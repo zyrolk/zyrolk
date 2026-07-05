@@ -1,0 +1,81 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper function to check if the user is an admin
+    function isAdmin() {
+      return request.auth != null && (
+        request.auth.token.email == 'zyrolkofficial@gmail.com' || (
+          exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'
+        )
+      );
+    }
+
+    // Helper function to check if user owns the document
+    function isOwner(userId) {
+      return request.auth != null && request.auth.uid == userId;
+    }
+
+    // Products Rules
+    match /products/{productId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Categories Rules
+    match /categories/{categoryId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Users Rules
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      // Allow creation only if the user is authenticated, writing their own document, and initializing role as 'customer'
+      allow create: if request.auth != null && 
+                    request.auth.uid == userId && 
+                    request.resource.data.role == 'customer';
+      // Prevent privilege escalation: only admins can change roles, users can update other details but cannot escalate themselves to admin
+      allow update: if isAdmin() || (
+                      isOwner(userId) && 
+                      (!('role' in request.resource.data) || request.resource.data.role == resource.data.role)
+                    );
+      allow delete: if isAdmin();
+    }
+
+    // Reviews Rules
+    match /reviews/{reviewId} {
+      allow read: if true;
+      // Authenticated users can write a review. Must provide userName and productId.
+      allow create: if request.auth != null && 
+                    request.resource.data.userName != null && 
+                    request.resource.data.productId != null;
+      allow update, delete: if isAdmin();
+    }
+
+    // Settings Rules - Only authenticated admins can edit website settings
+    match /settings/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Orders Rules
+    match /orders/{orderId} {
+      // Guests can create orders (customerUid == 'guest'), or authenticated users can create their own orders (customerUid == request.auth.uid)
+      allow create: if (request.resource.data.customerUid == 'guest' && request.auth == null) || 
+                    (request.auth != null && request.resource.data.customerUid == request.auth.uid);
+      
+      // Customers can read their own orders. Admins can read all.
+      allow read: if isAdmin() || (request.auth != null && resource.data.customerUid == request.auth.uid);
+      
+      // Only admins can update order status or delete/modify orders.
+      allow update, delete: if isAdmin();
+    }
+
+    // Connection testing
+    match /test/{docId} {
+      allow read: if true;
+    }
+  }
+}

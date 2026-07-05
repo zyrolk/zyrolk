@@ -1,0 +1,109 @@
+{
+  "entities": {
+    "Product": {
+      "title": "Product",
+      "description": "An electronic or smart appliance item in Zyro.lk store.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique identifier of the product." },
+        "name": { "type": "string", "description": "The brand and model name of the product." },
+        "description": { "type": "string", "description": "Detailed description of product features and specs." },
+        "price": { "type": "number", "description": "Current selling price in LKR (Sri Lankan Rupees)." },
+        "originalPrice": { "type": "number", "description": "Original retail price in LKR." },
+        "discount": { "type": "number", "description": "Discount percentage (e.g., 15 for 15% off)." },
+        "imageUrl": { "type": "string", "description": "Primary display image URL (fallback to high-quality unsplash or local image)." },
+        "imageUrls": { "type": "array", "description": "Additional image URLs for the product gallery." },
+        "category": { "type": "string", "description": "Category slug, e.g., 'electronics', 'home-kitchen', 'solar-lighting', 'accessories'." },
+        "rating": { "type": "number", "description": "Average user rating from 1 to 5." },
+        "reviewsCount": { "type": "number", "description": "Total number of reviews." },
+        "isNew": { "type": "boolean", "description": "Flag indicating if the product is a new arrival." },
+        "isFeatured": { "type": "boolean", "description": "Flag indicating if the product is featured on the home page." },
+        "isBestSeller": { "type": "boolean", "description": "Flag indicating if the product is a best seller." },
+        "stock": { "type": "number", "description": "Available stock quantity." },
+        "specs": { "type": "object", "description": "Key-value pair of specifications." }
+      },
+      "required": ["name", "price", "category", "imageUrl"]
+    },
+    "Category": {
+      "title": "Category",
+      "description": "Product category grouping.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Slug / ID of the category." },
+        "name": { "type": "string", "description": "Display name of the category." },
+        "icon": { "type": "string", "description": "Lucide icon identifier." },
+        "count": { "type": "number", "description": "Number of products in this category." }
+      },
+      "required": ["name", "id"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "A customer's purchase order details.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique order ID." },
+        "customerUid": { "type": "string", "description": "Firebase Authentication uid of the purchaser, or 'guest' for guests." },
+        "customerName": { "type": "string", "description": "Name of the customer." },
+        "customerPhone": { "type": "string", "description": "WhatsApp contact number of the customer." },
+        "customerEmail": { "type": "string", "description": "Email address of the customer." },
+        "customerAddress": { "type": "string", "description": "Delivery address in Sri Lanka." },
+        "district": { "type": "string", "description": "Sri Lankan district (e.g. Colombo, Gampaha, Kandy)." },
+        "items": { "type": "array", "description": "List of ordered items with productId, name, price, and quantity." },
+        "totalPrice": { "type": "number", "description": "Total amount paid or payable in LKR." },
+        "status": { "type": "string", "description": "Order status: 'pending', 'processing', 'completed', 'cancelled'.", "enum": ["pending", "processing", "completed", "cancelled"] },
+        "paymentMethod": { "type": "string", "description": "Payment option selected: 'cod' (Cash on Delivery) or 'whatsapp_confirm'." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Timestamp when order was placed." }
+      },
+      "required": ["customerName", "customerPhone", "items", "totalPrice", "status"]
+    },
+    "User": {
+      "title": "User",
+      "description": "User profile database representation.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Firebase Auth User UID." },
+        "email": { "type": "string", "description": "User email address." },
+        "displayName": { "type": "string", "description": "User's display name." },
+        "role": { "type": "string", "description": "Role of the user, e.g., 'customer' or 'admin'.", "enum": ["customer", "admin"] },
+        "createdAt": { "type": "string", "format": "date-time", "description": "User creation timestamp." }
+      },
+      "required": ["uid", "email", "role"]
+    },
+    "Review": {
+      "title": "Review",
+      "description": "A customer product review.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique review identifier." },
+        "productId": { "type": "string", "description": "The product ID being reviewed." },
+        "userName": { "type": "string", "description": "Reviewer's display name." },
+        "rating": { "type": "number", "description": "Rating score from 1 to 5." },
+        "comment": { "type": "string", "description": "Detailed review comment." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Review creation timestamp." }
+      },
+      "required": ["productId", "userName", "rating", "comment"]
+    }
+  },
+  "firestore": {
+    "/products/{productId}": {
+      "schema": "Product",
+      "description": "Collection of available products."
+    },
+    "/categories/{categoryId}": {
+      "schema": "Category",
+      "description": "Product categories."
+    },
+    "/orders/{orderId}": {
+      "schema": "Order",
+      "description": "Customer purchase orders."
+    },
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User accounts data, including administrator configurations."
+    },
+    "/reviews/{reviewId}": {
+      "schema": "Review",
+      "description": "Customer reviews of products."
+    }
+  }
+}
