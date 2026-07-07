@@ -1,0 +1,200 @@
+{
+  "entities": {
+    "Product": {
+      "title": "Product",
+      "description": "An electronic or smart appliance item in Zyro.lk store.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique identifier of the product." },
+        "name": { "type": "string", "description": "The brand and model name of the product." },
+        "description": { "type": "string", "description": "Detailed description of product features and specs." },
+        "price": { "type": "number", "description": "Current selling price in LKR (Sri Lankan Rupees)." },
+        "originalPrice": { "type": "number", "description": "Original retail price in LKR." },
+        "discount": { "type": "number", "description": "Discount percentage (e.g., 15 for 15% off)." },
+        "imageUrl": { "type": "string", "description": "Primary display image URL (fallback to high-quality unsplash or local image)." },
+        "imageUrls": { "type": "array", "description": "Additional image URLs for the product gallery." },
+        "category": { "type": "string", "description": "Category slug, e.g., 'electronics', 'home-kitchen', 'solar-lighting', 'accessories'." },
+        "rating": { "type": "number", "description": "Average user rating from 1 to 5." },
+        "reviewsCount": { "type": "number", "description": "Total number of reviews." },
+        "isNew": { "type": "boolean", "description": "Flag indicating if the product is a new arrival." },
+        "isFeatured": { "type": "boolean", "description": "Flag indicating if the product is featured on the home page." },
+        "isBestSeller": { "type": "boolean", "description": "Flag indicating if the product is a best seller." },
+        "stock": { "type": "number", "description": "Available stock quantity." },
+        "specs": { "type": "object", "description": "Key-value pair of specifications." }
+      },
+      "required": ["name", "price", "category", "imageUrl"]
+    },
+    "Category": {
+      "title": "Category",
+      "description": "Product category grouping.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Slug / ID of the category." },
+        "name": { "type": "string", "description": "Display name of the category." },
+        "icon": { "type": "string", "description": "Lucide icon identifier." },
+        "count": { "type": "number", "description": "Number of products in this category." }
+      },
+      "required": ["name", "id"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "A customer's purchase order details.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique order ID." },
+        "customerUid": { "type": "string", "description": "Firebase Authentication uid of the purchaser, or 'guest' for guests." },
+        "customerName": { "type": "string", "description": "Name of the customer." },
+        "customerPhone": { "type": "string", "description": "WhatsApp contact number of the customer." },
+        "customerEmail": { "type": "string", "description": "Email address of the customer." },
+        "customerAddress": { "type": "string", "description": "Delivery address in Sri Lanka." },
+        "district": { "type": "string", "description": "Sri Lankan district (e.g. Colombo, Gampaha, Kandy)." },
+        "items": { "type": "array", "description": "List of ordered items with productId, name, price, and quantity." },
+        "totalPrice": { "type": "number", "description": "Total amount paid or payable in LKR." },
+        "status": { "type": "string", "description": "Order status: 'pending', 'processing', 'completed', 'cancelled'.", "enum": ["pending", "processing", "completed", "cancelled"] },
+        "paymentMethod": { "type": "string", "description": "Payment option selected: 'cod' (Cash on Delivery) or 'whatsapp_confirm'." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Timestamp when order was placed." }
+      },
+      "required": ["customerName", "customerPhone", "items", "totalPrice", "status"]
+    },
+    "User": {
+      "title": "User",
+      "description": "User profile database representation.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Firebase Auth User UID." },
+        "email": { "type": "string", "description": "User email address." },
+        "displayName": { "type": "string", "description": "User's display name." },
+        "role": { "type": "string", "description": "Role of the user, e.g., 'customer' or 'admin'.", "enum": ["customer", "admin"] },
+        "createdAt": { "type": "string", "format": "date-time", "description": "User creation timestamp." }
+      },
+      "required": ["uid", "email", "role"]
+    },
+    "Review": {
+      "title": "Review",
+      "description": "A customer product review.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique review identifier." },
+        "productId": { "type": "string", "description": "The product ID being reviewed." },
+        "userName": { "type": "string", "description": "Reviewer's display name." },
+        "rating": { "type": "number", "description": "Rating score from 1 to 5." },
+        "comment": { "type": "string", "description": "Detailed review comment." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Review creation timestamp." }
+      },
+      "required": ["productId", "userName", "rating", "comment"]
+    },
+    "SupplierHub": {
+      "title": "Supplier Hub",
+      "description": "Supplier sources connected to Zyro.lk for stock and price sync.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique source identifier (e.g., a2z-website)." },
+        "name": { "type": "string", "description": "Display name of the supplier source." },
+        "connectionStatus": { "type": "string", "description": "Current link status: connected, disconnected, pending." },
+        "lastSync": { "type": "string", "description": "Timestamp of the last attempted sync." },
+        "lastError": { "type": "string", "description": "Last error message received during sync or 'None'." },
+        "sourceStatus": { "type": "string", "description": "Operational state: active, inactive, maintenance." },
+        "newProducts": { "type": "number", "description": "Count of new products discovered." },
+        "priceChanges": { "type": "number", "description": "Count of items with price updates." },
+        "stockChanges": { "type": "number", "description": "Count of items with stock level updates." },
+        "imageChanges": { "type": "number", "description": "Count of items with updated graphics." },
+        "pendingReviews": { "type": "number", "description": "Count of pending changes needing admin review." }
+      },
+      "required": ["id", "name", "connectionStatus", "sourceStatus"]
+    },
+    "SupplierSyncLog": {
+      "title": "Supplier Sync Log",
+      "description": "Audit trails and reports of background/manual supplier synchronization runs.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique log record ID." },
+        "supplierId": { "type": "string", "description": "Reference ID of the supplier." },
+        "supplierName": { "type": "string", "description": "Display name of the supplier source at sync time." },
+        "timestamp": { "type": "string", "description": "Timestamp of sync completion." },
+        "status": { "type": "string", "description": "Execution outcome: success, failed." },
+        "error": { "type": "string", "description": "Failure reason if status is failed, else None." },
+        "newProducts": { "type": "number" },
+        "priceChanges": { "type": "number" },
+        "stockChanges": { "type": "number" },
+        "imageChanges": { "type": "number" },
+        "pendingReviews": { "type": "number" },
+        "triggeredBy": { "type": "string", "description": "Who or what initiated the sync (e.g., Manual, Cron Job)." }
+      },
+      "required": ["id", "supplierId", "timestamp", "status"]
+    },
+    "SupplierImportQueueItem": {
+      "title": "Supplier Import Queue Item",
+      "description": "Realtime status tracking of individual automated supplier catalog downloads, parses, and extraction jobs.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique ID for the import queue task." },
+        "supplierCode": { "type": "string", "description": "Unique code identifying the supplier." },
+        "supplierName": { "type": "string", "description": "Name of the supplier." },
+        "productName": { "type": "string", "description": "Name of the product or feed file being imported." },
+        "source": { "type": "string", "description": "Source of import (Website / WhatsApp).", "enum": ["Website", "WhatsApp"] },
+        "importStatus": { "type": "string", "description": "Current status of the import job.", "enum": ["Waiting", "Downloading", "Processing", "Completed", "Failed"] },
+        "progress": { "type": "number", "description": "Progress percentage (0-100)." },
+        "totalImages": { "type": "number", "description": "Total images identified for processing." },
+        "downloadedImages": { "type": "number", "description": "Number of images downloaded/processed so far." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp." },
+        "completedAt": { "type": "string", "format": "date-time", "description": "Completion timestamp." },
+        "errorMessage": { "type": "string", "description": "Error message if status is Failed." }
+      },
+      "required": ["id", "supplierCode", "supplierName", "source", "importStatus", "progress"]
+    },
+    "SupplierSources": {
+      "title": "Supplier Sources",
+      "description": "Registered external supplier connections for Zyro.lk.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique identifier of the supplier source." },
+        "supplierName": { "type": "string", "description": "Display name of the supplier." },
+        "websiteUrl": { "type": "string", "description": "Base website URL of the supplier." },
+        "endpoint": { "type": "string", "description": "Product list API endpoint path." },
+        "supplierType": { "type": "string", "description": "Type of supplier, e.g., 'website'." },
+        "connectionStatus": { "type": "string", "description": "Connection link status, e.g., 'connected' or 'Failed'." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Timestamp when configuration was saved." },
+        "lastSync": { "type": "string", "format": "date-time", "description": "Timestamp of last attempted synchronization, initialized to null." }
+      },
+      "required": ["supplierName", "websiteUrl", "endpoint", "supplierType", "connectionStatus", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/products/{productId}": {
+      "schema": "Product",
+      "description": "Collection of available products."
+    },
+    "/categories/{categoryId}": {
+      "schema": "Category",
+      "description": "Product categories."
+    },
+    "/orders/{orderId}": {
+      "schema": "Order",
+      "description": "Customer purchase orders."
+    },
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User accounts data, including administrator configurations."
+    },
+    "/reviews/{reviewId}": {
+      "schema": "Review",
+      "description": "Customer reviews of products."
+    },
+    "/supplierHub/{docId}": {
+      "schema": "SupplierHub",
+      "description": "Supplier connection statuses and summary metrics."
+    },
+    "/supplierSources/{docId}": {
+      "schema": "SupplierSources",
+      "description": "Collection of saved supplier connections, status and sync metadata."
+    },
+    "/supplierSyncLogs/{logId}": {
+      "schema": "SupplierSyncLog",
+      "description": "Historical sync logs from supplier feeds."
+    },
+    "/supplier_import_queue/{id}": {
+      "schema": "SupplierImportQueueItem",
+      "description": "Collection of real-time supplier import queue tracking entries."
+    }
+  }
+}

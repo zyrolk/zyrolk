@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 450" width="1000" height="450">
+  <!-- Clean white background for conversion -->
+  <rect width="1000" height="450" fill="#ffffff" />
+  
+  <!-- Left Icon: Shopping Bag + Z -->
+  <g transform="translate(40, 20)">
+    <!-- Shopping Bag Handle -->
+    <path d="M 195,145 C 195,95 275,95 275,145" stroke="#0d1117" stroke-width="14" fill="none" stroke-linecap="round" />
+    
+    <!-- Shopping Bag Body -->
+    <path d="M 155,150 L 315,150 L 330,330 C 330,345 315,355 295,355 L 175,355 C 155,355 140,345 140,330 Z" stroke="#0d1117" stroke-width="14" fill="none" stroke-linecap="round" stroke-linejoin="round" />
+    
+    <!-- Speed Streaks (Wedges pointing left) -->
+    <path d="M 180,230 L 70,230 L 160,255 Z" fill="#0052fe" />
+    <path d="M 150,270 L 65,270 L 135,295 Z" fill="#0052fe" />
+    <path d="M 120,310 L 80,310 L 115,325 Z" fill="#0052fe" />
+    
+    <!-- Slanted Bold Z -->
+    <path d="M 175,160 L 335,160 L 130,320 L 275,320 L 245,350 L 85,350 L 290,190 L 145,190 Z" fill="#0052fe" />
+  </g>
+  
+  <!-- Brand Text -->
+  <text x="410" y="275" font-family="'FreeSans', 'Arial', 'Helvetica', sans-serif" font-weight="900" font-style="italic" font-size="145" fill="#0e121a" letter-spacing="-4">
+    Zyro<tspan fill="#0052fe">.lk</tspan>
+  </text>
+  
+  <!-- Tagline and Accents -->
+  <g transform="translate(20, 10)">
+    <!-- Left Accent Line -->
+    <line x1="355" y1="338" x2="390" y2="338" stroke="#0052fe" stroke-width="4" stroke-linecap="round" />
+    
+    <!-- Tagline Text -->
+    <text x="645" y="344" font-family="'FreeSans', 'Arial', 'Helvetica', sans-serif" font-weight="bold" font-size="17" fill="#475569" letter-spacing="6" text-anchor="middle">
+      PREMIUM ELECTRONICS, DELIVERED TO YOU
+    </text>
+    
+    <!-- Right Accent Line -->
+    <line x1="900" y1="338" x2="935" y2="338" stroke="#0052fe" stroke-width="4" stroke-linecap="round" />
+  </g>
+</svg>

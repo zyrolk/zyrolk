@@ -1,0 +1,22 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Publicly readable, writeable only by authenticated admin users
+    match /banners/{fileName} {
+      allow read: if true;
+      allow write: if request.auth != null && (
+        request.auth.token.email == 'zyrolkofficial@gmail.com' ||
+        firestore.exists(/databases/(default)/documents/users/$(request.auth.uid)) &&
+        firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'admin'
+      );
+    }
+    match /logos/{fileName} {
+      allow read: if true;
+      allow write: if request.auth != null && (
+        request.auth.token.email == 'zyrolkofficial@gmail.com' ||
+        firestore.exists(/databases/(default)/documents/users/$(request.auth.uid)) &&
+        firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'admin'
+      );
+    }
+  }
+}

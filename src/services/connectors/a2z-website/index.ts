@@ -1,0 +1,10 @@
+export * from './types';
+export { ConnectorLogger } from './ConnectorLogger';
+export { ProductValidator } from './ProductValidator';
+export { ProductMapper } from './ProductMapper';
+export { ImageDownloader } from './ImageDownloader';
+export type { DownloadRequest } from './ImageDownloader';
+export { ProductParser } from './ProductParser';
+export { ProductFetcher } from './ProductFetcher';
+export { WebsiteConnector } from './WebsiteConnector';
+export { A2ZConnectorService } from './A2ZConnectorService';
