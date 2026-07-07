@@ -185,7 +185,10 @@ app.post("/api/checkout", async (req, res) => {
 
 // Helper to retrieve credentials from Firebase for any A2Z-related supplier
 async function getA2ZCredentials() {
-  let credentials = { username: "rchi5408@gmail.com", password: "Ros3628" };
+  let credentials = {
+    username: process.env.A2Z_USERNAME || "",
+    password: process.env.A2Z_PASSWORD || ""
+  };
   try {
     const sourcesSnap = await adminDb.collection("supplierSources").get();
     sourcesSnap.forEach(doc => {
@@ -198,15 +201,19 @@ async function getA2ZCredentials() {
         const settings = data.settings || {};
         
         credentials = {
-          username: config.username || settings.username || data.username || process.env.A2Z_USERNAME || "rchi5408@gmail.com",
-          password: config.password || settings.password || data.password || process.env.A2Z_PASSWORD || "Ros3628"
+          username: config.username || settings.username || data.username || process.env.A2Z_USERNAME || "",
+          password: config.password || settings.password || data.password || process.env.A2Z_PASSWORD || ""
         };
       }
     });
   } catch (err) {
-    // Gracefully fallback to default credentials without logging permission/API warnings
-    console.log("[A2Z-Connector] Using fallback default credentials for catalog synchronization.");
+    console.warn("[A2Z-Connector] Could not read supplier credentials from Firestore; using environment variables if configured.");
   }
+
+  if (!credentials.username || !credentials.password) {
+    throw new Error("A2Z credentials are not configured. Set A2Z_USERNAME and A2Z_PASSWORD in the server environment or save credentials in supplierSources.");
+  }
+
   return credentials;
 }
 

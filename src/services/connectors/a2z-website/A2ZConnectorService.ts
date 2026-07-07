@@ -91,8 +91,12 @@ export class A2ZConnectorService {
     const baseDomain = this.getBaseDomain(baseUrl);
     console.log(`[A2Z-Connector] Triggering authentic login sequence for domain: ${baseDomain}`);
 
-    const username = credentials.username || 'rchi5408@gmail.com';
-    const password = credentials.password || 'Ros3628';
+    const username = credentials.username;
+    const password = credentials.password;
+
+    if (!username || !password) {
+      throw new Error('A2Z credentials are required before attempting supplier login.');
+    }
 
     try {
       // Step 1: Pre-authenticate GET request to initialize session cookies
