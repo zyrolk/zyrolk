@@ -4,7 +4,7 @@ import {
   ShieldCheck, Truck, RefreshCw, MessageSquare, ArrowRight, Plus, Minus, ShoppingBag,
   ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Maximize2, Sparkles, Award, CheckCircle2, HelpCircle
 } from 'lucide-react';
-import { collection, query, where, getDocs, addDoc, doc, getDoc, updateDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs, addDoc } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
 import { db, auth } from '../firebase';
 import { Product } from '../types';
@@ -108,16 +108,6 @@ export default function ProductDetailModal({
       });
       setReviews(list);
       
-      // Auto-heal reviewsCount in DB if no reviews are found in Firestore
-      if (list.length === 0 && product.reviewsCount !== 0) {
-        try {
-          await updateDoc(doc(db, "products", product.id), {
-            reviewsCount: 0
-          });
-        } catch (dbErr) {
-          console.warn("Could not auto-heal reviewsCount in Firestore:", dbErr);
-        }
-      }
     } catch (err) {
       console.error("Error loading reviews:", err);
     } finally {
@@ -223,6 +213,11 @@ export default function ProductDetailModal({
     const trimmedComment = newComment.trim();
     const trimmedName = newCustomerName.trim() || currentUser?.displayName || currentUser?.email?.split('@')[0] || "Verified Buyer";
 
+    if (!currentUser) {
+      alert("Please log in before submitting a review.");
+      return;
+    }
+
     if (!trimmedComment) {
       alert("Please write a comment for your review.");
       return;
@@ -238,6 +233,7 @@ export default function ProductDetailModal({
     try {
       const payload = {
         productId: product.id,
+        userId: currentUser.uid,
         customerName: trimmedName,
         userName: trimmedName, // backwards compatibility
         rating: newRating,
@@ -257,18 +253,6 @@ export default function ProductDetailModal({
         if (data.approved !== false) {
           list.push({ id: d.id, ...data });
         }
-      });
-
-      const totalReviewsCount = list.length;
-      const avgRating = totalReviewsCount > 0 
-        ? Number((list.reduce((acc, curr) => acc + curr.rating, 0) / totalReviewsCount).toFixed(1)) 
-        : 5;
-
-      // 3. Immediately update the product rating & reviewsCount in Firestore
-      const productRef = doc(db, "products", product.id);
-      await updateDoc(productRef, {
-        rating: avgRating,
-        reviewsCount: totalReviewsCount
       });
 
       // Clear the form
