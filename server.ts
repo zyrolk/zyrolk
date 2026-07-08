@@ -3,6 +3,7 @@ import path from "path";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { initializeApp, getApps } from "firebase-admin/app";
+import { getAuth } from "firebase-admin/auth";
 import { getFirestore } from "firebase-admin/firestore";
 import { A2ZConnectorService } from "./src/services/connectors/a2z-website/A2ZConnectorService";
 
@@ -27,8 +28,10 @@ if (getApps().length === 0) {
   });
 }
 const adminDb = getFirestore();
+const adminAuth = getAuth();
 const MAX_CART_ITEMS = 50;
 const MAX_ITEM_QUANTITY = 99;
+const ADMIN_EMAIL = "zyrolkofficial@gmail.com";
 
 interface CheckoutCartItem {
   productId: string;
@@ -267,8 +270,41 @@ async function getA2ZCredentials() {
   return credentials;
 }
 
+const requireSupplierAdminAuth: express.RequestHandler = async (req, res, next) => {
+  const authHeader = req.header("Authorization") || "";
+  const match = authHeader.match(/^Bearer\s+(.+)$/i);
+
+  if (!match) {
+    res.status(401).json({ error: "Authentication required" });
+    return;
+  }
+
+  try {
+    const decodedToken = await adminAuth.verifyIdToken(match[1]);
+    const email = (decodedToken.email || "").toLowerCase();
+
+    if (email === ADMIN_EMAIL) {
+      next();
+      return;
+    }
+
+    const userSnap = await adminDb.collection("users").doc(decodedToken.uid).get();
+    const userRole = userSnap.exists ? userSnap.data()?.role : null;
+
+    if (userRole === "admin") {
+      next();
+      return;
+    }
+
+    res.status(403).json({ error: "Admin access required" });
+  } catch (error) {
+    console.warn("[Supplier API] Failed admin authentication:", error);
+    res.status(401).json({ error: "Invalid or expired authentication token" });
+  }
+};
+
 // Server-side proxy for testing supplier connections securely (bypasses CORS)
-app.post("/api/test-supplier", async (req, res) => {
+app.post("/api/test-supplier", requireSupplierAdminAuth, async (req, res) => {
   const { websiteUrl, endpoint } = req.body;
   
   if (!websiteUrl) {
@@ -371,7 +407,7 @@ app.post("/api/test-supplier", async (req, res) => {
 });
 
 // Server-side proxy for fetching supplier products securely (bypasses CORS)
-app.post("/api/fetch-supplier", async (req, res) => {
+app.post("/api/fetch-supplier", requireSupplierAdminAuth, async (req, res) => {
   const { websiteUrl, endpoint } = req.body;
   
   if (!websiteUrl) {

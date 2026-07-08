@@ -32,7 +32,7 @@ import {
 } from 'lucide-react';
 import { RawA2ZProduct } from '../services/connectors/a2z-website/types';
 import { collection, getDocs, onSnapshot, setDoc, doc, getDoc } from 'firebase/firestore';
-import { db, handleFirestoreError, OperationType } from '../firebase';
+import { auth, db, handleFirestoreError, OperationType } from '../firebase';
 import { Product } from '../types';
 
 interface SupplierHubFiveStarsProps {
@@ -239,6 +239,19 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
       .replace(/^-+|-+$/g, '');  
   };
 
+  const getSupplierApiHeaders = async () => {
+    const user = auth.currentUser;
+    if (!user) {
+      throw new Error("Admin authentication is required. Please sign in again.");
+    }
+
+    const token = await user.getIdToken();
+    return {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`
+    };
+  };
+
   const handleSyncSupplier = async () => {
     setIsSyncing(true);
     setErrorMsg(null);
@@ -277,7 +290,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
         try {
           const res = await fetch('/api/fetch-supplier', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: await getSupplierApiHeaders(),
             body: JSON.stringify({ websiteUrl: urlToFetch, endpoint: endpointToFetch })
           });
 
@@ -603,9 +616,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
     try {
       const response = await fetch('/api/test-supplier', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
+        headers: await getSupplierApiHeaders(),
         body: JSON.stringify({
           websiteUrl: targetUrl,
           endpoint: endpointPath
@@ -644,9 +655,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
     try {
       const response = await fetch('/api/test-supplier', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
+        headers: await getSupplierApiHeaders(),
         body: JSON.stringify({
           websiteUrl: urlToTest,
           endpoint: endpointToTest

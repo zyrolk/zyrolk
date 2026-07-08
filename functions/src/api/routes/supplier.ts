@@ -1,5 +1,6 @@
 import * as express from "express";
 import { adminDb } from "../firebase";
+import { requireAdminAuth } from "../middleware/adminAuth";
 import { A2ZConnectorService } from "../suppliers/a2z/A2ZConnectorService";
 
 async function getA2ZCredentials(): Promise<{ username: string; password: string }> {
@@ -48,7 +49,7 @@ function buildSupplierTargetUrl(websiteUrl: string, endpoint: string): string {
 }
 
 export function registerSupplierRoutes(app: express.Express): void {
-  app.post("/api/test-supplier", async (req, res) => {
+  app.post("/api/test-supplier", requireAdminAuth, async (req, res) => {
     const { websiteUrl, endpoint = "" } = req.body;
 
     if (!websiteUrl) {
@@ -143,7 +144,7 @@ export function registerSupplierRoutes(app: express.Express): void {
     }
   });
 
-  app.post("/api/fetch-supplier", async (req, res) => {
+  app.post("/api/fetch-supplier", requireAdminAuth, async (req, res) => {
     const { websiteUrl, endpoint = "" } = req.body;
 
     if (!websiteUrl) {
