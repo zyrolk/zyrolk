@@ -92,6 +92,28 @@ const DEFAULT_WEBSITE_SETTINGS: WebsiteSettings = {
   enableFeaturedProducts: true
 };
 
+const DEFAULT_SUPPLIER_HUB_SETTINGS = {
+  autoSync: false,
+  defaultMargin: 0,
+  notifyOnPriceDecrease: false,
+  apiSecretKey: "",
+  updatedAt: ""
+};
+
+const DEFAULT_SUPPLIER_SETTINGS = {
+  websiteSyncEnabled: false,
+  whatsappSyncEnabled: false,
+  autoSyncEnabled: true,
+  autoImageDownload: true,
+  notificationEnabled: true,
+  syncInterval: "1 Hour",
+  defaultProfitMargin: 15,
+  defaultMarkup: 10,
+  defaultImageLimit: 5,
+  lastUpdated: "",
+  updatedBy: ""
+};
+
 const isValidUrl = (url: string) => {
   if (!url) return true;
   try {
@@ -402,26 +424,9 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
   const [syncHistorySearch, setSyncHistorySearch] = useState('');
   const [isSyncHistoryLoading, setIsSyncHistoryLoading] = useState<boolean>(true);
   const [viewingSyncLog, setViewingSyncLog] = useState<any | null>(null);
-  const [supplierHubSettings, setSupplierHubSettings] = useState<any>({
-    autoSync: true,
-    defaultMargin: 12,
-    notifyOnPriceDecrease: true,
-    apiSecretKey: "zyro_hub_sec_551aa"
-  });
+  const [supplierHubSettings, setSupplierHubSettings] = useState<any>(DEFAULT_SUPPLIER_HUB_SETTINGS);
   const [savingHubSettings, setSavingHubSettings] = useState(false);
-  const [supplierSettings, setSupplierSettings] = useState<any>({
-    websiteSyncEnabled: false,
-    whatsappSyncEnabled: false,
-    autoSyncEnabled: true,
-    autoImageDownload: true,
-    notificationEnabled: true,
-    syncInterval: "1 Hour",
-    defaultProfitMargin: 15,
-    defaultMarkup: 10,
-    defaultImageLimit: 5,
-    lastUpdated: "",
-    updatedBy: ""
-  });
+  const [supplierSettings, setSupplierSettings] = useState<any>(DEFAULT_SUPPLIER_SETTINGS);
   const [isSettingsLoading, setIsSettingsLoading] = useState<boolean>(true);
   const [savingSupplierSettings, setSavingSupplierSettings] = useState<boolean>(false);
   const [showResetSettingsConfirm, setShowResetSettingsConfirm] = useState<boolean>(false);
@@ -677,30 +682,17 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
 
     // Load Supplier Pending Changes is handled by onSnapshot realtime listener.
 
-    // Load Hub Settings
+    // Load Hub Settings from canonical supplier_settings/config.
     try {
-      const docRef = doc(db, "supplierHubSettings", "config");
-      const docSnap = await getDoc(docRef);
+      const docSnap = await getDoc(doc(db, "supplier_settings", "config"));
       if (docSnap.exists()) {
-        setSupplierHubSettings(docSnap.data());
+        setSupplierHubSettings({ ...DEFAULT_SUPPLIER_HUB_SETTINGS, ...docSnap.data() });
       } else {
-        setSupplierHubSettings({
-          autoSync: false,
-          defaultMargin: 0,
-          notifyOnPriceDecrease: false,
-          apiSecretKey: "",
-          updatedAt: ""
-        });
+        setSupplierHubSettings(DEFAULT_SUPPLIER_HUB_SETTINGS);
       }
     } catch (e) {
-      console.warn("supplierHubSettings error:", e);
-      setSupplierHubSettings({
-        autoSync: false,
-        defaultMargin: 0,
-        notifyOnPriceDecrease: false,
-        apiSecretKey: "",
-        updatedAt: ""
-      });
+      console.warn("supplier_settings hub config error:", e);
+      setSupplierHubSettings(DEFAULT_SUPPLIER_HUB_SETTINGS);
     }
     
     setLoading(false);
@@ -973,12 +965,12 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
     e.preventDefault();
     setSavingHubSettings(true);
     try {
-      const docRef = doc(db, "supplierHubSettings", "config");
+      const docRef = doc(db, "supplier_settings", "config");
       const updatedPayload = {
         ...supplierHubSettings,
         updatedAt: new Date().toLocaleString('en-US')
       };
-      await setDoc(docRef, updatedPayload);
+      await setDoc(docRef, updatedPayload, { merge: true });
       setSupplierHubSettings(updatedPayload);
       showSettingsToast("success", "Supplier Hub integration configuration saved.");
       playNotificationSound();
@@ -1000,7 +992,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
         lastUpdated: new Date().toISOString(),
         updatedBy: email
       };
-      await setDoc(doc(db, "supplier_settings", "config"), payload);
+      await setDoc(doc(db, "supplier_settings", "config"), payload, { merge: true });
       showSettingsToast("success", "Supplier Hub configurations saved successfully.");
       playNotificationSound();
     } catch (err: any) {
@@ -1028,7 +1020,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
         lastUpdated: new Date().toISOString(),
         updatedBy: email
       };
-      await setDoc(doc(db, "supplier_settings", "config"), defaults);
+      await setDoc(doc(db, "supplier_settings", "config"), defaults, { merge: true });
       showSettingsToast("success", "Configurations reset to system defaults.");
       playNotificationSound();
       setShowResetSettingsConfirm(false);
@@ -1301,23 +1293,17 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
 
     const unsubscribeSupplierSettings = onSnapshot(doc(db, "supplier_settings", "config"), (snapshot) => {
       if (snapshot.exists()) {
-        setSupplierSettings(snapshot.data());
+        const data = snapshot.data();
+        setSupplierSettings({ ...DEFAULT_SUPPLIER_SETTINGS, ...data });
+        setSupplierHubSettings({ ...DEFAULT_SUPPLIER_HUB_SETTINGS, ...data });
         setIsSettingsLoading(false);
       } else {
-        const defaults = {
-          websiteSyncEnabled: false,
-          whatsappSyncEnabled: false,
-          autoSyncEnabled: true,
-          autoImageDownload: true,
-          notificationEnabled: true,
-          syncInterval: "1 Hour",
-          defaultProfitMargin: 15,
-          defaultMarkup: 10,
-          defaultImageLimit: 5,
+        setSupplierSettings({
+          ...DEFAULT_SUPPLIER_SETTINGS,
           lastUpdated: new Date().toISOString(),
           updatedBy: "System"
-        };
-        setSupplierSettings(defaults);
+        });
+        setSupplierHubSettings(DEFAULT_SUPPLIER_HUB_SETTINGS);
         setIsSettingsLoading(false);
       }
     }, (error) => {
