@@ -106,6 +106,43 @@ Core Firestore collections:
 - `supplier_review_queue`, `supplier_import_queue`, `supplier_pending_changes`, `supplier_sync_history`, `supplier_settings`: intended supplier workflow collections.
 - `counters/orders`: order sequence counter for order numbers.
 
+## Backend Architecture (Approved)
+
+This is the permanent backend architecture direction for Zyro.lk.
+
+Approved request/response API architecture:
+
+```text
+Firebase Hosting
+  -> /api/**
+    -> One modular Express API hosted as a Firebase HTTPS Function
+```
+
+All frontend-facing request/response APIs should live inside one modular Express API hosted as a Firebase HTTPS Function. The Express API should be organized into focused route modules and shared services so checkout, Supplier Hub, admin operations, AI manager endpoints, marketplace endpoints, and future business APIs can share validation, authentication, error handling, logging, and Firebase Admin initialization.
+
+Background Firebase Functions are approved for non-request/response work such as:
+
+- Scheduled Supplier Sync
+- Notifications
+- Review Aggregation
+- Automation Jobs
+- AI Background Tasks
+
+Future heavy workloads may be migrated to Cloud Run only if required by scale, runtime duration, resource requirements, dependency isolation, or operational needs. These candidates include:
+
+- Heavy AI Manager
+- Trading Engine
+- Marketplace Workers
+
+Backend architecture rules:
+
+- Do not create one Firebase Function per business API.
+- Keep all request/response APIs inside the modular Express API.
+- Use separate Firebase Functions only for background jobs, triggers, and scheduled tasks.
+- Preserve existing frontend API contracts whenever possible.
+- Favor incremental migration over rewrites.
+- Always maintain rollback points.
+
 ## Supplier Hub Workflow
 
 The Supplier Hub is the admin-facing control center for supplier data ingestion. Its current main implementation is `src/components/SupplierHubFiveStars.tsx`.
