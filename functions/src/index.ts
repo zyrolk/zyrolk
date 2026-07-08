@@ -5,6 +5,48 @@ import { getFirestore } from "firebase-admin/firestore";
 // Initialize Firebase Admin SDK
 initializeApp();
 const adminDb = getFirestore();
+const MAX_CART_ITEMS = 50;
+const MAX_ITEM_QUANTITY = 99;
+
+interface CheckoutCartItem {
+  productId: string;
+  quantity: number;
+}
+
+class CheckoutError extends Error {
+  statusCode: number;
+
+  constructor(message: string, statusCode = 400) {
+    super(message);
+    this.statusCode = statusCode;
+  }
+}
+
+function validateCheckoutCartItems(cartItems: unknown): CheckoutCartItem[] {
+  if (!Array.isArray(cartItems) || cartItems.length === 0) {
+    throw new CheckoutError("Cart items are required and must not be empty");
+  }
+
+  if (cartItems.length > MAX_CART_ITEMS) {
+    throw new CheckoutError(`Cart cannot contain more than ${MAX_CART_ITEMS} items`);
+  }
+
+  return cartItems.map((item, index) => {
+    const rawItem = item as Partial<CheckoutCartItem>;
+    const productId = typeof rawItem.productId === "string" ? rawItem.productId.trim() : "";
+    const quantity = typeof rawItem.quantity === "number" ? rawItem.quantity : NaN;
+
+    if (!productId) {
+      throw new CheckoutError(`Cart item ${index + 1} is missing a valid product ID`);
+    }
+
+    if (!Number.isInteger(quantity) || quantity < 1 || quantity > MAX_ITEM_QUANTITY) {
+      throw new CheckoutError(`Cart item ${index + 1} must have a quantity between 1 and ${MAX_ITEM_QUANTITY}`);
+    }
+
+    return { productId, quantity };
+  });
+}
 
 /**
  * Production-ready Firebase Cloud Function for secure, transaction-based checkout.
@@ -40,8 +82,11 @@ export const checkout = onRequest({ cors: true }, async (req, res) => {
     cartItems, // Array of { productId, quantity }
   } = req.body;
 
-  if (!cartItems || !Array.isArray(cartItems) || cartItems.length === 0) {
-    res.status(400).json({ error: "Cart items are required and must not be empty" });
+  let validatedCartItems: CheckoutCartItem[];
+  try {
+    validatedCartItems = validateCheckoutCartItems(cartItems);
+  } catch (error: any) {
+    res.status(error.statusCode || 400).json({ error: error.message || "Invalid cart items" });
     return;
   }
 
@@ -56,21 +101,26 @@ export const checkout = onRequest({ cors: true }, async (req, res) => {
       const verifiedItems = [];
 
       // 1. Fetch, validate, and price each product inside the transaction
-      for (const item of cartItems) {
+      for (const item of validatedCartItems) {
         const productRef = adminDb.collection("products").doc(item.productId);
         const productSnap = await transaction.get(productRef);
 
         if (!productSnap.exists) {
-          throw new Error(`Product with ID "${item.productId}" was not found.`);
+          throw new CheckoutError(`Product with ID "${item.productId}" was not found.`, 404);
         }
 
         const pData = productSnap.data()!;
-        if (pData.stock === undefined || pData.stock < item.quantity) {
-          throw new Error(`Insufficient stock for product "${pData.name}". Available: ${pData.stock || 0}, Requested: ${item.quantity}`);
+        if (pData.isActive === false) {
+          throw new CheckoutError(`Product "${pData.name || item.productId}" is not available for purchase.`, 409);
+        }
+
+        const currentStock = Number(pData.stock);
+        if (!Number.isFinite(currentStock) || currentStock < item.quantity) {
+          throw new CheckoutError(`Insufficient stock for product "${pData.name}". Available: ${Number.isFinite(currentStock) ? currentStock : 0}, Requested: ${item.quantity}`, 409);
         }
 
         const truePrice = Number(pData.price);
-        if (isNaN(truePrice)) {
+        if (!Number.isFinite(truePrice) || truePrice <= 0) {
           throw new Error(`Product "${pData.name}" has an invalid price configuration in the database.`);
         }
 
@@ -139,7 +189,7 @@ export const checkout = onRequest({ cors: true }, async (req, res) => {
       const orderNumber = `ZY${nextSeq}`;
 
       // 4. Atomically decrease product stock
-      for (const item of cartItems) {
+      for (const item of validatedCartItems) {
         const productRef = adminDb.collection("products").doc(item.productId);
         const productSnap = await transaction.get(productRef); // read inside transaction
         const currentStock = productSnap.data()!.stock || 0;
@@ -178,6 +228,6 @@ export const checkout = onRequest({ cors: true }, async (req, res) => {
     res.json({ success: true, order: finalizedOrder });
   } catch (error: any) {
     console.error("Cloud Function Checkout Failed:", error);
-    res.status(500).json({ error: error.message || "Failed to process checkout transaction" });
+    res.status(error.statusCode || 500).json({ error: error.message || "Failed to process checkout transaction" });
   }
 });
