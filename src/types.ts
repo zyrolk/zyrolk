@@ -146,5 +146,7 @@ export interface SupplierReviewQueueItem {
   createdAt: string; // or any string-based timestamp/ISO string
   reviewedAt?: string;
   reviewedBy?: string;
+  productPayload?: Product & Record<string, unknown>;
+  matchedProductId?: string | null;
+  reviewQueueItemId?: string;
 }
-

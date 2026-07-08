@@ -31,9 +31,10 @@ import {
   FileText
 } from 'lucide-react';
 import { RawA2ZProduct } from '../services/connectors/a2z-website/types';
-import { collection, getDocs, onSnapshot, setDoc, doc, getDoc } from 'firebase/firestore';
+import { collection, doc, getDocs, onSnapshot, setDoc, writeBatch } from 'firebase/firestore';
 import { auth, db, handleFirestoreError, OperationType } from '../firebase';
 import { Product } from '../types';
+import { approveSupplierQueueItem, rejectSupplierQueueItem } from '../services/supplierQueueService';
 
 interface SupplierHubFiveStarsProps {
   isDarkMode?: boolean;
@@ -59,13 +60,18 @@ export interface ReviewQueueItem {
   supplierValue?: string | number;
   comparisonStatus?: 'NEW_PRODUCT' | 'PRICE_CHANGED' | 'STOCK_CHANGED' | 'DESCRIPTION_CHANGED' | 'IMAGE_CHANGED' | 'UNCHANGED';
   comparison?: ComparisonResult;
-  productPayload?: any; // Full product data to be written on approval
+  productPayload?: Product & Record<string, unknown>; // Full product data to be written on approval
   matchedProductId?: string | null; // ID of existing product if match found
+  supplierName?: string;
+  source?: 'Website' | 'WhatsApp';
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface SyncHistoryItem {
   id: string;
   timestamp: string;
+  createdAt?: string;
   supplierCode: string;
   productsSynced: number;
   status: 'Success' | 'Failed';
@@ -178,6 +184,89 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
     return () => unsubscribe();
   }, []);
 
+  useEffect(() => {
+    const sortByCreatedAtDesc = <T extends { createdAt?: string; detectedAt?: string; timestamp?: string }>(items: T[]): T[] => {
+      return items.sort((a, b) => {
+        const aTime = new Date(a.createdAt || a.detectedAt || a.timestamp || 0).getTime();
+        const bTime = new Date(b.createdAt || b.detectedAt || b.timestamp || 0).getTime();
+        return bTime - aTime;
+      });
+    };
+
+    const unsubscribeReviewQueue = onSnapshot(
+      collection(db, "supplier_review_queue"),
+      (snapshot) => {
+        const items: ReviewQueueItem[] = [];
+        snapshot.forEach((queueDoc) => {
+          items.push({ id: queueDoc.id, ...queueDoc.data() } as ReviewQueueItem);
+        });
+        setReviewQueue(sortByCreatedAtDesc(items));
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.GET, "supplier_review_queue");
+      }
+    );
+
+    const unsubscribeImportQueue = onSnapshot(
+      collection(db, "supplier_import_queue"),
+      (snapshot) => {
+        const items: any[] = [];
+        snapshot.forEach((queueDoc) => {
+          items.push({ id: queueDoc.id, ...queueDoc.data() });
+        });
+        setImportQueue(sortByCreatedAtDesc(items));
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.GET, "supplier_import_queue");
+      }
+    );
+
+    const unsubscribePendingChanges = onSnapshot(
+      collection(db, "supplier_pending_changes"),
+      (snapshot) => {
+        const items: any[] = [];
+        snapshot.forEach((queueDoc) => {
+          items.push({ id: queueDoc.id, ...queueDoc.data() });
+        });
+        setSupplierPendingChanges(sortByCreatedAtDesc(items));
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.GET, "supplier_pending_changes");
+      }
+    );
+
+    const unsubscribeSyncHistory = onSnapshot(
+      collection(db, "supplier_sync_history"),
+      (snapshot) => {
+        const items: SyncHistoryItem[] = [];
+        snapshot.forEach((queueDoc) => {
+          items.push({ id: queueDoc.id, ...queueDoc.data() } as SyncHistoryItem);
+        });
+        setSyncHistory(sortByCreatedAtDesc(items));
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.GET, "supplier_sync_history");
+      }
+    );
+
+    return () => {
+      unsubscribeReviewQueue();
+      unsubscribeImportQueue();
+      unsubscribePendingChanges();
+      unsubscribeSyncHistory();
+    };
+  }, []);
+
+  useEffect(() => {
+    setNewProducts(reviewQueue.filter(item => item.comparison?.comparisonStatus === 'NEW_PRODUCT').length);
+    setPriceChanges(reviewQueue.filter(item => item.comparison?.comparisonStatus === 'PRICE_CHANGED').length);
+    setStockChanges(reviewQueue.filter(item => item.comparison?.comparisonStatus === 'STOCK_CHANGED').length);
+    setImageChanges(reviewQueue.filter(item => (
+      item.comparison?.comparisonStatus === 'IMAGE_CHANGED' ||
+      item.comparison?.comparisonStatus === 'DESCRIPTION_CHANGED'
+    )).length);
+  }, [reviewQueue]);
+
   // Supplier Settings Engine state
   const [editingSourceId, setEditingSourceId] = useState<string | null>(null);
   const [editSupplierName, setEditSupplierName] = useState<string>('');
@@ -239,6 +328,12 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
       .replace(/^-+|-+$/g, '');  
   };
 
+  const generateQueueDocId = (sourceId: string, supplierCode: string, productName: string): string => {
+    const sourcePart = generateSlug(sourceId) || 'supplier';
+    const productPart = generateSlug(supplierCode || productName) || `${Date.now()}`;
+    return `${sourcePart}-${productPart}`;
+  };
+
   const getSupplierApiHeaders = async () => {
     const user = auth.currentUser;
     if (!user) {
@@ -275,7 +370,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
         throw new Error("No active Website supplier was found. Please enable a website supplier source in its Settings panel.");
       }
 
-      const allFetchedProducts: RawA2ZProduct[] = [];
+      const allFetchedProducts: any[] = [];
       const aggregatedMappedQueue: ReviewQueueItem[] = [];
       const aggregatedPendingChanges: any[] = [];
       let successCount = 0;
@@ -339,11 +434,12 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
             }
             
             const slicedProducts = fetched.slice(0, limitNum);
-            allFetchedProducts.push(...slicedProducts);
 
             // Map and compare each product
             const sourceMappedQueue: ReviewQueueItem[] = [];
             for (const prod of slicedProducts) {
+              const supplierName = source.supplierName || source.name || 'A2Z Supplier';
+              const queueItemId = generateQueueDocId(source.id, prod.sku, prod.title);
               const match = existingProducts.find(p => {
                 if (p.supplierItemCode && p.supplierItemCode.trim().toLowerCase() === prod.sku.trim().toLowerCase()) {
                   return true;
@@ -423,7 +519,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
               const categoryName = prod.categoryHierarchy && prod.categoryHierarchy.length > 0 ? prod.categoryHierarchy[0] : 'electronics';
               const categorySlug = generateSlug(categoryName);
 
-              const productPayload: any = {
+              const productPayload: Product & Record<string, unknown> = {
                 id: docId,
                 name: prod.title,
                 description: prod.longDescription || '',
@@ -453,9 +549,11 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
               };
 
               const queueItem: ReviewQueueItem = {
-                id: prod.sku,
+                id: queueItemId,
                 status: 'Pending' as const,
                 supplierCode: prod.sku,
+                supplierName,
+                source: 'Website',
                 productName: prod.title,
                 costPrice: prod.wholesalePrice,
                 marketPrice: prod.recommendedRetailPrice,
@@ -464,10 +562,24 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
                 comparisonStatus,
                 comparison: comparisonResult,
                 productPayload: productPayload, // Store payload for approval
-                matchedProductId: matchedProductId // Store match info for approval
+                matchedProductId: matchedProductId, // Store match info for approval
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString()
               };
 
               sourceMappedQueue.push(queueItem);
+
+              allFetchedProducts.push({
+                ...prod,
+                id: queueItemId,
+                supplierCode: prod.sku,
+                supplierName,
+                source: 'Website',
+                importStatus: 'Pending',
+                progress: 0,
+                createdAt: queueItem.createdAt,
+                updatedAt: queueItem.updatedAt
+              });
             }
 
             aggregatedMappedQueue.push(...sourceMappedQueue);
@@ -507,15 +619,19 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
 
                 return {
                   id: `change-${item.id}`,
+                  reviewQueueItemId: item.id,
                   productName: item.productName,
                   supplierCode: item.supplierCode,
-                  supplierName: source.supplierName || source.name || 'A2Z Supplier',
+                  supplierName: item.supplierName || source.supplierName || source.name || 'A2Z Supplier',
                   changeType: item.comparisonStatus,
                   source: 'Website',
                   detectedAt: new Date().toISOString(),
+                  createdAt: new Date().toISOString(),
                   oldValue,
                   newValue,
-                  status: 'Pending'
+                  status: 'Pending',
+                  productPayload: item.productPayload,
+                  matchedProductId: item.matchedProductId
                 };
               });
 
@@ -547,32 +663,36 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
         throw new Error(`Failed to sync from configured suppliers. Errors: ${errorMsgs.join("; ")}`);
       }
 
-      const data: RawA2ZProduct[] = allFetchedProducts;
+      const data: any[] = allFetchedProducts;
       const mappedQueue = aggregatedMappedQueue;
-
-      setReviewQueue(mappedQueue);
-      setImportQueue(data);
-      setSupplierPendingChanges(aggregatedPendingChanges);
       
       const newCount = mappedQueue.filter(item => item.comparison?.comparisonStatus === 'NEW_PRODUCT').length;
       const priceCount = mappedQueue.filter(item => item.comparison?.comparisonStatus === 'PRICE_CHANGED').length;
       const stockCount = mappedQueue.filter(item => item.comparison?.comparisonStatus === 'STOCK_CHANGED').length;
       const imageCount = mappedQueue.filter(item => item.comparison?.comparisonStatus === 'IMAGE_CHANGED' || item.comparison?.comparisonStatus === 'DESCRIPTION_CHANGED').length;
 
-      setNewProducts(newCount);
-      setPriceChanges(priceCount);
-      setStockChanges(stockCount);
-      setImageChanges(imageCount);
-
       const newLog: SyncHistoryItem = {
         id: `log-${Date.now()}`,
         timestamp: new Date().toLocaleTimeString(),
+        createdAt: new Date().toISOString(),
         supplierCode: 'A2Z',
         productsSynced: data.length,
         status: 'Success',
         details: `Successfully fetched and compared ${data.length} products. Found ${newCount} new, ${priceCount} price changes, ${stockCount} stock changes.`
       };
-      setSyncHistory(prev => [newLog, ...prev]);
+
+      const batch = writeBatch(db);
+      mappedQueue.forEach((item) => {
+        batch.set(doc(db, "supplier_review_queue", item.id), item, { merge: true });
+      });
+      data.forEach((item) => {
+        batch.set(doc(db, "supplier_import_queue", item.id), item, { merge: true });
+      });
+      aggregatedPendingChanges.forEach((change) => {
+        batch.set(doc(db, "supplier_pending_changes", change.id), change, { merge: true });
+      });
+      batch.set(doc(db, "supplier_sync_history", newLog.id), newLog, { merge: true });
+      await batch.commit();
       
       setSyncStatusMsg("Synchronization complete!");
       setTimeout(() => {
@@ -586,12 +706,15 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
       const failedLog: SyncHistoryItem = {
         id: `log-${Date.now()}`,
         timestamp: new Date().toLocaleTimeString(),
+        createdAt: new Date().toISOString(),
         supplierCode: 'A2Z',
         productsSynced: 0,
         status: 'Failed',
         details: err.message || "Network request failed."
       };
-      setSyncHistory(prev => [failedLog, ...prev]);
+      await setDoc(doc(db, "supplier_sync_history", failedLog.id), failedLog, { merge: true }).catch((historyErr) => {
+        handleFirestoreError(historyErr, OperationType.WRITE, `supplier_sync_history/${failedLog.id}`);
+      });
       setSyncStatusMsg(null);
     } finally {
       setIsSyncing(false);
@@ -866,22 +989,18 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
   const handleApprovePendingChange = async (change: any) => {
     setProcessingChangeId(change.id);
     try {
-      // Find the item in reviewQueue to get the productPayload
-      const reviewItem = reviewQueue.find(item => item.id === change.id);
-      
-      if (reviewItem && reviewItem.productPayload) {
-        const productPayload = reviewItem.productPayload;
-        const docId = productPayload.id;
-        
-        // Write to Firestore products collection
-        await setDoc(doc(db, "products", docId), productPayload, { merge: true });
-        console.log(`[Approval Pipeline] Successfully approved and wrote product: ${docId}`);
-      } else {
-        throw new Error(`Product payload not found for change: ${change.id}`);
-      }
-      
-      // Update local state
-      setSupplierPendingChanges(prev => prev.map(c => c.id === change.id ? { ...c, status: 'Approved' } : c));
+      const linkedReviewItem = reviewQueue.find(item => item.id === change.reviewQueueItemId);
+      const queueDecisionItem = {
+        ...linkedReviewItem,
+        ...change,
+        id: change.id,
+        productPayload: change.productPayload || linkedReviewItem?.productPayload,
+        reviewQueueItemId: change.reviewQueueItemId || linkedReviewItem?.id
+      };
+
+      await approveSupplierQueueItem(queueDecisionItem);
+      console.log(`[Approval Pipeline] Successfully approved and wrote product for queue item: ${change.id}`);
+
       setProcessingChangeId(null);
       setSuccessMsg(`Change for "${change.productName}" approved successfully.`);
       setTimeout(() => setSuccessMsg(null), 3000);
@@ -893,37 +1012,32 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
     }
   };
 
-  const handleRejectPendingChange = (change: any) => {
+  const handleRejectPendingChange = async (change: any) => {
     setProcessingChangeId(change.id);
-    setTimeout(() => {
+    try {
       // Only update local state - do NOT write to Firestore
-      setSupplierPendingChanges(prev => prev.map(c => c.id === change.id ? { ...c, status: 'Rejected' } : c));
+      await rejectSupplierQueueItem(change);
       setProcessingChangeId(null);
       setSuccessMsg(`Change for "${change.productName}" rejected.`);
       setTimeout(() => setSuccessMsg(null), 3000);
-    }, 800);
+    } catch (error: any) {
+      console.error("Reject pending change error:", error);
+      setErrorMsg(`Failed to reject: ${error.message || 'Unknown error'}`);
+      setTimeout(() => setErrorMsg(null), 4000);
+      setProcessingChangeId(null);
+    }
   };
 
   // --- REVIEW QUEUE APPROVAL HANDLERS ---
   const handleApproveReviewItem = async (item: ReviewQueueItem) => {
     setProcessingChangeId(item.id);
     try {
-      if (item.productPayload) {
-        const productPayload = item.productPayload;
-        const docId = productPayload.id;
-        
-        // Write to Firestore products collection
-        await setDoc(doc(db, "products", docId), productPayload, { merge: true });
-        console.log(`[Approval Pipeline] Successfully approved and wrote product: ${docId}`);
-        
-        // Update reviewQueue item status
-        setReviewQueue(prev => prev.map(i => i.id === item.id ? { ...i, status: 'Approved' } : i));
-        setProcessingChangeId(null);
-        setSuccessMsg(`Product "${item.productName}" approved successfully.`);
-        setTimeout(() => setSuccessMsg(null), 3000);
-      } else {
-        throw new Error(`Product payload not found for review item: ${item.id}`);
-      }
+      await approveSupplierQueueItem(item);
+      console.log(`[Approval Pipeline] Successfully approved and wrote product for queue item: ${item.id}`);
+
+      setProcessingChangeId(null);
+      setSuccessMsg(`Product "${item.productName}" approved successfully.`);
+      setTimeout(() => setSuccessMsg(null), 3000);
     } catch (error: any) {
       console.error("Review approval error:", error);
       setErrorMsg(`Failed to approve: ${error.message || 'Unknown error'}`);
@@ -932,15 +1046,20 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
     }
   };
 
-  const handleRejectReviewItem = (item: ReviewQueueItem) => {
+  const handleRejectReviewItem = async (item: ReviewQueueItem) => {
     setProcessingChangeId(item.id);
-    setTimeout(() => {
+    try {
       // Only update local state - do NOT write to Firestore
-      setReviewQueue(prev => prev.map(i => i.id === item.id ? { ...i, status: 'Rejected' } : i));
+      await rejectSupplierQueueItem(item);
       setProcessingChangeId(null);
       setSuccessMsg(`Product "${item.productName}" rejected.`);
       setTimeout(() => setSuccessMsg(null), 3000);
-    }, 800);
+    } catch (error: any) {
+      console.error("Review rejection error:", error);
+      setErrorMsg(`Failed to reject: ${error.message || 'Unknown error'}`);
+      setTimeout(() => setErrorMsg(null), 4000);
+      setProcessingChangeId(null);
+    }
   };
 
   // --- SETTINGS CONFIGURATION HANDLERS ---

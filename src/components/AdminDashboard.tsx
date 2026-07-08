@@ -22,6 +22,7 @@ import {
 } from 'recharts';
 import { motion, AnimatePresence } from 'motion/react';
 import SupplierHubFiveStars from './SupplierHubFiveStars';
+import { approveSupplierQueueItem, rejectSupplierQueueItem } from '../services/supplierQueueService';
 
 const AnimatedCounter: React.FC<{ value: number; formatter?: (v: number) => string }> = ({ value, formatter }) => {
   const [count, setCount] = useState(0);
@@ -857,18 +858,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
   const handleApproveReview = async (item: SupplierReviewQueueItem) => {
     setProcessingReviewId(item.id);
     try {
-      const email = auth.currentUser?.email || 'rchi5408@gmail.com';
-      const ref = doc(db, "supplier_review_queue", item.id);
-      
-      try {
-        await updateDoc(ref, {
-          status: 'Approved',
-          reviewedAt: new Date().toISOString(),
-          reviewedBy: email
-        });
-      } catch (err) {
-        handleFirestoreError(err, OperationType.UPDATE, `supplier_review_queue/${item.id}`);
-      }
+      await approveSupplierQueueItem(item);
       
       showSettingsToast("success", `Approved change for "${item.productName}".`);
       playNotificationSound();
@@ -884,18 +874,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
   const handleRejectReview = async (item: SupplierReviewQueueItem) => {
     setProcessingReviewId(item.id);
     try {
-      const email = auth.currentUser?.email || 'rchi5408@gmail.com';
-      const ref = doc(db, "supplier_review_queue", item.id);
-      
-      try {
-        await updateDoc(ref, {
-          status: 'Rejected',
-          reviewedAt: new Date().toISOString(),
-          reviewedBy: email
-        });
-      } catch (err) {
-        handleFirestoreError(err, OperationType.UPDATE, `supplier_review_queue/${item.id}`);
-      }
+      await rejectSupplierQueueItem(item);
       
       showSettingsToast("success", `Rejected change for "${item.productName}".`);
     } catch (err: any) {
@@ -910,18 +889,14 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
   const handleApprovePendingChange = async (change: any) => {
     setProcessingChangeId(change.id);
     try {
-      const email = auth.currentUser?.email || 'rchi5408@gmail.com';
-      const ref = doc(db, "supplier_pending_changes", change.id);
-      
-      try {
-        await updateDoc(ref, {
-          status: 'Approved',
-          reviewedAt: new Date().toISOString(),
-          reviewedBy: email
-        });
-      } catch (err) {
-        handleFirestoreError(err, OperationType.UPDATE, `supplier_pending_changes/${change.id}`);
-      }
+      const linkedReviewItem = supplierReviewQueue.find(item => item.id === change.reviewQueueItemId);
+      await approveSupplierQueueItem({
+        ...linkedReviewItem,
+        ...change,
+        id: change.id,
+        productPayload: change.productPayload || linkedReviewItem?.productPayload,
+        reviewQueueItemId: change.reviewQueueItemId || linkedReviewItem?.id
+      });
       
       showSettingsToast("success", `Approved supplier change for "${change.productName}".`);
       playNotificationSound();
@@ -937,18 +912,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
   const handleRejectPendingChange = async (change: any) => {
     setProcessingChangeId(change.id);
     try {
-      const email = auth.currentUser?.email || 'rchi5408@gmail.com';
-      const ref = doc(db, "supplier_pending_changes", change.id);
-      
-      try {
-        await updateDoc(ref, {
-          status: 'Rejected',
-          reviewedAt: new Date().toISOString(),
-          reviewedBy: email
-        });
-      } catch (err) {
-        handleFirestoreError(err, OperationType.UPDATE, `supplier_pending_changes/${change.id}`);
-      }
+      await rejectSupplierQueueItem(change);
       
       showSettingsToast("success", `Rejected supplier change for "${change.productName}".`);
       playNotificationSound();
