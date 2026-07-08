@@ -64,6 +64,8 @@ export interface ReviewQueueItem {
   matchedProductId?: string | null; // ID of existing product if match found
   supplierName?: string;
   source?: 'Website' | 'WhatsApp';
+  sourceId?: string;
+  batchId?: string;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -72,6 +74,7 @@ export interface SyncHistoryItem {
   id: string;
   timestamp: string;
   createdAt?: string;
+  batchId?: string;
   supplierCode: string;
   productsSynced: number;
   status: 'Success' | 'Failed';
@@ -353,6 +356,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
     setSyncStatusMsg("Initiating supplier synchronization checks...");
     
     try {
+      const syncBatchId = `batch-${Date.now()}`;
       // 1. Fetch existing products from Firestore
       const querySnapshot = await getDocs(collection(db, "products"));
       const existingProducts: Product[] = [];
@@ -554,6 +558,8 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
                 supplierCode: prod.sku,
                 supplierName,
                 source: 'Website',
+                sourceId: source.id,
+                batchId: syncBatchId,
                 productName: prod.title,
                 costPrice: prod.wholesalePrice,
                 marketPrice: prod.recommendedRetailPrice,
@@ -575,6 +581,8 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
                 supplierCode: prod.sku,
                 supplierName,
                 source: 'Website',
+                sourceId: source.id,
+                batchId: syncBatchId,
                 importStatus: 'Pending',
                 progress: 0,
                 createdAt: queueItem.createdAt,
@@ -625,6 +633,8 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
                   supplierName: item.supplierName || source.supplierName || source.name || 'A2Z Supplier',
                   changeType: item.comparisonStatus,
                   source: 'Website',
+                  sourceId: source.id,
+                  batchId: syncBatchId,
                   detectedAt: new Date().toISOString(),
                   createdAt: new Date().toISOString(),
                   oldValue,
@@ -672,9 +682,10 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
       const imageCount = mappedQueue.filter(item => item.comparison?.comparisonStatus === 'IMAGE_CHANGED' || item.comparison?.comparisonStatus === 'DESCRIPTION_CHANGED').length;
 
       const newLog: SyncHistoryItem = {
-        id: `log-${Date.now()}`,
+        id: syncBatchId,
         timestamp: new Date().toLocaleTimeString(),
         createdAt: new Date().toISOString(),
+        batchId: syncBatchId,
         supplierCode: 'A2Z',
         productsSynced: data.length,
         status: 'Success',

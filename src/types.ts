@@ -149,4 +149,6 @@ export interface SupplierReviewQueueItem {
   productPayload?: Product & Record<string, unknown>;
   matchedProductId?: string | null;
   reviewQueueItemId?: string;
+  sourceId?: string;
+  batchId?: string;
 }
