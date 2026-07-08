@@ -24,8 +24,8 @@
     ],
     "rewrites": [
       {
-        "source": "/api/checkout",
-        "function": "checkout"
+        "source": "/api/**",
+        "function": "api"
       },
       {
         "source": "**",
