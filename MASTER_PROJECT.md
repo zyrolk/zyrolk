@@ -294,6 +294,15 @@ All future AI coding tasks must follow these rules:
 - Validate with `npm run lint` and, when appropriate, `npm run build`.
 - Document important workflow or security changes in this file or a focused companion document.
 - If a change affects checkout, supplier ingestion, approval, auth, or security rules, treat it as high risk and verify carefully.
+- Never change Firebase schema without explicit user approval.
+- Never remove or rename Firestore collections unless explicitly approved.
+- Never change API contracts without approval.
+- Never introduce breaking changes to existing functionality.
+- When fixing a bug, prefer the smallest safe change.
+- Reuse existing components and services whenever possible.
+- If there are multiple implementation options, explain the trade-offs and recommend one before coding.
+- If requirements are ambiguous, ask instead of guessing.
+- Keep the project production-ready at all times.
 
 AI agents should produce implementation, verification, and a concise summary. They should not stop at a plan when the user has asked for a concrete code or file change.
 
