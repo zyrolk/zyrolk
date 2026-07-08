@@ -1,6 +1,7 @@
 import * as express from "express";
 import { adminDb } from "../firebase";
 import { requireAdminAuth } from "../middleware/adminAuth";
+import { getApprovedSupplierHosts, validateSupplierRequestTarget } from "../security/supplierUrlProtection";
 import { A2ZConnectorService } from "../suppliers/a2z/A2ZConnectorService";
 
 async function getA2ZCredentials(): Promise<{ username: string; password: string }> {
@@ -37,17 +38,6 @@ async function getA2ZCredentials(): Promise<{ username: string; password: string
   return credentials;
 }
 
-function buildSupplierTargetUrl(websiteUrl: string, endpoint: string): string {
-  let targetUrl = websiteUrl.trim().endsWith("/") ? websiteUrl.trim() : `${websiteUrl.trim()}/`;
-  const cleanEndpoint = endpoint.trim();
-
-  if (cleanEndpoint) {
-    targetUrl += cleanEndpoint.startsWith("/") ? cleanEndpoint.substring(1) : cleanEndpoint;
-  }
-
-  return targetUrl;
-}
-
 export function registerSupplierRoutes(app: express.Express): void {
   app.post("/api/test-supplier", requireAdminAuth, async (req, res) => {
     const { websiteUrl, endpoint = "" } = req.body;
@@ -57,13 +47,25 @@ export function registerSupplierRoutes(app: express.Express): void {
       return;
     }
 
-    const isA2Z = websiteUrl.toLowerCase().includes("a2z") || endpoint.toLowerCase().includes("a2z");
+    let validatedTarget;
+    try {
+      validatedTarget = await validateSupplierRequestTarget(websiteUrl, endpoint, await getApprovedSupplierHosts());
+    } catch (error: any) {
+      res.status(400).json({
+        success: false,
+        status: "Failed",
+        error: error.message || "Supplier URL is not allowed."
+      });
+      return;
+    }
+
+    const isA2Z = validatedTarget.targetUrl.toLowerCase().includes("a2z");
 
     if (isA2Z) {
       try {
         console.log("[A2Z-Connector] Triggering secure connection test via A2Z Connector Service...");
         const credentials = await getA2ZCredentials();
-        const products = await A2ZConnectorService.fetchCatalog(websiteUrl, credentials);
+        const products = await A2ZConnectorService.fetchCatalog(validatedTarget.targetUrl, credentials);
 
         res.json({
           success: true,
@@ -83,10 +85,8 @@ export function registerSupplierRoutes(app: express.Express): void {
       }
     }
 
-    const targetUrl = buildSupplierTargetUrl(websiteUrl, endpoint);
-
     try {
-      console.log("Testing connection to target URL:", targetUrl);
+      console.log("Testing connection to target URL:", validatedTarget.targetUrl);
 
       let data: any = null;
       let success = false;
@@ -95,7 +95,7 @@ export function registerSupplierRoutes(app: express.Express): void {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 6000);
 
-        const resObj = await fetch(targetUrl, { signal: controller.signal });
+        const resObj = await fetch(validatedTarget.targetUrl, { signal: controller.signal, redirect: "error" });
         clearTimeout(timeoutId);
 
         if (resObj.ok) {
@@ -152,13 +152,24 @@ export function registerSupplierRoutes(app: express.Express): void {
       return;
     }
 
-    const isA2Z = websiteUrl.toLowerCase().includes("a2z") || endpoint.toLowerCase().includes("a2z");
+    let validatedTarget;
+    try {
+      validatedTarget = await validateSupplierRequestTarget(websiteUrl, endpoint, await getApprovedSupplierHosts());
+    } catch (error: any) {
+      res.status(400).json({
+        success: false,
+        error: error.message || "Supplier URL is not allowed."
+      });
+      return;
+    }
+
+    const isA2Z = validatedTarget.targetUrl.toLowerCase().includes("a2z");
 
     if (isA2Z) {
       try {
         console.log("[A2Z-Connector] Orchestrating secure, authenticated catalog sync from A2Z Supplier...");
         const credentials = await getA2ZCredentials();
-        const products = await A2ZConnectorService.fetchCatalog(websiteUrl, credentials);
+        const products = await A2ZConnectorService.fetchCatalog(validatedTarget.targetUrl, credentials);
         res.json({ success: true, products });
         return;
       } catch (error: any) {
@@ -171,15 +182,13 @@ export function registerSupplierRoutes(app: express.Express): void {
       }
     }
 
-    const targetUrl = buildSupplierTargetUrl(websiteUrl, endpoint);
-
     try {
-      console.log("Fetching from target URL:", targetUrl);
+      console.log("Fetching from target URL:", validatedTarget.targetUrl);
 
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 10000);
 
-      const resObj = await fetch(targetUrl, { signal: controller.signal });
+      const resObj = await fetch(validatedTarget.targetUrl, { signal: controller.signal, redirect: "error" });
       clearTimeout(timeoutId);
 
       if (!resObj.ok) {

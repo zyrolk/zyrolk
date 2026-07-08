@@ -103,7 +103,7 @@ export class A2ZConnectorService {
       const preLoginUrl = `${baseDomain}/dash/Account/Login`;
       console.log(`[A2Z-Connector] Pre-authenticating GET request to: ${preLoginUrl}`);
       
-      const preRes = await fetch(preLoginUrl);
+      const preRes = await fetch(preLoginUrl, { redirect: 'error' });
       const preSetCookie = preRes.headers.get('set-cookie');
       let preCookieStr = '';
       if (typeof preRes.headers.getSetCookie === 'function') {
@@ -124,6 +124,7 @@ export class A2ZConnectorService {
 
       const authRes = await fetch(authUrl, {
         method: 'POST',
+        redirect: 'error',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
           'Cookie': cleanPreCookie
@@ -210,6 +211,7 @@ export class A2ZConnectorService {
 
         fetchResponse = await fetch(productsUrl, {
           method: 'GET',
+          redirect: 'error',
           headers: {
             'Cookie': this.sessionCookie || '',
             'Accept': 'application/json'

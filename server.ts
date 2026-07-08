@@ -6,6 +6,7 @@ import { initializeApp, getApps } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import { getFirestore } from "firebase-admin/firestore";
 import { A2ZConnectorService } from "./src/services/connectors/a2z-website/A2ZConnectorService";
+import { getApprovedSupplierHosts, validateSupplierRequestTarget } from "./src/server/security/supplierUrlProtection";
 
 const app = express();
 const PORT = 3000;
@@ -311,13 +312,24 @@ app.post("/api/test-supplier", requireSupplierAdminAuth, async (req, res) => {
     return res.status(400).json({ error: "Website URL is required" });
   }
 
-  const isA2Z = websiteUrl.toLowerCase().includes("a2z") || (endpoint || '').toLowerCase().includes("a2z");
+  let validatedTarget;
+  try {
+    validatedTarget = await validateSupplierRequestTarget(websiteUrl, endpoint || "", await getApprovedSupplierHosts(adminDb));
+  } catch (error: any) {
+    return res.status(400).json({
+      success: false,
+      status: "Failed",
+      error: error.message || "Supplier URL is not allowed."
+    });
+  }
+
+  const isA2Z = validatedTarget.targetUrl.toLowerCase().includes("a2z");
 
   if (isA2Z) {
     try {
       console.log("[A2Z-Connector] Triggering secure connection test via A2Z Connector Service...");
       const credentials = await getA2ZCredentials();
-      const products = await A2ZConnectorService.fetchCatalog(websiteUrl, credentials);
+      const products = await A2ZConnectorService.fetchCatalog(validatedTarget.targetUrl, credentials);
       
       return res.json({
         success: true,
@@ -335,17 +347,8 @@ app.post("/api/test-supplier", requireSupplierAdminAuth, async (req, res) => {
     }
   }
 
-  // Combine URL and endpoint safely for generic suppliers
-  let targetUrl = websiteUrl.trim().endsWith('/') ? websiteUrl.trim() : websiteUrl.trim() + '/';
-  const cleanEndpoint = endpoint.trim();
-  if (cleanEndpoint.startsWith('/')) {
-    targetUrl += cleanEndpoint.substring(1);
-  } else {
-    targetUrl += cleanEndpoint;
-  }
-
   try {
-    console.log("Testing connection to target URL:", targetUrl);
+    console.log("Testing connection to target URL:", validatedTarget.targetUrl);
     
     let fetchResponse: any = null;
     let data: any = null;
@@ -356,7 +359,7 @@ app.post("/api/test-supplier", requireSupplierAdminAuth, async (req, res) => {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 6000);
       
-      const resObj = await fetch(targetUrl, { signal: controller.signal });
+      const resObj = await fetch(validatedTarget.targetUrl, { signal: controller.signal, redirect: "error" });
       clearTimeout(timeoutId);
       
       if (resObj.ok) {
@@ -414,13 +417,23 @@ app.post("/api/fetch-supplier", requireSupplierAdminAuth, async (req, res) => {
     return res.status(400).json({ error: "Website URL is required" });
   }
 
-  const isA2Z = websiteUrl.toLowerCase().includes("a2z") || (endpoint || '').toLowerCase().includes("a2z");
+  let validatedTarget;
+  try {
+    validatedTarget = await validateSupplierRequestTarget(websiteUrl, endpoint || "", await getApprovedSupplierHosts(adminDb));
+  } catch (error: any) {
+    return res.status(400).json({
+      success: false,
+      error: error.message || "Supplier URL is not allowed."
+    });
+  }
+
+  const isA2Z = validatedTarget.targetUrl.toLowerCase().includes("a2z");
 
   if (isA2Z) {
     try {
       console.log("[A2Z-Connector] Orchestrating secure, authenticated catalog sync from A2Z Supplier...");
       const credentials = await getA2ZCredentials();
-      const products = await A2ZConnectorService.fetchCatalog(websiteUrl, credentials);
+      const products = await A2ZConnectorService.fetchCatalog(validatedTarget.targetUrl, credentials);
       return res.json({ success: true, products });
     } catch (error: any) {
       console.error("[A2Z-Connector] Catalog fetch failed:", error);
@@ -431,24 +444,13 @@ app.post("/api/fetch-supplier", requireSupplierAdminAuth, async (req, res) => {
     }
   }
 
-  // Combine URL and endpoint safely for generic suppliers
-  let targetUrl = websiteUrl.trim().endsWith('/') ? websiteUrl.trim() : websiteUrl.trim() + '/';
-  const cleanEndpoint = (endpoint || '').trim();
-  if (cleanEndpoint) {
-    if (cleanEndpoint.startsWith('/')) {
-      targetUrl += cleanEndpoint.substring(1);
-    } else {
-      targetUrl += cleanEndpoint;
-    }
-  }
-
   try {
-    console.log("Fetching from target URL:", targetUrl);
+    console.log("Fetching from target URL:", validatedTarget.targetUrl);
     
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
     
-    const resObj = await fetch(targetUrl, { signal: controller.signal });
+    const resObj = await fetch(validatedTarget.targetUrl, { signal: controller.signal, redirect: "error" });
     clearTimeout(timeoutId);
     
     if (!resObj.ok) {
