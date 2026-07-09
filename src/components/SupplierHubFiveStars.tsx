@@ -188,6 +188,22 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
   }, []);
 
   useEffect(() => {
+    const unsubscribe = onSnapshot(
+      doc(db, "supplier_settings", "config"),
+      (snapshot) => {
+        if (snapshot.exists()) {
+          setSupplierSettings(prev => ({ ...prev, ...snapshot.data() }));
+        }
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.GET, "supplier_settings/config");
+      }
+    );
+
+    return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
     const sortByCreatedAtDesc = <T extends { createdAt?: string; detectedAt?: string; timestamp?: string }>(items: T[]): T[] => {
       return items.sort((a, b) => {
         const aTime = new Date(a.createdAt || a.detectedAt || a.timestamp || 0).getTime();
@@ -312,6 +328,10 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
     autoImageDownload: true,
     notificationEnabled: true,
     syncInterval: "1 Hour",
+    maxProducts: 5,
+    enabledSupplierIds: [],
+    lastSync: "",
+    nextSync: "",
     defaultProfitMargin: 15,
     defaultMarkup: 10,
     defaultImageLimit: 5,
@@ -335,6 +355,18 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
     const sourcePart = generateSlug(sourceId) || 'supplier';
     const productPart = generateSlug(supplierCode || productName) || `${Date.now()}`;
     return `${sourcePart}-${productPart}`;
+  };
+
+  const toDateTimeLocalValue = (value?: string): string => {
+    if (!value) return "";
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return "";
+    const timezoneOffsetMs = parsed.getTimezoneOffset() * 60000;
+    return new Date(parsed.getTime() - timezoneOffsetMs).toISOString().slice(0, 16);
+  };
+
+  const fromDateTimeLocalValue = (value: string): string => {
+    return value ? new Date(value).toISOString() : "";
   };
 
   const getSupplierApiHeaders = async () => {
@@ -1074,38 +1106,58 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
   };
 
   // --- SETTINGS CONFIGURATION HANDLERS ---
-  const handleSaveSupplierSettings = (e: React.FormEvent) => {
+  const handleSaveSupplierSettings = async (e: React.FormEvent) => {
     e.preventDefault();
     setSavingSupplierSettings(true);
-    setTimeout(() => {
-      setSupplierSettings(prev => ({
-        ...prev,
+    try {
+      const email = auth.currentUser?.email || "Admin";
+      const payload = {
+        ...supplierSettings,
         lastUpdated: new Date().toISOString(),
-        updatedBy: "Admin User"
-      }));
+        updatedBy: email
+      };
+      await setDoc(doc(db, "supplier_settings", "config"), payload, { merge: true });
       setSavingSupplierSettings(false);
       setSuccessMsg("Supplier Hub control settings saved successfully.");
       setTimeout(() => setSuccessMsg(null), 3000);
-    }, 1000);
+    } catch (error: any) {
+      console.error("Save supplier settings failed:", error);
+      setErrorMsg(error.message || "Failed to save supplier settings.");
+      setTimeout(() => setErrorMsg(null), 4000);
+      setSavingSupplierSettings(false);
+    }
   };
 
-  const handleResetSettings = () => {
-    setSupplierSettings({
+  const handleResetSettings = async () => {
+    const defaults = {
       websiteSyncEnabled: false,
       whatsappSyncEnabled: false,
       autoSyncEnabled: true,
       autoImageDownload: true,
       notificationEnabled: true,
       syncInterval: "1 Hour",
+      maxProducts: 5,
+      enabledSupplierIds: [],
+      lastSync: "",
+      nextSync: "",
       defaultProfitMargin: 15,
       defaultMarkup: 10,
       defaultImageLimit: 5,
       lastUpdated: new Date().toISOString(),
       updatedBy: "System Default"
-    });
-    setShowResetSettingsConfirm(false);
-    setSuccessMsg("Supplier Hub control settings reset to system defaults.");
-    setTimeout(() => setSuccessMsg(null), 3000);
+    };
+
+    try {
+      await setDoc(doc(db, "supplier_settings", "config"), defaults, { merge: true });
+      setSupplierSettings(defaults);
+      setShowResetSettingsConfirm(false);
+      setSuccessMsg("Supplier Hub control settings reset to system defaults.");
+      setTimeout(() => setSuccessMsg(null), 3000);
+    } catch (error: any) {
+      console.error("Reset supplier settings failed:", error);
+      setErrorMsg(error.message || "Failed to reset supplier settings.");
+      setTimeout(() => setErrorMsg(null), 4000);
+    }
   };
 
   return (
@@ -2351,6 +2403,41 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
                     </select>
                   </div>
 
+                  {/* Scheduled Product Limit */}
+                  <div className="space-y-1">
+                    <label className="text-slate-400 font-bold block">Scheduled Max Products</label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="250"
+                      value={supplierSettings.maxProducts !== undefined ? supplierSettings.maxProducts : 5}
+                      onChange={(e) => setSupplierSettings(prev => ({ ...prev, maxProducts: e.target.value === "" ? "" : Number(e.target.value) }))}
+                      className="w-full px-3.5 py-2.5 bg-white dark:bg-[#111928] border border-slate-200 dark:border-slate-800 rounded-xl focus:outline-hidden focus:border-blue-500/50 transition-colors text-xs text-slate-900 dark:text-white font-mono font-bold text-left"
+                    />
+                  </div>
+
+                  {/* Next Scheduled Sync */}
+                  <div className="space-y-1">
+                    <label className="text-slate-400 font-bold block">Next Scheduled Sync</label>
+                    <input
+                      type="datetime-local"
+                      value={toDateTimeLocalValue(supplierSettings.nextSync)}
+                      onChange={(e) => setSupplierSettings(prev => ({ ...prev, nextSync: fromDateTimeLocalValue(e.target.value) }))}
+                      className="w-full px-3.5 py-2.5 bg-white dark:bg-[#111928] border border-slate-200 dark:border-slate-800 rounded-xl focus:outline-hidden focus:border-blue-500/50 transition-colors text-xs text-slate-900 dark:text-white font-mono font-bold text-left"
+                    />
+                  </div>
+
+                  {/* Last Sync */}
+                  <div className="space-y-1">
+                    <label className="text-slate-400 font-bold block">Last Scheduled Sync</label>
+                    <input
+                      type="datetime-local"
+                      value={toDateTimeLocalValue(supplierSettings.lastSync)}
+                      onChange={(e) => setSupplierSettings(prev => ({ ...prev, lastSync: fromDateTimeLocalValue(e.target.value) }))}
+                      className="w-full px-3.5 py-2.5 bg-white dark:bg-[#111928] border border-slate-200 dark:border-slate-800 rounded-xl focus:outline-hidden focus:border-blue-500/50 transition-colors text-xs text-slate-900 dark:text-white font-mono font-bold text-left"
+                    />
+                  </div>
+
                   {/* Profit Margin */}
                   <div className="space-y-1">
                     <label className="text-slate-400 font-bold block">Default Profit Margin (%)</label>
@@ -2398,6 +2485,50 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
                     />
                   </div>
 
+                </div>
+              </div>
+
+              {/* Section 3: Scheduled Supplier Scope */}
+              <div className="space-y-4">
+                <h4 className="text-[10px] font-black uppercase text-blue-500 tracking-wider">Enabled Suppliers for Scheduled Sync</h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {supplierSources.filter(source => (source.supplierType || source.type) === 'website').map((source) => {
+                    const enabledIds = supplierSettings.enabledSupplierIds || [];
+                    const isChecked = enabledIds.length === 0 || enabledIds.includes(source.id);
+                    return (
+                      <label
+                        key={source.id}
+                        className="flex items-center justify-between gap-3 px-3.5 py-2.5 rounded-xl bg-white dark:bg-[#111928] border border-slate-200 dark:border-slate-800 text-xs text-slate-700 dark:text-slate-200"
+                      >
+                        <span className="font-bold truncate">{source.supplierName || source.name || source.id}</span>
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={(e) => {
+                            setSupplierSettings(prev => {
+                              const currentIds = prev.enabledSupplierIds || [];
+                              const allWebsiteIds = supplierSources
+                                .filter(item => (item.supplierType || item.type) === 'website')
+                                .map(item => item.id);
+                              const normalizedIds = currentIds.length === 0 ? allWebsiteIds : currentIds;
+                              return {
+                                ...prev,
+                                enabledSupplierIds: e.target.checked
+                                  ? Array.from(new Set([...normalizedIds, source.id]))
+                                  : normalizedIds.filter((id: string) => id !== source.id)
+                              };
+                            });
+                          }}
+                          className="h-4 w-4 accent-blue-600"
+                        />
+                      </label>
+                    );
+                  })}
+                  {supplierSources.filter(source => (source.supplierType || source.type) === 'website').length === 0 && (
+                    <div className="text-[11px] text-slate-400 border border-dashed border-slate-200 dark:border-slate-800 rounded-xl p-4">
+                      No website suppliers are connected yet.
+                    </div>
+                  )}
                 </div>
               </div>
 

@@ -127,6 +127,11 @@ service cloud.firestore {
       allow read, write: if isAdmin();
     }
 
+    // Supplier Sync Lock Rules
+    match /supplier_sync_locks/{docId} {
+      allow read, write: if isAdmin();
+    }
+
     // Supplier Settings Rules
     match /supplier_settings/{docId} {
       allow read, write: if isAdmin();
