@@ -5,6 +5,7 @@ import { WebsiteSettings } from '../types';
 
 interface HeroBannerProps {
   onExploreProducts: () => void;
+  onBrowseCategories?: () => void;
   settings?: WebsiteSettings | null;
 }
 
@@ -12,9 +13,9 @@ const PREMIUM_DEFAULT_SLIDES = [
   {
     id: "premium-slide-1",
     badge: "SMART LIVING",
-    title: "Upgrade Your Lifestyle with Smart Technology",
+    title: "Premium Electronics Delivered Across Sri Lanka",
     subtitle: "Premium Electronics • Islandwide Delivery • Cash on Delivery",
-    description: "Experience next-generation performance with Zyro's curated collection of premium electronics, high-end gadgets, and smart solutions with rapid delivery.",
+    description: "Shop curated gadgets, accessories, smart devices, and lifestyle electronics from Zyro.lk with a clean checkout and local support.",
     image: "https://images.unsplash.com/photo-1546868871-7041f2a55e12?q=80&w=1600",
     bgGradient: "from-black via-zinc-950/90 to-blue-950/20",
     cta: "Shop Now"
@@ -41,7 +42,7 @@ const PREMIUM_DEFAULT_SLIDES = [
   }
 ];
 
-export default function HeroBanner({ onExploreProducts, settings }: HeroBannerProps) {
+export default function HeroBanner({ onExploreProducts, onBrowseCategories, settings }: HeroBannerProps) {
   const [currentSlide, setCurrentSlide] = useState(0);
   const [progress, setProgress] = useState(0);
   const [isPlaying, setIsPlaying] = useState(true);
@@ -106,7 +107,7 @@ export default function HeroBanner({ onExploreProducts, settings }: HeroBannerPr
 
   return (
     <div 
-      className="relative h-[550px] sm:h-[620px] md:h-[680px] lg:h-[720px] w-full overflow-hidden bg-black text-white group"
+      className="relative min-h-[520px] sm:min-h-[580px] lg:min-h-[640px] w-full overflow-hidden bg-slate-950 text-white group"
       onMouseEnter={() => setIsPlaying(false)}
       onMouseLeave={() => setIsPlaying(true)}
     >
@@ -142,14 +143,14 @@ export default function HeroBanner({ onExploreProducts, settings }: HeroBannerPr
 
           {/* Slide Content */}
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 w-full h-full flex flex-col justify-center relative z-10">
-            <div className="w-full md:w-3/5 lg:w-1/2 flex flex-col justify-center text-center md:text-left items-center md:items-start py-8 mt-4 md:mt-0">
+            <div className="w-full md:w-3/5 lg:w-1/2 flex flex-col justify-center text-center md:text-left items-center md:items-start py-10 mt-4 md:mt-0">
               
               {/* Badge */}
               <motion.span
                 initial={{ opacity: 0, y: 15 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.15, duration: 0.5 }}
-                className="inline-flex items-center px-3.5 py-1 rounded-full text-[10px] sm:text-xs font-mono font-bold tracking-widest bg-blue-500/10 text-blue-400 border border-blue-500/20 mb-4 uppercase"
+                className="inline-flex items-center px-3.5 py-1 rounded-full text-[10px] sm:text-xs font-mono font-bold tracking-widest bg-blue-500/15 text-blue-200 border border-blue-300/20 mb-4 uppercase shadow-sm"
               >
                 {slides[currentSlide].badge}
               </motion.span>
@@ -159,7 +160,7 @@ export default function HeroBanner({ onExploreProducts, settings }: HeroBannerPr
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.25, duration: 0.6 }}
-                className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-extrabold tracking-tight font-display text-white mb-4 leading-tight"
+                className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-black tracking-tight font-display text-white mb-4 leading-tight max-w-3xl"
               >
                 {slides[currentSlide].title}
               </motion.h1>
@@ -179,7 +180,7 @@ export default function HeroBanner({ onExploreProducts, settings }: HeroBannerPr
                 initial={{ opacity: 0, y: 15 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.45, duration: 0.6 }}
-                className="text-xs sm:text-sm md:text-base text-zinc-400 max-w-lg mb-8 leading-relaxed font-light"
+                className="text-xs sm:text-sm md:text-base text-zinc-300 max-w-lg mb-8 leading-relaxed font-light"
               >
                 {slides[currentSlide].description}
               </motion.p>
@@ -193,16 +194,16 @@ export default function HeroBanner({ onExploreProducts, settings }: HeroBannerPr
               >
                 <button
                   onClick={onExploreProducts}
-                  className="w-full sm:w-auto flex items-center justify-center px-7 py-3.5 text-sm font-bold rounded-full text-white bg-blue-600 hover:bg-blue-700 active:bg-blue-800 transition-all shadow-lg shadow-blue-600/35 border border-blue-500/30 transform active:scale-[0.98] cursor-pointer"
+                  className="zy-button zy-button-primary w-full sm:w-auto px-7 py-3.5 text-sm rounded-full cursor-pointer"
                 >
                   <ShoppingBag className="h-4.5 w-4.5 mr-2" />
-                  {slides[currentSlide].cta}
+                  Shop Now
                 </button>
                 <button
-                  onClick={onExploreProducts}
-                  className="w-full sm:w-auto flex items-center justify-center px-7 py-3.5 text-sm font-bold rounded-full text-white bg-zinc-900/40 hover:bg-zinc-900/80 active:bg-zinc-950 border border-zinc-700/50 hover:border-zinc-500 transition-all backdrop-blur-md transform active:scale-[0.98] cursor-pointer"
+                  onClick={onBrowseCategories || onExploreProducts}
+                  className="zy-button w-full sm:w-auto px-7 py-3.5 text-sm rounded-full text-white bg-white/10 hover:bg-white/15 active:bg-white/20 border border-white/20 hover:border-white/30 transition-all backdrop-blur-md cursor-pointer"
                 >
-                  Explore Catalog
+                  Browse Categories
                   <ArrowRight className="h-4.5 w-4.5 ml-2 text-zinc-400" />
                 </button>
               </motion.div>
@@ -217,14 +218,14 @@ export default function HeroBanner({ onExploreProducts, settings }: HeroBannerPr
         <>
           <button
             onClick={handlePrev}
-            className="absolute left-6 top-1/2 -translate-y-1/2 z-20 md:flex hidden items-center justify-center w-12 h-12 rounded-full bg-black/20 hover:bg-blue-600 border border-white/10 hover:border-blue-500 text-white hover:scale-105 transition-all duration-300 opacity-0 group-hover:opacity-100 cursor-pointer shadow-lg shadow-black/40"
+            className="absolute left-6 top-1/2 -translate-y-1/2 z-20 md:flex hidden items-center justify-center w-12 h-12 rounded-full bg-black/25 hover:bg-brand-blue border border-white/10 hover:border-blue-400 text-white hover:scale-105 transition-all duration-300 opacity-0 group-hover:opacity-100 cursor-pointer shadow-lg shadow-black/40"
             aria-label="Previous slide"
           >
             <ChevronLeft className="h-5 w-5" />
           </button>
           <button
             onClick={handleNext}
-            className="absolute right-6 top-1/2 -translate-y-1/2 z-20 md:flex hidden items-center justify-center w-12 h-12 rounded-full bg-black/20 hover:bg-blue-600 border border-white/10 hover:border-blue-500 text-white hover:scale-105 transition-all duration-300 opacity-0 group-hover:opacity-100 cursor-pointer shadow-lg shadow-black/40"
+            className="absolute right-6 top-1/2 -translate-y-1/2 z-20 md:flex hidden items-center justify-center w-12 h-12 rounded-full bg-black/25 hover:bg-brand-blue border border-white/10 hover:border-blue-400 text-white hover:scale-105 transition-all duration-300 opacity-0 group-hover:opacity-100 cursor-pointer shadow-lg shadow-black/40"
             aria-label="Next slide"
           >
             <ChevronRight className="h-5 w-5" />
@@ -251,7 +252,7 @@ export default function HeroBanner({ onExploreProducts, settings }: HeroBannerPr
                 <div className="w-12 sm:w-16 h-1 rounded-full bg-zinc-800 overflow-hidden relative">
                   {/* Dynamic loader */}
                   <div 
-                    className="absolute top-0 left-0 h-full rounded-full bg-gradient-to-r from-blue-600 to-blue-400"
+                    className="absolute top-0 left-0 h-full rounded-full bg-gradient-to-r from-brand-blue to-blue-400"
                     style={{ 
                       width: currentSlide === idx ? `${progress}%` : '0%',
                       transition: currentSlide === idx && progress > 0 ? 'width 50ms linear' : 'none'

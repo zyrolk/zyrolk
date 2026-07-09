@@ -31,13 +31,13 @@ export default function Footer({ setCurrentPage, onSelectCategory, settings }: F
   const footerLogo = settings?.footerLogoUrl || settings?.logoUrl;
 
   return (
-    <footer className="bg-slate-900 text-slate-300 pt-16 pb-8 border-t border-slate-800">
+    <footer className="bg-slate-950 text-slate-300 pt-16 sm:pt-20 pb-8 border-t border-slate-800">
       
       {/* 1. Trust Pillars Segment */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-12 border-b border-slate-800 grid grid-cols-1 md:grid-cols-3 gap-8">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-12 border-b border-slate-800/80 grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6">
         
-        <div className="flex items-start space-x-4">
-          <div className="p-3 bg-slate-800 rounded-2xl text-brand-blue">
+        <div className="flex items-start space-x-4 rounded-3xl border border-white/10 bg-white/5 p-5">
+          <div className="p-3 bg-blue-500/12 rounded-2xl text-blue-300">
             <ShieldCheck className="h-6 w-6" />
           </div>
           <div>
@@ -48,8 +48,8 @@ export default function Footer({ setCurrentPage, onSelectCategory, settings }: F
           </div>
         </div>
 
-        <div className="flex items-start space-x-4">
-          <div className="p-3 bg-slate-800 rounded-2xl text-brand-blue">
+        <div className="flex items-start space-x-4 rounded-3xl border border-white/10 bg-white/5 p-5">
+          <div className="p-3 bg-blue-500/12 rounded-2xl text-blue-300">
             <Truck className="h-6 w-6" />
           </div>
           <div>
@@ -60,8 +60,8 @@ export default function Footer({ setCurrentPage, onSelectCategory, settings }: F
           </div>
         </div>
 
-        <div className="flex items-start space-x-4">
-          <div className="p-3 bg-slate-800 rounded-2xl text-brand-blue">
+        <div className="flex items-start space-x-4 rounded-3xl border border-white/10 bg-white/5 p-5">
+          <div className="p-3 bg-blue-500/12 rounded-2xl text-blue-300">
             <RefreshCw className="h-6 w-6" />
           </div>
           <div>
@@ -75,7 +75,7 @@ export default function Footer({ setCurrentPage, onSelectCategory, settings }: F
       </div>
 
       {/* 2. Main Footer Grid */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-8">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 sm:py-14 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-8 lg:gap-10">
         
         {/* About & Branding */}
         <div className="space-y-4 text-left">
@@ -133,8 +133,8 @@ export default function Footer({ setCurrentPage, onSelectCategory, settings }: F
 
         {/* Quick Links */}
         <div className="space-y-4 text-left">
-          <h4 className="text-sm font-bold text-white uppercase tracking-wider">Explore Store</h4>
-          <ul className="space-y-2 text-xs">
+          <h4 className="text-sm font-black text-white uppercase tracking-wider">Explore Store</h4>
+          <ul className="space-y-2.5 text-xs">
             <li><button onClick={() => setCurrentPage('home')} className="hover:text-white transition-colors cursor-pointer text-left">Homepage</button></li>
             <li><button onClick={() => setCurrentPage('products')} className="hover:text-white transition-colors cursor-pointer text-left">Browse All Products</button></li>
             <li><button onClick={() => setCurrentPage('categories')} className="hover:text-white transition-colors cursor-pointer text-left">Product Categories</button></li>
@@ -145,8 +145,8 @@ export default function Footer({ setCurrentPage, onSelectCategory, settings }: F
 
         {/* Categorized Products */}
         <div className="space-y-4 text-left">
-          <h4 className="text-sm font-bold text-white uppercase tracking-wider">Top Categories</h4>
-          <ul className="space-y-2 text-xs">
+          <h4 className="text-sm font-black text-white uppercase tracking-wider">Top Categories</h4>
+          <ul className="space-y-2.5 text-xs">
             <li><button onClick={() => handleCategoryClick('electronics')} className="hover:text-white transition-colors cursor-pointer text-left">Flagship Electronics</button></li>
             <li><button onClick={() => handleCategoryClick('solar-lighting')} className="hover:text-white transition-colors cursor-pointer text-left">Solar & Power Solutions</button></li>
             <li><button onClick={() => handleCategoryClick('home-kitchen')} className="hover:text-white transition-colors cursor-pointer text-left">Premium Home & Kitchen</button></li>
@@ -156,8 +156,8 @@ export default function Footer({ setCurrentPage, onSelectCategory, settings }: F
 
         {/* Company & Support CMS Pages */}
         <div className="space-y-4 text-left">
-          <h4 className="text-sm font-bold text-white uppercase tracking-wider">Company & Legal</h4>
-          <ul className="space-y-2 text-xs">
+          <h4 className="text-sm font-black text-white uppercase tracking-wider">Company & Legal</h4>
+          <ul className="space-y-2.5 text-xs">
             <li><button onClick={() => setCurrentPage('about-us')} className="hover:text-white transition-colors cursor-pointer text-left">About Us</button></li>
             <li><button onClick={() => setCurrentPage('faq')} className="hover:text-white transition-colors cursor-pointer text-left">FAQs & Guides</button></li>
             <li><button onClick={() => setCurrentPage('return-policy')} className="hover:text-white transition-colors cursor-pointer text-left">Return & Warranty</button></li>
@@ -168,7 +168,7 @@ export default function Footer({ setCurrentPage, onSelectCategory, settings }: F
 
         {/* Newsletter & Sub */}
         <div className="space-y-4 text-left">
-          <h4 className="text-sm font-bold text-white uppercase tracking-wider">Exclusive Club</h4>
+          <h4 className="text-sm font-black text-white uppercase tracking-wider">Exclusive Club</h4>
           <p className="text-xs text-slate-400 font-light leading-relaxed">
             Subscribe to receive flash discount codes, tech arrival newsletters, and solar optimization tips.
           </p>
@@ -180,7 +180,7 @@ export default function Footer({ setCurrentPage, onSelectCategory, settings }: F
               placeholder="Enter your email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full bg-slate-800 text-slate-100 text-xs px-3.5 py-2.5 rounded-xl border border-slate-700/60 focus:outline-hidden focus:border-brand-blue transition-all"
+              className="zy-input w-full bg-slate-900/80 text-slate-100 text-xs px-3.5 py-2.5 rounded-xl border-slate-700/70 focus:outline-hidden focus:border-brand-blue transition-all"
             />
             <button
               type="submit"

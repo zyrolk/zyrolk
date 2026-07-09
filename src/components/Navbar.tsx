@@ -79,7 +79,7 @@ export default function Navbar({
   ];
 
   return (
-    <header className="sticky top-0 z-50 w-full bg-white/95 backdrop-blur-md border-b border-slate-100 shadow-xs">
+    <header className="sticky top-0 z-50 w-full bg-white/95 backdrop-blur-xl border-b border-slate-200/60 shadow-sm">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
           
@@ -114,7 +114,7 @@ export default function Navbar({
                 placeholder="Search premium electronics..."
                 value={tempSearch}
                 onChange={(e) => setTempSearch(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 text-sm bg-slate-50 border border-slate-200 rounded-full focus:outline-hidden focus:ring-2 focus:ring-brand-blue/20 focus:border-brand-blue transition-all"
+                className="zy-input w-full pl-10 pr-4 py-2.5 text-sm rounded-full focus:outline-hidden"
               />
               <Search className="absolute left-3.5 top-2.5 h-4.5 w-4.5 text-slate-400" />
             </form>
@@ -129,7 +129,7 @@ export default function Navbar({
                   setCurrentPage(link.id);
                   setIsAdminMode(false);
                 }}
-                className={`text-sm font-medium transition-colors cursor-pointer py-1 ${
+                className={`text-sm font-semibold transition-colors cursor-pointer py-1 ${
                   currentPage === link.id && !isAdminMode
                     ? 'text-brand-blue border-b-2 border-brand-blue'
                     : 'text-slate-600 hover:text-slate-900'
@@ -147,7 +147,7 @@ export default function Navbar({
             {settings?.contactPhone ? (
               <a 
                 href={`tel:${settings.contactPhone}`} 
-                className="hidden xl:flex items-center text-xs font-semibold text-slate-700 bg-slate-100 py-1.5 px-3 rounded-full hover:bg-slate-200 transition-colors"
+                className="hidden xl:flex items-center text-xs font-bold text-slate-700 bg-slate-100/80 border border-slate-200/60 py-1.5 px-3 rounded-full hover:bg-white hover:text-brand-blue transition-colors"
               >
                 <Phone className="h-3.5 w-3.5 mr-1 text-brand-blue" />
                 <span>{settings.contactPhone}</span>
@@ -163,12 +163,12 @@ export default function Navbar({
             {isWishlistEnabled && (
               <button 
                 onClick={() => { setCurrentPage('wishlist'); setIsAdminMode(false); }}
-                className="p-2 text-slate-600 hover:text-red-500 relative transition-colors cursor-pointer"
+                className="zy-button zy-button-ghost p-2 text-slate-600 hover:text-red-500 relative cursor-pointer rounded-full"
                 title="Wishlist"
               >
                 <Heart className={`h-5 w-5 ${currentPage === 'wishlist' ? 'fill-red-500 text-red-500' : ''}`} />
                 {wishlistCount > 0 && (
-                  <span className="absolute top-0 right-0 inline-flex items-center justify-center px-1.5 py-0.5 text-[10px] font-bold leading-none text-white bg-red-500 rounded-full">
+                  <span className="absolute top-0 right-0 inline-flex items-center justify-center px-1.5 py-0.5 text-[10px] font-bold leading-none text-white bg-red-500 rounded-full shadow-sm">
                     {wishlistCount}
                   </span>
                 )}
@@ -178,12 +178,12 @@ export default function Navbar({
             {/* Cart Button */}
             <button 
               onClick={onOpenCart}
-              className="p-2 text-slate-600 hover:text-brand-blue relative transition-colors cursor-pointer"
+              className="zy-button zy-button-ghost p-2 text-slate-600 hover:text-brand-blue relative cursor-pointer rounded-full"
               title="Shopping Cart"
             >
               <ShoppingBag className="h-5 w-5" />
               {cartCount > 0 && (
-                <span className="absolute top-0 right-0 inline-flex items-center justify-center px-1.5 py-0.5 text-[10px] font-bold leading-none text-white bg-brand-blue rounded-full">
+                <span className="absolute top-0 right-0 inline-flex items-center justify-center px-1.5 py-0.5 text-[10px] font-bold leading-none text-white bg-brand-blue rounded-full shadow-sm">
                   {cartCount}
                 </span>
               )}
@@ -193,14 +193,14 @@ export default function Navbar({
             <div className="relative">
               <button
                 onClick={() => setIsProfileOpen(!isProfileOpen)}
-                className="flex items-center space-x-1 p-2 text-slate-600 hover:text-slate-900 focus:outline-hidden cursor-pointer"
+                className="zy-button zy-button-ghost flex items-center space-x-1 p-2 text-slate-600 hover:text-slate-900 focus:outline-hidden cursor-pointer rounded-full"
               >
                 <User className="h-5 w-5" />
                 <ChevronDown className="h-3.5 w-3.5 hidden sm:block" />
               </button>
 
               {isProfileOpen && (
-                <div className="absolute right-0 mt-2 w-56 rounded-xl bg-white shadow-lg ring-1 ring-black/5 divide-y divide-slate-100 z-50">
+                <div className="zy-card absolute right-0 mt-2 w-56 rounded-2xl bg-white shadow-lg ring-1 ring-black/5 divide-y divide-slate-100 z-50 overflow-hidden">
                   <div className="px-4 py-3">
                     <p className="text-xs text-slate-400">Signed in as</p>
                     <p className="text-sm font-medium text-slate-800 truncate">
@@ -254,7 +254,7 @@ export default function Navbar({
             {/* Mobile Hamburger Menu Button */}
             <button
               onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-              className="lg:hidden p-2 text-slate-600 hover:text-slate-900 cursor-pointer"
+              className="zy-button zy-button-ghost lg:hidden p-2 text-slate-600 hover:text-slate-900 cursor-pointer rounded-full"
             >
               {isMobileMenuOpen ? <X className="h-6 w-6" /> : <Menu className="h-6 w-6" />}
             </button>
@@ -265,7 +265,7 @@ export default function Navbar({
 
       {/* Mobile Menu Panel */}
       {isMobileMenuOpen && (
-        <div className="lg:hidden bg-white border-t border-slate-100 py-3 px-4 space-y-3 animate-fadeIn">
+        <div className="lg:hidden bg-white/95 backdrop-blur-xl border-t border-slate-100 py-3 px-4 space-y-3 animate-fadeIn shadow-sm">
           {/* Mobile Search Bar */}
           <form onSubmit={handleSearchSubmit} className="relative w-full">
             <input
@@ -273,7 +273,7 @@ export default function Navbar({
               placeholder="Search premium electronics..."
               value={tempSearch}
               onChange={(e) => setTempSearch(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 text-sm bg-slate-50 border border-slate-200 rounded-full focus:outline-hidden"
+              className="zy-input w-full pl-10 pr-4 py-2.5 text-sm rounded-full focus:outline-hidden"
             />
             <Search className="absolute left-3.5 top-2.5 h-4.5 w-4.5 text-slate-400" />
           </form>

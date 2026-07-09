@@ -487,30 +487,62 @@ export default function App() {
 
           {/* PAGE 1: HOME PAGE */}
           {currentPage === 'home' && (
-            <div className="space-y-16 pb-16 animate-fadeIn">
+            <div className="space-y-14 sm:space-y-18 pb-16 animate-fadeIn">
               
               {/* Premium Hero Slider Banner */}
-              <HeroBanner settings={settings} onExploreProducts={() => { setCurrentPage('products'); setSelectedCategory('all'); }} />
+              <HeroBanner
+                settings={settings}
+                onExploreProducts={() => { setCurrentPage('products'); setSelectedCategory('all'); }}
+                onBrowseCategories={() => { setCurrentPage('categories'); }}
+              />
+
+              {/* Storefront trust badges */}
+              <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 -mt-8 relative z-10">
+                <div className="zy-card grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 p-3 sm:p-4 bg-white/95 backdrop-blur-xl">
+                  {[
+                    { icon: ShieldCheck, title: "Cash on Delivery", text: "Pay when your order arrives" },
+                    { icon: Truck, title: "Fast Delivery", text: "Islandwide courier dispatch" },
+                    { icon: ShoppingBag, title: "Secure Shopping", text: "Protected checkout flow" },
+                    { icon: Star, title: "Quality Products", text: "Curated electronics range" }
+                  ].map((item) => {
+                    const Icon = item.icon;
+                    return (
+                      <div key={item.title} className="flex items-start gap-3 rounded-2xl bg-slate-50/80 border border-slate-100 px-3 py-3.5 text-left">
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-brand-blue">
+                          <Icon className="h-4.5 w-4.5" />
+                        </div>
+                        <div className="min-w-0">
+                          <h3 className="text-xs sm:text-sm font-black text-slate-900 leading-tight">{item.title}</h3>
+                          <p className="text-[10px] sm:text-xs text-slate-500 mt-0.5 leading-snug">{item.text}</p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
 
               {/* Categories segment list */}
               <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                <div className="flex flex-col md:flex-row md:items-end justify-between mb-10 gap-4">
+                <div className="flex flex-col md:flex-row md:items-end justify-between mb-8 gap-4">
                   <div className="text-left">
-                    <span className="text-xs font-extrabold text-brand-blue uppercase tracking-widest block mb-1">Curated collections</span>
-                    <h2 className="text-2xl sm:text-3xl font-black tracking-tight text-slate-900 font-display">
-                      Shop by Electronics Categories
+                    <span className="zy-section-eyebrow block mb-2">Curated collections</span>
+                    <h2 className="text-2xl sm:text-4xl font-black tracking-tight text-slate-900 font-display">
+                      Shop by category
                     </h2>
+                    <p className="text-sm text-slate-500 mt-2 max-w-xl">
+                      Find the right electronics faster with collections built around how Sri Lankan customers shop.
+                    </p>
                   </div>
                   <button 
                     onClick={() => { setCurrentPage('categories'); }}
-                    className="text-xs font-bold text-brand-blue hover:text-blue-700 bg-blue-50 hover:bg-blue-100 px-4 py-2 rounded-full transition-all w-fit cursor-pointer flex items-center gap-1.5"
+                    className="zy-button zy-button-outline text-xs px-4 py-2 rounded-full w-fit cursor-pointer"
                   >
-                    View Overview
+                    Browse Categories
                     <ArrowRight className="h-3 w-3" />
                   </button>
                 </div>
 
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3.5 sm:gap-5 md:gap-6">
                   {categories.slice(0, 4).map((cat) => {
                     const itemsCount = products.filter(p => p.category && p.category.toLowerCase().trim() === cat.id.toLowerCase().trim() && p.isActive !== false).length;
                     const catImage = getCategoryImage(cat.id, products);
@@ -525,7 +557,7 @@ export default function App() {
                           setSelectedCategory(cat.id);
                           setCurrentPage('products');
                         }}
-                        className="group cursor-pointer bg-white border border-slate-100/80 rounded-2xl md:rounded-3xl overflow-hidden shadow-xs hover:shadow-md hover:border-slate-200/60 transition-all duration-300 flex flex-col h-full"
+                        className="zy-card zy-card-hover group cursor-pointer overflow-hidden flex flex-col h-full"
                       >
                         {/* Compact Top Image */}
                         <div className="relative aspect-[4/3] w-full overflow-hidden bg-slate-900 select-none">
@@ -536,19 +568,22 @@ export default function App() {
                             referrerPolicy="no-referrer"
                           />
                           {/* Soft bottom vignette for image blending */}
-                          <div className="absolute inset-0 bg-gradient-to-t from-black/30 via-transparent to-transparent opacity-40" />
+                          <div className="absolute inset-0 bg-gradient-to-t from-slate-950/60 via-slate-950/5 to-transparent" />
+                          <div className="absolute left-3 top-3 zy-badge zy-badge-primary bg-white/90 backdrop-blur-sm">
+                            {itemsCount} {itemsCount === 1 ? 'item' : 'items'}
+                          </div>
                         </div>
 
                         {/* Text and Count Container */}
-                        <div className="p-3 sm:p-4.5 flex flex-col flex-grow text-left">
-                          <h4 className="text-xs sm:text-sm md:text-base font-bold text-slate-800 font-display group-hover:text-brand-blue transition-colors duration-200 line-clamp-1">
+                        <div className="p-3.5 sm:p-4.5 flex flex-col flex-grow text-left">
+                          <h4 className="text-sm md:text-base font-black text-slate-900 font-display group-hover:text-brand-blue transition-colors duration-200 line-clamp-1">
                             {cat.name}
                           </h4>
-                          <div className="flex items-center justify-between mt-1">
-                            <span className="text-[10px] sm:text-xs text-slate-400 font-light font-sans tracking-wide">
-                              {itemsCount} {itemsCount === 1 ? 'Product' : 'Products'}
+                          <div className="flex items-center justify-between mt-2">
+                            <span className="text-[10px] sm:text-xs text-slate-500 font-semibold">
+                              Explore collection
                             </span>
-                            <span className="text-[10px] font-bold text-brand-blue/80 opacity-0 group-hover:opacity-100 group-hover:translate-x-0.5 -translate-x-1 transition-all duration-200 hidden sm:inline-block">
+                            <span className="text-[10px] font-bold text-brand-blue/80 opacity-100 sm:opacity-0 group-hover:opacity-100 group-hover:translate-x-0.5 -translate-x-1 transition-all duration-200">
                               →
                             </span>
                           </div>
@@ -593,23 +628,26 @@ export default function App() {
                   {/* Featured Products Grid */}
                   {products.filter(p => p.isFeatured && p.isActive !== false).length > 0 && (
                     <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                      <div className="flex items-end justify-between mb-8 border-b border-slate-100 pb-4">
-                        <div className="text-left">
-                          <span className="text-xs font-extrabold text-brand-blue uppercase tracking-widest block">Zyro Exclusive Selection</span>
-                          <h2 className="text-2xl sm:text-3xl font-bold tracking-tight text-slate-900 font-display mt-1">
-                            Featured Electronics
+                      <div className="flex flex-col sm:flex-row sm:items-end justify-between mb-8 gap-4">
+                        <div className="text-left max-w-2xl">
+                          <span className="zy-section-eyebrow block">Featured selection</span>
+                          <h2 className="text-2xl sm:text-4xl font-black tracking-tight text-slate-900 font-display mt-2">
+                            Customer-ready electronics, picked for today
                           </h2>
+                          <p className="text-sm text-slate-500 mt-2">
+                            Highlighted products from the live catalog with consistent cards, strong pricing, and fast shopping actions.
+                          </p>
                         </div>
                         <button 
                           onClick={() => { setCurrentPage('products'); setSelectedCategory('all'); }}
-                          className="text-sm font-semibold text-brand-blue hover:underline flex items-center cursor-pointer"
+                          className="zy-button zy-button-outline text-xs px-4 py-2 rounded-full flex items-center cursor-pointer"
                         >
                           View All Products
                           <ArrowRight className="h-4 w-4 ml-1.5" />
                         </button>
                       </div>
 
-                      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
+                      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 lg:gap-7">
                         {products.filter(p => p.isFeatured && p.isActive !== false).slice(0, 8).map((prod) => (
                           <ProductCard 
                             key={prod.id}
@@ -626,45 +664,112 @@ export default function App() {
                     </section>
                   )}
 
+                  {/* Premium promotional section */}
+                  <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-5">
+                      {[
+                        {
+                          label: "New Arrivals",
+                          title: "Fresh tech just added",
+                          text: `${products.filter(p => p.isNew && p.isActive !== false).length} new products ready to explore`,
+                          icon: ShoppingBag,
+                          tone: "blue"
+                        },
+                        {
+                          label: "Best Sellers",
+                          title: "Popular with customers",
+                          text: `${products.filter(p => p.isBestSeller && p.isActive !== false).length} best-selling picks in stock`,
+                          icon: Star,
+                          tone: "slate"
+                        },
+                        {
+                          label: "Limited Offers",
+                          title: "Deals worth checking",
+                          text: `${products.filter(p => p.discount && p.discount > 0 && p.isActive !== false).length} discounted products available`,
+                          icon: RefreshCw,
+                          tone: "orange"
+                        }
+                      ].map((promo) => {
+                        const Icon = promo.icon;
+                        const toneClasses = promo.tone === "orange"
+                          ? "from-orange-500 to-amber-500 text-white"
+                          : promo.tone === "slate"
+                            ? "from-slate-950 to-slate-800 text-white"
+                            : "from-brand-blue to-blue-700 text-white";
+                        return (
+                          <button
+                            key={promo.label}
+                            onClick={() => { setCurrentPage('products'); setSelectedCategory('all'); }}
+                            className={`group relative overflow-hidden rounded-3xl p-6 sm:p-7 text-left shadow-lg transition-all duration-300 hover:-translate-y-1 hover:shadow-xl cursor-pointer bg-gradient-to-br ${toneClasses}`}
+                          >
+                            <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.22),transparent_52%)]" />
+                            <div className="relative z-10 flex items-start justify-between gap-6">
+                              <div className="space-y-3">
+                                <span className="inline-flex rounded-full bg-white/15 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-white/90 border border-white/20">
+                                  {promo.label}
+                                </span>
+                                <div>
+                                  <h3 className="text-xl sm:text-2xl font-black font-display leading-tight">{promo.title}</h3>
+                                  <p className="text-sm text-white/75 mt-2 leading-relaxed">{promo.text}</p>
+                                </div>
+                                <span className="inline-flex items-center text-xs font-black text-white">
+                                  Explore now
+                                  <ArrowRight className="h-3.5 w-3.5 ml-1.5 transition-transform group-hover:translate-x-1" />
+                                </span>
+                              </div>
+                              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-white/15 border border-white/20">
+                                <Icon className="h-5.5 w-5.5" />
+                              </div>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </section>
+
                   {/* Brand Why Choose Us Section - Luxury Grid */}
                   <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                    <div className="bg-slate-900 text-white rounded-[2rem] p-8 md:p-12 relative overflow-hidden text-left border border-slate-800">
-                      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(29,78,216,0.18)_0,transparent_70%)]"></div>
+                    <div className="bg-slate-950 text-white rounded-[2rem] sm:rounded-[2.5rem] p-6 sm:p-8 md:p-12 relative overflow-hidden text-left border border-slate-800 shadow-2xl">
+                      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(29,78,216,0.28)_0,transparent_58%)]"></div>
                       
-                      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center relative z-10">
-                        <div className="lg:col-span-5 space-y-4">
-                          <span className="text-xs font-extrabold text-blue-400 uppercase tracking-widest">Why shop at {settings?.storeName || "Zyro.lk"}?</span>
-                          <h3 className="text-2xl sm:text-3xl font-bold font-display leading-tight text-white">
-                            Authorized Warranties & Instant Delivery Guaranteed
+                      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-center relative z-10">
+                        <div className="lg:col-span-4 space-y-4">
+                          <span className="text-xs font-extrabold text-blue-300 uppercase tracking-widest">Why choose {settings?.storeName || "Zyro.lk"}?</span>
+                          <h3 className="text-2xl sm:text-4xl font-black font-display leading-tight text-white">
+                            A local shopping experience built for trust
                           </h3>
-                          <p className="text-sm text-slate-400 font-light leading-relaxed">
-                            We pride ourselves on offering 100% genuine electronics products from global tech brands directly to the Sri Lankan consumer market. No hidden charges, pure trust.
+                          <p className="text-sm text-slate-300 font-light leading-relaxed">
+                            Browse premium electronics with clear pricing, secure checkout, islandwide delivery, and a team customers can contact before and after ordering.
                           </p>
                           <button 
                             onClick={() => setCurrentPage('contact')}
-                            className="inline-flex items-center px-5 py-2.5 bg-brand-blue hover:bg-blue-700 text-white text-xs font-bold rounded-full transition-colors cursor-pointer"
+                            className="zy-button zy-button-primary px-5 py-2.5 text-xs rounded-full cursor-pointer"
                           >
-                            Visit Showroom
+                            Contact Support
                             <ArrowRight className="h-3.5 w-3.5 ml-2" />
                           </button>
                         </div>
 
-                        <div className="lg:col-span-7 grid grid-cols-1 sm:grid-cols-3 gap-6 text-center">
-                          <div className="bg-slate-800/50 p-6 rounded-2xl border border-white/5 backdrop-blur-xs flex flex-col items-center justify-center">
-                            <ShieldCheck className="h-8 w-8 text-blue-400 mb-3" />
-                            <h4 className="text-sm font-bold text-white font-display mb-1">Genuine Brands</h4>
-                            <p className="text-[11px] text-slate-400 font-light">Direct importer assurance.</p>
-                          </div>
-                          <div className="bg-slate-800/50 p-6 rounded-2xl border border-white/5 backdrop-blur-xs flex flex-col items-center justify-center">
-                            <Truck className="h-8 w-8 text-blue-400 mb-3" />
-                            <h4 className="text-sm font-bold text-white font-display mb-1">Fast Shipping</h4>
-                            <p className="text-[11px] text-slate-400 font-light">Islandwide secure courier.</p>
-                          </div>
-                          <div className="bg-slate-800/50 p-6 rounded-2xl border border-white/5 backdrop-blur-xs flex flex-col items-center justify-center">
-                            <RefreshCw className="h-8 w-8 text-blue-400 mb-3" />
-                            <h4 className="text-sm font-bold text-white font-display mb-1">Easy Swap</h4>
-                            <p className="text-[11px] text-slate-400 font-light">7 days exchange policy.</p>
-                          </div>
+                        <div className="lg:col-span-8 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          {[
+                            { icon: ShieldCheck, title: "Trusted Products", text: "Curated electronics with clear product details and review support." },
+                            { icon: Truck, title: "Fast Delivery", text: "Delivery options built for Colombo, suburbs, and islandwide orders." },
+                            { icon: ShoppingBag, title: "Local Sri Lankan Store", text: "A local storefront experience designed around COD and support." },
+                            { icon: Phone, title: "Customer Support", text: "Contact options stay close when customers need order guidance." }
+                          ].map((item) => {
+                            const Icon = item.icon;
+                            return (
+                              <div key={item.title} className="bg-white/10 p-5 sm:p-6 rounded-3xl border border-white/10 backdrop-blur-xs flex items-start gap-4">
+                                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-blue-500/15 text-blue-200 border border-blue-300/10">
+                                  <Icon className="h-5 w-5" />
+                                </div>
+                                <div>
+                                  <h4 className="text-sm font-black text-white font-display mb-1">{item.title}</h4>
+                                  <p className="text-xs text-slate-300 font-light leading-relaxed">{item.text}</p>
+                                </div>
+                              </div>
+                            );
+                          })}
                         </div>
                       </div>
                     </div>
@@ -673,23 +778,24 @@ export default function App() {
                   {/* New Arrivals segment */}
                   {products.filter(p => p.isNew && p.isActive !== false).length > 0 && (
                     <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                      <div className="flex items-end justify-between mb-8 border-b border-slate-100 pb-4">
-                        <div className="text-left">
-                          <span className="text-xs font-extrabold text-brand-blue uppercase tracking-widest block">Fresh Stock</span>
-                          <h2 className="text-2xl sm:text-3xl font-bold tracking-tight text-slate-900 font-display mt-1">
+                      <div className="flex flex-col sm:flex-row sm:items-end justify-between mb-8 gap-4">
+                        <div className="text-left max-w-2xl">
+                          <span className="zy-section-eyebrow block">Fresh stock</span>
+                          <h2 className="text-2xl sm:text-3xl font-black tracking-tight text-slate-900 font-display mt-2">
                             New Arrivals
                           </h2>
+                          <p className="text-sm text-slate-500 mt-2">Recently added products from the live storefront catalog.</p>
                         </div>
                         <button 
                           onClick={() => { setCurrentPage('products'); setSelectedCategory('all'); }}
-                          className="text-sm font-semibold text-brand-blue hover:underline flex items-center cursor-pointer"
+                          className="zy-button zy-button-outline text-xs px-4 py-2 rounded-full flex items-center cursor-pointer"
                         >
                           Browse New Arrivals
                           <ArrowRight className="h-4 w-4 ml-1.5" />
                         </button>
                       </div>
 
-                      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
+                      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 lg:gap-7">
                         {products.filter(p => p.isNew && p.isActive !== false).slice(0, 8).map((prod) => (
                           <ProductCard 
                             key={prod.id}
@@ -709,23 +815,24 @@ export default function App() {
                   {/* Best Sellers Segment */}
                   {products.filter(p => p.isBestSeller && p.isActive !== false).length > 0 && (
                     <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                      <div className="flex items-end justify-between mb-8 border-b border-slate-100 pb-4">
-                        <div className="text-left">
-                          <span className="text-xs font-extrabold text-brand-blue uppercase tracking-widest block">Top Volume Sales</span>
-                          <h2 className="text-2xl sm:text-3xl font-bold tracking-tight text-slate-900 font-display mt-1">
+                      <div className="flex flex-col sm:flex-row sm:items-end justify-between mb-8 gap-4">
+                        <div className="text-left max-w-2xl">
+                          <span className="zy-section-eyebrow block">Top volume sales</span>
+                          <h2 className="text-2xl sm:text-3xl font-black tracking-tight text-slate-900 font-display mt-2">
                             Our Best Sellers
                           </h2>
+                          <p className="text-sm text-slate-500 mt-2">Popular picks that help new customers shop with confidence.</p>
                         </div>
                         <button 
                           onClick={() => { setCurrentPage('products'); setSelectedCategory('all'); }}
-                          className="text-sm font-semibold text-brand-blue hover:underline flex items-center cursor-pointer"
+                          className="zy-button zy-button-outline text-xs px-4 py-2 rounded-full flex items-center cursor-pointer"
                         >
                           Explore Catalog
                           <ArrowRight className="h-4 w-4 ml-1.5" />
                         </button>
                       </div>
 
-                      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
+                      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 lg:gap-7">
                         {products.filter(p => p.isBestSeller && p.isActive !== false).slice(0, 8).map((prod) => (
                           <ProductCard 
                             key={prod.id}
@@ -745,23 +852,24 @@ export default function App() {
                   {/* Latest Products segment */}
                   {products.filter(p => p.isActive !== false).length > 0 && (
                     <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                      <div className="flex items-end justify-between mb-8 border-b border-slate-100 pb-4">
-                        <div className="text-left">
-                          <span className="text-xs font-extrabold text-brand-blue uppercase tracking-widest block">Recently Added</span>
-                          <h2 className="text-2xl sm:text-3xl font-bold tracking-tight text-slate-900 font-display mt-1">
+                      <div className="flex flex-col sm:flex-row sm:items-end justify-between mb-8 gap-4">
+                        <div className="text-left max-w-2xl">
+                          <span className="zy-section-eyebrow block">Recently added</span>
+                          <h2 className="text-2xl sm:text-3xl font-black tracking-tight text-slate-900 font-display mt-2">
                             Latest Products
                           </h2>
+                          <p className="text-sm text-slate-500 mt-2">The newest active products available in the storefront.</p>
                         </div>
                         <button 
                           onClick={() => { setCurrentPage('products'); setSelectedCategory('all'); }}
-                          className="text-sm font-semibold text-brand-blue hover:underline flex items-center cursor-pointer"
+                          className="zy-button zy-button-outline text-xs px-4 py-2 rounded-full flex items-center cursor-pointer"
                         >
                           See Full Catalog
                           <ArrowRight className="h-4 w-4 ml-1.5" />
                         </button>
                       </div>
 
-                      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
+                      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 lg:gap-7">
                         {[...products]
                           .filter(p => p.isActive !== false)
                           .sort((a, b) => {
@@ -791,23 +899,26 @@ export default function App() {
 
               {/* Beautiful customer testimonials segment */}
               {homepageReviews.length > 0 && (
-                <section className="bg-slate-900/5 py-16 text-left border-y border-slate-100">
+                <section className="bg-white/60 py-16 sm:py-20 text-left border-y border-slate-100">
                   <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                     <div className="text-center space-y-2 mb-12">
-                      <span className="text-xs font-extrabold text-brand-blue uppercase tracking-widest block">Testimonials</span>
-                      <h2 className="text-2xl sm:text-3xl font-bold tracking-tight text-slate-900 font-display">
+                      <span className="zy-section-eyebrow block">Testimonials</span>
+                      <h2 className="text-2xl sm:text-4xl font-black tracking-tight text-slate-900 font-display">
                         Verified Customer Feedback
                       </h2>
+                      <p className="text-sm text-slate-500 max-w-xl mx-auto">
+                        Real storefront reviews help customers choose confidently before ordering.
+                      </p>
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-5 lg:gap-7">
                       {homepageReviews.slice(0, 6).map((rev, idx) => {
                         const nameToUse = rev.customerName || rev.userName || "Verified Buyer";
                         const initials = nameToUse.substring(0, 2).toUpperCase() || "VB";
                         const productName = products.find(p => p.id === rev.productId)?.name || "Verified Purchase";
 
                         return (
-                          <div key={rev.id || idx} className="bg-white p-6 rounded-3xl border border-slate-100/80 shadow-xs space-y-4 flex flex-col justify-between">
+                          <div key={rev.id || idx} className="zy-card zy-card-hover p-6 space-y-4 flex flex-col justify-between">
                             <div className="space-y-4">
                               <div className="flex text-amber-400">
                                 {[...Array(5)].map((_, i) => (
