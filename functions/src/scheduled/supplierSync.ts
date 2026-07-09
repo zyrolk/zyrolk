@@ -1,7 +1,7 @@
 import { logger } from "firebase-functions";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { adminDb } from "../api/firebase";
-import { fetchSupplierProductsFromTarget } from "../api/suppliers/fetchSupplierProducts";
+import { SupplierRegistry } from "../api/suppliers/SupplierRegistry";
 import { ProductParser } from "../api/suppliers/a2z/ProductParser";
 import { RawA2ZProduct } from "../api/suppliers/a2z/types";
 
@@ -412,6 +412,8 @@ export async function runScheduledSupplierSync(): Promise<void> {
       .filter((source) => isSourceEnabled(source, settings));
 
     const maxProducts = getMaxProducts(settings);
+    const connectors = await SupplierRegistry.loadEnabledConnectors(settings.enabledSupplierIds || settings.enabledSuppliers || []);
+    const connectorBySourceId = new Map(connectors.map((connector) => [connector.id, connector]));
     const queuedWrites: Array<{ collection: string; id: string; data: Record<string, unknown> }> = [];
 
     for (const source of sources) {
@@ -425,7 +427,13 @@ export async function runScheduledSupplierSync(): Promise<void> {
       }
 
       try {
-        const fetched = await fetchSupplierProductsFromTarget(websiteUrl, endpoint);
+        const connector = connectorBySourceId.get(source.id) ||
+          await SupplierRegistry.createConnectorForTarget(websiteUrl, endpoint, {
+            id: source.id,
+            name: supplierName,
+            enabled: true,
+          });
+        const fetched = await connector.fetchProducts();
         let products = normalizeSupplierProducts(fetched.products);
 
         const categoryFilter = source.settings?.categoriesFilter || [];
