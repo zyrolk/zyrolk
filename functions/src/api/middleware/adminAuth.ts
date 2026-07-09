@@ -1,10 +1,10 @@
 import * as express from "express";
+import { getRuntimeConfig } from "../config";
 import { adminAuth, adminDb } from "../firebase";
-
-const ADMIN_EMAIL = "zyrolkofficial@gmail.com";
+import { appLogger } from "../logging";
 
 export function hasSupplierAdminAccess(email: string | undefined, userRole: unknown): boolean {
-  return (email || "").toLowerCase() === ADMIN_EMAIL || userRole === "admin";
+  return (email || "").toLowerCase() === getRuntimeConfig().adminEmail || userRole === "admin";
 }
 
 export const requireAdminAuth: express.RequestHandler = async (req, res, next) => {
@@ -35,7 +35,11 @@ export const requireAdminAuth: express.RequestHandler = async (req, res, next) =
 
     res.status(403).json({ error: "Admin access required" });
   } catch (error) {
-    console.warn("[Supplier API] Failed admin authentication:", error);
+    appLogger.warn("Supplier API admin authentication failed.", {
+      path: req.path,
+      method: req.method,
+      error,
+    });
     res.status(401).json({ error: "Invalid or expired authentication token" });
   }
 };

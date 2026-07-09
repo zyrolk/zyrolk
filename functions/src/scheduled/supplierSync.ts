@@ -1,6 +1,7 @@
 import { logger } from "firebase-functions";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { adminDb } from "../api/firebase";
+import { appLogger } from "../api/logging";
 import { SupplierRegistry } from "../api/suppliers/SupplierRegistry";
 import { ProductParser } from "../api/suppliers/a2z/ProductParser";
 import { RawA2ZProduct } from "../api/suppliers/a2z/types";
@@ -386,9 +387,16 @@ export async function runScheduledSupplierSync(): Promise<void> {
   const settingsSnap = await adminDb.collection("supplier_settings").doc("config").get();
   const settings = (settingsSnap.exists ? settingsSnap.data() : {}) as SupplierSettings;
 
+  appLogger.info("Scheduled supplier sync evaluated.", {
+    batchId,
+    autoSyncEnabled: !!settings.autoSyncEnabled,
+    syncInterval: settings.syncInterval || "unspecified",
+  });
+
   if (!isSyncDue(settings, startedAt.getTime())) {
     const finishedAt = new Date();
     await writeHistory(batchId, "Skipped", startedAt, finishedAt, metrics, "Scheduled sync skipped because auto sync is disabled, manual-only, or not due yet.");
+    appLogger.info("Scheduled supplier sync skipped because it is not due.", { batchId });
     return;
   }
 
@@ -396,10 +404,13 @@ export async function runScheduledSupplierSync(): Promise<void> {
   if (!lockAcquired) {
     const finishedAt = new Date();
     await writeHistory(batchId, "Skipped", startedAt, finishedAt, metrics, "Scheduled sync skipped because another supplier sync is already running.");
+    appLogger.warn("Scheduled supplier sync skipped because lock is already held.", { batchId });
     return;
   }
 
   try {
+    appLogger.info("Scheduled supplier sync started.", { batchId });
+
     const existingSnap = await adminDb.collection("products").get();
     const existingProducts = existingSnap.docs.map((productDoc) => ({
       id: productDoc.id,
@@ -528,6 +539,12 @@ export async function runScheduledSupplierSync(): Promise<void> {
       } catch (error: any) {
         const message = error?.message || "Unknown supplier sync error";
         metrics.errors.push(`${supplierName}: ${message}`);
+        appLogger.error("Scheduled supplier source sync failed.", {
+          batchId,
+          sourceId: source.id,
+          supplierName,
+          error,
+        });
         await adminDb.collection("supplierSources").doc(source.id).set({
           connectionStatus: "Failed",
           lastError: message,
@@ -557,9 +574,23 @@ export async function runScheduledSupplierSync(): Promise<void> {
       metrics,
       `Scheduled sync scanned ${metrics.productsScanned} products and queued ${metrics.productsQueued} products.`
     );
+
+    appLogger.info("Scheduled supplier sync finished.", {
+      batchId,
+      status,
+      productsScanned: metrics.productsScanned,
+      productsQueued: metrics.productsQueued,
+      errorCount: metrics.errors.length,
+    });
   } catch (error: any) {
     const finishedAt = new Date();
     metrics.errors.push(error?.message || "Unknown scheduled sync failure");
+    appLogger.error("Scheduled supplier sync failed.", {
+      batchId,
+      productsScanned: metrics.productsScanned,
+      productsQueued: metrics.productsQueued,
+      error,
+    });
     await writeHistory(batchId, "Failed", startedAt, finishedAt, metrics, error?.message || "Scheduled sync failed.");
     throw error;
   } finally {

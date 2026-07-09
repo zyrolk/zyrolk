@@ -1,4 +1,5 @@
 import * as express from "express";
+import { sendSupplierFailure } from "../errors";
 import { requireAdminAuth } from "../middleware/adminAuth";
 import { fetchSupplierProductsFromTarget } from "../suppliers/fetchSupplierProducts";
 import { SupplierRegistry } from "../suppliers/SupplierRegistry";
@@ -18,10 +19,16 @@ export function registerSupplierRoutes(app: express.Express): void {
 
       res.status(200).json(result);
     } catch (error: any) {
-      res.status(400).json({
-        success: false,
-        status: "Failed",
-        error: error.message || "Supplier URL is not allowed."
+      sendSupplierFailure(res, error, {
+        logMessage: "Supplier connection test failed.",
+        fallbackMessage: "Supplier URL is not allowed.",
+        fallbackStatusCode: 400,
+        includeStatus: true,
+        context: {
+          route: "/api/test-supplier",
+          websiteUrl,
+          endpoint,
+        },
       });
     }
   });
@@ -38,10 +45,14 @@ export function registerSupplierRoutes(app: express.Express): void {
       const result = await fetchSupplierProductsFromTarget(websiteUrl, endpoint);
       res.json({ success: true, products: result.products });
     } catch (error: any) {
-      console.error("Fetch supplier error:", error);
-      res.status(500).json({
-        success: false,
-        error: error.message || "Failed to fetch from the supplier endpoint."
+      sendSupplierFailure(res, error, {
+        logMessage: "Supplier catalog fetch failed.",
+        fallbackMessage: "Failed to fetch from the supplier endpoint.",
+        context: {
+          route: "/api/fetch-supplier",
+          websiteUrl,
+          endpoint,
+        },
       });
     }
   });

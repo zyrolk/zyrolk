@@ -13,9 +13,17 @@ import {
   validateCheckoutCartItems,
   validateCheckoutDetails,
 } from "../checkout/checkoutLogic";
+import { sendApiError } from "../errors";
 import { adminDb } from "../firebase";
+import { appLogger } from "../logging";
 
 const enforceCheckoutRateLimit = createCheckoutRateLimiter();
+
+interface CheckoutOrderResponse {
+  id: string;
+  orderNumber: string;
+  [key: string]: unknown;
+}
 
 export function registerCheckoutRoutes(app: express.Express): void {
   app.all("/api/checkout", async (req, res) => {
@@ -27,7 +35,15 @@ export function registerCheckoutRoutes(app: express.Express): void {
     try {
       enforceCheckoutRateLimit(getClientRateLimitKey(req.header("x-forwarded-for"), req.ip));
     } catch (error: any) {
-      res.status(error.statusCode || 429).json({ error: error.message || "Too many checkout attempts" });
+      sendApiError(res, error, {
+        logMessage: "Checkout rate limit rejected request.",
+        fallbackMessage: "Too many checkout attempts",
+        fallbackStatusCode: 429,
+        context: {
+          route: "/api/checkout",
+          reason: "rate_limit",
+        },
+      });
       return;
     }
 
@@ -53,12 +69,27 @@ export function registerCheckoutRoutes(app: express.Express): void {
       idempotencyKey = getIdempotencyKeyFromValues(req.header("Idempotency-Key"), req.body?.idempotencyKey);
       requestHash = createCheckoutRequestHash(req.body, validatedCartItems);
     } catch (error: any) {
-      res.status(error.statusCode || 400).json({ error: error.message || "Invalid checkout request" });
+      sendApiError(res, error, {
+        logMessage: "Checkout validation failed.",
+        fallbackMessage: "Invalid checkout request",
+        fallbackStatusCode: 400,
+        context: {
+          route: "/api/checkout",
+          reason: "validation",
+        },
+      });
       return;
     }
 
     try {
-      const finalizedOrder = await adminDb.runTransaction(async (transaction) => {
+      appLogger.info("Checkout transaction started.", {
+        route: "/api/checkout",
+        customerUid: customerUid || "guest",
+        cartItemsCount: validatedCartItems.length,
+        idempotencyKeyProvided: !!idempotencyKey,
+      });
+
+      const finalizedOrder = await adminDb.runTransaction<CheckoutOrderResponse>(async (transaction) => {
         const idempotencyRef = idempotencyKey
           ? adminDb.collection(CHECKOUT_IDEMPOTENCY_COLLECTION).doc(hashValue(idempotencyKey))
           : null;
@@ -69,7 +100,7 @@ export function registerCheckoutRoutes(app: express.Express): void {
             const idempotencyData = idempotencySnap.data();
             const idempotencyDecision = resolveCheckoutIdempotency(idempotencyData || null, requestHash);
             if (idempotencyDecision.action === "return-order") {
-              return idempotencyDecision.order;
+            return idempotencyDecision.order as CheckoutOrderResponse;
             }
           }
         }
@@ -182,10 +213,24 @@ export function registerCheckoutRoutes(app: express.Express): void {
         return order;
       });
 
+      appLogger.info("Checkout transaction completed.", {
+        route: "/api/checkout",
+        orderId: finalizedOrder.id,
+        orderNumber: finalizedOrder.orderNumber,
+      });
+
       res.json({ success: true, order: finalizedOrder });
     } catch (error: any) {
-      console.error("Cloud Function Checkout Failed:", error);
-      res.status(error.statusCode || 500).json({ error: error.message || "Failed to process checkout transaction" });
+      sendApiError(res, error, {
+        logMessage: "Checkout transaction failed.",
+        fallbackMessage: "Failed to process checkout transaction",
+        context: {
+          route: "/api/checkout",
+          customerUid: customerUid || "guest",
+          cartItemsCount: validatedCartItems.length,
+          idempotencyKeyProvided: !!idempotencyKey,
+        },
+      });
     }
   });
 }
