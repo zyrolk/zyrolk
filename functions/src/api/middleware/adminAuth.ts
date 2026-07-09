@@ -3,6 +3,10 @@ import { adminAuth, adminDb } from "../firebase";
 
 const ADMIN_EMAIL = "zyrolkofficial@gmail.com";
 
+export function hasSupplierAdminAccess(email: string | undefined, userRole: unknown): boolean {
+  return (email || "").toLowerCase() === ADMIN_EMAIL || userRole === "admin";
+}
+
 export const requireAdminAuth: express.RequestHandler = async (req, res, next) => {
   const authHeader = req.header("Authorization") || "";
   const match = authHeader.match(/^Bearer\s+(.+)$/i);
@@ -16,7 +20,7 @@ export const requireAdminAuth: express.RequestHandler = async (req, res, next) =
     const decodedToken = await adminAuth.verifyIdToken(match[1]);
     const email = (decodedToken.email || "").toLowerCase();
 
-    if (email === ADMIN_EMAIL) {
+    if (hasSupplierAdminAccess(email, null)) {
       next();
       return;
     }
@@ -24,7 +28,7 @@ export const requireAdminAuth: express.RequestHandler = async (req, res, next) =
     const userSnap = await adminDb.collection("users").doc(decodedToken.uid).get();
     const userRole = userSnap.exists ? userSnap.data()?.role : null;
 
-    if (userRole === "admin") {
+    if (hasSupplierAdminAccess(email, userRole)) {
       next();
       return;
     }

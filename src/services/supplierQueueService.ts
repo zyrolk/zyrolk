@@ -1,28 +1,14 @@
 import { doc, serverTimestamp, writeBatch } from 'firebase/firestore';
 import { auth, db } from '../firebase';
-import { Product } from '../types';
+import {
+  buildSupplierQueueDecisionPlan,
+  SupplierQueueAction,
+  SupplierQueueDecisionItem,
+  getSupplierReviewQueueItemId,
+} from './supplierQueueDecisionPlan';
 
-export interface SupplierQueueDecisionItem {
-  id: string;
-  productName?: string;
-  productPayload?: Product & Record<string, unknown>;
-  reviewQueueItemId?: string;
-  sourceId?: string;
-  batchId?: string;
-  rejectionReason?: string;
-}
-
-export const getSupplierReviewQueueItemId = (item: SupplierQueueDecisionItem): string => {
-  if (item.reviewQueueItemId) {
-    return item.reviewQueueItemId;
-  }
-
-  if (item.id.startsWith('change-')) {
-    return item.id.slice('change-'.length);
-  }
-
-  return item.id;
-};
+export type { SupplierQueueDecisionItem };
+export { getSupplierReviewQueueItemId };
 
 export const approveSupplierQueueItem = async (item: SupplierQueueDecisionItem): Promise<void> => {
   const productPayload = item.productPayload;
@@ -31,7 +17,7 @@ export const approveSupplierQueueItem = async (item: SupplierQueueDecisionItem):
     throw new Error(`Product payload not found for queue item: ${item.id}`);
   }
 
-  await writeSupplierQueueDecision(item, 'approved', productPayload.id);
+  await writeSupplierQueueDecision(item, 'approved');
 };
 
 export const rejectSupplierQueueItem = async (item: SupplierQueueDecisionItem): Promise<void> => {
@@ -40,44 +26,34 @@ export const rejectSupplierQueueItem = async (item: SupplierQueueDecisionItem): 
 
 const writeSupplierQueueDecision = async (
   item: SupplierQueueDecisionItem,
-  action: 'approved' | 'rejected',
-  productId?: string
+  action: SupplierQueueAction,
 ): Promise<void> => {
   const reviewQueueItemId = getSupplierReviewQueueItemId(item);
-  const queueDocumentId = item.id;
   const currentUser = auth.currentUser;
   const batch = writeBatch(db);
   const auditId = `${reviewQueueItemId}-${action}-${Date.now()}`;
-  const auditPayload: Record<string, unknown> = {
-    id: auditId,
+  const plan = buildSupplierQueueDecisionPlan(
+    item,
     action,
-    reviewedBy: {
+    {
       uid: currentUser?.uid || 'unknown',
       email: currentUser?.email || 'unknown',
     },
-    reviewedAt: serverTimestamp(),
-    sourceId: item.sourceId || 'unknown',
-    batchId: item.batchId || 'unknown',
-    queueDocumentId,
-  };
+    serverTimestamp(),
+    auditId,
+  );
 
-  if (action === 'approved') {
-    if (!productId || !item.productPayload) {
-      throw new Error(`Product payload not found for queue item: ${item.id}`);
+  for (const operation of plan.sets) {
+    if (operation.options) {
+      batch.set(doc(db, operation.collection, operation.id), operation.data, operation.options);
+    } else {
+      batch.set(doc(db, operation.collection, operation.id), operation.data);
     }
-
-    auditPayload.productId = productId;
-    batch.set(doc(db, 'products', productId), item.productPayload, { merge: true });
   }
 
-  if (action === 'rejected' && item.rejectionReason) {
-    auditPayload.rejectionReason = item.rejectionReason;
+  for (const operation of plan.deletes) {
+    batch.delete(doc(db, operation.collection, operation.id));
   }
-
-  batch.set(doc(db, 'supplier_approval_audit', auditId), auditPayload);
-  batch.delete(doc(db, 'supplier_review_queue', reviewQueueItemId));
-  batch.delete(doc(db, 'supplier_pending_changes', `change-${reviewQueueItemId}`));
-  batch.delete(doc(db, 'supplier_import_queue', reviewQueueItemId));
 
   await batch.commit();
 };
