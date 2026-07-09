@@ -31,6 +31,42 @@ const DISTRICT_DELIVERY: Record<string, number> = {
   "Other": 600
 };
 
+const CHECKOUT_IDEMPOTENCY_STORAGE_KEY = "zyro.checkout.idempotency";
+
+function createCheckoutIdempotencyKey() {
+  if (window.crypto?.randomUUID) {
+    return window.crypto.randomUUID();
+  }
+
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function getCheckoutIdempotencyKey(signature: string) {
+  try {
+    const storedAttempt = window.sessionStorage.getItem(CHECKOUT_IDEMPOTENCY_STORAGE_KEY);
+    if (storedAttempt) {
+      const parsedAttempt = JSON.parse(storedAttempt) as { key?: string; signature?: string };
+      if (parsedAttempt.key && parsedAttempt.signature === signature) {
+        return parsedAttempt.key;
+      }
+    }
+
+    const key = createCheckoutIdempotencyKey();
+    window.sessionStorage.setItem(CHECKOUT_IDEMPOTENCY_STORAGE_KEY, JSON.stringify({ key, signature }));
+    return key;
+  } catch {
+    return createCheckoutIdempotencyKey();
+  }
+}
+
+function clearCheckoutIdempotencyKey() {
+  try {
+    window.sessionStorage.removeItem(CHECKOUT_IDEMPOTENCY_STORAGE_KEY);
+  } catch {
+    // Ignore browsers that block session storage.
+  }
+}
+
 export default function CartDrawer({
   isOpen,
   onClose,
@@ -115,25 +151,31 @@ export default function CartDrawer({
     setCheckoutError(null);
     try {
       const user = auth.currentUser;
+      const checkoutPayload = {
+        customerUid: user ? user.uid : "guest",
+        customerName,
+        customerPhone,
+        customerPhone2: customerPhone2 || "",
+        customerEmail: customerEmail || "guest@zyro.lk",
+        customerAddress,
+        district,
+        city,
+        paymentMethod,
+        cartItems: cartItems.map(item => ({
+          productId: item.product.id,
+          quantity: item.quantity
+        }))
+      };
+      const idempotencyKey = getCheckoutIdempotencyKey(JSON.stringify(checkoutPayload));
       const response = await fetch("/api/checkout", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          "Idempotency-Key": idempotencyKey,
         },
         body: JSON.stringify({
-          customerUid: user ? user.uid : "guest",
-          customerName,
-          customerPhone,
-          customerPhone2: customerPhone2 || "",
-          customerEmail: customerEmail || "guest@zyro.lk",
-          customerAddress,
-          district,
-          city,
-          paymentMethod,
-          cartItems: cartItems.map(item => ({
-            productId: item.product.id,
-            quantity: item.quantity
-          }))
+          ...checkoutPayload,
+          idempotencyKey,
         })
       });
 
@@ -148,6 +190,7 @@ export default function CartDrawer({
       }
 
       setPlacedOrder(resData.order);
+      clearCheckoutIdempotencyKey();
 
       // Reset & Clear
       onClearCart();

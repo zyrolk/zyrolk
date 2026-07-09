@@ -150,6 +150,11 @@ service cloud.firestore {
       allow update, delete: if isAdmin();
     }
 
+    // Checkout idempotency records are written only by trusted backend code.
+    match /checkout_idempotency/{docId} {
+      allow read, write: if false;
+    }
+
     // Connection testing
     match /test/{docId} {
       allow read: if true;
