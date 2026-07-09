@@ -1,20 +1,69 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# Zyro.lk
 
-# Run and deploy your AI Studio app
+Zyro.lk is a React, TypeScript, Firebase, and Express commerce platform with a public storefront, checkout flow, admin dashboard, Supplier Hub, approval workflow, scheduled supplier sync, and automated regression tests.
 
-This contains everything you need to run your app locally.
+## Required Node Version
 
-View your app in AI Studio: https://ai.studio/apps/e0bba654-c5b7-4124-8953-422dc254e202
+Use the latest Node.js LTS release for local development and CI. The GitHub Actions workflow uses `node-version: lts/*` so the CI runner automatically tracks the current LTS line.
 
-## Run Locally
+## Local Setup
 
-**Prerequisites:**  Node.js
+Install root dependencies:
 
+```bash
+npm install
+```
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+Install Firebase Functions dependencies:
+
+```bash
+cd functions
+npm install
+cd ..
+```
+
+Start the local development server:
+
+```bash
+npm run dev
+```
+
+## Local Verification Commands
+
+Run these checks before committing production work:
+
+```bash
+npm run lint
+npm run build
+cd functions
+npm run build
+cd ..
+npm test
+git diff --check
+```
+
+These commands verify TypeScript, the production root build, the Firebase Functions build, automated regression coverage, and whitespace safety.
+
+## CI Workflow
+
+The GitHub Actions CI workflow lives at `.github/workflows/ci.yml`.
+
+It runs on:
+
+- Pushes to `main`
+- Pull requests
+
+The workflow:
+
+- Uses the latest Node.js LTS release.
+- Caches npm dependencies using both root and `functions` lockfiles.
+- Installs root dependencies with `npm ci`.
+- Installs Firebase Functions dependencies with `npm ci --prefix functions`.
+- Runs `npm run lint`.
+- Runs `npm run build`.
+- Builds Firebase Functions from the `functions` directory.
+- Runs `npm test`.
+- Cancels duplicate in-progress runs on the same branch.
+- Uploads command logs as artifacts only when the workflow fails.
+
+The CI workflow does not print secrets and does not perform deployment. It is a verification gate only.

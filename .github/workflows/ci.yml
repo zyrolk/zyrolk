@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Use latest LTS Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "lts/*"
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            functions/package-lock.json
+
+      - name: Prepare log directory
+        run: mkdir -p ci-logs
+
+      - name: Install root dependencies
+        shell: bash
+        run: |
+          set -o pipefail
+          npm ci 2>&1 | tee ci-logs/root-npm-ci.log
+
+      - name: Install Functions dependencies
+        shell: bash
+        run: |
+          set -o pipefail
+          npm ci --prefix functions 2>&1 | tee ci-logs/functions-npm-ci.log
+
+      - name: Run root lint
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run lint 2>&1 | tee ci-logs/root-lint.log
+
+      - name: Run root build
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run build 2>&1 | tee ci-logs/root-build.log
+
+      - name: Build Firebase Functions
+        shell: bash
+        working-directory: functions
+        run: |
+          set -o pipefail
+          npm run build 2>&1 | tee ../ci-logs/functions-build.log
+
+      - name: Run automated tests
+        shell: bash
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee ci-logs/root-test.log
+
+      - name: Upload failure logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-failure-logs
+          path: ci-logs/
+          if-no-files-found: ignore
+          retention-days: 7
