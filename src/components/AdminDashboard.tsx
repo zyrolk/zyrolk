@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { Suspense, lazy, useState, useEffect } from 'react';
 import { 
   TrendingUp, ShoppingBag, Users, Layers, Plus, Trash2, Edit3, Check, 
   X, RefreshCw, AlertCircle, Calendar, DollarSign, ArrowUpRight, Upload,
@@ -21,8 +21,9 @@ import {
   CartesianGrid, Tooltip, PieChart, Pie, Cell, BarChart, Bar, Legend
 } from 'recharts';
 import { motion, AnimatePresence } from 'motion/react';
-import SupplierHubFiveStars from './SupplierHubFiveStars';
 import { approveSupplierQueueItem, rejectSupplierQueueItem } from '../services/supplierQueueService';
+
+const SupplierHubFiveStars = lazy(() => import('./SupplierHubFiveStars'));
 
 const AnimatedCounter: React.FC<{ value: number; formatter?: (v: number) => string }> = ({ value, formatter }) => {
   const [count, setCount] = useState(0);
@@ -58,6 +59,18 @@ const AnimatedCounter: React.FC<{ value: number; formatter?: (v: number) => stri
 
   return <span>{formatter ? formatter(count) : Math.round(count).toLocaleString()}</span>;
 };
+
+const AdminLazyPanelFallback = () => (
+  <div className="min-h-96 animate-pulse rounded-2xl border border-slate-800/70 bg-slate-900/70 p-6">
+    <div className="mb-6 h-5 w-48 rounded-lg bg-slate-800" />
+    <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+      <div className="h-24 rounded-xl bg-slate-800/80" />
+      <div className="h-24 rounded-xl bg-slate-800/80" />
+      <div className="h-24 rounded-xl bg-slate-800/80" />
+    </div>
+    <div className="mt-6 h-56 rounded-xl bg-slate-800/70" />
+  </div>
+);
 
 const DEFAULT_WEBSITE_SETTINGS: WebsiteSettings = {
   storeName: "Zyro.lk",
@@ -5869,7 +5882,9 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
 
           {/* TAB 8: SUPPLIER HUB ⭐⭐⭐⭐⭐ */}
           {activeTab === 'supplierHubFiveStars' && (
-            <SupplierHubFiveStars isDarkMode={isDarkMode} />
+            <Suspense fallback={<AdminLazyPanelFallback />}>
+              <SupplierHubFiveStars isDarkMode={isDarkMode} />
+            </Suspense>
           )}
 
         </main>

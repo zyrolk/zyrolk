@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { Suspense, lazy, useState, useEffect } from 'react';
 import { 
   collection, onSnapshot, doc, getDoc, updateDoc, setDoc 
 } from 'firebase/firestore';
@@ -12,14 +12,15 @@ import Navbar from './components/Navbar';
 import MobileBottomNav from './components/MobileBottomNav';
 import HeroBanner from './components/HeroBanner';
 import ProductCard from './components/ProductCard';
-import ProductDetailModal from './components/ProductDetailModal';
-import CartDrawer from './components/CartDrawer';
 import Footer from './components/Footer';
-import ContactPage from './components/ContactPage';
-import AuthModal from './components/AuthModal';
-import AdminDashboard from './components/AdminDashboard';
-import CmsPage from './components/CmsPage';
 import FloatingWhatsApp from './components/FloatingWhatsApp';
+
+const AdminDashboard = lazy(() => import('./components/AdminDashboard'));
+const ProductDetailModal = lazy(() => import('./components/ProductDetailModal'));
+const CartDrawer = lazy(() => import('./components/CartDrawer'));
+const ContactPage = lazy(() => import('./components/ContactPage'));
+const AuthModal = lazy(() => import('./components/AuthModal'));
+const CmsPage = lazy(() => import('./components/CmsPage'));
 
 // Lucide Icons
 import { 
@@ -40,6 +41,12 @@ const getCategoryImage = (catId: string, productsList: Product[]) => {
   if (prodImg) return prodImg;
   return "https://images.unsplash.com/photo-1468495244123-6c6c332eeece?q=80&w=600&auto=format&fit=crop";
 };
+
+const LazyBlockFallback = ({ className = "" }: { className?: string }) => (
+  <div className={`animate-pulse rounded-2xl border border-slate-100 bg-white/80 ${className}`}>
+    <div className="h-full min-h-32 w-full rounded-2xl bg-slate-100/70" />
+  </div>
+);
 
 export default function App() {
   // Page Navigation State
@@ -75,6 +82,8 @@ export default function App() {
   const [isCartOpen, setIsCartOpen] = useState<boolean>(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+  const [hasOpenedCart, setHasOpenedCart] = useState<boolean>(false);
+  const [hasOpenedAuth, setHasOpenedAuth] = useState<boolean>(false);
 
   // Auth User State
   const [user, setUser] = useState<User | null>(null);
@@ -343,6 +352,18 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, [currentPage]);
 
+  useEffect(() => {
+    if (isCartOpen) {
+      setHasOpenedCart(true);
+    }
+  }, [isCartOpen]);
+
+  useEffect(() => {
+    if (isAuthModalOpen) {
+      setHasOpenedAuth(true);
+    }
+  }, [isAuthModalOpen]);
+
   // Format currency
   const formatPrice = (amount: number) => {
     return new Intl.NumberFormat('en-LK', {
@@ -454,10 +475,12 @@ export default function App() {
       {/* --- PAGE COMPILING WRAPPER --- */}
       {isAdminMode ? (
         /* Full-screen admin module with internal layouts */
-        <AdminDashboard 
-          initialTab={adminInitialTab}
-          initialCmsPageId={adminInitialCmsPageId}
-        />
+        <Suspense fallback={<LazyBlockFallback className="min-h-screen rounded-none border-0 bg-slate-950" />}>
+          <AdminDashboard
+            initialTab={adminInitialTab}
+            initialCmsPageId={adminInitialCmsPageId}
+          />
+        </Suspense>
       ) : (
         <div className="flex-1 pb-24 md:pb-0">
           {/* Main Content Pages */}
@@ -1096,31 +1119,35 @@ export default function App() {
 
           {/* PAGE 5: CONTACT PAGE */}
           {currentPage === 'contact' && (
-            <ContactPage 
-              settings={settings} 
-              isAdmin={isAdminUser}
-              onEdit={(pageId) => {
-                setAdminInitialTab('pages');
-                setAdminInitialCmsPageId(pageId);
-                setIsAdminMode(true);
-                setCurrentPage('admin');
-              }}
-            />
+            <Suspense fallback={<LazyBlockFallback className="mx-auto my-12 min-h-96 max-w-7xl" />}>
+              <ContactPage
+                settings={settings}
+                isAdmin={isAdminUser}
+                onEdit={(pageId) => {
+                  setAdminInitialTab('pages');
+                  setAdminInitialCmsPageId(pageId);
+                  setIsAdminMode(true);
+                  setCurrentPage('admin');
+                }}
+              />
+            </Suspense>
           )}
 
           {/* PAGE 6: CMS DYNAMIC PAGES */}
           {['about-us', 'privacy-policy', 'terms-conditions', 'return-policy', 'faq'].includes(currentPage) && (
-            <CmsPage 
-              pageId={currentPage} 
-              onBackToHome={() => setCurrentPage('home')} 
-              isAdmin={isAdminUser}
-              onEdit={(pageId) => {
-                setAdminInitialTab('pages');
-                setAdminInitialCmsPageId(pageId);
-                setIsAdminMode(true);
-                setCurrentPage('admin');
-              }}
-            />
+            <Suspense fallback={<LazyBlockFallback className="mx-auto my-12 min-h-96 max-w-5xl" />}>
+              <CmsPage
+                pageId={currentPage}
+                onBackToHome={() => setCurrentPage('home')}
+                isAdmin={isAdminUser}
+                onEdit={(pageId) => {
+                  setAdminInitialTab('pages');
+                  setAdminInitialCmsPageId(pageId);
+                  setIsAdminMode(true);
+                  setCurrentPage('admin');
+                }}
+              />
+            </Suspense>
           )}
 
           {/* Dynamic Footer Block */}
@@ -1156,7 +1183,8 @@ export default function App() {
       {/* Detail Showcase Modal */}
       {(() => {
         const liveSelectedProduct = selectedProduct ? (products.find(p => p.id === selectedProduct.id) || selectedProduct) : null;
-        return (
+        return liveSelectedProduct ? (
+          <Suspense fallback={null}>
           <ProductDetailModal 
             product={liveSelectedProduct}
             isOpen={!!selectedProduct}
@@ -1169,26 +1197,35 @@ export default function App() {
             onBuyNow={handleBuyNow}
             settings={settings}
           />
-        );
+          </Suspense>
+        ) : null;
       })()}
 
       {/* Cart Drawer Sliding panel */}
-      <CartDrawer 
-        isOpen={isCartOpen}
-        onClose={() => setIsCartOpen(false)}
-        cartItems={cart}
-        onUpdateQuantity={handleUpdateCartQuantity}
-        onRemoveItem={handleRemoveFromCart}
-        onClearCart={handleClearCart}
-        settings={settings}
-        setCurrentPage={setCurrentPage}
-      />
+      {hasOpenedCart && (
+        <Suspense fallback={null}>
+          <CartDrawer
+            isOpen={isCartOpen}
+            onClose={() => setIsCartOpen(false)}
+            cartItems={cart}
+            onUpdateQuantity={handleUpdateCartQuantity}
+            onRemoveItem={handleRemoveFromCart}
+            onClearCart={handleClearCart}
+            settings={settings}
+            setCurrentPage={setCurrentPage}
+          />
+        </Suspense>
+      )}
 
       {/* Authentication Gateway */}
-      <AuthModal 
-        isOpen={isAuthModalOpen}
-        onClose={() => setIsAuthModalOpen(false)}
-      />
+      {hasOpenedAuth && (
+        <Suspense fallback={null}>
+          <AuthModal
+            isOpen={isAuthModalOpen}
+            onClose={() => setIsAuthModalOpen(false)}
+          />
+        </Suspense>
+      )}
 
     </div>
   );

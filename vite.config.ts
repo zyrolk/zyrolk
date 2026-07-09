@@ -6,6 +6,36 @@ import {defineConfig} from 'vite';
 export default defineConfig(() => {
   return {
     plugins: [react(), tailwindcss()],
+    build: {
+      modulePreload: {
+        resolveDependencies(_filename, deps) {
+          return deps.filter((dep) => (
+            !dep.includes('admin-') &&
+            !dep.includes('supplier-') &&
+            !dep.includes('charts-')
+          ));
+        },
+      },
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (id.includes('node_modules')) {
+              if (id.includes('firebase')) {
+                return 'firebase';
+              }
+              if (id.includes('react') || id.includes('react-dom') || id.includes('motion')) {
+                return 'react-vendor';
+              }
+              if (id.includes('recharts')) {
+                return 'charts';
+              }
+            }
+
+            return undefined;
+          },
+        },
+      },
+    },
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),
