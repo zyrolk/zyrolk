@@ -1,5 +1,5 @@
 import React from 'react';
-import { Star, ShoppingCart, Heart, Phone } from 'lucide-react';
+import { Eye, Star, ShoppingCart, Heart, Phone } from 'lucide-react';
 import { Product } from '../types';
 
 interface ProductCardProps {
@@ -22,6 +22,12 @@ export default function ProductCard({
   showWishlist = true,
   settings
 }: ProductCardProps) {
+  const stockLabel = product.stock <= 0
+    ? 'Out of stock'
+    : product.stock <= 5
+      ? `Only ${product.stock} left`
+      : 'In stock';
+
   // Format price in Sri Lankan Rupees (LKR)
   const formatPrice = (amount: number) => {
     return new Intl.NumberFormat('en-LK', {
@@ -74,13 +80,13 @@ export default function ProductCard({
   return (
     <div 
       onClick={() => onViewDetail(product)}
-      className="zy-card zy-card-hover group relative overflow-hidden flex flex-col h-full cursor-pointer"
+      className="zy-card zy-card-hover group relative overflow-hidden flex flex-col h-full cursor-pointer border-slate-200/80 bg-white"
     >
       {/* Badges Overlay */}
       <div className="absolute top-3 left-3 z-10 flex flex-col space-y-1">
         {product.discount && product.discount > 0 ? (
-          <span className="zy-badge zy-badge-accent">
-            {product.discount}% OFF
+          <span className="zy-badge zy-badge-accent shadow-lg shadow-orange-500/15">
+            Save {product.discount}%
           </span>
         ) : null}
         {product.isNew ? (
@@ -102,20 +108,22 @@ export default function ProductCard({
             e.stopPropagation();
             onToggleWishlist(product);
           }}
-          className="absolute top-3 right-3 z-10 p-2.5 bg-white/90 hover:bg-white text-slate-400 hover:text-red-500 rounded-full shadow-sm hover:shadow-md backdrop-blur-xs transition-all cursor-pointer"
+          className="absolute top-3 right-3 z-20 flex h-11 w-11 items-center justify-center bg-white/95 hover:bg-white text-slate-500 hover:text-red-500 rounded-full shadow-md hover:shadow-lg backdrop-blur-xs transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/25"
           title={isWishlisted ? "Remove from Wishlist" : "Add to Wishlist"}
+          aria-label={isWishlisted ? `Remove ${product.name} from wishlist` : `Add ${product.name} to wishlist`}
+          aria-pressed={isWishlisted}
         >
           <Heart className={`h-4.5 w-4.5 transition-colors ${isWishlisted ? 'fill-red-500 text-red-500' : ''}`} />
         </button>
       )}
 
       {/* Product Image Stage */}
-      <div className="relative w-full aspect-square bg-gradient-to-br from-slate-50 to-blue-50/35 flex items-center justify-center overflow-hidden">
+      <div className="relative w-full aspect-square bg-gradient-to-br from-slate-50 via-white to-blue-50/50 flex items-center justify-center overflow-hidden p-5 sm:p-7">
         <img
           src={product.imageUrl || 'https://images.unsplash.com/photo-1531403009284-440f080d1e12?auto=format&fit=crop&w=600&q=80'}
           alt={product.name}
           referrerPolicy="no-referrer"
-          className="w-full h-full object-cover transform group-hover:scale-105 transition-transform duration-500 ease-out"
+          className="w-full h-full object-contain transform group-hover:scale-[1.06] transition-transform duration-500 ease-out drop-shadow-[0_18px_24px_rgba(15,23,42,0.08)]"
           onError={(e) => {
             e.currentTarget.onerror = null;
             e.currentTarget.src = 'https://images.unsplash.com/photo-1531403009284-440f080d1e12?auto=format&fit=crop&w=600&q=80';
@@ -123,23 +131,36 @@ export default function ProductCard({
         />
         {/* Out of Stock overlay */}
         {product.stock <= 0 && (
-          <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
-            <span className="text-white text-xs font-bold uppercase tracking-wider bg-red-600 px-3 py-1.5 rounded-full shadow-lg">
+          <div className="absolute inset-0 bg-white/65 backdrop-blur-[2px] flex items-center justify-center">
+            <span className="text-white text-xs font-bold uppercase tracking-wider bg-slate-900 px-4 py-2 rounded-full shadow-lg">
               Out of Stock
             </span>
           </div>
         )}
+
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onViewDetail(product);
+          }}
+          className="absolute inset-x-5 bottom-4 z-10 flex min-h-11 items-center justify-center gap-2 rounded-xl border border-white/80 bg-slate-950/90 px-4 py-2.5 text-xs font-black text-white shadow-lg backdrop-blur-md transition-all duration-300 sm:translate-y-3 sm:opacity-0 sm:group-hover:translate-y-0 sm:group-hover:opacity-100 focus-visible:translate-y-0 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/25"
+          aria-label={`Quick view ${product.name}`}
+        >
+          <Eye className="h-4 w-4" aria-hidden="true" />
+          Quick View
+        </button>
       </div>
 
       {/* Content & Details */}
-      <div className="p-4 sm:p-4.5 flex flex-col flex-1">
+      <div className="p-4 sm:p-5 flex flex-col flex-1">
         {/* Category Label */}
         <span className="text-[10px] text-slate-500 font-black uppercase tracking-widest mb-1.5">
           {product.category.replace('-', ' ')}
         </span>
 
         {/* Product Name */}
-        <h3 className="text-sm font-bold text-slate-900 line-clamp-2 mb-1 group-hover:text-brand-blue transition-colors min-h-[40px] leading-snug">
+        <h3 className="text-[0.95rem] font-extrabold text-slate-950 line-clamp-2 mb-1.5 group-hover:text-brand-blue transition-colors min-h-[42px] leading-snug font-display">
           {product.name}
         </h3>
 
@@ -163,9 +184,9 @@ export default function ProductCard({
         </div>
 
         {/* Pricing & Stock Grid */}
-        <div className="mt-auto pt-3 border-t border-slate-100/80 flex items-baseline justify-between flex-wrap gap-1.5">
+        <div className="mt-auto pt-3.5 border-t border-slate-100/80 flex items-end justify-between flex-wrap gap-2">
           <div className="flex flex-col">
-            <span className="zy-price text-lg">
+            <span className="zy-price text-xl leading-none">
               {formatPrice(product.price)}
             </span>
             {product.originalPrice && product.originalPrice > product.price && (
@@ -174,46 +195,47 @@ export default function ProductCard({
               </span>
             )}
           </div>
-          <span className={`text-[10px] font-bold px-2 py-1 rounded-full ${product.stock > 0 ? 'bg-emerald-50 text-emerald-700 border border-emerald-100' : 'bg-red-50 text-red-600 border border-red-100'}`}>
-            {product.stock > 0 ? `${product.stock} in stock` : 'Out of stock'}
+          <span className={`inline-flex items-center gap-1.5 text-[10px] font-extrabold px-2.5 py-1.5 rounded-full border ${product.stock <= 0 ? 'bg-red-50 text-red-700 border-red-100' : product.stock <= 5 ? 'bg-amber-50 text-amber-700 border-amber-100' : 'bg-emerald-50 text-emerald-700 border-emerald-100'}`}>
+            <span className={`h-1.5 w-1.5 rounded-full ${product.stock <= 0 ? 'bg-red-500' : product.stock <= 5 ? 'bg-amber-500' : 'bg-emerald-500'}`} aria-hidden="true" />
+            {stockLabel}
           </span>
         </div>
 
         {/* Actions button group */}
         <div className="mt-4">
           {product.stock > 0 ? (
-            <div className="grid grid-cols-2 gap-2">
+            <div className="flex gap-2.5">
               {/* Add to Cart */}
               <button
                 onClick={(e) => {
                   e.stopPropagation();
                   onAddToCart(product);
                 }}
-                className="zy-button zy-button-primary py-2.5 px-2 text-xs cursor-pointer"
+                className="zy-button zy-button-primary min-h-11 flex-1 py-3 px-3 text-xs cursor-pointer focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/25"
+                aria-label={`Add ${product.name} to cart`}
               >
-                <ShoppingCart className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline ml-1.5">Add to Cart</span>
-                <span className="inline sm:hidden ml-1 font-medium text-[10px]">Cart</span>
+                <ShoppingCart className="h-4 w-4" aria-hidden="true" />
+                <span className="ml-1.5">Add to Cart</span>
               </button>
 
               {/* Quick WhatsApp Order */}
               <button
                 onClick={handleWhatsAppQuickBuy}
-                className="zy-button bg-emerald-600 hover:bg-emerald-700 text-white border border-emerald-600 py-2.5 px-2 text-xs cursor-pointer shadow-sm"
+                className="zy-button flex h-11 w-11 flex-none items-center justify-center rounded-xl bg-white hover:bg-emerald-50 text-emerald-700 border border-emerald-200 p-0 cursor-pointer shadow-sm focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-emerald-500/20"
                 title="Buy Now via WhatsApp"
+                aria-label={`Order ${product.name} through WhatsApp`}
               >
-                <Phone className="h-3.5 w-3.5 text-white fill-white" />
-                <span className="hidden sm:inline ml-1.5">Buy Now</span>
-                <span className="inline sm:hidden ml-1 font-medium text-[10px]">Order</span>
+                <Phone className="h-4 w-4" aria-hidden="true" />
               </button>
             </div>
           ) : (
             /* WhatsApp Enquiry Button (out of stock) */
             <button
               onClick={handleWhatsAppEnquiry}
-              className="zy-button zy-button-outline w-full py-2.5 px-3 text-xs cursor-pointer"
+              className="zy-button zy-button-outline w-full min-h-11 py-2.5 px-3 text-xs cursor-pointer focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20"
+              aria-label={`Ask about availability for ${product.name} on WhatsApp`}
             >
-              <Phone className="h-3.5 w-3.5 text-white fill-white" />
+              <Phone className="h-3.5 w-3.5" aria-hidden="true" />
               <span>Enquire on WhatsApp</span>
             </button>
           )}

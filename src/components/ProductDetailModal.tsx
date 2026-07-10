@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   X, Star, Heart, ShoppingCart, Check, Phone, 
-  ShieldCheck, Truck, RefreshCw, MessageSquare, ArrowRight, Plus, Minus, ShoppingBag,
-  ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Maximize2, Sparkles, Award, CheckCircle2, HelpCircle
+  Truck, MessageSquare, ArrowRight, Plus, Minus, ShoppingBag,
+  ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Maximize2, Sparkles, Award, CheckCircle2, HelpCircle,
+  Banknote, Headphones, LockKeyhole
 } from 'lucide-react';
 import { collection, query, where, getDocs, addDoc } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
@@ -73,6 +74,82 @@ export default function ProductDetailModal({
   // Refs
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const relatedScrollRef = useRef<HTMLDivElement>(null);
+  const modalRef = useRef<HTMLDivElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const previouslyFocusedElementRef = useRef<HTMLElement | null>(null);
+  const onCloseRef = useRef(onClose);
+  const isLightboxOpenRef = useRef(isLightboxOpen);
+  const galleryImages = Array.from(new Set([product?.imageUrl, ...(product?.imageUrls || [])]))
+    .filter((url): url is string => Boolean(url));
+  const galleryImageCountRef = useRef(galleryImages.length);
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
+  useEffect(() => {
+    isLightboxOpenRef.current = isLightboxOpen;
+  }, [isLightboxOpen]);
+
+  useEffect(() => {
+    galleryImageCountRef.current = galleryImages.length;
+  }, [galleryImages.length]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    previouslyFocusedElementRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    const focusTimer = window.setTimeout(() => closeButtonRef.current?.focus(), 0);
+
+    const handleDialogKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        if (isLightboxOpenRef.current) {
+          setIsLightboxOpen(false);
+          setLightboxZoom(1);
+          setLightboxPan({ x: 0, y: 0 });
+        } else {
+          onCloseRef.current();
+        }
+        return;
+      }
+
+      const target = event.target as HTMLElement | null;
+      const isTyping = target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA';
+      const galleryImageCount = galleryImageCountRef.current;
+      if (!isTyping && galleryImageCount > 1 && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+        event.preventDefault();
+        setActiveImageIndex((current) => event.key === 'ArrowRight'
+          ? (current + 1) % galleryImageCount
+          : (current - 1 + galleryImageCount) % galleryImageCount);
+      }
+
+      if (event.key === 'Tab' && modalRef.current) {
+        const focusable = (Array.from(modalRef.current.querySelectorAll(
+          'button:not([disabled]), a[href], input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        )) as HTMLElement[]).filter((element) => element.offsetParent !== null);
+        if (focusable.length === 0) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
+    };
+
+    document.addEventListener('keydown', handleDialogKeyDown);
+    return () => {
+      window.clearTimeout(focusTimer);
+      document.removeEventListener('keydown', handleDialogKeyDown);
+      previouslyFocusedElementRef.current?.focus();
+    };
+  }, [isOpen]);
 
   // Listen to Auth State
   useEffect(() => {
@@ -146,11 +223,11 @@ export default function ProductDetailModal({
     }).format(amount);
   };
 
-  const galleryImages = Array.from(new Set([product.imageUrl, ...(product.imageUrls || [])])).filter(Boolean);
-
   // Swipe gesture handlers
   const handleTouchStart = (e: React.TouchEvent) => {
-    setTouchStartX(e.targetTouches[0].clientX);
+    const startX = e.targetTouches[0].clientX;
+    setTouchStartX(startX);
+    setTouchEndX(startX);
   };
 
   const handleTouchMove = (e: React.TouchEvent) => {
@@ -400,7 +477,13 @@ export default function ProductDetailModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/70 backdrop-blur-xl flex items-center justify-center p-0 sm:p-4 md:p-6 animate-fadeIn">
+    <div
+      ref={modalRef}
+      className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/70 backdrop-blur-xl flex items-center justify-center p-0 sm:p-4 md:p-6 animate-fadeIn"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="product-detail-title"
+    >
       
       {/* Immersive Apple/Samsung-style Premium Modal Layout */}
       <div className="relative w-full max-w-6xl bg-white sm:rounded-[2.5rem] overflow-hidden shadow-[0_25px_60px_-15px_rgba(0,0,0,0.25)] border border-slate-100 flex flex-col min-h-screen sm:min-h-0 sm:h-[94vh]">
@@ -415,11 +498,14 @@ export default function ProductDetailModal({
           </div>
           
           <button
+            ref={closeButtonRef}
+            type="button"
             onClick={onClose}
-            className="pointer-events-auto p-3 text-slate-500 hover:text-slate-900 bg-white/95 hover:bg-slate-100 border border-slate-100 rounded-full transition-all cursor-pointer shadow-md active:scale-90"
+            className="pointer-events-auto p-3 text-slate-600 hover:text-slate-950 bg-white/95 hover:bg-slate-100 border border-slate-200 rounded-full transition-all cursor-pointer shadow-md active:scale-90 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/25"
             id="product-modal-close-btn"
+            aria-label={`Close details for ${product.name}`}
           >
-            <X className="h-5 w-5" />
+            <X className="h-5 w-5" aria-hidden="true" />
           </button>
         </div>
 
@@ -461,11 +547,20 @@ export default function ProductDetailModal({
                   {/* Premium Slider Container */}
                   <div className="space-y-4">
                     <div 
-                      className="relative aspect-square w-full rounded-3xl bg-slate-50 border border-slate-100 overflow-hidden select-none group/zoom shadow-sm cursor-zoom-in"
+                      className="relative aspect-square w-full rounded-3xl bg-gradient-to-br from-slate-50 via-white to-blue-50/40 border border-slate-200/80 overflow-hidden select-none group/zoom shadow-sm cursor-zoom-in focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20"
                       onTouchStart={handleTouchStart}
                       onTouchMove={handleTouchMove}
                       onTouchEnd={handleTouchEnd}
                       onClick={() => setIsLightboxOpen(true)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault();
+                          setIsLightboxOpen(true);
+                        }
+                      }}
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`Open image viewer for ${product.name}. Image ${activeImageIndex + 1} of ${galleryImages.length}.`}
                     >
                       {/* Swipe instructions helper */}
                       {galleryImages.length > 1 && (
@@ -512,20 +607,24 @@ export default function ProductDetailModal({
                       {galleryImages.length > 1 && (
                         <>
                           <button
+                            type="button"
                             onClick={(e) => {
                               e.stopPropagation();
                               setActiveImageIndex((prev) => (prev - 1 + galleryImages.length) % galleryImages.length);
                             }}
-                            className="absolute left-4 top-1/2 -translate-y-1/2 p-2.5 rounded-full bg-white/95 text-slate-800 hover:bg-white border border-slate-100 shadow-md transition-all opacity-0 group-hover/zoom:opacity-100 cursor-pointer hover:scale-110 active:scale-95"
+                            className="absolute left-4 top-1/2 -translate-y-1/2 p-3 rounded-full bg-white/95 text-slate-800 hover:bg-white border border-slate-200 shadow-md transition-all opacity-100 sm:opacity-0 sm:group-hover/zoom:opacity-100 cursor-pointer hover:scale-105 active:scale-95 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/25"
+                            aria-label="Show previous product image"
                           >
                             <ChevronLeft className="h-5 w-5" />
                           </button>
                           <button
+                            type="button"
                             onClick={(e) => {
                               e.stopPropagation();
                               setActiveImageIndex((prev) => (prev + 1) % galleryImages.length);
                             }}
-                            className="absolute right-4 top-1/2 -translate-y-1/2 p-2.5 rounded-full bg-white/95 text-slate-800 hover:bg-white border border-slate-100 shadow-md transition-all opacity-0 group-hover/zoom:opacity-100 cursor-pointer hover:scale-110 active:scale-95"
+                            className="absolute right-4 top-1/2 -translate-y-1/2 p-3 rounded-full bg-white/95 text-slate-800 hover:bg-white border border-slate-200 shadow-md transition-all opacity-100 sm:opacity-0 sm:group-hover/zoom:opacity-100 cursor-pointer hover:scale-105 active:scale-95 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/25"
+                            aria-label="Show next product image"
                           >
                             <ChevronRight className="h-5 w-5" />
                           </button>
@@ -544,15 +643,18 @@ export default function ProductDetailModal({
                       <div className="flex items-center space-x-2.5 overflow-x-auto py-1 scrollbar-none justify-start">
                         {galleryImages.map((url, idx) => (
                           <button
+                            type="button"
                             key={idx}
                             onClick={() => setActiveImageIndex(idx)}
-                            className={`w-20 h-20 rounded-2xl border bg-slate-50 p-1.5 flex-shrink-0 cursor-pointer transition-all ${
+                            className={`w-[4.5rem] h-[4.5rem] sm:w-20 sm:h-20 rounded-2xl border bg-slate-50 p-1.5 flex-shrink-0 cursor-pointer transition-all focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20 ${
                               activeImageIndex === idx 
                                 ? 'border-brand-blue ring-4 ring-brand-blue/5 scale-102 bg-white shadow-xs' 
                                 : 'border-slate-100 hover:border-slate-300'
                             }`}
+                            aria-label={`Show product image ${idx + 1} of ${galleryImages.length}`}
+                            aria-pressed={activeImageIndex === idx}
                           >
-                            <img src={url} alt="" className="w-full h-full object-contain rounded-xl" referrerPolicy="no-referrer" />
+                            <img src={url} alt={`${product.name} thumbnail ${idx + 1}`} className="w-full h-full object-contain rounded-xl" referrerPolicy="no-referrer" />
                           </button>
                         ))}
                       </div>
@@ -560,27 +662,34 @@ export default function ProductDetailModal({
                   </div>
 
                   {/* Trust badge strip row */}
-                  <div className="grid grid-cols-3 gap-3.5 bg-slate-50/50 p-5 rounded-2xl border border-slate-100 text-left">
-                    <div className="space-y-1">
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 bg-slate-50/70 p-4 sm:p-5 rounded-3xl border border-slate-200/80 text-left">
+                    <div className="rounded-2xl bg-white p-3.5 border border-slate-100 space-y-1.5">
                       <div className="p-2 bg-blue-50/80 text-brand-blue rounded-xl w-fit">
-                        <ShieldCheck className="h-5 w-5" />
+                        <Banknote className="h-5 w-5" aria-hidden="true" />
                       </div>
-                      <span className="text-xs font-bold text-slate-800 block">Genuine Stock</span>
-                      <span className="text-[10px] text-slate-400 font-light block leading-tight">100% official brand authorization</span>
+                      <span className="text-xs font-bold text-slate-900 block">Cash on Delivery</span>
+                      <span className="text-[10px] text-slate-500 block leading-tight">Pay when your order arrives</span>
                     </div>
-                    <div className="space-y-1">
+                    <div className="rounded-2xl bg-white p-3.5 border border-slate-100 space-y-1.5">
                       <div className="p-2 bg-blue-50/80 text-brand-blue rounded-xl w-fit">
-                        <Truck className="h-5 w-5" />
+                        <Truck className="h-5 w-5" aria-hidden="true" />
                       </div>
-                      <span className="text-xs font-bold text-slate-800 block">Fast Dispatch</span>
-                      <span className="text-[10px] text-slate-400 font-light block leading-tight">Islandwide tracked courier to doorstep</span>
+                      <span className="text-xs font-bold text-slate-900 block">Island-wide Delivery</span>
+                      <span className="text-[10px] text-slate-500 block leading-tight">Courier delivery across Sri Lanka</span>
                     </div>
-                    <div className="space-y-1">
+                    <div className="rounded-2xl bg-white p-3.5 border border-slate-100 space-y-1.5">
                       <div className="p-2 bg-blue-50/80 text-brand-blue rounded-xl w-fit">
-                        <RefreshCw className="h-5 w-5" />
+                        <LockKeyhole className="h-5 w-5" aria-hidden="true" />
                       </div>
-                      <span className="text-xs font-bold text-slate-800 block">COD Supported</span>
-                      <span className="text-[10px] text-slate-400 font-light block leading-tight">Verify items before cash handover</span>
+                      <span className="text-xs font-bold text-slate-900 block">Secure Checkout</span>
+                      <span className="text-[10px] text-slate-500 block leading-tight">Protected order processing</span>
+                    </div>
+                    <div className="rounded-2xl bg-white p-3.5 border border-slate-100 space-y-1.5">
+                      <div className="p-2 bg-blue-50/80 text-brand-blue rounded-xl w-fit">
+                        <Headphones className="h-5 w-5" aria-hidden="true" />
+                      </div>
+                      <span className="text-xs font-bold text-slate-900 block">Customer Support</span>
+                      <span className="text-[10px] text-slate-500 block leading-tight">Help before and after ordering</span>
                     </div>
                   </div>
 
@@ -595,9 +704,9 @@ export default function ProductDetailModal({
                       </div>
                       <div className="bg-white border border-slate-100 rounded-3xl overflow-hidden shadow-xs divide-y divide-slate-100">
                         {Object.entries(product.specs).map(([key, val]) => (
-                          <div key={key} className="grid grid-cols-3 p-4 text-xs transition-all hover:bg-slate-50/50 items-center">
-                            <span className="font-bold text-slate-500 capitalize">{key}</span>
-                            <span className="col-span-2 text-slate-800 text-left pl-4 font-normal">{val}</span>
+                          <div key={key} className="grid grid-cols-1 gap-1 p-4 text-xs transition-all hover:bg-slate-50/50 sm:grid-cols-3 sm:items-center sm:gap-0">
+                            <span className="font-bold text-slate-600 capitalize">{key}</span>
+                            <span className="text-slate-900 text-left font-medium sm:col-span-2 sm:pl-4">{val}</span>
                           </div>
                         ))}
                       </div>
@@ -622,7 +731,7 @@ export default function ProductDetailModal({
                           ? 'text-amber-700 bg-amber-50 border-amber-100' 
                           : 'text-emerald-700 bg-emerald-50 border-emerald-100'
                       }`}>
-                        <span className={`w-2 h-2 rounded-full animate-ping ${product.stock <= 5 ? 'bg-amber-500' : 'bg-emerald-500'}`} />
+                        <span className={`w-2 h-2 rounded-full ${product.stock <= 5 ? 'bg-amber-500' : 'bg-emerald-500'}`} aria-hidden="true" />
                         {product.stock <= 5 ? `Limited Stock: Only ${product.stock} left` : 'In Stock & Ready'}
                       </span>
                     ) : (
@@ -645,7 +754,7 @@ export default function ProductDetailModal({
                       </span>
                     </div>
 
-                    <h1 className="text-3xl sm:text-4.5xl font-black text-slate-900 tracking-tight leading-none font-display">
+                    <h1 id="product-detail-title" className="text-3xl sm:text-4.5xl font-black text-slate-950 tracking-tight leading-none font-display">
                       {product.name}
                     </h1>
 
@@ -653,7 +762,8 @@ export default function ProductDetailModal({
                     {totalReviews > 0 && (
                       <button 
                         onClick={scrollToReviews}
-                        className="flex items-center space-x-3 mt-1.5 group cursor-pointer text-left focus:outline-hidden"
+                        className="flex items-center space-x-3 mt-1.5 group cursor-pointer text-left rounded-lg focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20"
+                        aria-label={`Read ${totalReviews} customer reviews for ${product.name}`}
                       >
                         <div className="flex text-amber-400">
                           {[...Array(5)].map((_, i) => (
@@ -729,26 +839,30 @@ export default function ProductDetailModal({
                   </div>
 
                   {/* Quantity selector input element */}
-                  <div className="flex items-center justify-between bg-slate-50 p-4.5 rounded-2xl border border-slate-100">
+                  <div className="flex items-center justify-between gap-4 bg-slate-50 p-4 rounded-2xl border border-slate-200/80 sm:p-4.5">
                     <div>
                       <span className="text-xs font-black text-slate-800 block">Quantity Selection</span>
                       <span className="text-[10px] text-slate-400 font-light block mt-0.5">Adjust units for dispatch</span>
                     </div>
-                    <div className="flex items-center space-x-2 bg-white border border-slate-200/80 p-2 rounded-xl shadow-3xs">
+                    <div className="flex items-center space-x-1 bg-white border border-slate-200/80 p-1.5 rounded-xl shadow-3xs" role="group" aria-label="Product quantity">
                       <button
+                        type="button"
                         onClick={() => setQuantity(Math.max(1, quantity - 1))}
-                        className="w-9 h-9 rounded-lg text-slate-800 hover:bg-slate-100 flex items-center justify-center font-black cursor-pointer transition-all active:scale-90"
-                        disabled={product.stock <= 0}
+                        className="w-11 h-11 rounded-lg text-slate-800 hover:bg-slate-100 flex items-center justify-center font-black cursor-pointer transition-all active:scale-90 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20"
+                        disabled={product.stock <= 0 || quantity <= 1}
+                        aria-label="Decrease quantity"
                       >
-                        <Minus className="h-3.5 w-3.5" />
+                        <Minus className="h-4 w-4" aria-hidden="true" />
                       </button>
-                      <span className="w-8 text-center text-sm font-black text-slate-900">{quantity}</span>
+                      <span className="w-9 text-center text-base font-black text-slate-950" aria-live="polite" aria-label={`Quantity ${quantity}`}>{quantity}</span>
                       <button
+                        type="button"
                         onClick={() => setQuantity(Math.min(product.stock, quantity + 1))}
-                        className="w-9 h-9 rounded-lg text-slate-800 hover:bg-slate-100 flex items-center justify-center font-black cursor-pointer transition-all active:scale-90"
+                        className="w-11 h-11 rounded-lg text-slate-800 hover:bg-slate-100 flex items-center justify-center font-black cursor-pointer transition-all active:scale-90 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20"
                         disabled={product.stock <= 0 || quantity >= product.stock}
+                        aria-label="Increase quantity"
                       >
-                        <Plus className="h-3.5 w-3.5" />
+                        <Plus className="h-4 w-4" aria-hidden="true" />
                       </button>
                     </div>
                   </div>
@@ -758,14 +872,25 @@ export default function ProductDetailModal({
                     
                     {product.stock > 0 ? (
                       <>
-                        {/* Add to Cart (large royal blue) & Buy Now (black) buttons side-by-side */}
-                        <div className="grid grid-cols-2 gap-3.5">
-                          
-                          {/* Royal Blue Add to Cart Button */}
+                        {/* Buy Now remains the primary conversion action; cart behavior is unchanged. */}
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1.15fr_0.85fr]">
                           <motion.button
+                            type="button"
+                            whileTap={{ scale: 0.97 }}
+                            onClick={() => onBuyNow(product, quantity)}
+                            className="order-1 flex min-h-14 items-center justify-center rounded-2xl bg-brand-blue px-6 py-4 text-sm font-black text-white shadow-lg shadow-brand-blue/20 transition-all hover:bg-blue-700 hover:shadow-xl hover:shadow-brand-blue/25 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/25"
+                            aria-label={`Buy ${quantity} ${product.name} now`}
+                          >
+                            <ShoppingBag className="h-5 w-5 mr-2" aria-hidden="true" />
+                            Buy Now
+                          </motion.button>
+
+                          <motion.button
+                            type="button"
                             whileTap={{ scale: 0.96 }}
                             onClick={handleAddToCart}
-                            className="flex items-center justify-center py-4 px-6 rounded-2xl text-xs sm:text-sm font-black cursor-pointer transition-all border shadow-lg bg-brand-blue border-transparent text-white hover:bg-blue-700 shadow-brand-blue/15 hover:shadow-brand-blue/25"
+                            className="order-2 flex min-h-14 items-center justify-center rounded-2xl border border-slate-300 bg-white px-6 py-4 text-xs font-black text-slate-900 shadow-sm transition-all hover:border-brand-blue/40 hover:bg-blue-50/50 hover:text-brand-blue focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20 sm:text-sm"
+                            aria-label={`Add ${quantity} ${product.name} to cart`}
                           >
                             {addedMessage ? (
                               <>
@@ -780,34 +905,28 @@ export default function ProductDetailModal({
                             )}
                           </motion.button>
 
-                          {/* Black Buy Now Button */}
-                          <motion.button
-                            whileTap={{ scale: 0.96 }}
-                            onClick={() => onBuyNow(product, quantity)}
-                            className="flex items-center justify-center py-4 px-6 rounded-2xl text-xs sm:text-sm font-black cursor-pointer transition-all border shadow-md bg-slate-950 border-transparent text-white hover:bg-slate-850 shadow-slate-950/10"
-                          >
-                            <ShoppingBag className="h-4.5 w-4.5 mr-2" />
-                            Buy Now
-                          </motion.button>
-
                         </div>
 
                         {/* WhatsApp Quick Checkout Order Action */}
                         <motion.button
+                          type="button"
                           whileTap={{ scale: 0.97 }}
                           onClick={handleWhatsAppCheckout}
-                          className="w-full flex items-center justify-center py-4 px-6 bg-emerald-500 hover:bg-emerald-600 text-white rounded-2xl text-sm font-black cursor-pointer transition-all shadow-md shadow-emerald-500/15 gap-2.5"
+                          className="w-full flex min-h-12 items-center justify-center py-3.5 px-6 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-2xl text-sm font-black cursor-pointer transition-all gap-2.5 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-emerald-500/20"
+                          aria-label={`Order ${product.name} through WhatsApp`}
                         >
-                          <Phone className="h-4 w-4 fill-white text-white" />
-                          Order Instantly on WhatsApp
+                          <Phone className="h-4 w-4" aria-hidden="true" />
+                          Prefer assistance? Order on WhatsApp
                         </motion.button>
                       </>
                     ) : (
                       /* Out of stock WhatsApp Enquiry Button */
                       <motion.button
+                        type="button"
                         whileTap={{ scale: 0.97 }}
                         onClick={handleWhatsAppEnquiry}
                         className="w-full flex items-center justify-center py-4 px-6 bg-brand-blue hover:bg-blue-700 text-white rounded-2xl text-sm font-black cursor-pointer transition-all shadow-md shadow-brand-blue/15 gap-2.5"
+                        aria-label={`Ask about availability for ${product.name} on WhatsApp`}
                       >
                         <Phone className="h-4 w-4 fill-white text-white" />
                         Enquire Stock on WhatsApp
@@ -815,7 +934,7 @@ export default function ProductDetailModal({
                     )}
 
                     {/* Trust assurances check labels row */}
-                    <div className="flex justify-center items-center gap-6 text-[10px] text-slate-400 font-bold uppercase tracking-wider py-1.5 bg-slate-50/50 rounded-xl">
+                    <div className="flex flex-wrap justify-center items-center gap-3 text-[10px] text-slate-600 font-bold uppercase tracking-wider px-3 py-2.5 bg-slate-50 rounded-xl border border-slate-100 sm:gap-6">
                       <span className="flex items-center gap-1.5">
                         <Check className="h-3.5 w-3.5 text-emerald-500" />
                         Cash on Delivery Eligible
@@ -830,8 +949,11 @@ export default function ProductDetailModal({
                     {/* Wishlist Heart action button */}
                     {isWishlistEnabled && (
                       <button
+                        type="button"
                         onClick={() => onToggleWishlist(product)}
-                        className="flex items-center justify-center text-xs font-bold text-slate-500 hover:text-red-500 mx-auto transition-colors cursor-pointer py-1.5 gap-2"
+                        className="flex items-center justify-center text-xs font-bold text-slate-600 hover:text-red-600 mx-auto transition-colors cursor-pointer py-2 px-3 gap-2 rounded-xl focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-red-500/15"
+                        aria-label={isWishlisted ? `Remove ${product.name} from wishlist` : `Add ${product.name} to wishlist`}
+                        aria-pressed={isWishlisted}
                       >
                         <Heart className={`h-4.5 w-4.5 transition-colors ${isWishlisted ? 'fill-red-500 text-red-500 animate-pulse' : 'text-slate-400'}`} />
                         <span>{isWishlisted ? 'Saved in Wishlist' : 'Add to Wishlist'}</span>
@@ -927,26 +1049,29 @@ export default function ProductDetailModal({
 
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                           <div className="space-y-1.5">
-                            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-wider">Your Name</label>
+                            <label htmlFor="product-review-name" className="block text-[10px] font-black text-slate-500 uppercase tracking-wider">Your Name</label>
                             <input
+                              id="product-review-name"
                               type="text"
                               required
                               placeholder="e.g. John Doe"
                               value={newCustomerName}
                               onChange={(e) => setNewCustomerName(e.target.value)}
-                              className="w-full text-xs px-4 py-3 bg-white border border-slate-200 rounded-2xl focus:outline-hidden focus:ring-2 focus:ring-brand-blue/10 focus:border-brand-blue/60 transition-all text-slate-700"
+                              className="w-full text-xs px-4 py-3 bg-white border border-slate-300 rounded-2xl focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/15 focus-visible:border-brand-blue transition-all text-slate-800"
                             />
                           </div>
 
                           <div className="space-y-1.5">
-                            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-wider">Select Star Rating</label>
+                            <span className="block text-[10px] font-black text-slate-500 uppercase tracking-wider" id="product-review-rating-label">Select Star Rating</span>
                             <div className="flex space-x-1 py-1">
                               {[1, 2, 3, 4, 5].map((val) => (
                                 <button
                                   key={val}
                                   type="button"
                                   onClick={() => setNewRating(val)}
-                                  className="p-1 hover:scale-115 transition-transform cursor-pointer"
+                                  className="p-2 hover:scale-110 transition-transform cursor-pointer rounded-lg focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-amber-400/25"
+                                  aria-label={`${val} star rating`}
+                                  aria-pressed={newRating === val}
                                 >
                                   <Star className={`h-6 w-6 ${val <= newRating ? 'fill-amber-400 text-amber-400' : 'text-slate-200'}`} />
                                 </button>
@@ -956,21 +1081,22 @@ export default function ProductDetailModal({
                         </div>
 
                         <div className="space-y-1.5">
-                          <label className="block text-[10px] font-black text-slate-400 uppercase tracking-wider">Write Review Comments</label>
+                          <label htmlFor="product-review-comment" className="block text-[10px] font-black text-slate-500 uppercase tracking-wider">Write Review Comments</label>
                           <textarea
+                            id="product-review-comment"
                             required
                             rows={3}
                             placeholder="Share details regarding product authenticity, performance, packaging, warranty, or delivery dispatch time..."
                             value={newComment}
                             onChange={(e) => setNewComment(e.target.value)}
-                            className="w-full text-xs px-4 py-3 bg-white border border-slate-200 rounded-2xl focus:outline-hidden focus:ring-2 focus:ring-brand-blue/10 focus:border-brand-blue/60 transition-all text-slate-700"
+                            className="w-full text-xs px-4 py-3 bg-white border border-slate-300 rounded-2xl focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/15 focus-visible:border-brand-blue transition-all text-slate-800"
                           />
                         </div>
 
                         <button
                           type="submit"
                           disabled={isSubmitting}
-                          className="w-full sm:w-fit px-8 py-3 bg-slate-950 hover:bg-slate-850 text-white font-black rounded-xl text-[10px] uppercase tracking-widest transition-all cursor-pointer disabled:opacity-50 shadow-md shadow-slate-950/10"
+                          className="w-full sm:w-fit px-8 py-3 bg-slate-950 hover:bg-slate-800 text-white font-black rounded-xl text-[10px] uppercase tracking-widest transition-all cursor-pointer disabled:opacity-50 shadow-md shadow-slate-950/10 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/25"
                         >
                           {isSubmitting ? 'Submitting Details...' : 'Submit Verified Review'}
                         </button>
@@ -1075,14 +1201,18 @@ export default function ProductDetailModal({
                   {relatedItems.length > 4 && (
                     <div className="flex space-x-2">
                       <button
+                        type="button"
                         onClick={() => scrollRelated('left')}
-                        className="p-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-full cursor-pointer transition-all active:scale-90 border border-slate-200/50"
+                        className="p-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-full cursor-pointer transition-all active:scale-90 border border-slate-200 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20"
+                        aria-label="Scroll related products left"
                       >
                         <ChevronLeft className="h-4.5 w-4.5" />
                       </button>
                       <button
+                        type="button"
                         onClick={() => scrollRelated('right')}
-                        className="p-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-full cursor-pointer transition-all active:scale-90 border border-slate-200/50"
+                        className="p-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-full cursor-pointer transition-all active:scale-90 border border-slate-200 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20"
+                        aria-label="Scroll related products right"
                       >
                         <ChevronRight className="h-4.5 w-4.5" />
                       </button>
@@ -1096,7 +1226,8 @@ export default function ProductDetailModal({
                   className="flex overflow-x-auto gap-4 py-3 scrollbar-none snap-x snap-mandatory"
                 >
                   {relatedItems.map((item) => (
-                    <motion.div 
+                    <motion.button
+                      type="button"
                       key={item.id}
                       whileHover={{ y: -5 }}
                       whileTap={{ scale: 0.98 }}
@@ -1107,7 +1238,8 @@ export default function ProductDetailModal({
                           scrollContainerRef.current.scrollTo({ top: 0, behavior: 'smooth' });
                         }
                       }}
-                      className="w-[185px] sm:w-[230px] flex-shrink-0 snap-start group cursor-pointer bg-white border border-slate-100 rounded-2xl p-4 flex flex-col h-full hover:shadow-lg hover:border-slate-200 transition-all duration-300 text-left"
+                      className="w-[185px] sm:w-[230px] flex-shrink-0 snap-start group cursor-pointer bg-white border border-slate-200 rounded-2xl p-4 flex flex-col h-full hover:shadow-lg hover:border-brand-blue/25 transition-all duration-300 text-left focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20"
+                      aria-label={`View related product ${item.name}`}
                     >
                       <div className="aspect-square w-full rounded-xl overflow-hidden bg-slate-50 relative mb-4 p-3 flex items-center justify-center select-none">
                         <img 
@@ -1141,7 +1273,7 @@ export default function ProductDetailModal({
                           </span>
                         </div>
                       </div>
-                    </motion.div>
+                    </motion.button>
                   ))}
                 </div>
               </div>
@@ -1161,6 +1293,9 @@ export default function ProductDetailModal({
             exit={{ opacity: 0 }}
             onClick={handleLightboxClose}
             className="fixed inset-0 z-50 bg-black/95 backdrop-blur-2xl flex flex-col justify-between p-4 cursor-zoom-out select-none"
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Expanded image viewer for ${product.name}`}
           >
             {/* Top Close Control rail */}
             <div className="flex justify-between items-center w-full max-w-6xl mx-auto py-2">
@@ -1169,8 +1304,10 @@ export default function ProductDetailModal({
                 <span>Device Inspector Mode</span>
               </div>
               <button
+                type="button"
                 onClick={handleLightboxClose}
-                className="p-3 bg-white/10 hover:bg-white/20 text-white rounded-full transition-colors cursor-pointer border border-white/10"
+                className="p-3 bg-white/10 hover:bg-white/20 text-white rounded-full transition-colors cursor-pointer border border-white/10 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-white/30"
+                aria-label="Close expanded image viewer"
               >
                 <X className="h-5 w-5" />
               </button>
@@ -1197,7 +1334,7 @@ export default function ProductDetailModal({
                   }}
                   transition={isDragging ? { type: 'tween', duration: 0 } : { type: 'spring', damping: 25 }}
                   src={activeImageUrl}
-                  alt=""
+                  alt={`${product.name}, image ${activeImageIndex + 1} of ${galleryImages.length}`}
                   referrerPolicy="no-referrer"
                   className="max-h-[80vh] max-w-full object-contain pointer-events-none"
                 />
@@ -1207,14 +1344,18 @@ export default function ProductDetailModal({
               {galleryImages.length > 1 && (
                 <>
                   <button
+                    type="button"
                     onClick={prevLightboxImage}
-                    className="absolute left-2 p-3 bg-white/10 hover:bg-white/20 border border-white/10 text-white rounded-full transition-colors cursor-pointer active:scale-90"
+                    className="absolute left-2 p-3 bg-white/10 hover:bg-white/20 border border-white/10 text-white rounded-full transition-colors cursor-pointer active:scale-90 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-white/30"
+                    aria-label="Show previous expanded product image"
                   >
                     <ChevronLeft className="h-6 w-6" />
                   </button>
                   <button
+                    type="button"
                     onClick={nextLightboxImage}
-                    className="absolute right-2 p-3 bg-white/10 hover:bg-white/20 border border-white/10 text-white rounded-full transition-colors cursor-pointer active:scale-90"
+                    className="absolute right-2 p-3 bg-white/10 hover:bg-white/20 border border-white/10 text-white rounded-full transition-colors cursor-pointer active:scale-90 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-white/30"
+                    aria-label="Show next expanded product image"
                   >
                     <ChevronRight className="h-6 w-6" />
                   </button>
@@ -1226,9 +1367,11 @@ export default function ProductDetailModal({
             <div className="w-full max-w-xl mx-auto bg-white/5 border border-white/10 backdrop-blur-md p-4 rounded-3xl flex items-center justify-between gap-4 mb-2" onClick={(e) => e.stopPropagation()}>
               <div className="flex items-center gap-1.5">
                 <button
+                  type="button"
                   onClick={handleZoomOut}
                   disabled={lightboxZoom <= 1}
-                  className="p-2 text-white/80 hover:text-white disabled:opacity-30 transition-colors cursor-pointer"
+                  className="p-2 text-white/80 hover:text-white disabled:opacity-30 transition-colors cursor-pointer rounded-lg focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-white/30"
+                  aria-label="Zoom out product image"
                 >
                   <ZoomOut className="h-5 w-5" />
                 </button>
@@ -1238,9 +1381,11 @@ export default function ProductDetailModal({
                 </span>
 
                 <button
+                  type="button"
                   onClick={handleZoomIn}
                   disabled={lightboxZoom >= 4}
-                  className="p-2 text-white/80 hover:text-white disabled:opacity-30 transition-colors cursor-pointer"
+                  className="p-2 text-white/80 hover:text-white disabled:opacity-30 transition-colors cursor-pointer rounded-lg focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-white/30"
+                  aria-label="Zoom in product image"
                 >
                   <ZoomIn className="h-5 w-5" />
                 </button>
@@ -1252,7 +1397,7 @@ export default function ProductDetailModal({
 
               {/* Pagination Dots */}
               {galleryImages.length > 1 && (
-                <div className="flex items-center space-x-1.5">
+                <div className="flex items-center space-x-1.5" aria-label={`Image ${activeImageIndex + 1} of ${galleryImages.length}`} role="status">
                   {galleryImages.map((_, i) => (
                     <div 
                       key={i} 
@@ -1268,39 +1413,60 @@ export default function ProductDetailModal({
         )}
       </AnimatePresence>
 
-      {/* MOBILE SCROLL ACCESSIBILITY: STICKY FLOOR ADD TO CART FOOTER BAR */}
+      {/* Mobile sticky purchase bar; uses the same cart and checkout handlers as the main CTA section. */}
       <AnimatePresence>
-        {showStickyBar && (
+        {showStickyBar && !isLightboxOpen && (
           <motion.div
             initial={{ y: 100, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: 100, opacity: 0 }}
             transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-            className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 border-t border-slate-200/60 p-4.5 pb-5 flex items-center justify-between shadow-[0_-15px_40px_rgba(0,0,0,0.12)] md:hidden backdrop-blur-md"
+            className="fixed bottom-0 left-0 right-0 z-[60] bg-white/97 border-t border-slate-200 px-4 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] shadow-[0_-15px_40px_rgba(0,0,0,0.14)] md:hidden backdrop-blur-xl"
+            aria-label="Mobile purchase actions"
           >
-            <div className="flex items-center space-x-3 text-left max-w-[55%]">
-              <img 
-                src={product.imageUrl} 
-                alt="" 
-                className="w-12 h-12 object-contain bg-slate-50 p-1.5 rounded-xl border border-slate-100" 
-                referrerPolicy="no-referrer" 
-              />
-              <div>
-                <span className="text-[9px] text-slate-400 block font-bold uppercase tracking-widest truncate">{brandName}</span>
-                <span className="text-xs font-black text-slate-900 truncate block leading-tight">{product.name}</span>
-                <span className="text-xs font-black text-brand-blue block mt-0.5">{formatPrice(product.price)}</span>
+            <div className="mx-auto max-w-xl space-y-2.5">
+              <div className="flex items-center justify-between gap-3 text-left">
+                <div className="min-w-0">
+                  <span className="block truncate text-[11px] font-extrabold text-slate-900">{product.name}</span>
+                  <span className="block text-base font-black text-brand-blue">{formatPrice(product.price)}</span>
+                </div>
+                <span className={`flex-none rounded-full border px-2.5 py-1 text-[9px] font-extrabold uppercase tracking-wide ${product.stock <= 0 ? 'border-red-100 bg-red-50 text-red-700' : product.stock <= 5 ? 'border-amber-100 bg-amber-50 text-amber-700' : 'border-emerald-100 bg-emerald-50 text-emerald-700'}`}>
+                  {product.stock <= 0 ? 'Out of stock' : product.stock <= 5 ? `Only ${product.stock} left` : 'In stock'}
+                </span>
               </div>
-            </div>
-            
-            <div className="flex items-center space-x-2">
-              <button
-                onClick={handleAddToCart}
-                disabled={product.stock <= 0}
-                className="py-3 px-5 bg-brand-blue hover:bg-blue-700 text-white rounded-xl text-xs font-black flex items-center gap-1.5 active:scale-95 transition-all shadow-md shadow-brand-blue/15 cursor-pointer disabled:opacity-50"
-              >
-                {addedMessage ? <Check className="h-4 w-4 text-emerald-300" /> : <ShoppingCart className="h-4 w-4" />}
-                <span>{addedMessage ? 'Added' : 'Add to Cart'}</span>
-              </button>
+
+              {product.stock > 0 ? (
+                <div className="grid grid-cols-[0.9fr_1.1fr] gap-2.5">
+                  <button
+                    type="button"
+                    onClick={handleAddToCart}
+                    className="flex min-h-12 items-center justify-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3 py-3 text-xs font-black text-slate-900 transition-all active:scale-[0.98] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20"
+                    aria-label={`Add ${quantity} ${product.name} to cart`}
+                  >
+                    {addedMessage ? <Check className="h-4 w-4 text-emerald-600" aria-hidden="true" /> : <ShoppingCart className="h-4 w-4" aria-hidden="true" />}
+                    <span>{addedMessage ? 'Added' : 'Add to Cart'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onBuyNow(product, quantity)}
+                    className="flex min-h-12 items-center justify-center gap-1.5 rounded-xl bg-brand-blue px-3 py-3 text-xs font-black text-white shadow-md shadow-brand-blue/20 transition-all active:scale-[0.98] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/25"
+                    aria-label={`Buy ${quantity} ${product.name} now`}
+                  >
+                    <ShoppingBag className="h-4 w-4" aria-hidden="true" />
+                    Buy Now
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleWhatsAppEnquiry}
+                  className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-brand-blue px-4 py-3 text-xs font-black text-white shadow-md shadow-brand-blue/20 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/25"
+                  aria-label={`Ask about availability for ${product.name} on WhatsApp`}
+                >
+                  <Phone className="h-4 w-4" aria-hidden="true" />
+                  Enquire About Stock
+                </button>
+              )}
             </div>
           </motion.div>
         )}
