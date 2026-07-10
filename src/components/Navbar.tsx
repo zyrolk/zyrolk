@@ -234,7 +234,7 @@ export default function Navbar({
           }}
           onFocus={() => setIsSearchOpen(true)}
           onKeyDown={handleSearchKeyDown}
-          className="zy-input min-h-11 min-w-0 max-w-full w-full rounded-2xl border-slate-200 bg-slate-50/90 pl-11 pr-20 text-sm text-slate-900 shadow-inner shadow-slate-950/[0.02] transition-all placeholder:text-slate-500 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/15 focus-visible:border-brand-blue/40 focus-visible:bg-white [&::-webkit-search-cancel-button]:appearance-none"
+          className="zy-input min-h-12 min-w-0 max-w-full w-full rounded-2xl border-slate-200 bg-slate-50/90 pl-11 pr-24 text-sm text-slate-900 shadow-inner shadow-slate-950/[0.02] transition-all placeholder:text-slate-500 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/15 focus-visible:border-brand-blue/40 focus-visible:bg-white [&::-webkit-search-cancel-button]:appearance-none"
           role="combobox"
           aria-autocomplete="list"
           aria-expanded={isSearchOpen}
@@ -246,7 +246,7 @@ export default function Navbar({
           <button
             type="button"
             onClick={clearSearch}
-            className="absolute right-11 top-1/2 z-10 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full text-slate-500 transition-colors hover:bg-slate-200 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20"
+            className="absolute right-12 top-1/2 z-10 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-xl text-slate-500 transition-colors hover:bg-slate-200 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20"
             aria-label="Clear product search"
           >
             <X className="h-4 w-4" aria-hidden="true" />
@@ -254,7 +254,7 @@ export default function Navbar({
         )}
         <button
           type="submit"
-          className="absolute right-1.5 top-1/2 z-10 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-xl bg-brand-blue text-white shadow-sm transition-all hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/25"
+          className="absolute right-0.5 top-1/2 z-10 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-xl bg-brand-blue text-white shadow-sm transition-all hover:bg-blue-700 active:scale-95 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/25"
           aria-label="Submit product search"
         >
           <ArrowUpRight className="h-4 w-4" aria-hidden="true" />
@@ -293,7 +293,7 @@ export default function Navbar({
                       >
                         <div className="flex h-11 w-11 flex-none items-center justify-center overflow-hidden rounded-xl border border-slate-100 bg-slate-50 p-1.5">
                           {product.imageUrl ? (
-                            <img src={product.imageUrl} alt="" className="h-full w-full object-contain" referrerPolicy="no-referrer" />
+                            <img src={product.imageUrl} alt="" className="h-full w-full object-contain" referrerPolicy="no-referrer" decoding="async" width="44" height="44" />
                           ) : (
                             <PackageSearch className="h-5 w-5 text-slate-400" aria-hidden="true" />
                           )}
@@ -330,11 +330,11 @@ export default function Navbar({
                       <span className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest text-slate-500">
                         <Clock3 className="h-3.5 w-3.5" aria-hidden="true" /> Recent searches
                       </span>
-                      <button type="button" onClick={clearRecentSearches} className="min-h-8 rounded-lg px-2 text-[10px] font-black text-brand-blue hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20">Clear</button>
+                      <button type="button" onClick={clearRecentSearches} className="min-h-11 rounded-lg px-2 text-[10px] font-black text-brand-blue hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20">Clear</button>
                     </div>
                     <div className="flex flex-wrap gap-2">
                       {recentSearches.map((query) => (
-                        <button key={query} type="button" onClick={() => commitSearch(query)} className="min-h-10 rounded-full border border-slate-200 bg-slate-50 px-3 text-xs font-bold text-slate-700 transition-colors hover:border-brand-blue/30 hover:bg-blue-50 hover:text-brand-blue focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20">
+                        <button key={query} type="button" onClick={() => commitSearch(query)} className="min-h-11 rounded-full border border-slate-200 bg-slate-50 px-3 text-xs font-bold text-slate-700 transition-colors hover:border-brand-blue/30 hover:bg-blue-50 hover:text-brand-blue focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20">
                           {query}
                         </button>
                       ))}
@@ -347,7 +347,7 @@ export default function Navbar({
                   </span>
                   <div className="flex flex-wrap gap-2">
                     {matchingCategories.map((category) => (
-                      <button key={category.id} type="button" onClick={() => handleCategorySuggestion(category.id)} className="min-h-10 rounded-full border border-blue-100 bg-blue-50 px-3 text-xs font-black text-brand-blue transition-colors hover:bg-brand-blue hover:text-white focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20">
+                      <button key={category.id} type="button" onClick={() => handleCategorySuggestion(category.id)} className="min-h-11 rounded-full border border-blue-100 bg-blue-50 px-3 text-xs font-black text-brand-blue transition-colors hover:bg-brand-blue hover:text-white focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20">
                         {category.name}
                       </button>
                     ))}
@@ -361,7 +361,7 @@ export default function Navbar({
                 <span className="mb-2 block text-[10px] font-black uppercase tracking-widest text-slate-500">Browse a category instead</span>
                 <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none">
                   {matchingCategories.map((category) => (
-                    <button key={category.id} type="button" onClick={() => handleCategorySuggestion(category.id)} className="min-h-10 flex-none rounded-full border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 hover:border-brand-blue/30 hover:text-brand-blue focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20">
+                    <button key={category.id} type="button" onClick={() => handleCategorySuggestion(category.id)} className="min-h-11 flex-none rounded-full border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 hover:border-brand-blue/30 hover:text-brand-blue focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20">
                       {category.name}
                     </button>
                   ))}
@@ -380,7 +380,7 @@ export default function Navbar({
         <div className="flex items-center justify-between h-16">
           
           {/* Logo */}
-          <div className="flex-shrink-0 flex items-center cursor-pointer" onClick={() => { setCurrentPage('home'); setIsAdminMode(false); }}>
+          <button type="button" className="flex min-h-11 flex-shrink-0 items-center rounded-xl cursor-pointer focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20" onClick={() => { setCurrentPage('home'); setIsAdminMode(false); }} aria-label="Go to homepage">
             {settings?.logoUrl ? (
               <img 
                 src={settings.logoUrl} 
@@ -400,7 +400,7 @@ export default function Navbar({
                 )}
               </span>
             )}
-          </div>
+          </button>
 
           {/* Desktop Search Bar */}
           <div className="hidden md:flex flex-1 max-w-md mx-8">
@@ -416,7 +416,7 @@ export default function Navbar({
                   setCurrentPage(link.id);
                   setIsAdminMode(false);
                 }}
-                className={`text-sm font-semibold transition-colors cursor-pointer py-1 ${
+                className={`min-h-11 text-sm font-semibold transition-colors cursor-pointer px-1 ${
                   currentPage === link.id && !isAdminMode
                     ? 'text-brand-blue border-b-2 border-brand-blue'
                     : 'text-slate-600 hover:text-slate-900'
@@ -450,7 +450,7 @@ export default function Navbar({
             {isWishlistEnabled && (
               <button 
                 onClick={() => { setCurrentPage('wishlist'); setIsAdminMode(false); }}
-                className="zy-button zy-button-ghost p-2 text-slate-600 hover:text-red-500 relative cursor-pointer rounded-full"
+                className="zy-button zy-button-ghost h-11 w-11 p-0 text-slate-600 hover:text-red-500 relative cursor-pointer rounded-full"
                 title="Wishlist"
                 aria-label={`Open wishlist with ${wishlistCount} saved ${wishlistCount === 1 ? 'product' : 'products'}`}
                 aria-current={currentPage === 'wishlist' ? 'page' : undefined}
@@ -467,7 +467,7 @@ export default function Navbar({
             {/* Cart Button */}
             <button 
               onClick={onOpenCart}
-              className="zy-button zy-button-ghost p-2 text-slate-600 hover:text-brand-blue relative cursor-pointer rounded-full"
+              className="zy-button zy-button-ghost h-11 w-11 p-0 text-slate-600 hover:text-brand-blue relative cursor-pointer rounded-full"
               title="Shopping Cart"
               aria-label={`Open shopping cart with ${cartCount} ${cartCount === 1 ? 'item' : 'items'}`}
             >
@@ -480,10 +480,12 @@ export default function Navbar({
             </button>
 
             {/* User Dropdown */}
-            <div className="relative">
+            <div className="relative hidden sm:block">
               <button
                 onClick={() => setIsProfileOpen(!isProfileOpen)}
-                className="zy-button zy-button-ghost flex items-center space-x-1 p-2 text-slate-600 hover:text-slate-900 focus:outline-hidden cursor-pointer rounded-full"
+                className="zy-button zy-button-ghost flex h-11 min-w-11 items-center justify-center space-x-1 p-0 text-slate-600 hover:text-slate-900 cursor-pointer rounded-full focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20"
+                aria-label={user ? 'Open account menu' : 'Open sign in menu'}
+                aria-expanded={isProfileOpen}
               >
                 <User className="h-5 w-5" />
                 <ChevronDown className="h-3.5 w-3.5 hidden sm:block" />
@@ -544,7 +546,7 @@ export default function Navbar({
             {/* Mobile Hamburger Menu Button */}
             <button
               onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-              className="zy-button zy-button-ghost lg:hidden p-2 text-slate-600 hover:text-slate-900 cursor-pointer rounded-full"
+              className="zy-button zy-button-ghost flex h-11 w-11 items-center justify-center lg:hidden p-0 text-slate-600 hover:text-slate-900 cursor-pointer rounded-full focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20"
               aria-label={isMobileMenuOpen ? 'Close navigation menu' : 'Open navigation menu'}
               aria-expanded={isMobileMenuOpen}
             >

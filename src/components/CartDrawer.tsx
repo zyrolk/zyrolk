@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { X, ShoppingBag, Trash2, ShieldCheck, Phone, CheckCircle, Truck, Lock, Eye } from 'lucide-react';
 import { CartItem, Order, WebsiteSettings } from '../types';
 import { auth } from '../firebase';
@@ -91,6 +91,28 @@ export default function CartDrawer({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [placedOrder, setPlacedOrder] = useState<Order | null>(null);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+  const onCloseRef = useRef(onClose);
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const focusTimer = window.setTimeout(() => closeButtonRef.current?.focus(), 0);
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onCloseRef.current();
+    };
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      window.clearTimeout(focusTimer);
+      document.removeEventListener('keydown', handleEscape);
+      previousFocusRef.current?.focus();
+    };
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -203,23 +225,26 @@ export default function CartDrawer({
   };
 
   return (
-    <div className="fixed inset-0 z-50 overflow-hidden bg-black/60 backdrop-blur-xs flex justify-end">
+    <div className="fixed inset-0 z-50 overflow-hidden bg-black/60 backdrop-blur-xs flex justify-end" role="dialog" aria-modal="true" aria-labelledby="cart-drawer-title">
       
       {/* Cart Container */}
-      <div className="w-full max-w-lg bg-white h-full shadow-2xl flex flex-col justify-between animate-slideLeft overflow-y-auto">
+      <div className="w-full max-w-lg bg-white h-[100dvh] shadow-2xl flex flex-col justify-between animate-slideLeft overflow-hidden">
         
         {/* Header */}
-        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+        <div className="flex flex-none items-center justify-between border-b border-slate-200 bg-white/95 px-4 py-3 backdrop-blur-xl sm:px-6 sm:py-4">
           <div className="flex items-center space-x-2">
             <ShoppingBag className="h-5 w-5 text-brand-blue" />
-            <span className="text-lg font-bold tracking-tight font-display">Shopping Cart</span>
+            <h2 id="cart-drawer-title" className="text-lg font-bold tracking-tight font-display">Shopping Cart</h2>
             <span className="text-xs bg-brand-blue/10 text-brand-blue font-bold px-2 py-0.5 rounded-full">
               {cartItems.length}
             </span>
           </div>
           <button
+            ref={closeButtonRef}
+            type="button"
             onClick={onClose}
-            className="p-2 text-slate-400 hover:text-slate-900 hover:bg-slate-100 rounded-full cursor-pointer transition-colors"
+            className="flex h-11 w-11 items-center justify-center text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-full cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20"
+            aria-label="Close shopping cart"
           >
             <X className="h-5 w-5" />
           </button>
@@ -276,7 +301,7 @@ export default function CartDrawer({
         ) : (
           /* Cart active items list & Checkout Form */
           <>
-            <div className="flex-1 overflow-y-auto px-6 py-4 space-y-6">
+            <div className="flex-1 overflow-y-auto overscroll-contain px-4 py-4 pb-[max(1.5rem,env(safe-area-inset-bottom))] space-y-6 sm:px-6">
               
               {/* Free Delivery Progress Bar */}
               {cartItems.length > 0 && (() => {
@@ -318,8 +343,9 @@ export default function CartDrawer({
                   <ShoppingBag className="h-12 w-12 mx-auto text-slate-300" />
                   <p className="text-sm font-medium">Your shopping cart is empty.</p>
                   <button
+                    type="button"
                     onClick={onClose}
-                    className="text-xs font-bold text-brand-blue hover:underline"
+                    className="min-h-11 rounded-xl px-4 text-xs font-bold text-brand-blue hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20"
                   >
                     Explore our electronics store
                   </button>
@@ -329,41 +355,52 @@ export default function CartDrawer({
                   <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Cart Items</h4>
                   <div className="divide-y divide-slate-100">
                     {cartItems.map((item) => (
-                      <div key={item.product.id} className="flex py-3 first:pt-0 last:pb-0 items-center">
+                      <div key={item.product.id} className="flex items-start py-4 first:pt-0 last:pb-0">
                         <img
                           src={item.product.imageUrl}
                           alt={item.product.name}
-                          className="w-14 h-14 rounded-xl object-cover bg-slate-50 border border-slate-100 flex-shrink-0"
+                          className="w-14 h-14 rounded-xl object-contain p-1 bg-slate-50 border border-slate-100 flex-shrink-0"
                           referrerPolicy="no-referrer"
+                          loading="lazy"
+                          decoding="async"
+                          width="56"
+                          height="56"
                         />
-                        <div className="ml-4 flex-1 text-left">
+                        <div className="ml-3 min-w-0 flex-1 text-left sm:ml-4">
                           <h5 className="text-sm font-semibold text-slate-800 line-clamp-1">{item.product.name}</h5>
                           <span className="text-xs text-slate-400">{formatPrice(item.product.price)} each</span>
                           <div className="flex items-center space-x-1.5 mt-1.5">
                             <button
+                              type="button"
                               onClick={() => onUpdateQuantity(item.product.id, Math.max(1, item.quantity - 1))}
-                              className="w-6 h-6 rounded-md bg-slate-100 text-slate-600 font-bold text-xs flex items-center justify-center cursor-pointer"
+                              className="w-11 h-11 rounded-xl bg-slate-100 text-slate-700 font-black text-base flex items-center justify-center cursor-pointer transition-colors hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20"
+                              disabled={item.quantity <= 1}
+                              aria-label={`Decrease quantity of ${item.product.name}`}
                             >
                               -
                             </button>
-                            <span className="w-6 text-center text-xs font-bold">{item.quantity}</span>
+                            <span className="flex h-11 w-8 items-center justify-center text-sm font-black" aria-live="polite">{item.quantity}</span>
                             <button
+                              type="button"
                               onClick={() => onUpdateQuantity(item.product.id, Math.min(item.product.stock, item.quantity + 1))}
-                              className="w-6 h-6 rounded-md bg-slate-100 text-slate-600 font-bold text-xs flex items-center justify-center cursor-pointer"
+                              className="w-11 h-11 rounded-xl bg-slate-100 text-slate-700 font-black text-base flex items-center justify-center cursor-pointer transition-colors hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20"
                               disabled={item.quantity >= item.product.stock}
+                              aria-label={`Increase quantity of ${item.product.name}`}
                             >
                               +
                             </button>
                           </div>
                         </div>
-                        <div className="ml-4 flex flex-col items-end justify-between h-14">
+                        <div className="ml-2 flex h-[4.5rem] flex-col items-end justify-between sm:ml-4">
                           <span className="text-sm font-bold text-slate-900">
                             {formatPrice(item.product.price * item.quantity)}
                           </span>
                           <button
+                            type="button"
                             onClick={() => onRemoveItem(item.product.id)}
-                            className="p-1.5 text-slate-400 hover:text-red-500 rounded-md transition-colors cursor-pointer"
+                            className="flex h-11 w-11 items-center justify-center text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-red-500/20"
                             title="Remove item"
+                            aria-label={`Remove ${item.product.name} from cart`}
                           >
                             <Trash2 className="h-4 w-4" />
                           </button>
@@ -418,61 +455,66 @@ export default function CartDrawer({
                     
                     {/* Customer Name */}
                     <div>
-                      <label className="block text-xs font-medium text-slate-500 mb-1">Recipient Name *</label>
+                      <label htmlFor="cart-recipient-name" className="block text-xs font-medium text-slate-600 mb-1">Recipient Name *</label>
                       <input
+                        id="cart-recipient-name"
                         type="text"
                         required
                         placeholder="John Doe"
                         value={customerName}
                         onChange={(e) => setCustomerName(e.target.value)}
-                        className="w-full text-sm px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-brand-blue/20"
+                        className="min-h-11 w-full text-sm px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/15"
                       />
                     </div>
 
                     {/* Customer Phone 1 (Required) */}
                     <div>
-                      <label className="block text-xs font-medium text-slate-500 mb-1">Phone Number 1 *</label>
+                      <label htmlFor="cart-phone-primary" className="block text-xs font-medium text-slate-600 mb-1">Phone Number 1 *</label>
                       <input
+                        id="cart-phone-primary"
                         type="tel"
                         required
                         placeholder="+94 77 123 4567"
                         value={customerPhone}
                         onChange={(e) => setCustomerPhone(e.target.value)}
-                        className="w-full text-sm px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-brand-blue/20"
+                        className="min-h-11 w-full text-sm px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/15"
                       />
                     </div>
 
                     {/* Customer Phone 2 (Optional) */}
                     <div>
-                      <label className="block text-xs font-medium text-slate-500 mb-1">Phone Number 2 (Optional)</label>
+                      <label htmlFor="cart-phone-secondary" className="block text-xs font-medium text-slate-600 mb-1">Phone Number 2 (Optional)</label>
                       <input
+                        id="cart-phone-secondary"
                         type="tel"
                         placeholder="Alternative Contact Number"
                         value={customerPhone2}
                         onChange={(e) => setCustomerPhone2(e.target.value)}
-                        className="w-full text-sm px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-brand-blue/20"
+                        className="min-h-11 w-full text-sm px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/15"
                       />
                     </div>
 
                     {/* Email */}
                     <div>
-                      <label className="block text-xs font-medium text-slate-500 mb-1">Email Address (Optional)</label>
+                      <label htmlFor="cart-email" className="block text-xs font-medium text-slate-600 mb-1">Email Address (Optional)</label>
                       <input
+                        id="cart-email"
                         type="email"
                         placeholder="customer@gmail.com"
                         value={customerEmail}
                         onChange={(e) => setCustomerEmail(e.target.value)}
-                        className="w-full text-sm px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden"
+                        className="min-h-11 w-full text-sm px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/15"
                       />
                     </div>
 
                     {/* District Selector for Sri Lanka */}
                     <div>
-                      <label className="block text-xs font-medium text-slate-500 mb-1">District *</label>
+                      <label htmlFor="cart-district" className="block text-xs font-medium text-slate-600 mb-1">District *</label>
                       <select
+                        id="cart-district"
                         value={district}
                         onChange={(e) => setDistrict(e.target.value)}
-                        className="w-full text-sm px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden"
+                        className="min-h-11 w-full text-sm px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/15"
                       >
                         {Object.keys(DISTRICT_DELIVERY).map((dist) => (
                           <option key={dist} value={dist}>{dist}</option>
@@ -482,27 +524,29 @@ export default function CartDrawer({
 
                     {/* City */}
                     <div>
-                      <label className="block text-xs font-medium text-slate-500 mb-1">City *</label>
+                      <label htmlFor="cart-city" className="block text-xs font-medium text-slate-600 mb-1">City *</label>
                       <input
+                        id="cart-city"
                         type="text"
                         required
                         placeholder="Colombo"
                         value={city}
                         onChange={(e) => setCity(e.target.value)}
-                        className="w-full text-sm px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-brand-blue/20"
+                        className="min-h-11 w-full text-sm px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/15"
                       />
                     </div>
 
                     {/* Delivery Address */}
                     <div>
-                      <label className="block text-xs font-medium text-slate-500 mb-1">Street Address *</label>
+                      <label htmlFor="cart-address" className="block text-xs font-medium text-slate-600 mb-1">Street Address *</label>
                       <textarea
+                        id="cart-address"
                         required
                         rows={2}
                         placeholder="No. 12, Galle Road, Colombo 03"
                         value={customerAddress}
                         onChange={(e) => setCustomerAddress(e.target.value)}
-                        className="w-full text-sm px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden"
+                        className="w-full text-sm px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/15"
                       ></textarea>
                     </div>
 
@@ -561,7 +605,8 @@ export default function CartDrawer({
                   <button
                     type="submit"
                     disabled={isSubmitting}
-                    className="w-full mt-6 py-3.5 px-4 rounded-xl font-bold text-sm cursor-pointer transition-all flex items-center justify-center bg-slate-900 hover:bg-slate-800 text-white shadow-lg shadow-slate-900/10"
+                    className="min-h-12 w-full mt-6 py-3.5 px-4 rounded-xl font-bold text-sm cursor-pointer transition-all flex items-center justify-center bg-slate-900 hover:bg-slate-800 text-white shadow-lg shadow-slate-900/10 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/25"
+                    aria-busy={isSubmitting}
                   >
                     {isSubmitting ? (
                       "Saving Order details..."

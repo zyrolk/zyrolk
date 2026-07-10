@@ -52,7 +52,7 @@ function ProductFilters({
           type="button"
           onClick={onClearAll}
           disabled={activeFilterCount === 0}
-          className="inline-flex min-h-10 items-center gap-1.5 rounded-xl px-2.5 text-[10px] font-black uppercase tracking-wide text-brand-blue transition-colors hover:bg-blue-50 disabled:cursor-not-allowed disabled:text-slate-300 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20"
+          className="inline-flex min-h-11 items-center gap-1.5 rounded-xl px-2.5 text-[10px] font-black uppercase tracking-wide text-brand-blue transition-colors hover:bg-blue-50 disabled:cursor-not-allowed disabled:text-slate-300 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20"
         >
           <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
           Clear All

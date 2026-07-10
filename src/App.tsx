@@ -391,7 +391,7 @@ export default function App() {
   }, [isAuthModalOpen]);
 
   // --- CART FUNCTIONS ---
-  const handleAddToCart = (product: Product, qty: number = 1) => {
+  const handleAddToCart = useCallback((product: Product, qty: number = 1) => {
     if (product.stock <= 0) return;
     setCart(prev => {
       const existing = prev.find(item => item.product.id === product.id);
@@ -404,7 +404,7 @@ export default function App() {
       }
       return [...prev, { product, quantity: Math.min(product.stock, qty) }];
     });
-  };
+  }, []);
 
   const handleBuyNow = (product: Product, quantity: number) => {
     if (product.stock <= 0) return;
@@ -439,7 +439,7 @@ export default function App() {
   };
 
   // --- WISHLIST FUNCTIONS ---
-  const handleToggleWishlist = (product: Product) => {
+  const handleToggleWishlist = useCallback((product: Product) => {
     const isRemoving = wishlist.some(item => item.id === product.id);
     setWishlist(prev => {
       const isExist = prev.some(item => item.id === product.id);
@@ -454,7 +454,16 @@ export default function App() {
       window.clearTimeout(wishlistFeedbackTimerRef.current);
     }
     wishlistFeedbackTimerRef.current = window.setTimeout(() => setWishlistFeedback(null), 2400);
-  };
+  }, [wishlist]);
+
+  const handleViewProduct = useCallback((product: Product) => {
+    setSelectedProduct(product);
+  }, []);
+
+  const wishlistProductIds = useMemo(
+    () => new Set(wishlist.map(product => product.id)),
+    [wishlist]
+  );
 
   // --- FILTERING LOGIC ---
   const filteredProducts = useMemo(() => products.filter(prod => {
@@ -560,7 +569,7 @@ export default function App() {
           />
         </Suspense>
       ) : (
-        <div className="flex-1 pb-24 md:pb-0">
+        <div className="flex-1 pb-[calc(7rem+env(safe-area-inset-bottom))] md:pb-0">
           {/* Main Content Pages */}
 
           {/* PAGE 1: HOME PAGE */}
@@ -646,6 +655,10 @@ export default function App() {
                             alt={cat.name} 
                             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500 ease-out"
                             referrerPolicy="no-referrer"
+                            loading="lazy"
+                            decoding="async"
+                            width="600"
+                            height="450"
                           />
                           {/* Soft bottom vignette for image blending */}
                           <div className="absolute inset-0 bg-gradient-to-t from-slate-950/60 via-slate-950/5 to-transparent" />
@@ -677,7 +690,7 @@ export default function App() {
               {/* Homepage Content Sections */}
               {loading ? (
                 <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
-                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
+                  <div className="grid grid-cols-1 min-[480px]:grid-cols-2 lg:grid-cols-4 gap-5 sm:gap-6">
                     {[...Array(4)].map((_, idx) => (
                       <div key={idx} className="bg-white border border-slate-100 rounded-2xl p-4 space-y-4 animate-pulse flex flex-col justify-between h-full">
                         <div className="space-y-4">
@@ -732,10 +745,10 @@ export default function App() {
                           <ProductCard 
                             key={prod.id}
                             product={prod}
-                            isWishlisted={wishlist.some(w => w.id === prod.id)}
+                            isWishlisted={wishlistProductIds.has(prod.id)}
                             onAddToCart={handleAddToCart}
                             onToggleWishlist={handleToggleWishlist}
-                            onViewDetail={(p) => setSelectedProduct(p)}
+                            onViewDetail={handleViewProduct}
                             showWishlist={settings?.enableWishlist !== false}
                             settings={settings}
                           />
@@ -880,10 +893,10 @@ export default function App() {
                           <ProductCard 
                             key={prod.id}
                             product={prod}
-                            isWishlisted={wishlist.some(w => w.id === prod.id)}
+                            isWishlisted={wishlistProductIds.has(prod.id)}
                             onAddToCart={handleAddToCart}
                             onToggleWishlist={handleToggleWishlist}
-                            onViewDetail={(p) => setSelectedProduct(p)}
+                            onViewDetail={handleViewProduct}
                             showWishlist={settings?.enableWishlist !== false}
                             settings={settings}
                           />
@@ -917,10 +930,10 @@ export default function App() {
                           <ProductCard 
                             key={prod.id}
                             product={prod}
-                            isWishlisted={wishlist.some(w => w.id === prod.id)}
+                            isWishlisted={wishlistProductIds.has(prod.id)}
                             onAddToCart={handleAddToCart}
                             onToggleWishlist={handleToggleWishlist}
-                            onViewDetail={(p) => setSelectedProduct(p)}
+                            onViewDetail={handleViewProduct}
                             showWishlist={settings?.enableWishlist !== false}
                             settings={settings}
                           />
@@ -955,10 +968,10 @@ export default function App() {
                             <ProductCard 
                               key={prod.id}
                               product={prod}
-                              isWishlisted={wishlist.some(w => w.id === prod.id)}
+                              isWishlisted={wishlistProductIds.has(prod.id)}
                               onAddToCart={handleAddToCart}
                               onToggleWishlist={handleToggleWishlist}
-                              onViewDetail={(p) => setSelectedProduct(p)}
+                              onViewDetail={handleViewProduct}
                               showWishlist={settings?.enableWishlist !== false}
                               settings={settings}
                             />
@@ -1079,26 +1092,26 @@ export default function App() {
                     {activeFilterCount > 0 && (
                       <div className="flex flex-wrap items-center gap-2" aria-label="Active filters">
                         {searchQuery && (
-                          <button type="button" onClick={() => setSearchQuery('')} className="inline-flex min-h-9 items-center gap-1.5 rounded-full border border-blue-100 bg-blue-50 px-3 text-[11px] font-bold text-brand-blue focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20">
+                          <button type="button" onClick={() => setSearchQuery('')} className="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-blue-100 bg-blue-50 px-3 text-[11px] font-bold text-brand-blue focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20">
                             Search: “{searchQuery}” <X className="h-3.5 w-3.5" aria-hidden="true" />
                           </button>
                         )}
                         {selectedCategory !== 'all' && (
-                          <button type="button" onClick={() => setSelectedCategory('all')} className="inline-flex min-h-9 items-center gap-1.5 rounded-full border border-blue-100 bg-blue-50 px-3 text-[11px] font-bold text-brand-blue focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20">
+                          <button type="button" onClick={() => setSelectedCategory('all')} className="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-blue-100 bg-blue-50 px-3 text-[11px] font-bold text-brand-blue focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20">
                             {categories.find(category => category.id === selectedCategory)?.name || selectedCategory.replace('-', ' ')} <X className="h-3.5 w-3.5" aria-hidden="true" />
                           </button>
                         )}
                         {priceRange < 1000000 && (
-                          <button type="button" onClick={() => setPriceRange(1000000)} className="inline-flex min-h-9 items-center gap-1.5 rounded-full border border-blue-100 bg-blue-50 px-3 text-[11px] font-bold text-brand-blue focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20">
+                          <button type="button" onClick={() => setPriceRange(1000000)} className="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-blue-100 bg-blue-50 px-3 text-[11px] font-bold text-brand-blue focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20">
                             Up to {formatPrice(priceRange)} <X className="h-3.5 w-3.5" aria-hidden="true" />
                           </button>
                         )}
                         {sortBy !== 'featured' && (
-                          <button type="button" onClick={() => setSortBy('featured')} className="inline-flex min-h-9 items-center gap-1.5 rounded-full border border-blue-100 bg-blue-50 px-3 text-[11px] font-bold text-brand-blue focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20">
+                          <button type="button" onClick={() => setSortBy('featured')} className="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-blue-100 bg-blue-50 px-3 text-[11px] font-bold text-brand-blue focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20">
                             Custom sort <X className="h-3.5 w-3.5" aria-hidden="true" />
                           </button>
                         )}
-                        <button type="button" onClick={clearAllFilters} className="min-h-9 rounded-full px-3 text-[11px] font-black text-slate-600 hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20">Clear all</button>
+                        <button type="button" onClick={clearAllFilters} className="min-h-11 rounded-full px-3 text-[11px] font-black text-slate-600 hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20">Clear all</button>
                       </div>
                     )}
                   </div>
@@ -1127,10 +1140,10 @@ export default function App() {
                         <ProductCard 
                           key={prod.id}
                           product={prod}
-                          isWishlisted={wishlist.some(w => w.id === prod.id)}
+                          isWishlisted={wishlistProductIds.has(prod.id)}
                           onAddToCart={handleAddToCart}
                           onToggleWishlist={handleToggleWishlist}
-                          onViewDetail={(p) => setSelectedProduct(p)}
+                          onViewDetail={handleViewProduct}
                           showWishlist={settings?.enableWishlist !== false}
                           settings={settings}
                         />
@@ -1238,6 +1251,10 @@ export default function App() {
                           alt={cat.name} 
                           className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700 ease-out"
                           referrerPolicy="no-referrer"
+                          loading="lazy"
+                          decoding="async"
+                          width="720"
+                          height="540"
                         />
                         <div className="absolute inset-0 bg-gradient-to-t md:bg-gradient-to-r from-slate-950/80 via-slate-950/30 to-transparent"></div>
                         
@@ -1330,7 +1347,7 @@ export default function App() {
                       isWishlisted={true}
                       onAddToCart={handleAddToCart}
                       onToggleWishlist={handleToggleWishlist}
-                      onViewDetail={(p) => setSelectedProduct(p)}
+                      onViewDetail={handleViewProduct}
                       settings={settings}
                     />
                   ))}
@@ -1425,7 +1442,7 @@ export default function App() {
             product={liveSelectedProduct}
             isOpen={!!selectedProduct}
             onClose={() => setSelectedProduct(null)}
-            isWishlisted={liveSelectedProduct ? wishlist.some(w => w.id === liveSelectedProduct.id) : false}
+            isWishlisted={liveSelectedProduct ? wishlistProductIds.has(liveSelectedProduct.id) : false}
             onAddToCart={handleAddToCart}
             onToggleWishlist={handleToggleWishlist}
             allProducts={products}

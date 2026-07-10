@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { 
   Home, ShoppingBag, Heart, ShoppingCart, Menu, X, 
   LayoutDashboard, LogIn, LogOut, Phone, MapPin, 
@@ -40,6 +40,23 @@ export default function MobileBottomNav({
   setSelectedCategory
 }: MobileBottomNavProps) {
   const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
+  const menuCloseButtonRef = useRef<HTMLButtonElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (!isMoreMenuOpen) return;
+    previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const focusTimer = window.setTimeout(() => menuCloseButtonRef.current?.focus(), 0);
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setIsMoreMenuOpen(false);
+    };
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      window.clearTimeout(focusTimer);
+      document.removeEventListener('keydown', handleEscape);
+      previousFocusRef.current?.focus();
+    };
+  }, [isMoreMenuOpen]);
 
   const handleLogout = async () => {
     await signOut(auth);
@@ -67,15 +84,17 @@ export default function MobileBottomNav({
   return (
     <>
       {/* ==================== FLOATING BOTTOM NAV DOCK ==================== */}
-      <div className="fixed bottom-4 left-4 right-4 z-40 md:hidden">
-        <div className="bg-white/90 backdrop-blur-xl border border-slate-200/80 rounded-2xl shadow-2xl px-2 py-2.5 flex justify-around items-center">
+      <nav className="zy-bottom-dock fixed left-3 right-3 z-40 md:hidden" aria-label="Mobile storefront navigation">
+        <div className="bg-white/95 backdrop-blur-xl border border-slate-200/80 rounded-2xl shadow-2xl px-1.5 py-1.5 flex justify-around items-stretch">
           
           {/* Tab 1: Home */}
           <button 
             onClick={() => handleTabClick('home')}
-            className={`flex flex-col items-center justify-center flex-1 transition-all relative py-1 cursor-pointer ${
+            className={`flex min-h-12 flex-col items-center justify-center flex-1 transition-all relative py-1 cursor-pointer rounded-xl active:scale-95 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20 ${
               currentPage === 'home' && !isAdminMode ? activeTabClass : inactiveTabClass
             }`}
+            aria-label="Go to home"
+            aria-current={currentPage === 'home' && !isAdminMode ? 'page' : undefined}
           >
             <Home className="h-5 w-5" />
             <span className="text-[9px] font-bold mt-1 tracking-tight">Home</span>
@@ -87,9 +106,11 @@ export default function MobileBottomNav({
           {/* Tab 2: Shop / Products */}
           <button 
             onClick={() => handleTabClick('products')}
-            className={`flex flex-col items-center justify-center flex-1 transition-all relative py-1 cursor-pointer ${
+            className={`flex min-h-12 flex-col items-center justify-center flex-1 transition-all relative py-1 cursor-pointer rounded-xl active:scale-95 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20 ${
               currentPage === 'products' && !isAdminMode ? activeTabClass : inactiveTabClass
             }`}
+            aria-label="Browse products"
+            aria-current={currentPage === 'products' && !isAdminMode ? 'page' : undefined}
           >
             <ShoppingBag className="h-5 w-5" />
             <span className="text-[9px] font-bold mt-1 tracking-tight">Shop</span>
@@ -104,12 +125,13 @@ export default function MobileBottomNav({
               setIsMoreMenuOpen(false);
               onOpenCart();
             }}
-            className="flex flex-col items-center justify-center flex-1 transition-all relative py-1 cursor-pointer text-slate-400 hover:text-slate-600"
+            className="flex min-h-12 flex-col items-center justify-center flex-1 transition-all relative py-1 cursor-pointer rounded-xl text-slate-500 hover:text-slate-700 active:scale-95 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20"
+            aria-label={`Open cart with ${cartCount} ${cartCount === 1 ? 'item' : 'items'}`}
           >
             <div className="relative">
               <ShoppingCart className="h-5 w-5" />
               {cartCount > 0 && (
-                <span className="absolute -top-1.5 -right-2 inline-flex items-center justify-center px-1.5 py-0.5 text-[8px] font-black leading-none text-white bg-brand-blue rounded-full animate-pulse">
+                <span className="absolute -top-1.5 -right-2 inline-flex items-center justify-center px-1.5 py-0.5 text-[8px] font-black leading-none text-white bg-brand-blue rounded-full">
                   {cartCount}
                 </span>
               )}
@@ -120,9 +142,11 @@ export default function MobileBottomNav({
           {/* Tab 4: Wishlist */}
           <button 
             onClick={() => handleTabClick('wishlist')}
-            className={`flex flex-col items-center justify-center flex-1 transition-all relative py-1 cursor-pointer ${
+            className={`flex min-h-12 flex-col items-center justify-center flex-1 transition-all relative py-1 cursor-pointer rounded-xl active:scale-95 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20 ${
               currentPage === 'wishlist' && !isAdminMode ? activeTabClass : inactiveTabClass
             }`}
+            aria-label={`Open wishlist with ${wishlistCount} saved ${wishlistCount === 1 ? 'product' : 'products'}`}
+            aria-current={currentPage === 'wishlist' && !isAdminMode ? 'page' : undefined}
           >
             <div className="relative">
               <Heart className="h-5 w-5" />
@@ -141,34 +165,52 @@ export default function MobileBottomNav({
           {/* Tab 5: More Menu Bottom Sheet Toggle */}
           <button 
             onClick={() => setIsMoreMenuOpen(!isMoreMenuOpen)}
-            className={`flex flex-col items-center justify-center flex-1 transition-all relative py-1 cursor-pointer ${
+            className={`flex min-h-12 flex-col items-center justify-center flex-1 transition-all relative py-1 cursor-pointer rounded-xl active:scale-95 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20 ${
               isMoreMenuOpen ? 'text-brand-blue scale-110' : 'text-slate-400 hover:text-slate-600'
             }`}
+            aria-label={isMoreMenuOpen ? 'Close more menu' : 'Open more menu'}
+            aria-expanded={isMoreMenuOpen}
+            aria-controls="mobile-more-menu"
           >
             {isMoreMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
             <span className="text-[9px] font-bold mt-1 tracking-tight">Menu</span>
           </button>
 
         </div>
-      </div>
+      </nav>
 
       {/* ==================== BOTTOM DRAWER SHEET ==================== */}
       {isMoreMenuOpen && (
-        <div className="fixed inset-0 z-30 md:hidden">
+        <div id="mobile-more-menu" className="fixed inset-0 z-30 md:hidden" role="dialog" aria-modal="true" aria-labelledby="mobile-more-menu-title">
           {/* Backdrop glass click closer */}
-          <div 
+          <button
+            type="button"
             onClick={() => setIsMoreMenuOpen(false)}
             className="absolute inset-0 bg-slate-950/40 backdrop-blur-xs transition-opacity"
-          ></div>
+            aria-label="Close more menu"
+          />
 
           {/* Drawer content board */}
-          <div className="absolute bottom-0 left-0 right-0 max-h-[85vh] bg-white rounded-t-[2.5rem] shadow-2xl border-t border-slate-100 flex flex-col overflow-hidden pb-28 animate-slideUp">
+          <div className="absolute bottom-0 left-0 right-0 max-h-[88dvh] bg-white rounded-t-[2rem] sm:rounded-t-[2.5rem] shadow-2xl border-t border-slate-100 flex flex-col overflow-hidden pb-[calc(6.75rem+env(safe-area-inset-bottom))] animate-slideUp">
             
             {/* Grab handle indicator for touch feel */}
             <div className="w-12 h-1 bg-slate-200 rounded-full mx-auto my-3.5 flex-shrink-0"></div>
 
+            <div className="flex items-center justify-between px-5 pb-3">
+              <h2 id="mobile-more-menu-title" className="text-lg font-black font-display text-slate-950">More options</h2>
+              <button
+                ref={menuCloseButtonRef}
+                type="button"
+                onClick={() => setIsMoreMenuOpen(false)}
+                className="flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 text-slate-600 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20"
+                aria-label="Close more menu"
+              >
+                <X className="h-5 w-5" aria-hidden="true" />
+              </button>
+            </div>
+
             {/* Inner scroll container */}
-            <div className="flex-1 overflow-y-auto px-6 space-y-6 text-left">
+            <div className="flex-1 overflow-y-auto overscroll-contain px-5 sm:px-6 space-y-6 text-left">
               
               {/* Header Greeting panel */}
               <div className="bg-slate-50 border border-slate-100 rounded-3xl p-4 flex items-center justify-between">

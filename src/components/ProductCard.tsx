@@ -1,5 +1,5 @@
-import React from 'react';
-import { Eye, Star, ShoppingCart, Heart, Phone } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Check, Eye, Star, ShoppingCart, Heart, Phone } from 'lucide-react';
 import { Product } from '../types';
 
 interface ProductCardProps {
@@ -13,7 +13,7 @@ interface ProductCardProps {
   settings?: any; // Allow WebsiteSettings to be passed
 }
 
-export default function ProductCard({
+function ProductCard({
   product,
   isWishlisted,
   onAddToCart,
@@ -22,11 +22,25 @@ export default function ProductCard({
   showWishlist = true,
   settings
 }: ProductCardProps) {
+  const [isAdded, setIsAdded] = useState(false);
+  const addedTimerRef = useRef<number | null>(null);
   const stockLabel = product.stock <= 0
     ? 'Out of stock'
     : product.stock <= 5
       ? `Only ${product.stock} left`
       : 'In stock';
+
+  useEffect(() => () => {
+    if (addedTimerRef.current !== null) window.clearTimeout(addedTimerRef.current);
+  }, []);
+
+  const handleCardAddToCart = (event: React.MouseEvent) => {
+    event.stopPropagation();
+    onAddToCart(product);
+    setIsAdded(true);
+    if (addedTimerRef.current !== null) window.clearTimeout(addedTimerRef.current);
+    addedTimerRef.current = window.setTimeout(() => setIsAdded(false), 1600);
+  };
 
   // Format price in Sri Lankan Rupees (LKR)
   const formatPrice = (amount: number) => {
@@ -123,6 +137,10 @@ export default function ProductCard({
           src={product.imageUrl || 'https://images.unsplash.com/photo-1531403009284-440f080d1e12?auto=format&fit=crop&w=600&q=80'}
           alt={product.name}
           referrerPolicy="no-referrer"
+          loading="lazy"
+          decoding="async"
+          width="600"
+          height="600"
           className="w-full h-full object-contain transform group-hover:scale-[1.06] transition-transform duration-500 ease-out drop-shadow-[0_18px_24px_rgba(15,23,42,0.08)]"
           onError={(e) => {
             e.currentTarget.onerror = null;
@@ -207,15 +225,13 @@ export default function ProductCard({
             <div className="flex gap-2.5">
               {/* Add to Cart */}
               <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onAddToCart(product);
-                }}
+                onClick={handleCardAddToCart}
                 className="zy-button zy-button-primary min-h-11 flex-1 py-3 px-3 text-xs cursor-pointer focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/25"
                 aria-label={`Add ${product.name} to cart`}
+                aria-live="polite"
               >
-                <ShoppingCart className="h-4 w-4" aria-hidden="true" />
-                <span className="ml-1.5">Add to Cart</span>
+                {isAdded ? <Check className="h-4 w-4" aria-hidden="true" /> : <ShoppingCart className="h-4 w-4" aria-hidden="true" />}
+                <span className="ml-1.5">{isAdded ? 'Added' : 'Add to Cart'}</span>
               </button>
 
               {/* Quick WhatsApp Order */}
@@ -245,3 +261,5 @@ export default function ProductCard({
     </div>
   );
 }
+
+export default React.memo(ProductCard);

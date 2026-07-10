@@ -104,10 +104,12 @@ textarea {
   transition: border-color 180ms ease, box-shadow 180ms ease, transform 180ms ease;
 }
 
-.zy-card-hover:hover {
-  border-color: rgba(29, 78, 216, 0.22);
-  box-shadow: var(--zy-shadow-md);
-  transform: translateY(-2px);
+@media (hover: hover) and (pointer: fine) {
+  .zy-card-hover:hover {
+    border-color: rgba(29, 78, 216, 0.22);
+    box-shadow: var(--zy-shadow-md);
+    transform: translateY(-2px);
+  }
 }
 
 .zy-input {
@@ -140,8 +142,10 @@ textarea {
   transition: background-color 180ms ease, border-color 180ms ease, color 180ms ease, box-shadow 180ms ease, transform 120ms ease;
 }
 
-.zy-button:hover {
-  transform: translateY(-1px);
+@media (hover: hover) and (pointer: fine) {
+  .zy-button:hover {
+    transform: translateY(-1px);
+  }
 }
 
 .zy-button:active {
@@ -259,4 +263,48 @@ textarea {
   font-weight: 900;
   letter-spacing: 0.12em;
   text-transform: uppercase;
+}
+
+.scrollbar-none {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
+.zy-touch-target {
+  min-width: 2.75rem;
+  min-height: 2.75rem;
+}
+
+.zy-safe-bottom {
+  padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+}
+
+.zy-bottom-dock {
+  bottom: max(1rem, env(safe-area-inset-bottom));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html:focus-within {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
+  }
+
+  .zy-card-hover:hover,
+  .zy-button:hover,
+  .zy-button:active {
+    transform: none;
+  }
 }
