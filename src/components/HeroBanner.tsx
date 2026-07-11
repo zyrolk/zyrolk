@@ -110,6 +110,9 @@ export default function HeroBanner({ onExploreProducts, onBrowseCategories, sett
       className="relative min-h-[520px] sm:min-h-[580px] lg:min-h-[640px] w-full overflow-hidden bg-slate-950 text-white group"
       onMouseEnter={() => setIsPlaying(false)}
       onMouseLeave={() => setIsPlaying(true)}
+      role="region"
+      aria-roledescription="carousel"
+      aria-label="Featured products"
     >
       {/* Background slide with AnimatePresence */}
       <AnimatePresence mode="wait">
@@ -120,6 +123,9 @@ export default function HeroBanner({ onExploreProducts, onBrowseCategories, sett
           exit={{ opacity: 0 }}
           transition={{ duration: 0.8 }}
           className="absolute inset-0 w-full h-full"
+          role="group"
+          aria-roledescription="slide"
+          aria-label={`${currentSlide + 1} of ${slides.length}: ${slides[currentSlide].title}`}
         >
           {/* Background Image */}
           <div className="absolute inset-0 select-none pointer-events-none">
@@ -160,7 +166,7 @@ export default function HeroBanner({ onExploreProducts, onBrowseCategories, sett
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.25, duration: 0.6 }}
-                className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-black tracking-tight font-display text-white mb-4 leading-tight max-w-3xl"
+                className="w-full min-w-0 max-w-3xl text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-black tracking-tight font-display text-white mb-4 leading-tight"
               >
                 {slides[currentSlide].title}
               </motion.h1>
@@ -170,7 +176,7 @@ export default function HeroBanner({ onExploreProducts, onBrowseCategories, sett
                 initial={{ opacity: 0, y: 18 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.35, duration: 0.6 }}
-                className="text-base sm:text-lg md:text-xl font-medium text-blue-100 mb-4 max-w-xl"
+                className="w-full min-w-0 max-w-xl text-base sm:text-lg md:text-xl font-medium text-blue-100 mb-4"
               >
                 {slides[currentSlide].subtitle}
               </motion.p>
@@ -180,7 +186,7 @@ export default function HeroBanner({ onExploreProducts, onBrowseCategories, sett
                 initial={{ opacity: 0, y: 15 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.45, duration: 0.6 }}
-                className="text-xs sm:text-sm md:text-base text-zinc-300 max-w-lg mb-8 leading-relaxed font-light"
+                className="w-full min-w-0 max-w-lg text-xs sm:text-sm md:text-base text-zinc-300 mb-8 leading-relaxed font-light"
               >
                 {slides[currentSlide].description}
               </motion.p>
@@ -190,18 +196,18 @@ export default function HeroBanner({ onExploreProducts, onBrowseCategories, sett
                 initial={{ opacity: 0, y: 15 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.55, duration: 0.6 }}
-                className="flex flex-col sm:flex-row items-center space-y-3 sm:space-y-0 sm:space-x-4 w-full sm:w-auto"
+                className="flex w-full min-w-0 flex-col items-center space-y-3 sm:w-auto sm:flex-row sm:space-y-0 sm:space-x-4"
               >
                 <button
                   onClick={onExploreProducts}
-                  className="zy-button zy-button-primary w-full sm:w-auto px-7 py-3.5 text-sm rounded-full cursor-pointer"
+                  className="zy-button zy-button-primary w-full min-w-0 max-w-full px-5 py-3.5 text-sm rounded-full cursor-pointer sm:w-auto sm:px-7"
                 >
                   <ShoppingBag className="h-4.5 w-4.5 mr-2" />
                   Shop Now
                 </button>
                 <button
                   onClick={onBrowseCategories || onExploreProducts}
-                  className="zy-button w-full sm:w-auto px-7 py-3.5 text-sm rounded-full text-white bg-white/10 hover:bg-white/15 active:bg-white/20 border border-white/20 hover:border-white/30 transition-all backdrop-blur-md cursor-pointer"
+                  className="zy-button w-full min-w-0 max-w-full px-5 py-3.5 text-sm rounded-full text-white bg-white/10 hover:bg-white/15 active:bg-white/20 border border-white/20 hover:border-white/30 transition-all backdrop-blur-md cursor-pointer sm:w-auto sm:px-7"
                 >
                   Browse Categories
                   <ArrowRight className="h-4.5 w-4.5 ml-2 text-zinc-400" />
@@ -218,14 +224,14 @@ export default function HeroBanner({ onExploreProducts, onBrowseCategories, sett
         <>
           <button
             onClick={handlePrev}
-            className="absolute left-6 top-1/2 -translate-y-1/2 z-20 md:flex hidden items-center justify-center w-12 h-12 rounded-full bg-black/25 hover:bg-brand-blue border border-white/10 hover:border-blue-400 text-white hover:scale-105 transition-all duration-300 opacity-0 group-hover:opacity-100 cursor-pointer shadow-lg shadow-black/40"
+            className="absolute left-6 top-1/2 -translate-y-1/2 z-20 md:flex hidden items-center justify-center w-12 h-12 rounded-full bg-black/25 hover:bg-brand-blue border border-white/10 hover:border-blue-400 text-white hover:scale-105 transition-all duration-300 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-400/40 cursor-pointer shadow-lg shadow-black/40"
             aria-label="Previous slide"
           >
             <ChevronLeft className="h-5 w-5" />
           </button>
           <button
             onClick={handleNext}
-            className="absolute right-6 top-1/2 -translate-y-1/2 z-20 md:flex hidden items-center justify-center w-12 h-12 rounded-full bg-black/25 hover:bg-brand-blue border border-white/10 hover:border-blue-400 text-white hover:scale-105 transition-all duration-300 opacity-0 group-hover:opacity-100 cursor-pointer shadow-lg shadow-black/40"
+            className="absolute right-6 top-1/2 -translate-y-1/2 z-20 md:flex hidden items-center justify-center w-12 h-12 rounded-full bg-black/25 hover:bg-brand-blue border border-white/10 hover:border-blue-400 text-white hover:scale-105 transition-all duration-300 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-400/40 cursor-pointer shadow-lg shadow-black/40"
             aria-label="Next slide"
           >
             <ChevronRight className="h-5 w-5" />
@@ -240,8 +246,10 @@ export default function HeroBanner({ onExploreProducts, onBrowseCategories, sett
             <button
               key={slide.id}
               onClick={() => handleSlideSelect(idx)}
-              className="group flex flex-col items-start focus:outline-none cursor-pointer"
+              className="group flex min-h-11 items-center rounded-lg px-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 cursor-pointer"
               title={`Go to slide ${idx + 1}`}
+              aria-label={`Show slide ${idx + 1} of ${slides.length}: ${slide.title}`}
+              aria-current={currentSlide === idx ? 'true' : undefined}
             >
               <div className="flex items-center space-x-2">
                 {/* Slide Number */}

@@ -26,7 +26,7 @@ const CmsPage = lazy(() => import('./components/CmsPage'));
 // Lucide Icons
 import { 
   ShieldCheck, Truck, RefreshCw, Star, ArrowRight,
-  SlidersHorizontal, ShoppingBag, Phone, Heart, X
+  SlidersHorizontal, ShoppingBag, Phone, Heart, X, Grid3X3
 } from 'lucide-react';
 
 const CATEGORY_IMAGES: Record<string, string> = {
@@ -1225,6 +1225,23 @@ export default function App() {
                 </p>
               </div>
 
+              {categories.length === 0 ? (
+                <div className="rounded-[2rem] border border-slate-200/80 bg-white px-6 py-14 text-center shadow-2xs">
+                  <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-blue-50 text-brand-blue">
+                    <Grid3X3 className="h-8 w-8" aria-hidden="true" />
+                  </div>
+                  <h2 className="mt-5 text-lg font-black font-display text-slate-950">Collections are being refreshed</h2>
+                  <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-slate-500">Browse all products while our curated category shelves are being prepared.</p>
+                  <button
+                    type="button"
+                    onClick={() => { setCurrentPage('products'); setSelectedCategory('all'); }}
+                    className="zy-button zy-button-primary mx-auto mt-5 min-h-11 px-5 text-xs focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/25"
+                  >
+                    Explore All Products
+                    <ArrowRight className="ml-1.5 h-4 w-4" aria-hidden="true" />
+                  </button>
+                </div>
+              ) : (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                 {categories.map((cat) => {
                     const itemsCount = categoryCounts[cat.id] || 0;
@@ -1297,6 +1314,7 @@ export default function App() {
                   );
                 })}
               </div>
+              )}
             </div>
           )}
 

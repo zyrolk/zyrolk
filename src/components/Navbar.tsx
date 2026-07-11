@@ -278,7 +278,7 @@ export default function Navbar({
                   <div className="space-y-1">
                     <div className="flex items-center justify-between px-3 pb-1 pt-2">
                       <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Matching products</span>
-                      <span className="text-[10px] font-bold text-slate-400">Use ↑ ↓ and Enter</span>
+                      <span className="text-[10px] font-bold text-slate-500">Use ↑ ↓ and Enter</span>
                     </div>
                     {matchingProducts.map((product, index) => (
                       <button

@@ -85,6 +85,8 @@ export default function Footer({ setCurrentPage, onSelectCategory, settings }: F
               alt={settings?.storeName || "Zyro.lk"} 
               className="h-10 max-w-[180px] object-contain" 
               referrerPolicy="no-referrer"
+              loading="lazy"
+              decoding="async"
             />
           ) : (
             <span className="text-2xl font-bold font-display text-white">
@@ -105,23 +107,23 @@ export default function Footer({ setCurrentPage, onSelectCategory, settings }: F
           {/* Social media links */}
           <div className="flex space-x-3 pt-2">
             {settings?.facebookUrl && (
-              <a href={settings.facebookUrl} target="_blank" rel="noopener noreferrer" className="p-2 bg-slate-800 hover:bg-brand-blue text-white rounded-xl transition-colors">
-                <Facebook className="h-4 w-4" />
+              <a href={settings.facebookUrl} target="_blank" rel="noopener noreferrer" aria-label="Visit Zyro.lk on Facebook" className="flex h-11 w-11 items-center justify-center bg-slate-800 hover:bg-brand-blue text-white rounded-xl transition-colors focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-400/40">
+                <Facebook className="h-4 w-4" aria-hidden="true" />
               </a>
             )}
             {settings?.instagramUrl && (
-              <a href={settings.instagramUrl} target="_blank" rel="noopener noreferrer" className="p-2 bg-slate-800 hover:bg-pink-600 text-white rounded-xl transition-colors">
-                <Instagram className="h-4 w-4" />
+              <a href={settings.instagramUrl} target="_blank" rel="noopener noreferrer" aria-label="Visit Zyro.lk on Instagram" className="flex h-11 w-11 items-center justify-center bg-slate-800 hover:bg-pink-600 text-white rounded-xl transition-colors focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-pink-400/40">
+                <Instagram className="h-4 w-4" aria-hidden="true" />
               </a>
             )}
             {settings?.tiktokUrl && (
-              <a href={settings.tiktokUrl} target="_blank" rel="noopener noreferrer" className="p-2 bg-slate-800 hover:bg-zinc-800 text-white rounded-xl transition-colors font-bold text-xs flex items-center justify-center min-w-[32px]">
-                🎵
+              <a href={settings.tiktokUrl} target="_blank" rel="noopener noreferrer" aria-label="Visit Zyro.lk on TikTok" className="flex h-11 w-11 items-center justify-center bg-slate-800 hover:bg-zinc-800 text-white rounded-xl transition-colors focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-white/30 font-bold text-xs">
+                <span aria-hidden="true">🎵</span>
               </a>
             )}
             {settings?.youtubeUrl && (
-              <a href={settings.youtubeUrl} target="_blank" rel="noopener noreferrer" className="p-2 bg-slate-800 hover:bg-red-600 text-white rounded-xl transition-colors">
-                <Youtube className="h-4 w-4" />
+              <a href={settings.youtubeUrl} target="_blank" rel="noopener noreferrer" aria-label="Visit Zyro.lk on YouTube" className="flex h-11 w-11 items-center justify-center bg-slate-800 hover:bg-red-600 text-white rounded-xl transition-colors focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-red-400/40">
+                <Youtube className="h-4 w-4" aria-hidden="true" />
               </a>
             )}
           </div>
@@ -134,35 +136,35 @@ export default function Footer({ setCurrentPage, onSelectCategory, settings }: F
         {/* Quick Links */}
         <div className="space-y-4 text-left">
           <h4 className="text-sm font-black text-white uppercase tracking-wider">Explore Store</h4>
-          <ul className="space-y-2.5 text-xs">
-            <li><button onClick={() => setCurrentPage('home')} className="hover:text-white transition-colors cursor-pointer text-left">Homepage</button></li>
-            <li><button onClick={() => setCurrentPage('products')} className="hover:text-white transition-colors cursor-pointer text-left">Browse All Products</button></li>
-            <li><button onClick={() => setCurrentPage('categories')} className="hover:text-white transition-colors cursor-pointer text-left">Product Categories</button></li>
-            <li><button onClick={() => setCurrentPage('wishlist')} className="hover:text-white transition-colors cursor-pointer text-left">My Saved Wishlist</button></li>
-            <li><button onClick={() => setCurrentPage('contact')} className="hover:text-white transition-colors cursor-pointer text-left">Support & Directions</button></li>
+          <ul className="text-xs">
+            <li><button onClick={() => setCurrentPage('home')} className="inline-flex min-h-11 items-center hover:text-white transition-colors cursor-pointer text-left focus-visible:outline-none focus-visible:text-white focus-visible:underline">Homepage</button></li>
+            <li><button onClick={() => setCurrentPage('products')} className="inline-flex min-h-11 items-center hover:text-white transition-colors cursor-pointer text-left focus-visible:outline-none focus-visible:text-white focus-visible:underline">Browse All Products</button></li>
+            <li><button onClick={() => setCurrentPage('categories')} className="inline-flex min-h-11 items-center hover:text-white transition-colors cursor-pointer text-left focus-visible:outline-none focus-visible:text-white focus-visible:underline">Product Categories</button></li>
+            <li><button onClick={() => setCurrentPage('wishlist')} className="inline-flex min-h-11 items-center hover:text-white transition-colors cursor-pointer text-left focus-visible:outline-none focus-visible:text-white focus-visible:underline">My Saved Wishlist</button></li>
+            <li><button onClick={() => setCurrentPage('contact')} className="inline-flex min-h-11 items-center hover:text-white transition-colors cursor-pointer text-left focus-visible:outline-none focus-visible:text-white focus-visible:underline">Support & Directions</button></li>
           </ul>
         </div>
 
         {/* Categorized Products */}
         <div className="space-y-4 text-left">
           <h4 className="text-sm font-black text-white uppercase tracking-wider">Top Categories</h4>
-          <ul className="space-y-2.5 text-xs">
-            <li><button onClick={() => handleCategoryClick('electronics')} className="hover:text-white transition-colors cursor-pointer text-left">Flagship Electronics</button></li>
-            <li><button onClick={() => handleCategoryClick('solar-lighting')} className="hover:text-white transition-colors cursor-pointer text-left">Solar & Power Solutions</button></li>
-            <li><button onClick={() => handleCategoryClick('home-kitchen')} className="hover:text-white transition-colors cursor-pointer text-left">Premium Home & Kitchen</button></li>
-            <li><button onClick={() => handleCategoryClick('accessories')} className="hover:text-white transition-colors cursor-pointer text-left">Sleek Tech Accessories</button></li>
+          <ul className="text-xs">
+            <li><button onClick={() => handleCategoryClick('electronics')} className="inline-flex min-h-11 items-center hover:text-white transition-colors cursor-pointer text-left focus-visible:outline-none focus-visible:text-white focus-visible:underline">Flagship Electronics</button></li>
+            <li><button onClick={() => handleCategoryClick('solar-lighting')} className="inline-flex min-h-11 items-center hover:text-white transition-colors cursor-pointer text-left focus-visible:outline-none focus-visible:text-white focus-visible:underline">Solar & Power Solutions</button></li>
+            <li><button onClick={() => handleCategoryClick('home-kitchen')} className="inline-flex min-h-11 items-center hover:text-white transition-colors cursor-pointer text-left focus-visible:outline-none focus-visible:text-white focus-visible:underline">Premium Home & Kitchen</button></li>
+            <li><button onClick={() => handleCategoryClick('accessories')} className="inline-flex min-h-11 items-center hover:text-white transition-colors cursor-pointer text-left focus-visible:outline-none focus-visible:text-white focus-visible:underline">Sleek Tech Accessories</button></li>
           </ul>
         </div>
 
         {/* Company & Support CMS Pages */}
         <div className="space-y-4 text-left">
           <h4 className="text-sm font-black text-white uppercase tracking-wider">Company & Legal</h4>
-          <ul className="space-y-2.5 text-xs">
-            <li><button onClick={() => setCurrentPage('about-us')} className="hover:text-white transition-colors cursor-pointer text-left">About Us</button></li>
-            <li><button onClick={() => setCurrentPage('faq')} className="hover:text-white transition-colors cursor-pointer text-left">FAQs & Guides</button></li>
-            <li><button onClick={() => setCurrentPage('return-policy')} className="hover:text-white transition-colors cursor-pointer text-left">Return & Warranty</button></li>
-            <li><button onClick={() => setCurrentPage('terms-conditions')} className="hover:text-white transition-colors cursor-pointer text-left">Terms & Conditions</button></li>
-            <li><button onClick={() => setCurrentPage('privacy-policy')} className="hover:text-white transition-colors cursor-pointer text-left">Privacy Policy</button></li>
+          <ul className="text-xs">
+            <li><button onClick={() => setCurrentPage('about-us')} className="inline-flex min-h-11 items-center hover:text-white transition-colors cursor-pointer text-left focus-visible:outline-none focus-visible:text-white focus-visible:underline">About Us</button></li>
+            <li><button onClick={() => setCurrentPage('faq')} className="inline-flex min-h-11 items-center hover:text-white transition-colors cursor-pointer text-left focus-visible:outline-none focus-visible:text-white focus-visible:underline">FAQs & Guides</button></li>
+            <li><button onClick={() => setCurrentPage('return-policy')} className="inline-flex min-h-11 items-center hover:text-white transition-colors cursor-pointer text-left focus-visible:outline-none focus-visible:text-white focus-visible:underline">Return & Warranty</button></li>
+            <li><button onClick={() => setCurrentPage('terms-conditions')} className="inline-flex min-h-11 items-center hover:text-white transition-colors cursor-pointer text-left focus-visible:outline-none focus-visible:text-white focus-visible:underline">Terms & Conditions</button></li>
+            <li><button onClick={() => setCurrentPage('privacy-policy')} className="inline-flex min-h-11 items-center hover:text-white transition-colors cursor-pointer text-left focus-visible:outline-none focus-visible:text-white focus-visible:underline">Privacy Policy</button></li>
           </ul>
         </div>
 
@@ -174,23 +176,26 @@ export default function Footer({ setCurrentPage, onSelectCategory, settings }: F
           </p>
           
           <form onSubmit={handleSubscribe} className="relative mt-2">
+            <label htmlFor="footer-newsletter-email" className="sr-only">Email address for newsletter</label>
             <input
+              id="footer-newsletter-email"
               type="email"
               required
               placeholder="Enter your email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="zy-input w-full bg-slate-900/80 text-slate-100 text-xs px-3.5 py-2.5 rounded-xl border-slate-700/70 focus:outline-hidden focus:border-brand-blue transition-all"
+              className="zy-input min-h-11 w-full bg-slate-900/80 text-slate-100 text-xs pl-3.5 pr-12 py-2.5 rounded-xl border-slate-700/70 focus-visible:outline-none focus-visible:border-brand-blue focus-visible:ring-4 focus-visible:ring-blue-400/20 transition-all"
             />
             <button
               type="submit"
-              className="absolute right-1 top-1 p-1.5 bg-brand-blue text-white rounded-lg hover:bg-blue-700 transition-colors cursor-pointer"
+              aria-label={subscribed ? 'Newsletter subscription confirmed' : 'Subscribe to newsletter'}
+              className="absolute right-0 top-0 flex h-11 w-11 items-center justify-center bg-brand-blue text-white rounded-xl hover:bg-blue-700 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-300/40"
             >
-              {subscribed ? <Check className="h-3 w-3" /> : <Send className="h-3 w-3" />}
+              {subscribed ? <Check className="h-4 w-4" aria-hidden="true" /> : <Send className="h-4 w-4" aria-hidden="true" />}
             </button>
           </form>
           {subscribed && (
-            <p className="text-[10px] text-emerald-400 font-semibold">
+            <p className="text-xs text-emerald-400 font-semibold" role="status" aria-live="polite">
               Thank you! Welcome to the Zyro Elite Club.
             </p>
           )}

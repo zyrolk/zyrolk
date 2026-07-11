@@ -346,14 +346,14 @@ export default function CmsPage({ pageId, onBackToHome, isAdmin, onEdit }: CmsPa
   return (
     <div className="relative min-h-screen pb-20">
       {/* Premium subtle glow background */}
-      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full max-w-7xl h-[450px] bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-blue-500/5 dark:from-blue-500/10 via-transparent to-transparent pointer-events-none blur-3xl opacity-75" />
+      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full max-w-7xl h-[450px] bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-blue-500/5 via-transparent to-transparent pointer-events-none blur-3xl opacity-75" />
 
-      <div className="relative max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-10 animate-fadeIn text-left">
+      <div className="relative max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-10 animate-fadeIn text-left">
         {/* Navigation Action Row */}
-        <div className="flex items-center justify-between mb-10 flex-wrap gap-4">
+        <div className="flex items-center justify-between mb-8 sm:mb-10 flex-wrap gap-4">
           <button
             onClick={onBackToHome}
-            className="inline-flex items-center space-x-2 text-xs font-semibold text-slate-500 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 transition-colors cursor-pointer group"
+            className="-ml-3 inline-flex min-h-11 items-center space-x-2 rounded-xl px-3 text-xs font-semibold text-slate-600 hover:text-blue-600 transition-colors cursor-pointer group focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-500/20"
           >
             <ArrowLeft className="h-4 w-4 group-hover:-translate-x-1 transition-transform" />
             <span>Return to Homepage</span>
@@ -362,7 +362,7 @@ export default function CmsPage({ pageId, onBackToHome, isAdmin, onEdit }: CmsPa
           {isAdmin && onEdit && (
             <button
               onClick={() => onEdit(pageId)}
-              className="inline-flex items-center space-x-1.5 bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-sm hover:shadow-md"
+              className="inline-flex items-center space-x-1.5 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-sm hover:shadow-md"
             >
               <Edit3 className="h-3.5 w-3.5 text-white" />
               <span>Edit Page</span>
@@ -372,12 +372,12 @@ export default function CmsPage({ pageId, onBackToHome, isAdmin, onEdit }: CmsPa
 
         {loading ? (
           <div className="space-y-6">
-            <div className="h-4 w-1/4 bg-slate-200 dark:bg-slate-800 rounded animate-pulse" />
-            <div className="h-10 bg-slate-200 dark:bg-slate-800 rounded-lg w-2/3 animate-pulse" />
+            <div className="h-4 w-1/4 bg-slate-200 rounded animate-pulse" />
+            <div className="h-10 bg-slate-200 rounded-lg w-2/3 animate-pulse" />
             <div className="space-y-3 pt-6">
-              <div className="h-4 bg-slate-200 dark:bg-slate-800 rounded w-full animate-pulse" />
-              <div className="h-4 bg-slate-200 dark:bg-slate-800 rounded w-5/6 animate-pulse" />
-              <div className="h-4 bg-slate-200 dark:bg-slate-800 rounded w-4/5 animate-pulse" />
+              <div className="h-4 bg-slate-200 rounded w-full animate-pulse" />
+              <div className="h-4 bg-slate-200 rounded w-5/6 animate-pulse" />
+              <div className="h-4 bg-slate-200 rounded w-4/5 animate-pulse" />
             </div>
           </div>
         ) : (
@@ -390,32 +390,32 @@ export default function CmsPage({ pageId, onBackToHome, isAdmin, onEdit }: CmsPa
             >
               {/* Metadata Badges */}
               <div className="flex flex-wrap items-center gap-2 text-[10px] text-slate-400 uppercase tracking-widest font-bold">
-                <span className="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-800/80 px-3 py-1 rounded-full text-slate-500 dark:text-slate-400 border border-slate-200/40 dark:border-slate-700/30">
+                <span className="flex items-center gap-1.5 bg-slate-100 px-3 py-1 rounded-full text-slate-500 border border-slate-200/40">
                   <FileText className="h-3 w-3 text-blue-500" />
                   Corporate Specifications
                 </span>
                 {page?.lastUpdated && (
-                  <span className="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-800/80 px-3 py-1 rounded-full text-slate-500 dark:text-slate-400 border border-slate-200/40 dark:border-slate-700/30">
+                  <span className="flex items-center gap-1.5 bg-slate-100 px-3 py-1 rounded-full text-slate-500 border border-slate-200/40">
                     <Calendar className="h-3 w-3" />
                     Updated: {page.lastUpdated}
                   </span>
                 )}
-                <span className="flex items-center gap-1.5 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-100/50 dark:border-emerald-900/40 px-3 py-1 rounded-full text-emerald-600 dark:text-emerald-400 font-bold">
+                <span className="flex items-center gap-1.5 bg-emerald-50 border border-emerald-100/50 px-3 py-1 rounded-full text-emerald-600 font-bold">
                   <Check className="h-3 w-3 text-emerald-500" />
                   Official Zyro Spec
                 </span>
               </div>
 
-              <h1 className="text-3xl sm:text-5xl font-black font-display text-slate-900 dark:text-white mb-4 tracking-tight leading-none">
+              <h1 className="text-3xl sm:text-5xl font-black font-display text-slate-900 mb-4 tracking-tight leading-none">
                 {page?.title}
               </h1>
 
               {introSection && introSection.items.length > 0 && (
-                <div className="space-y-4 text-slate-600 dark:text-slate-300 text-sm sm:text-base leading-relaxed">
+                <div className="space-y-4 text-slate-600 text-sm sm:text-base leading-relaxed">
                   {introSection.items.map((item, idx) => {
                     if (item.type === 'paragraph') {
                       return (
-                        <p key={idx} className="whitespace-pre-line text-left text-slate-600 dark:text-slate-300">
+                        <p key={idx} className="whitespace-pre-line text-left text-slate-600">
                           {item.text}
                         </p>
                       );
@@ -424,11 +424,11 @@ export default function CmsPage({ pageId, onBackToHome, isAdmin, onEdit }: CmsPa
                       return (
                         <div key={idx} className="grid grid-cols-1 md:grid-cols-2 gap-4 my-6">
                           {item.items.map((li, liIdx) => (
-                            <div key={liIdx} className="flex items-start space-x-3 p-4 bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800/80 rounded-2xl">
-                              <div className="mt-0.5 flex-shrink-0 flex items-center justify-center h-5 w-5 rounded-full bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-100/50 dark:border-emerald-900/40">
+                            <div key={liIdx} className="flex items-start space-x-3 p-4 bg-slate-50 border border-slate-100 rounded-2xl">
+                              <div className="mt-0.5 flex-shrink-0 flex items-center justify-center h-5 w-5 rounded-full bg-emerald-50 border border-emerald-100/50">
                                 <Check className="h-3 w-3 text-emerald-500" />
                               </div>
-                              <span className="text-xs sm:text-sm font-medium text-slate-700 dark:text-slate-300">{li}</span>
+                              <span className="text-xs sm:text-sm font-medium text-slate-700">{li}</span>
                             </div>
                           ))}
                         </div>
@@ -436,20 +436,20 @@ export default function CmsPage({ pageId, onBackToHome, isAdmin, onEdit }: CmsPa
                     }
                     if (item.type === 'qa') {
                       return (
-                        <div key={idx} className="bg-slate-50/60 dark:bg-slate-900/45 border border-slate-100 dark:border-slate-800/80 p-5 rounded-2xl space-y-3 shadow-sm">
+                        <div key={idx} className="bg-slate-50/60 border border-slate-100 p-5 rounded-2xl space-y-3 shadow-sm">
                           <div className="flex items-start space-x-3">
-                            <span className="flex-shrink-0 px-2 py-0.5 text-[9px] tracking-wider font-extrabold uppercase rounded bg-blue-50 dark:bg-blue-950 text-blue-600 dark:text-blue-400 border border-blue-100/30 dark:border-blue-900/30">
+                            <span className="flex-shrink-0 px-2 py-0.5 text-[9px] tracking-wider font-extrabold uppercase rounded bg-blue-50 text-blue-600 border border-blue-100/30">
                               Question
                             </span>
-                            <h4 className="text-sm font-bold text-slate-900 dark:text-white leading-snug">
+                            <h4 className="text-sm font-bold text-slate-900 leading-snug">
                               {item.q}
                             </h4>
                           </div>
-                          <div className="flex items-start space-x-3 border-t border-slate-100 dark:border-slate-800/80 pt-3">
-                            <span className="flex-shrink-0 px-2 py-0.5 text-[9px] tracking-wider font-extrabold uppercase rounded bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 border border-emerald-100/30 dark:border-emerald-900/30">
+                          <div className="flex items-start space-x-3 border-t border-slate-100 pt-3">
+                            <span className="flex-shrink-0 px-2 py-0.5 text-[9px] tracking-wider font-extrabold uppercase rounded bg-emerald-50 text-emerald-600 border border-emerald-100/30">
                               Answer
                             </span>
-                            <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 leading-relaxed whitespace-pre-line">
+                            <p className="text-xs sm:text-sm text-slate-600 leading-relaxed whitespace-pre-line">
                               {item.a}
                             </p>
                           </div>
@@ -474,16 +474,16 @@ export default function CmsPage({ pageId, onBackToHome, isAdmin, onEdit }: CmsPa
                       initial={{ opacity: 0, y: 15 }}
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ delay: sectionIdx * 0.05 }}
-                      className="bg-white dark:bg-slate-900/40 border border-slate-100 dark:border-slate-800/80 rounded-3xl p-6 sm:p-8 shadow-[0_2px_8px_-3px_rgba(0,0,0,0.02)] hover:shadow-md hover:border-slate-200/60 dark:hover:border-slate-700/60 transition-all duration-300"
+                      className="bg-white border border-slate-100 rounded-3xl p-6 sm:p-8 shadow-[0_2px_8px_-3px_rgba(0,0,0,0.02)] hover:shadow-md hover:border-slate-200/60 transition-all duration-300"
                     >
                       {section.title && (
-                        <div className="flex items-center mb-6 border-b border-slate-100/80 dark:border-slate-800/60 pb-4">
+                        <div className="flex items-center mb-6 border-b border-slate-100/80 pb-4">
                           {sectionIcon && (
-                            <div className="flex items-center justify-center h-10 w-10 rounded-2xl bg-slate-50 dark:bg-slate-800/80 border border-slate-100/80 dark:border-slate-800 shadow-sm mr-4 shrink-0">
+                            <div className="flex items-center justify-center h-10 w-10 rounded-2xl bg-slate-50 border border-slate-100/80 shadow-sm mr-4 shrink-0">
                               {sectionIcon}
                             </div>
                           )}
-                          <h2 className="text-lg sm:text-xl font-bold font-display text-slate-900 dark:text-white tracking-tight">
+                          <h2 className="text-lg sm:text-xl font-bold font-display text-slate-900 tracking-tight">
                             {section.title}
                           </h2>
                         </div>
@@ -493,7 +493,7 @@ export default function CmsPage({ pageId, onBackToHome, isAdmin, onEdit }: CmsPa
                         {section.items.map((item, itemIdx) => {
                           if (item.type === 'paragraph') {
                             return (
-                              <p key={itemIdx} className="text-sm sm:text-base text-slate-600 dark:text-slate-300 leading-relaxed text-justify whitespace-pre-line">
+                              <p key={itemIdx} className="text-sm sm:text-base text-slate-600 leading-relaxed text-justify whitespace-pre-line">
                                 {item.text}
                               </p>
                             );
@@ -502,11 +502,11 @@ export default function CmsPage({ pageId, onBackToHome, isAdmin, onEdit }: CmsPa
                             return (
                               <div key={itemIdx} className="grid grid-cols-1 md:grid-cols-2 gap-4 my-4">
                                 {item.items.map((li, liIdx) => (
-                                  <div key={liIdx} className="flex items-start space-x-3 p-4 bg-slate-50/50 dark:bg-slate-900/20 border border-slate-100/50 dark:border-slate-800/40 rounded-2xl">
-                                    <div className="mt-0.5 flex-shrink-0 flex items-center justify-center h-5 w-5 rounded-full bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-100/50 dark:border-emerald-900/40">
+                                  <div key={liIdx} className="flex items-start space-x-3 p-4 bg-slate-50/50 border border-slate-100/50 rounded-2xl">
+                                    <div className="mt-0.5 flex-shrink-0 flex items-center justify-center h-5 w-5 rounded-full bg-emerald-50 border border-emerald-100/50">
                                       <Check className="h-3 w-3 text-emerald-500" />
                                     </div>
-                                    <span className="text-xs sm:text-sm font-medium text-slate-700 dark:text-slate-300">{li}</span>
+                                    <span className="text-xs sm:text-sm font-medium text-slate-700">{li}</span>
                                   </div>
                                 ))}
                               </div>
@@ -514,20 +514,20 @@ export default function CmsPage({ pageId, onBackToHome, isAdmin, onEdit }: CmsPa
                           }
                           if (item.type === 'qa') {
                             return (
-                              <div key={itemIdx} className="bg-slate-50/60 dark:bg-slate-900/45 border border-slate-100 dark:border-slate-800/80 p-5 rounded-2xl space-y-3 shadow-sm">
+                              <div key={itemIdx} className="bg-slate-50/60 border border-slate-100 p-5 rounded-2xl space-y-3 shadow-sm">
                                 <div className="flex items-start space-x-3">
-                                  <span className="flex-shrink-0 px-2 py-0.5 text-[9px] tracking-wider font-extrabold uppercase rounded bg-blue-50 dark:bg-blue-950 text-blue-600 dark:text-blue-400 border border-blue-100/30 dark:border-blue-900/30">
+                                  <span className="flex-shrink-0 px-2 py-0.5 text-[9px] tracking-wider font-extrabold uppercase rounded bg-blue-50 text-blue-600 border border-blue-100/30">
                                     Question
                                   </span>
-                                  <h4 className="text-sm font-bold text-slate-900 dark:text-white leading-snug">
+                                  <h4 className="text-sm font-bold text-slate-900 leading-snug">
                                     {item.q}
                                   </h4>
                                 </div>
-                                <div className="flex items-start space-x-3 border-t border-slate-100 dark:border-slate-800/80 pt-3">
-                                  <span className="flex-shrink-0 px-2 py-0.5 text-[9px] tracking-wider font-extrabold uppercase rounded bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 border border-emerald-100/30 dark:border-emerald-900/30">
+                                <div className="flex items-start space-x-3 border-t border-slate-100 pt-3">
+                                  <span className="flex-shrink-0 px-2 py-0.5 text-[9px] tracking-wider font-extrabold uppercase rounded bg-emerald-50 text-emerald-600 border border-emerald-100/30">
                                     Answer
                                   </span>
-                                  <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 leading-relaxed whitespace-pre-line">
+                                  <p className="text-xs sm:text-sm text-slate-600 leading-relaxed whitespace-pre-line">
                                     {item.a}
                                   </p>
                                 </div>

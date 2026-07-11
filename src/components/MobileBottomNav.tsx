@@ -79,7 +79,7 @@ export default function MobileBottomNav({
   };
 
   const activeTabClass = "text-brand-blue scale-110";
-  const inactiveTabClass = "text-slate-400 hover:text-slate-600";
+  const inactiveTabClass = "text-slate-500 hover:text-slate-700";
 
   return (
     <>
@@ -166,7 +166,7 @@ export default function MobileBottomNav({
           <button 
             onClick={() => setIsMoreMenuOpen(!isMoreMenuOpen)}
             className={`flex min-h-12 flex-col items-center justify-center flex-1 transition-all relative py-1 cursor-pointer rounded-xl active:scale-95 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20 ${
-              isMoreMenuOpen ? 'text-brand-blue scale-110' : 'text-slate-400 hover:text-slate-600'
+              isMoreMenuOpen ? 'text-brand-blue scale-110' : 'text-slate-500 hover:text-slate-700'
             }`}
             aria-label={isMoreMenuOpen ? 'Close more menu' : 'Open more menu'}
             aria-expanded={isMoreMenuOpen}
@@ -223,7 +223,7 @@ export default function MobileBottomNav({
                 {user ? (
                   <button 
                     onClick={handleLogout}
-                    className="px-3.5 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center"
+                    className="min-h-11 px-3.5 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-red-500/15"
                   >
                     <LogOut className="h-3.5 w-3.5 mr-1" />
                     Sign Out
@@ -234,7 +234,7 @@ export default function MobileBottomNav({
                       setIsMoreMenuOpen(false);
                       onOpenAuthModal();
                     }}
-                    className="px-3.5 py-1.5 bg-brand-blue text-white rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center shadow-xs"
+                    className="min-h-11 px-3.5 py-1.5 bg-brand-blue text-white rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center shadow-xs focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20"
                   >
                     <LogIn className="h-3.5 w-3.5 mr-1" />
                     Sign In

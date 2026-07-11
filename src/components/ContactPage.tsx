@@ -331,7 +331,8 @@ export default function ContactPage({ settings, isAdmin, onEdit }: ContactPagePr
               </div>
               <button
                 onClick={handleWhatsAppChat}
-                className="w-full py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center justify-center cursor-pointer"
+                className="w-full min-h-11 px-4 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center justify-center cursor-pointer focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-emerald-500/30 focus-visible:ring-offset-2"
+                aria-label="Start a customer support chat on WhatsApp"
               >
                 <Phone className="h-3.5 w-3.5 mr-2 text-white fill-white" />
                 Chat on WhatsApp
@@ -348,7 +349,7 @@ export default function ContactPage({ settings, isAdmin, onEdit }: ContactPagePr
             </p>
 
             {submitted ? (
-              <div className="py-12 text-center space-y-4">
+              <div className="py-12 text-center space-y-4" role="status" aria-live="polite">
                 <CheckCircle className="h-14 w-14 text-emerald-500 mx-auto animate-pulse" />
                 <h4 className="text-xl font-bold font-display text-slate-900">Inquiry Sent Successfully!</h4>
                 <p className="text-sm text-slate-500 max-w-sm mx-auto font-light leading-relaxed">
@@ -356,63 +357,67 @@ export default function ContactPage({ settings, isAdmin, onEdit }: ContactPagePr
                 </p>
               </div>
             ) : (
-              <form onSubmit={handleSubmit} className="space-y-4">
+              <form onSubmit={handleSubmit} className="space-y-4" aria-label="Customer inquiry form">
                 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   {/* Name */}
                   <div>
-                    <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Your Name *</label>
+                    <label htmlFor="contact-name" className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Your Name *</label>
                     <input
+                      id="contact-name"
                       type="text"
                       required
                       placeholder="Kumara Alwis"
                       value={name}
                       onChange={(e) => setName(e.target.value)}
-                      className="w-full text-sm px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-brand-blue/20"
+                      className="min-h-11 w-full text-sm px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus-visible:outline-none focus-visible:border-brand-blue focus-visible:ring-4 focus-visible:ring-brand-blue/15"
                     />
                   </div>
 
                   {/* Phone */}
                   <div>
-                    <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">WhatsApp / Contact Number *</label>
+                    <label htmlFor="contact-phone" className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">WhatsApp / Contact Number *</label>
                     <input
+                      id="contact-phone"
                       type="tel"
                       required
                       placeholder="+94 77 123 4567"
                       value={phone}
                       onChange={(e) => setPhone(e.target.value)}
-                      className="w-full text-sm px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-brand-blue/20"
+                      className="min-h-11 w-full text-sm px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus-visible:outline-none focus-visible:border-brand-blue focus-visible:ring-4 focus-visible:ring-brand-blue/15"
                     />
                   </div>
                 </div>
 
                 {/* Email */}
                 <div>
-                  <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Email Address</label>
+                  <label htmlFor="contact-email" className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Email Address</label>
                   <input
+                    id="contact-email"
                     type="email"
                     placeholder="kumara@gmail.com"
-                    className="w-full text-sm px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden"
+                    className="min-h-11 w-full text-sm px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus-visible:outline-none focus-visible:border-brand-blue focus-visible:ring-4 focus-visible:ring-brand-blue/15"
                   />
                 </div>
 
                 {/* Message */}
                 <div>
-                  <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Inquiry Details *</label>
+                  <label htmlFor="contact-message" className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Inquiry Details *</label>
                   <textarea
+                    id="contact-message"
                     required
                     rows={4}
                     placeholder="Describe what product you are interested in, quantities required, or delivery questions..."
                     value={message}
                     onChange={(e) => setMessage(e.target.value)}
-                    className="w-full text-sm px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-brand-blue/20"
+                    className="w-full text-sm px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus-visible:outline-none focus-visible:border-brand-blue focus-visible:ring-4 focus-visible:ring-brand-blue/15"
                   ></textarea>
                 </div>
 
                 {/* Button */}
                 <button
                   type="submit"
-                  className="w-full py-3.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-sm font-bold shadow-md shadow-slate-900/10 cursor-pointer flex items-center justify-center transition-all"
+                  className="w-full min-h-11 px-4 py-3.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-sm font-bold shadow-md shadow-slate-900/10 cursor-pointer flex items-center justify-center transition-all focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-slate-900/25 focus-visible:ring-offset-2"
                 >
                   <Send className="h-4 w-4 mr-1.5" />
                   Submit Inquiry

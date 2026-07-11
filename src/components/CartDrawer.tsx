@@ -339,7 +339,7 @@ export default function CartDrawer({
               
               {/* Cart Items List */}
               {cartItems.length === 0 ? (
-                <div className="text-center py-16 text-slate-400 space-y-4">
+                <div className="text-center py-16 text-slate-500 space-y-4">
                   <ShoppingBag className="h-12 w-12 mx-auto text-slate-300" />
                   <p className="text-sm font-medium">Your shopping cart is empty.</p>
                   <button
@@ -352,7 +352,7 @@ export default function CartDrawer({
                 </div>
               ) : (
                 <div className="space-y-4">
-                  <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Cart Items</h4>
+                  <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Cart Items</h4>
                   <div className="divide-y divide-slate-100">
                     {cartItems.map((item) => (
                       <div key={item.product.id} className="flex items-start py-4 first:pt-0 last:pb-0">
@@ -368,7 +368,7 @@ export default function CartDrawer({
                         />
                         <div className="ml-3 min-w-0 flex-1 text-left sm:ml-4">
                           <h5 className="text-sm font-semibold text-slate-800 line-clamp-1">{item.product.name}</h5>
-                          <span className="text-xs text-slate-400">{formatPrice(item.product.price)} each</span>
+                          <span className="text-xs text-slate-500">{formatPrice(item.product.price)} each</span>
                           <div className="flex items-center space-x-1.5 mt-1.5">
                             <button
                               type="button"
@@ -414,7 +414,7 @@ export default function CartDrawer({
               {/* Delivery and Summary Box */}
               {cartItems.length > 0 && (
                 <div className="bg-slate-50 border border-slate-100 p-4 rounded-2xl space-y-3.5">
-                  <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Order Summary</h4>
+                  <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Order Summary</h4>
                   <div className="space-y-2 text-xs">
                     <div className="flex justify-between">
                       <span className="text-slate-500">Items Subtotal:</span>
@@ -449,7 +449,7 @@ export default function CartDrawer({
               {/* Checkout Form */}
               {cartItems.length > 0 && (
                 <form onSubmit={handleCheckout} className="space-y-4">
-                  <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Delivery Details</h4>
+                  <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Delivery Details</h4>
                   
                   <div className="grid grid-cols-1 gap-3.5">
                     

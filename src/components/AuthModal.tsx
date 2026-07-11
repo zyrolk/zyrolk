@@ -121,36 +121,47 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
     <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
       
       {/* Modal Stage */}
-      <div className="relative w-full max-w-md bg-white rounded-3xl overflow-hidden shadow-2xl border border-slate-100 p-6 md:p-8 animate-fadeIn text-left">
+      <div
+        className="relative w-full max-w-md bg-white rounded-3xl overflow-hidden shadow-2xl border border-slate-100 p-6 md:p-8 animate-fadeIn text-left"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="auth-modal-title"
+        aria-describedby="auth-modal-description"
+      >
         
         {/* Close */}
         <button
           onClick={onClose}
-          className="absolute top-4 right-4 p-2 text-slate-400 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-full transition-colors cursor-pointer"
+          className="absolute top-3 right-3 flex h-11 w-11 items-center justify-center text-slate-500 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-full transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20"
+          aria-label="Close sign in dialog"
         >
-          <X className="h-4.5 w-4.5" />
+          <X className="h-4.5 w-4.5" aria-hidden="true" />
         </button>
 
         {/* Brand */}
         <div className="text-center space-y-2 mb-6 flex flex-col items-center justify-center">
-          <img 
-            src="/logo.png" 
-            alt="Zyro.lk" 
-            className="h-12 max-w-[200px] object-contain mb-2"
-            referrerPolicy="no-referrer"
-          />
-          <h2 className="text-xl font-bold font-display text-slate-800">
+          <div className="relative mb-2 flex h-12 min-w-32 items-center justify-center" role="img" aria-label="Zyro.lk">
+            <span className="text-2xl font-black font-display text-slate-900" aria-hidden="true">Zyro<span className="text-brand-blue">.lk</span></span>
+            <img
+              src="/logo.png"
+              alt=""
+              className="absolute inset-0 h-12 w-full bg-white object-contain"
+              referrerPolicy="no-referrer"
+              onError={(event) => { event.currentTarget.hidden = true; }}
+            />
+          </div>
+          <h2 id="auth-modal-title" className="text-xl font-bold font-display text-slate-800">
             {isSignUp ? "Create Premium Account" : "Welcome Back"}
           </h2>
-          <p className="text-xs text-slate-400 font-light">
+          <p id="auth-modal-description" className="text-xs text-slate-500 font-light">
             {isSignUp ? "Register to save wishlists and explore genuine items." : "Sign in to access your electronics panel."}
           </p>
         </div>
 
         {/* Error notification */}
         {error && (
-          <div className="bg-red-50 border border-red-100 text-red-700 text-xs p-3 rounded-2xl flex items-start space-x-2 mb-5">
-            <AlertCircle className="h-4.5 w-4.5 text-red-500 shrink-0 mt-0.5" />
+          <div className="bg-red-50 border border-red-100 text-red-700 text-xs p-3 rounded-2xl flex items-start space-x-2 mb-5" role="alert">
+            <AlertCircle className="h-4.5 w-4.5 text-red-500 shrink-0 mt-0.5" aria-hidden="true" />
             <p className="font-light">{error}</p>
           </div>
         )}
@@ -160,57 +171,61 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
           
           {isSignUp && (
             <div>
-              <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Full Name</label>
+              <label htmlFor="auth-display-name" className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Full Name</label>
               <div className="relative">
                 <input
+                  id="auth-display-name"
                   type="text"
                   required
                   placeholder="Amara Wijesinghe"
                   value={displayName}
                   onChange={(e) => setDisplayName(e.target.value)}
-                  className="w-full text-sm pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-brand-blue/20"
+                  className="min-h-11 w-full text-sm pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus-visible:outline-none focus-visible:border-brand-blue focus-visible:ring-4 focus-visible:ring-brand-blue/15"
                 />
-                <User className="absolute left-3.5 top-3 h-4.5 w-4.5 text-slate-400" />
+                <User className="pointer-events-none absolute left-3.5 top-3 h-4.5 w-4.5 text-slate-500" aria-hidden="true" />
               </div>
             </div>
           )}
 
           <div>
-            <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Email Address</label>
+            <label htmlFor="auth-email" className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Email Address</label>
             <div className="relative">
               <input
+                id="auth-email"
                 type="email"
                 required
                 placeholder="amara@gmail.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="w-full text-sm pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-brand-blue/20"
+                className="min-h-11 w-full text-sm pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus-visible:outline-none focus-visible:border-brand-blue focus-visible:ring-4 focus-visible:ring-brand-blue/15"
               />
-              <Mail className="absolute left-3.5 top-3 h-4.5 w-4.5 text-slate-400" />
+              <Mail className="pointer-events-none absolute left-3.5 top-3 h-4.5 w-4.5 text-slate-500" aria-hidden="true" />
             </div>
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Password</label>
+            <label htmlFor="auth-password" className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Password</label>
             <div className="relative">
               <input
+                id="auth-password"
                 type="password"
                 required
                 placeholder="••••••••"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full text-sm pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-brand-blue/20"
+                className="min-h-11 w-full text-sm pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus-visible:outline-none focus-visible:border-brand-blue focus-visible:ring-4 focus-visible:ring-brand-blue/15"
               />
-              <Lock className="absolute left-3.5 top-3 h-4.5 w-4.5 text-slate-400" />
+              <Lock className="pointer-events-none absolute left-3.5 top-3 h-4.5 w-4.5 text-slate-500" aria-hidden="true" />
             </div>
           </div>
 
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-3 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-sm font-semibold transition-all cursor-pointer flex items-center justify-center shadow-xs"
+            className="w-full min-h-11 px-4 py-3 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-sm font-semibold transition-all cursor-pointer flex items-center justify-center shadow-xs focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-slate-900/25 focus-visible:ring-offset-2 disabled:cursor-wait disabled:opacity-70"
+            aria-busy={loading}
           >
-            <LogIn className="h-4 w-4 mr-1.5" />
+            <LogIn className="h-4 w-4 mr-1.5" aria-hidden="true" />
             {loading ? "Authenticating..." : isSignUp ? "Create Account" : "Sign In"}
           </button>
 
@@ -219,13 +234,13 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
         {/* Divider */}
         <div className="relative my-6 text-center">
           <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-slate-100"></div></div>
-          <span className="relative bg-white px-3 text-[11px] font-bold text-slate-400 uppercase tracking-wider">or connect via</span>
+          <span className="relative bg-white px-3 text-[11px] font-bold text-slate-500 uppercase tracking-wider">or connect via</span>
         </div>
 
         {/* Social Authentication */}
         <button
           onClick={handleGoogleLogin}
-          className="w-full py-2.5 border border-slate-200 rounded-xl text-sm font-medium text-slate-700 hover:bg-slate-50 transition-all flex items-center justify-center space-x-2 cursor-pointer"
+          className="w-full min-h-11 px-4 py-2.5 border border-slate-200 rounded-xl text-sm font-medium text-slate-700 hover:bg-slate-50 transition-all flex items-center justify-center space-x-2 cursor-pointer focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/15"
         >
           <svg className="h-4 w-4 mr-2" viewBox="0 0 24 24">
             <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
@@ -241,7 +256,7 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
           {isSignUp ? "Already have a Zyro account?" : "New to Zyro.lk?"}{" "}
           <button
             onClick={() => setIsSignUp(!isSignUp)}
-            className="font-semibold text-brand-blue hover:underline cursor-pointer"
+            className="inline-flex min-h-11 items-center rounded-lg px-2 font-semibold text-brand-blue hover:underline cursor-pointer focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/15"
           >
             {isSignUp ? "Sign In" : "Register Now"}
           </button>

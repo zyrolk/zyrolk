@@ -194,10 +194,10 @@ function ProductCard({
                   />
                 ))}
               </div>
-              <span className="text-[11px] text-slate-400 font-medium">({product.reviewsCount})</span>
+              <span className="text-[11px] text-slate-500 font-medium">({product.reviewsCount})</span>
             </>
           ) : (
-            <span className="text-[11px] text-slate-400 font-medium">New arrival</span>
+            <span className="text-[11px] text-slate-500 font-medium">New arrival</span>
           )}
         </div>
 
@@ -208,7 +208,7 @@ function ProductCard({
               {formatPrice(product.price)}
             </span>
             {product.originalPrice && product.originalPrice > product.price && (
-              <span className="text-xs text-slate-400 line-through">
+              <span className="text-xs text-slate-500 line-through">
                 {formatPrice(product.originalPrice)}
               </span>
             )}
