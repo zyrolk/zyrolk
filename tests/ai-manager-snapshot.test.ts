@@ -154,3 +154,15 @@ test('AI Manager supplier snapshot is minimal and excludes sensitive connector d
   assert.equal(serialized.includes('connectorUrl'), false);
   assert.equal(Object.isFrozen(snapshot.suppliers), true);
 });
+
+test('AI Manager pricing snapshot is minimal and preserves invalid numeric values for analysis', () => {
+  const invalidProduct = { ...product, id: 'invalid-price', price: Number.NaN, originalPrice: Number.POSITIVE_INFINITY, discount: -2 };
+  const snapshot = buildAIManagerSnapshot(createSource({ products: [product, invalidProduct] }));
+
+  assert.deepEqual(Object.keys(snapshot.pricing.products[0]).sort(), ['id', 'isActive', 'name', 'originalPrice', 'sellingPrice', 'storedDiscount']);
+  assert.equal(Number.isNaN(snapshot.pricing.products[1].sellingPrice), true);
+  assert.equal(snapshot.pricing.products[1].originalPrice, Number.POSITIVE_INFINITY);
+  assert.equal(snapshot.pricing.products[1].storedDiscount, -2);
+  assert.equal(JSON.stringify(snapshot.pricing.products[0]).includes('description'), false);
+  assert.equal(Object.isFrozen(snapshot.pricing.products), true);
+});

@@ -4,7 +4,7 @@ import { INTELLIGENCE_CATALOG } from './intelligenceCatalog';
 
 const DATA_SET_LABELS: Readonly<Record<AIDataSetId, string>> = Object.freeze({
   products: 'Products',
-  'pricing-products': 'Products with cost or market pricing',
+  'pricing-products': 'Products with pricing data',
   categories: 'Categories',
   orders: 'Orders',
   customers: 'Customers (aggregate count only)',
@@ -61,9 +61,12 @@ export function buildAIManagerSnapshot(source: AIManagerSourceData): AIManagerSn
   const supplierReviewQueue = [...source.supplierReviewQueue];
   const supplierPendingChanges = [...source.supplierPendingChanges];
   const supplierSyncHistory = [...source.supplierSyncHistory];
-  const pricingProductCount = products.filter(
-    (product) => typeof product.costPrice === 'number' || typeof product.marketPrice === 'number',
-  ).length;
+  const pricingProductCount = products.filter((product) => (
+    typeof product.price === 'number'
+    || typeof product.originalPrice === 'number'
+    || typeof product.costPrice === 'number'
+    || typeof product.marketPrice === 'number'
+  )).length;
 
   const recordCounts: Readonly<Record<AIDataSetId, number>> = {
     products: products.length,
@@ -149,6 +152,16 @@ export function buildAIManagerSnapshot(source: AIManagerSourceData): AIManagerSn
         reviewQueueItemId: item.reviewQueueItemId || '',
         supplierId: item.sourceId || item.supplierCode || '',
         status: String(item.status || ''),
+      })),
+    },
+    pricing: {
+      products: products.map((product) => ({
+        id: product.id,
+        name: product.name,
+        isActive: product.isActive !== false,
+        sellingPrice: typeof product.price === 'number' ? product.price : null,
+        originalPrice: typeof product.originalPrice === 'number' ? product.originalPrice : null,
+        storedDiscount: typeof product.discount === 'number' ? product.discount : null,
       })),
     },
     dataSets,
