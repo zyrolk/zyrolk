@@ -59,6 +59,7 @@ export function buildAIManagerSnapshot(source: AIManagerSourceData): AIManagerSn
   const reviews = [...source.reviews];
   const supplierSources = [...source.supplierSources];
   const supplierReviewQueue = [...source.supplierReviewQueue];
+  const supplierPendingChanges = [...source.supplierPendingChanges];
   const supplierSyncHistory = [...source.supplierSyncHistory];
   const pricingProductCount = products.filter(
     (product) => typeof product.costPrice === 'number' || typeof product.marketPrice === 'number',
@@ -117,6 +118,37 @@ export function buildAIManagerSnapshot(source: AIManagerSourceData): AIManagerSn
         name: product.name,
         stock: typeof product.stock === 'number' ? product.stock : null,
         isActive: product.isActive !== false,
+      })),
+    },
+    suppliers: {
+      suppliers: supplierSources.map((supplier) => ({
+        id: supplier.id || '',
+        name: supplier.supplierName || supplier.name || 'Unnamed supplier',
+        isEnabled: supplier.enabled !== false && String(supplier.sourceStatus || 'active').toLowerCase() === 'active',
+        lastSync: typeof supplier.lastSync === 'string' && supplier.lastSync.trim() ? supplier.lastSync : null,
+      })),
+      syncHistory: supplierSyncHistory.map((entry) => {
+        const rawStatus = String(entry.status || '').toLowerCase();
+        return {
+          supplierId: entry.supplierId || entry.sourceId || entry.supplierCode || '',
+          supplierName: entry.supplierName || entry.source || '',
+          timestamp: entry.startedAt || entry.createdAt || entry.timestamp || null,
+          status: rawStatus === 'success' ? 'success' as const : rawStatus === 'failed' ? 'failed' as const : 'unknown' as const,
+          pendingReviews: typeof entry.pendingReviews === 'number' && Number.isFinite(entry.pendingReviews) && entry.pendingReviews >= 0
+            ? entry.pendingReviews : null,
+        };
+      }),
+      reviewQueue: supplierReviewQueue.map((item) => ({
+        id: item.id,
+        supplierId: item.sourceId || item.supplierCode || '',
+        supplierName: item.supplierName || '',
+        status: String(item.status || ''),
+      })),
+      pendingChanges: supplierPendingChanges.map((item) => ({
+        id: item.id || '',
+        reviewQueueItemId: item.reviewQueueItemId || '',
+        supplierId: item.sourceId || item.supplierCode || '',
+        status: String(item.status || ''),
       })),
     },
     dataSets,

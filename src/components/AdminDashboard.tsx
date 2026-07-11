@@ -5895,6 +5895,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                   reviews,
                   supplierSources,
                   supplierReviewQueue,
+                  supplierPendingChanges,
                   supplierSyncHistory,
                   settings,
                 }}

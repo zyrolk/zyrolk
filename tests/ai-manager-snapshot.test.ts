@@ -44,6 +44,7 @@ function createSource(overrides: Partial<AIManagerSourceData> = {}): AIManagerSo
     reviews: [],
     supplierSources: [],
     supplierReviewQueue: [],
+    supplierPendingChanges: [],
     supplierSyncHistory: [],
     settings: null,
     ...overrides,
@@ -133,4 +134,23 @@ test('AI Manager inventory snapshot is minimal and preserves invalid stock for a
   assert.equal(snapshot.inventory.products[1].stock, null);
   assert.equal(JSON.stringify(snapshot.inventory).includes('description'), false);
   assert.equal(JSON.stringify(snapshot.inventory).includes('price'), false);
+});
+
+test('AI Manager supplier snapshot is minimal and excludes sensitive connector data', () => {
+  const snapshot = buildAIManagerSnapshot(createSource({
+    supplierSources: [{
+      id: 'supplier-a', name: 'Supplier A', sourceStatus: 'active', lastSync: '2026-03-01T00:00:00.000Z',
+      connectorUrl: 'https://secret.example.com', apiKey: 'secret-key',
+    } as AIManagerSourceData['supplierSources'][number] & { connectorUrl: string; apiKey: string }],
+    supplierSyncHistory: [{ supplierId: 'supplier-a', supplierName: 'Supplier A', timestamp: '2026-03-01T00:00:00.000Z', status: 'Success', pendingReviews: 2 }],
+    supplierPendingChanges: [{ id: 'change-1', reviewQueueItemId: 'review-1', sourceId: 'supplier-a', status: 'Pending' }],
+  }));
+  const serialized = JSON.stringify(snapshot.suppliers);
+
+  assert.deepEqual(Object.keys(snapshot.suppliers.suppliers[0]).sort(), ['id', 'isEnabled', 'lastSync', 'name']);
+  assert.deepEqual(Object.keys(snapshot.suppliers.syncHistory[0]).sort(), ['pendingReviews', 'status', 'supplierId', 'supplierName', 'timestamp']);
+  assert.equal(serialized.includes('secret.example.com'), false);
+  assert.equal(serialized.includes('secret-key'), false);
+  assert.equal(serialized.includes('connectorUrl'), false);
+  assert.equal(Object.isFrozen(snapshot.suppliers), true);
 });

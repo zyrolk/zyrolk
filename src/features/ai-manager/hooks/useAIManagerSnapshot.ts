@@ -13,6 +13,7 @@ export function useAIManagerSnapshot(source: AIManagerSourceData) {
       source.reviews,
       source.supplierSources,
       source.supplierReviewQueue,
+      source.supplierPendingChanges,
       source.supplierSyncHistory,
       source.settings,
     ],

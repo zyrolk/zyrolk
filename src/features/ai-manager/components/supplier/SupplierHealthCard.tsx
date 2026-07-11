@@ -1,0 +1,13 @@
+import { HeartHandshake } from 'lucide-react';
+import type { SupplierHealth } from '../../types/supplier';
+
+interface SupplierHealthCardProps { readonly healthy: readonly SupplierHealth[]; readonly attention: readonly SupplierHealth[] }
+const TONES = { healthy: 'text-emerald-300 bg-emerald-500/10', attention: 'text-amber-300 bg-amber-500/10', critical: 'text-red-300 bg-red-500/10', unavailable: 'text-slate-300 bg-slate-500/10' } as const;
+
+function SupplierRow({ supplier }: { readonly supplier: SupplierHealth; readonly key?: string }) {
+  return <li className="rounded-xl border border-slate-800 p-3.5"><div className="flex flex-wrap items-center justify-between gap-2"><span className="text-xs font-black text-white">{supplier.supplierName}</span><span className={`rounded-full px-2.5 py-1 text-[9px] font-black uppercase tracking-wider ${TONES[supplier.status]}`}>{supplier.label}</span></div><ul className="mt-2 space-y-1 text-[11px] leading-relaxed text-slate-500">{supplier.reasons.map((reason) => <li key={reason}>• {reason}</li>)}</ul></li>;
+}
+
+export function SupplierHealthCard({ healthy, attention }: SupplierHealthCardProps) {
+  return <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5" aria-labelledby="supplier-health-title"><div className="flex items-center gap-3"><div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-400"><HeartHandshake className="h-5 w-5" aria-hidden="true" /></div><div><h3 id="supplier-health-title" className="text-base font-black text-white">Explainable supplier health</h3><p className="text-[11px] text-slate-500">Enabled suppliers only</p></div></div><div className="mt-5 grid gap-5 xl:grid-cols-2"><div><h4 className="text-xs font-black uppercase tracking-wider text-emerald-400">Top Healthy Suppliers</h4>{healthy.length ? <ol className="mt-3 space-y-2">{healthy.map((supplier) => <SupplierRow key={supplier.supplierId || supplier.supplierName} supplier={supplier} />)}</ol> : <p className="mt-3 rounded-xl border border-dashed border-slate-700 p-4 text-xs text-slate-500">No enabled supplier currently meets every healthy condition.</p>}</div><div><h4 className="text-xs font-black uppercase tracking-wider text-amber-400">Suppliers Requiring Attention</h4>{attention.length ? <ol className="mt-3 space-y-2">{attention.map((supplier) => <SupplierRow key={supplier.supplierId || supplier.supplierName} supplier={supplier} />)}</ol> : <p className="mt-3 rounded-xl border border-dashed border-slate-700 p-4 text-xs text-slate-500">No enabled suppliers currently require attention.</p>}</div></div></section>;
+}
