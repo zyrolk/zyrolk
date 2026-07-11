@@ -111,6 +111,14 @@ export function buildAIManagerSnapshot(source: AIManagerSourceData): AIManagerSn
         })),
       })),
     },
+    inventory: {
+      products: products.map((product) => ({
+        id: product.id,
+        name: product.name,
+        stock: typeof product.stock === 'number' ? product.stock : null,
+        isActive: product.isActive !== false,
+      })),
+    },
     dataSets,
     intelligence: calculateIntelligenceReadiness(dataSets),
     privacy: {

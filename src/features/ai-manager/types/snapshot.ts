@@ -2,6 +2,7 @@ import type { Category, Order, Product, SupplierReviewQueueItem, WebsiteSettings
 import type { SupplierSource, SyncHistoryEntry } from '../../../services/sync-engine/types';
 import type { AIDataSetReadiness, AIIntelligenceReadiness } from './domain';
 import type { SalesSnapshot } from './sales';
+import type { InventorySnapshot } from './inventory';
 
 export interface AIManagerCustomerInput {
   readonly id?: string;
@@ -49,6 +50,7 @@ export interface AIManagerMetrics {
 export interface AIManagerSnapshot {
   readonly metrics: AIManagerMetrics;
   readonly sales: SalesSnapshot;
+  readonly inventory: InventorySnapshot;
   readonly dataSets: readonly AIDataSetReadiness[];
   readonly intelligence: readonly AIIntelligenceReadiness[];
   readonly privacy: {

@@ -74,6 +74,7 @@ test('AI Manager snapshot builds immutable deterministic aggregates', () => {
   assert.equal(Object.isFrozen(snapshot), true);
   assert.equal(Object.isFrozen(snapshot.metrics), true);
   assert.equal(Object.isFrozen(snapshot.intelligence), true);
+  assert.equal(Object.isFrozen(snapshot.inventory.products), true);
   assert.deepEqual(buildAIManagerSnapshot(source), snapshot);
 });
 
@@ -121,4 +122,15 @@ test('AI Manager snapshot excludes customer PII and raw records', () => {
   assert.equal(serialized.includes('Sensitive Address'), false);
   assert.equal(serialized.includes('Private Customer'), false);
   assert.equal(serialized.includes('Private review text'), false);
+});
+
+test('AI Manager inventory snapshot is minimal and preserves invalid stock for analysis', () => {
+  const nullStockProduct = { ...product, id: 'null-stock', stock: null } as unknown as Product;
+  const snapshot = buildAIManagerSnapshot(createSource({ products: [product, nullStockProduct] }));
+
+  assert.deepEqual(Object.keys(snapshot.inventory.products[0]).sort(), ['id', 'isActive', 'name', 'stock']);
+  assert.equal(snapshot.inventory.products[0].stock, 4);
+  assert.equal(snapshot.inventory.products[1].stock, null);
+  assert.equal(JSON.stringify(snapshot.inventory).includes('description'), false);
+  assert.equal(JSON.stringify(snapshot.inventory).includes('price'), false);
 });

@@ -7,6 +7,7 @@ import { IntelligenceDomainGrid } from './components/IntelligenceDomainGrid';
 import { OperationalSnapshot } from './components/OperationalSnapshot';
 import { RecommendationsEmptyState } from './components/RecommendationsEmptyState';
 import { SalesIntelligenceDashboard } from './components/sales/SalesIntelligenceDashboard';
+import { InventoryIntelligenceDashboard } from './components/inventory/InventoryIntelligenceDashboard';
 
 export default function AIManagerPanel({ sourceData, isDarkMode }: AIManagerPanelProps) {
   const snapshot = useAIManagerSnapshot(sourceData);
@@ -16,6 +17,7 @@ export default function AIManagerPanel({ sourceData, isDarkMode }: AIManagerPane
       <AIManagerHeader />
       <OperationalSnapshot metrics={snapshot.metrics} />
       <SalesIntelligenceDashboard snapshot={snapshot.sales} />
+      <InventoryIntelligenceDashboard snapshot={snapshot.inventory} />
       <IntelligenceDomainGrid intelligence={snapshot.intelligence} />
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
         <DataReadinessPanel dataSets={snapshot.dataSets} />
