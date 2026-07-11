@@ -98,6 +98,19 @@ export function buildAIManagerSnapshot(source: AIManagerSourceData): AIManagerSn
       reviewCount: reviews.length,
       pendingSupplierReviewCount: supplierReviewQueue.filter((item) => item.status === 'Pending').length,
     },
+    sales: {
+      orders: orders.map((order) => ({
+        createdAt: order.createdAt,
+        status: String(order.status || 'unknown').toLowerCase(),
+        totalPrice: order.totalPrice,
+        items: order.items.map((item) => ({
+          productId: item.productId,
+          productName: item.name,
+          unitPrice: item.price,
+          quantity: item.quantity,
+        })),
+      })),
+    },
     dataSets,
     intelligence: calculateIntelligenceReadiness(dataSets),
     privacy: {
