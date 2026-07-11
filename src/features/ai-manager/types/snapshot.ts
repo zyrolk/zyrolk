@@ -4,6 +4,7 @@ import type { SalesSnapshot } from './sales';
 import type { InventorySnapshot } from './inventory';
 import type { SupplierSnapshot } from './supplier';
 import type { PricingSnapshot } from './pricing';
+import type { CustomerSnapshot } from './customer';
 
 export interface AIManagerSupplierSourceInput {
   readonly id?: string;
@@ -85,6 +86,7 @@ export interface AIManagerSnapshot {
   readonly inventory: InventorySnapshot;
   readonly suppliers: SupplierSnapshot;
   readonly pricing: PricingSnapshot;
+  readonly customers: CustomerSnapshot;
   readonly dataSets: readonly AIDataSetReadiness[];
   readonly intelligence: readonly AIIntelligenceReadiness[];
   readonly privacy: {

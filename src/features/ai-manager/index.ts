@@ -5,3 +5,4 @@ export type { SalesAnalysis, SalesInsight, SalesMetrics, RevenueSummary, OrderBr
 export type { InventoryAnalysis, InventoryHealth, InventoryInsight, InventoryMetrics, InventorySummary, StockDistribution } from './types/inventory';
 export type { SupplierAnalysis, SupplierHealth, SupplierInsight, SupplierMetrics, SupplierQueueSummary, SupplierSyncSummary } from './types/supplier';
 export type { PricingAnalysis, PricingHealth, PricingInsight, PricingMetrics, DiscountSummary, PriceDistribution } from './types/pricing';
+export type { CustomerAnalysis, CustomerHealth, CustomerInsight, CustomerMetrics, CustomerRetentionSummary } from './types/customer';

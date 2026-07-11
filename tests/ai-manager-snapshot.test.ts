@@ -117,11 +117,14 @@ test('AI Manager snapshot excludes customer PII and raw records', () => {
   assert.equal(snapshot.privacy.containsCustomerRecords, false);
   assert.equal(snapshot.privacy.containsDirectIdentifiers, false);
   assert.equal(snapshot.sales.orders.length, 1);
+  assert.equal(snapshot.customers.purchaseProfiles.length, 1);
+  assert.deepEqual(Object.keys(snapshot.customers.purchaseProfiles[0]).sort(), ['lifetimeValue', 'orderCount', 'orderDates']);
   assert.deepEqual(Object.keys(snapshot.sales.orders[0]).sort(), ['createdAt', 'items', 'status', 'totalPrice']);
   assert.equal(serialized.includes('sensitive@example.com'), false);
   assert.equal(serialized.includes('+94 11 111 1111'), false);
   assert.equal(serialized.includes('Sensitive Address'), false);
   assert.equal(serialized.includes('Private Customer'), false);
+  assert.equal(serialized.includes('customer-private-uid'), false);
   assert.equal(serialized.includes('Private review text'), false);
 });
 

@@ -61,6 +61,27 @@ export function buildAIManagerSnapshot(source: AIManagerSourceData): AIManagerSn
   const supplierReviewQueue = [...source.supplierReviewQueue];
   const supplierPendingChanges = [...source.supplierPendingChanges];
   const supplierSyncHistory = [...source.supplierSyncHistory];
+  const seenCustomerOrderIds = new Set<string>();
+  const customerPurchaseGroups = new Map<string, { orderCount: number; lifetimeValue: number; orderDates: string[] }>();
+  let excludedCustomerOrderCount = 0;
+  orders.forEach((order) => {
+    if (String(order.status).toLowerCase() === 'cancelled') return;
+    const orderId = String(order.id || '').trim();
+    if (orderId && seenCustomerOrderIds.has(orderId)) return;
+    if (orderId) seenCustomerOrderIds.add(orderId);
+    const emailKey = String(order.customerEmail || '').trim().toLowerCase();
+    const uid = String(order.customerUid || '').trim().toLowerCase();
+    const transientGroupKey = emailKey ? `email:${emailKey}` : uid && uid !== 'guest' ? `uid:${uid}` : '';
+    if (!transientGroupKey) {
+      excludedCustomerOrderCount += 1;
+      return;
+    }
+    const current = customerPurchaseGroups.get(transientGroupKey) || { orderCount: 0, lifetimeValue: 0, orderDates: [] };
+    current.orderCount += 1;
+    current.lifetimeValue += Number.isFinite(order.totalPrice) && order.totalPrice >= 0 ? order.totalPrice : 0;
+    current.orderDates.push(String(order.createdAt || ''));
+    customerPurchaseGroups.set(transientGroupKey, current);
+  });
   const pricingProductCount = products.filter((product) => (
     typeof product.price === 'number'
     || typeof product.originalPrice === 'number'
@@ -163,6 +184,15 @@ export function buildAIManagerSnapshot(source: AIManagerSourceData): AIManagerSn
         originalPrice: typeof product.originalPrice === 'number' ? product.originalPrice : null,
         storedDiscount: typeof product.discount === 'number' ? product.discount : null,
       })),
+    },
+    customers: {
+      customerRecordCount: source.customers.length,
+      purchaseProfiles: [...customerPurchaseGroups.values()].map((profile) => ({
+        orderCount: profile.orderCount,
+        lifetimeValue: profile.lifetimeValue,
+        orderDates: [...profile.orderDates],
+      })),
+      excludedOrderCount: excludedCustomerOrderCount,
     },
     dataSets,
     intelligence: calculateIntelligenceReadiness(dataSets),
