@@ -24,6 +24,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { approveSupplierQueueItem, rejectSupplierQueueItem } from '../services/supplierQueueService';
 
 const SupplierHubFiveStars = lazy(() => import('./SupplierHubFiveStars'));
+const AIManagerPanel = lazy(() => import('../features/ai-manager'));
 
 const AnimatedCounter: React.FC<{ value: number; formatter?: (v: number) => string }> = ({ value, formatter }) => {
   const [count, setCount] = useState(0);
@@ -351,12 +352,12 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
 }
 
 interface AdminDashboardProps {
-  initialTab?: 'stats' | 'products' | 'categories' | 'orders' | 'customers' | 'pages' | 'settings' | 'supplierHub' | 'supplierHubFiveStars';
+  initialTab?: 'stats' | 'aiManager' | 'products' | 'categories' | 'orders' | 'customers' | 'pages' | 'settings' | 'supplierHub' | 'supplierHubFiveStars';
   initialCmsPageId?: string;
 }
 
 export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId = 'about-us' }: AdminDashboardProps = {}) {
-  const [activeTab, setActiveTab] = useState<'stats' | 'products' | 'categories' | 'orders' | 'customers' | 'pages' | 'settings' | 'supplierHub' | 'supplierHubFiveStars'>(initialTab);
+  const [activeTab, setActiveTab] = useState<'stats' | 'aiManager' | 'products' | 'categories' | 'orders' | 'customers' | 'pages' | 'settings' | 'supplierHub' | 'supplierHubFiveStars'>(initialTab);
   const [isDarkMode, setIsDarkMode] = useState<boolean>(true);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
   const [showNotifications, setShowNotifications] = useState<boolean>(false);
@@ -1796,6 +1797,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
           <nav className="space-y-1.5 pt-4">
             {[
               { id: 'stats', label: 'Dashboard', icon: TrendingUp },
+              { id: 'aiManager', label: 'AI Manager', icon: Sparkles },
               { id: 'products', label: 'Products Catalog', icon: ShoppingBag },
               { id: 'categories', label: 'Categories', icon: Layers },
               { id: 'orders', label: 'Orders Feed', icon: Clock },
@@ -5880,7 +5882,27 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
             </motion.div>
           )}
 
-          {/* TAB 8: SUPPLIER HUB ⭐⭐⭐⭐⭐ */}
+          {/* AI MANAGER: READ-ONLY INTELLIGENCE FOUNDATION */}
+          {activeTab === 'aiManager' && (
+            <Suspense fallback={<AdminLazyPanelFallback />}>
+              <AIManagerPanel
+                isDarkMode={isDarkMode}
+                sourceData={{
+                  products,
+                  categories,
+                  orders,
+                  customers,
+                  reviews,
+                  supplierSources,
+                  supplierReviewQueue,
+                  supplierSyncHistory,
+                  settings,
+                }}
+              />
+            </Suspense>
+          )}
+
+          {/* SUPPLIER HUB ⭐⭐⭐⭐⭐ */}
           {activeTab === 'supplierHubFiveStars' && (
             <Suspense fallback={<AdminLazyPanelFallback />}>
               <SupplierHubFiveStars isDarkMode={isDarkMode} />
