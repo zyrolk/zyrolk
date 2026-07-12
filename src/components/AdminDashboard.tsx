@@ -14,6 +14,7 @@ import {
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { onAuthStateChanged } from 'firebase/auth';
 import { db, storage, auth } from '../firebase';
+import { searchAdminProducts } from '../services/product-search/adminProductSearch';
 import { Product, Category, Order, WebsiteSettings, SupplierReviewQueueItem } from '../types';
 import { CloudinaryUpload } from './CloudinaryUpload';
 import { 
@@ -1726,12 +1727,10 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
     return matchesSearch && matchesStatus;
   });
 
-  const filteredProducts = products.filter(p => {
-    const sLower = productSearch.toLowerCase();
-    const nameMatch = p.name.toLowerCase().includes(sLower) || (p.sku || "").toLowerCase().includes(sLower) || p.id.toLowerCase().includes(sLower);
+  const filteredProducts = searchAdminProducts(products, productSearch).filter(p => {
     const matchesCategory = productCategoryFilter === "all" || p.category === productCategoryFilter;
     const matchesStock = productStockFilter === "all" || (productStockFilter === "instock" ? p.stock > 0 : p.stock <= 5);
-    return nameMatch && matchesCategory && matchesStock;
+    return matchesCategory && matchesStock;
   });
 
   const filteredCustomers = customers.filter(c => {
@@ -2631,7 +2630,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                   <Search className="h-4 w-4 absolute left-3 top-3 text-slate-400" />
                   <input
                     type="text"
-                    placeholder="Search name, SKU, or ID..."
+                    placeholder="Search name, supplier code, SKU, brand, model or category..."
                     value={productSearch}
                     onChange={(e) => setProductSearch(e.target.value)}
                     className="w-full text-xs pl-9 pr-3 py-2 bg-slate-100/50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-800 rounded-xl focus:outline-hidden"

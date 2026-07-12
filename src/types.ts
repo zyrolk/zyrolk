@@ -23,6 +23,24 @@ export interface Product {
   marketPrice?: number;
 }
 
+/** Customer-search-safe view of a product. Keep this explicit and allowlisted. */
+export interface CustomerProduct {
+  readonly id: string;
+  readonly name: string;
+  readonly image: string;
+  readonly sellingPrice: number;
+  readonly salePrice?: number;
+  readonly category: string;
+  readonly brand: string;
+  readonly model: string;
+  readonly stock: number;
+  readonly rating: number;
+  readonly reviewCount: number;
+  readonly isNew: boolean;
+  readonly isFeatured: boolean;
+  readonly isBestSeller: boolean;
+}
+
 export interface Category {
   id: string; // e.g., 'electronics'
   name: string;

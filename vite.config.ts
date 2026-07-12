@@ -17,6 +17,7 @@ export default defineConfig(() => {
         },
       },
       rollupOptions: {
+        // TODO: Evaluate Firebase and chart bundle splitting in a dedicated performance sprint.
         output: {
           manualChunks(id) {
             if (id.includes('node_modules')) {

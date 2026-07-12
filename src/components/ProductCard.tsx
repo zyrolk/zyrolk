@@ -69,6 +69,7 @@ function ProductCard({
       alert("WhatsApp checkout is currently being configured by the store administrator. Please try again soon or contact support!");
       return;
     }
+    // TODO: Add noopener/noreferrer when WhatsApp window-opening behavior is addressed in a dedicated security change.
     window.open(`https://wa.me/${waNumber}?text=${message}`, '_blank');
   };
 

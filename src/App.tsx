@@ -4,8 +4,10 @@ import {
 } from 'firebase/firestore';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { db, auth, handleFirestoreError, OperationType } from './firebase';
-import { Product, Category, CartItem, WebsiteSettings } from './types';
+import { Product, Category, CartItem, CustomerProduct, WebsiteSettings } from './types';
 import { motion } from 'motion/react';
+import { projectCustomerProducts } from './services/product-search/customerProjection';
+import { searchCustomerProducts } from './services/product-search/customerProductSearch';
 
 // Components
 import Navbar from './components/Navbar';
@@ -460,20 +462,29 @@ export default function App() {
     setSelectedProduct(product);
   }, []);
 
+  const customerProducts = useMemo(
+    () => projectCustomerProducts(products.filter((product) => product.isActive !== false)),
+    [products],
+  );
+
+  const handleCustomerSearchSelection = useCallback((product: CustomerProduct) => {
+    const sourceProduct = products.find((candidate) => candidate.id === product.id);
+    if (sourceProduct) handleViewProduct(sourceProduct);
+  }, [handleViewProduct, products]);
+
   const wishlistProductIds = useMemo(
     () => new Set(wishlist.map(product => product.id)),
     [wishlist]
   );
 
   // --- FILTERING LOGIC ---
-  const filteredProducts = useMemo(() => products.filter(prod => {
+  const filteredProducts = useMemo(() => {
+    const matchingCustomerIds = new Set(
+      searchCustomerProducts(customerProducts, searchQuery).map((product) => product.id),
+    );
+    return products.filter(prod => {
       const matchesActive = prod.isActive !== false;
-      const searchLower = searchQuery.toLowerCase().trim();
-      const matchesSearch = !searchLower ||
-                            (prod.name || "").toLowerCase().includes(searchLower) ||
-                            (prod.description || "").toLowerCase().includes(searchLower) ||
-                            (prod.sku || "").toLowerCase().includes(searchLower) ||
-                            (prod.id || "").toLowerCase().includes(searchLower);
+      const matchesSearch = matchingCustomerIds.has(prod.id);
       const matchesCategory = selectedCategory === "all" ||
                               (prod.category && prod.category.toLowerCase().trim() === selectedCategory.toLowerCase().trim());
       const matchesPrice = prod.price <= priceRange;
@@ -483,7 +494,8 @@ export default function App() {
       if (sortBy === "price-desc") return b.price - a.price;
       if (sortBy === "rating") return b.rating - a.rating;
       return (b.isFeatured ? 1 : 0) - (a.isFeatured ? 1 : 0); // Featured defaults
-    }), [priceRange, products, searchQuery, selectedCategory, sortBy]);
+    });
+  }, [customerProducts, priceRange, products, searchQuery, selectedCategory, sortBy]);
 
   const activeProducts = useMemo(
     () => products.filter(product => product.isActive !== false),
@@ -548,10 +560,11 @@ export default function App() {
         onOpenCart={() => setIsCartOpen(true)}
         searchQuery={searchQuery}
         setSearchQuery={setSearchQuery}
-        products={products}
+        products={customerProducts}
         categories={categories}
         isLoading={loading}
         onSelectCategory={setSelectedCategory}
+        onSelectProduct={handleCustomerSearchSelection}
         onOpenAuthModal={() => setIsAuthModalOpen(true)}
         isAdminMode={isAdminMode}
         setIsAdminMode={setIsAdminMode}
@@ -1124,7 +1137,7 @@ export default function App() {
                       </div>
                       <div>
                         <p className="text-base font-black text-slate-900">No products match your selection</p>
-                        <p className="mx-auto mt-1 max-w-md text-xs leading-relaxed text-slate-500">Try clearing a filter or searching with a shorter product name, model, or SKU.</p>
+                        <p className="mx-auto mt-1 max-w-md text-xs leading-relaxed text-slate-500">Try clearing a filter or searching by product name, brand, model, or category.</p>
                       </div>
                       <button
                         type="button"

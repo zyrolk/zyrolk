@@ -7,7 +7,10 @@ import {
 import { auth, db } from '../firebase';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
-import { Category, Product, WebsiteSettings } from '../types';
+import { Category, CustomerProduct, WebsiteSettings } from '../types';
+import { useDebouncedValue } from '../hooks/useDebouncedValue';
+import { searchCustomerProducts } from '../services/product-search/customerProductSearch';
+import { normalizeSearchText } from '../services/product-search/productSearchMetadata';
 
 const RECENT_SEARCHES_KEY = 'zyro_recent_searches';
 
@@ -19,10 +22,11 @@ interface NavbarProps {
   onOpenCart: () => void;
   searchQuery: string;
   setSearchQuery: (query: string) => void;
-  products: Product[];
+  products: readonly CustomerProduct[];
   categories: Category[];
   isLoading: boolean;
   onSelectCategory: (categoryId: string) => void;
+  onSelectProduct: (product: CustomerProduct) => void;
   onOpenAuthModal: () => void;
   isAdminMode: boolean;
   setIsAdminMode: (admin: boolean) => void;
@@ -42,6 +46,7 @@ export default function Navbar({
   categories,
   isLoading,
   onSelectCategory,
+  onSelectProduct,
   onOpenAuthModal,
   isAdminMode,
   setIsAdminMode,
@@ -86,15 +91,11 @@ export default function Navbar({
     return () => document.removeEventListener('mousedown', handleOutsideClick);
   }, []);
 
-  const normalizedTempSearch = tempSearch.toLowerCase().trim();
+  const debouncedSearch = useDebouncedValue(tempSearch, 150);
+  const normalizedTempSearch = normalizeSearchText(debouncedSearch);
   const matchingProducts = useMemo(() => {
     if (!normalizedTempSearch) return [];
-    return products.filter((product) => product.isActive !== false && (
-      (product.name || '').toLowerCase().includes(normalizedTempSearch) ||
-      (product.description || '').toLowerCase().includes(normalizedTempSearch) ||
-      (product.sku || '').toLowerCase().includes(normalizedTempSearch) ||
-      (product.id || '').toLowerCase().includes(normalizedTempSearch)
-    )).slice(0, 5);
+    return searchCustomerProducts(products, normalizedTempSearch).slice(0, 5);
   }, [normalizedTempSearch, products]);
 
   const matchingCategories = useMemo(() => {
@@ -135,6 +136,14 @@ export default function Navbar({
     commitSearch(tempSearch);
   };
 
+  const selectProduct = (product: CustomerProduct) => {
+    saveRecentSearch(tempSearch.trim() || product.name);
+    onSelectProduct(product);
+    setIsMobileMenuOpen(false);
+    setIsSearchOpen(false);
+    setActiveSuggestionIndex(-1);
+  };
+
   const handleSearchKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'Escape') {
       setIsSearchOpen(false);
@@ -152,7 +161,7 @@ export default function Navbar({
       setActiveSuggestionIndex((current) => current <= 0 ? matchingProducts.length - 1 : current - 1);
     } else if (event.key === 'Enter' && activeSuggestionIndex >= 0) {
       event.preventDefault();
-      commitSearch(matchingProducts[activeSuggestionIndex].name);
+      selectProduct(matchingProducts[activeSuggestionIndex]);
     }
   };
 
@@ -225,7 +234,7 @@ export default function Navbar({
         <input
           id={inputId}
           type="search"
-          placeholder="Search products, models or SKU..."
+          placeholder="Search products, brands, models or categories..."
           value={tempSearch}
           onChange={(event) => {
             setTempSearch(event.target.value);
@@ -288,23 +297,30 @@ export default function Navbar({
                         role="option"
                         aria-selected={activeSuggestionIndex === index}
                         onMouseEnter={() => setActiveSuggestionIndex(index)}
-                        onClick={() => commitSearch(product.name)}
+                        onClick={() => selectProduct(product)}
                         className={`flex min-h-14 w-full items-center gap-3 rounded-2xl px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20 ${activeSuggestionIndex === index ? 'bg-blue-50' : 'hover:bg-slate-50'}`}
                       >
                         <div className="flex h-11 w-11 flex-none items-center justify-center overflow-hidden rounded-xl border border-slate-100 bg-slate-50 p-1.5">
-                          {product.imageUrl ? (
-                            <img src={product.imageUrl} alt="" className="h-full w-full object-contain" referrerPolicy="no-referrer" decoding="async" width="44" height="44" />
+                          {product.image ? (
+                            <img src={product.image} alt="" className="h-full w-full object-contain" referrerPolicy="no-referrer" loading="lazy" decoding="async" width="44" height="44" />
                           ) : (
                             <PackageSearch className="h-5 w-5 text-slate-400" aria-hidden="true" />
                           )}
                         </div>
                         <div className="min-w-0 flex-1">
                           <span className="block truncate text-xs font-black text-slate-900">{highlightMatch(product.name)}</span>
-                          <span className="mt-0.5 block truncate text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-                            {product.category.replace('-', ' ')}{product.sku ? ` · ${product.sku}` : ''}
+                          {(product.brand || product.model) && (
+                            <span className="mt-0.5 block truncate text-[10px] font-semibold text-slate-500">
+                              {[product.brand, product.model].filter(Boolean).join(' / ')}
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex-none text-right">
+                          <span className="block text-xs font-black text-slate-900">LKR {product.sellingPrice.toLocaleString()}</span>
+                          <span className={`mt-0.5 block text-[10px] font-bold ${product.stock > 0 ? 'text-emerald-700' : 'text-red-600'}`}>
+                            {product.stock > 0 ? 'In stock' : 'Out of stock'}
                           </span>
                         </div>
-                        <ArrowUpRight className="h-4 w-4 flex-none text-slate-400" aria-hidden="true" />
                       </button>
                     ))}
                     <button
@@ -318,7 +334,7 @@ export default function Navbar({
                   <div className="px-4 py-7 text-center" role="status">
                     <PackageSearch className="mx-auto h-8 w-8 text-slate-300" aria-hidden="true" />
                     <p className="mt-3 text-sm font-black text-slate-800">No matching products found</p>
-                    <p className="mt-1 text-xs leading-relaxed text-slate-500">Try a shorter product name, model, or SKU.</p>
+                    <p className="mt-1 text-xs leading-relaxed text-slate-500">Try a product name, brand, model, or category.</p>
                   </div>
                 )}
               </div>
