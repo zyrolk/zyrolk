@@ -204,6 +204,7 @@ export default function App() {
 
   // Sync state changes with localStorage and Firestore
   useEffect(() => {
+    // TODO(security): persist minimal cart references after a dedicated checkout compatibility review.
     localStorage.setItem('zyro_cart', JSON.stringify(cart));
     
     const syncCartToFirestore = async () => {
@@ -309,6 +310,7 @@ export default function App() {
 
       // Live listener on products
       const pUnsub = onSnapshot(collection(db, "products"), (snap) => {
+        // TODO(security): introduce a customer-safe product DTO in a dedicated data-boundary sprint.
         if (!isMounted) return;
         const prodList: Product[] = [];
         snap.forEach(doc => {

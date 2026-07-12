@@ -95,6 +95,15 @@ function ProductCard({
   return (
     <div 
       onClick={() => onViewDetail(product)}
+      onKeyDown={(event) => {
+        if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) {
+          event.preventDefault();
+          onViewDetail(product);
+        }
+      }}
+      role="button"
+      tabIndex={0}
+      aria-label={`View details for ${product.name}`}
       className="zy-card zy-card-hover group relative overflow-hidden flex flex-col h-full cursor-pointer border-slate-200/80 bg-white"
     >
       {/* Badges Overlay */}
