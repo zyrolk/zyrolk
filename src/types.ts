@@ -45,6 +45,7 @@ export interface Category {
   id: string; // e.g., 'electronics'
   name: string;
   icon: string; // lucide icon name
+  imageUrl?: string;
   count?: number;
 }
 

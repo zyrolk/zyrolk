@@ -1,4 +1,4 @@
-import React, { Suspense, lazy, useState, useEffect } from 'react';
+import React, { Suspense, lazy, useState, useEffect, useMemo, useRef } from 'react';
 import { 
   TrendingUp, ShoppingBag, Users, Layers, Plus, Trash2, Edit3, Check, 
   X, RefreshCw, AlertCircle, Calendar, DollarSign, ArrowUpRight, Upload,
@@ -15,6 +15,15 @@ import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage
 import { onAuthStateChanged } from 'firebase/auth';
 import { db, storage, auth } from '../firebase';
 import { searchAdminProducts } from '../services/product-search/adminProductSearch';
+import {
+  buildCategoryProductCounts,
+  canDeleteCategory,
+  categoryMatches,
+  isDuplicateCategorySlug,
+  normalizeCategoryName,
+  normalizeCategorySlug,
+  sortCategoriesAlphabetically,
+} from '../services/categories/categoryUtils';
 import { Product, Category, Order, WebsiteSettings, SupplierReviewQueueItem } from '../types';
 import { CloudinaryUpload } from './CloudinaryUpload';
 import { 
@@ -463,6 +472,13 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
 
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [newCategory, setNewCategory] = useState({ id: "", name: "", icon: "Smartphone", imageUrl: "" });
+  const [editingCategory, setEditingCategory] = useState<Category | null>(null);
+  const [categoryToDelete, setCategoryToDelete] = useState<Category | null>(null);
+  const [savingCategory, setSavingCategory] = useState(false);
+  const categoryTriggerRef = useRef<HTMLElement | null>(null);
+  const categorySlugInputRef = useRef<HTMLInputElement | null>(null);
+  const categoryNameInputRef = useRef<HTMLInputElement | null>(null);
+  const categoryDeleteCancelRef = useRef<HTMLButtonElement | null>(null);
   const [specKey, setSpecKey] = useState("");
   const [specVal, setSpecVal] = useState("");
 
@@ -488,6 +504,41 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
       setSettingsToasts(prev => prev.filter(t => t.id !== id));
     }, 4000);
   };
+
+  const categoryProductCounts = useMemo(
+    () => buildCategoryProductCounts(categories, products),
+    [categories, products],
+  );
+
+  const restoreCategoryFocus = () => {
+    window.requestAnimationFrame(() => categoryTriggerRef.current?.focus());
+  };
+
+  const closeCategoryModal = () => {
+    setShowCategoryModal(false);
+    setEditingCategory(null);
+    restoreCategoryFocus();
+  };
+
+  const closeCategoryDeleteConfirmation = () => {
+    setCategoryToDelete(null);
+    restoreCategoryFocus();
+  };
+
+  useEffect(() => {
+    if (!showCategoryModal && !categoryToDelete) return;
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      if (categoryToDelete) closeCategoryDeleteConfirmation();
+      else closeCategoryModal();
+    };
+    document.addEventListener('keydown', handleEscape);
+    if (showCategoryModal) window.requestAnimationFrame(() => {
+      (editingCategory ? categoryNameInputRef.current : categorySlugInputRef.current)?.focus();
+    });
+    if (categoryToDelete) window.requestAnimationFrame(() => categoryDeleteCancelRef.current?.focus());
+    return () => document.removeEventListener('keydown', handleEscape);
+  }, [categoryToDelete, editingCategory, showCategoryModal]);
 
   useEffect(() => {
     setLogoError(false);
@@ -617,7 +668,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
       const catSnap = await getDocs(collection(db, "categories"));
       const catList: Category[] = [];
       catSnap.forEach((d) => catList.push({ id: d.id, ...d.data() } as Category));
-      setCategories(catList);
+      setCategories(sortCategoriesAlphabetically(catList));
     } catch (e) { console.warn("Categories load error", e); }
 
     try {
@@ -1480,14 +1531,100 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
 
   const handleSaveCategory = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!authorized || !newCategory.id || !newCategory.name) return;
+    if (!authorized) return;
+    const id = editingCategory?.id ?? normalizeCategorySlug(newCategory.id);
+    const name = normalizeCategoryName(newCategory.name);
+    if (!id || !name) {
+      showSettingsToast('error', 'Category slug and display name are required.');
+      return;
+    }
+    if (!editingCategory && isDuplicateCategorySlug(categories, id)) {
+      showSettingsToast('error', `Category slug "${id}" already exists.`);
+      return;
+    }
+    setSavingCategory(true);
     try {
-      await setDoc(doc(db, "categories", newCategory.id), newCategory);
-      setShowCategoryModal(false);
+      if (!editingCategory) {
+        const existingCategory = await getDoc(doc(db, 'categories', id));
+        if (existingCategory.exists()) {
+          showSettingsToast('error', `Category slug "${id}" already exists.`);
+          return;
+        }
+      }
+      await setDoc(doc(db, "categories", id), {
+        name,
+        icon: newCategory.icon.trim() || 'Layers',
+        imageUrl: newCategory.imageUrl.trim(),
+      }, { merge: Boolean(editingCategory) });
+      showSettingsToast('success', `Category "${name}" ${editingCategory ? 'updated' : 'created'} successfully.`);
       setNewCategory({ id: "", name: "", icon: "Smartphone", imageUrl: "" });
+      closeCategoryModal();
       loadData();
-    } catch (err) {
+    } catch (err: any) {
       console.error("Save category failed:", err);
+      showSettingsToast('error', err?.message || 'Failed to save category.');
+    } finally {
+      setSavingCategory(false);
+    }
+  };
+
+  const openCreateCategory = (trigger: HTMLElement) => {
+    categoryTriggerRef.current = trigger;
+    setEditingCategory(null);
+    setNewCategory({ id: '', name: '', icon: 'Smartphone', imageUrl: '' });
+    setShowCategoryModal(true);
+  };
+
+  const openEditCategory = (category: Category, trigger: HTMLElement) => {
+    categoryTriggerRef.current = trigger;
+    setEditingCategory(category);
+    setNewCategory({
+      id: category.id,
+      name: category.name,
+      icon: category.icon || 'Layers',
+      imageUrl: category.imageUrl || '',
+    });
+    setShowCategoryModal(true);
+  };
+
+  const requestDeleteCategory = (category: Category, trigger: HTMLElement) => {
+    categoryTriggerRef.current = trigger;
+    if (!canDeleteCategory(categoryProductCounts[category.id])) {
+      showSettingsToast('error', 'This category is currently used by products.');
+      return;
+    }
+    setCategoryToDelete(category);
+  };
+
+  const confirmDeleteCategory = async () => {
+    if (!authorized || !categoryToDelete) return;
+    if (!canDeleteCategory(categoryProductCounts[categoryToDelete.id])) {
+      showSettingsToast('error', 'This category is currently used by products.');
+      closeCategoryDeleteConfirmation();
+      return;
+    }
+    setSavingCategory(true);
+    try {
+      const currentProductsSnapshot = await getDocs(collection(db, 'products'));
+      const currentProducts: Product[] = [];
+      currentProductsSnapshot.forEach((productDocument) => {
+        currentProducts.push({ id: productDocument.id, ...productDocument.data() } as Product);
+      });
+      const currentCounts = buildCategoryProductCounts([categoryToDelete], currentProducts)[categoryToDelete.id];
+      if (!canDeleteCategory(currentCounts)) {
+        showSettingsToast('error', 'This category is currently used by products.');
+        closeCategoryDeleteConfirmation();
+        return;
+      }
+      await deleteDoc(doc(db, 'categories', categoryToDelete.id));
+      showSettingsToast('success', `Category "${categoryToDelete.name}" deleted successfully.`);
+      closeCategoryDeleteConfirmation();
+      loadData();
+    } catch (err: any) {
+      console.error('Delete category failed:', err);
+      showSettingsToast('error', err?.message || 'Failed to delete category.');
+    } finally {
+      setSavingCategory(false);
     }
   };
 
@@ -1728,7 +1865,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
   });
 
   const filteredProducts = searchAdminProducts(products, productSearch).filter(p => {
-    const matchesCategory = productCategoryFilter === "all" || p.category === productCategoryFilter;
+    const matchesCategory = productCategoryFilter === "all" || categoryMatches(p.category, productCategoryFilter);
     const matchesStock = productStockFilter === "all" || (productStockFilter === "instock" ? p.stock > 0 : p.stock <= 5);
     return matchesCategory && matchesStock;
   });
@@ -2749,25 +2886,41 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                   <p className="text-xs text-slate-400">Classify electronic catalog items</p>
                 </div>
                 <button
-                  onClick={() => {
-                    setNewCategory({ id: "", name: "", icon: "Smartphone", imageUrl: "" });
-                    setShowCategoryModal(true);
-                  }}
-                  className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center space-x-1 shadow-md shadow-blue-500/15"
+                  type="button"
+                  onClick={(event) => openCreateCategory(event.currentTarget)}
+                  className="flex min-h-11 items-center space-x-1 rounded-xl bg-blue-600 px-4 py-2.5 text-xs font-bold text-white shadow-md shadow-blue-500/15 transition-all hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-500/30"
                 >
                   <Plus className="h-4 w-4" />
                   <span>Create Category</span>
                 </button>
               </div>
 
+              {loading ? (
+                <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4" role="status" aria-label="Loading categories">
+                  {[0, 1, 2, 3].map((item) => <div key={item} className="h-52 animate-pulse rounded-2xl bg-slate-200/70 dark:bg-slate-800/70" />)}
+                </div>
+              ) : categories.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center dark:border-slate-700 dark:bg-[#101827]/75">
+                  <Layers className="mx-auto h-10 w-10 text-slate-400" aria-hidden="true" />
+                  <h3 className="mt-4 text-sm font-bold text-slate-900 dark:text-white">No categories created</h3>
+                  <p className="mt-1 text-xs text-slate-500">Create the first category to organize the product catalogue.</p>
+                </div>
+              ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                 {categories.map(c => {
-                  const count = products.filter(p => p.category === c.id).length;
+                  const counts = categoryProductCounts[c.id] ?? { active: 0, total: 0 };
+                  const deleteAllowed = canDeleteCategory(counts);
                   return (
                     <div key={c.id} className={`rounded-2xl p-5 border flex flex-col justify-between ${isDarkMode ? 'bg-[#101827]/75 border-slate-800/60 shadow-lg' : 'bg-white border-slate-200/80 shadow-xs'}`}>
                       <div className="text-left space-y-3">
-                        <div className="w-10 h-10 rounded-xl bg-blue-500/10 text-blue-500 flex items-center justify-center">
-                          <Layers className="h-5 w-5" />
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-xl bg-blue-500/10 text-blue-500">
+                            {c.imageUrl ? <img src={c.imageUrl} alt="" className="h-full w-full object-cover" loading="lazy" decoding="async" referrerPolicy="no-referrer" /> : <Layers className="h-5 w-5" aria-hidden="true" />}
+                          </div>
+                          <div className="flex gap-1">
+                            <button type="button" onClick={(event) => openEditCategory(c, event.currentTarget)} className="flex h-11 w-11 items-center justify-center rounded-xl text-slate-400 hover:bg-blue-500/10 hover:text-blue-500 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-500/25" aria-label={`Edit ${c.name}`}><Edit3 className="h-4 w-4" aria-hidden="true" /></button>
+                            <button type="button" disabled={!deleteAllowed} onClick={(event) => requestDeleteCategory(c, event.currentTarget)} className="flex h-11 w-11 items-center justify-center rounded-xl text-slate-400 hover:bg-red-500/10 hover:text-red-500 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-red-500/25 disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-slate-400" aria-label={`Delete ${c.name}`} aria-describedby={!deleteAllowed ? `category-delete-help-${c.id}` : undefined}><Trash2 className="h-4 w-4" aria-hidden="true" /></button>
+                          </div>
                         </div>
                         <div>
                           <h3 className="font-bold text-sm text-slate-800 dark:text-white">{c.name}</h3>
@@ -2775,14 +2928,18 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                         </div>
                       </div>
 
-                      <div className="mt-6 pt-4 border-t border-slate-100 dark:border-slate-800/60 flex items-center justify-between text-xs font-semibold">
-                        <span className="text-slate-400">{count} Active Items</span>
-                        <span className="text-blue-500">Overview →</span>
+                      <div className="mt-6 border-t border-slate-100 pt-4 text-xs font-semibold dark:border-slate-800/60">
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="text-emerald-500">{counts.active} Active</span>
+                          <span className="text-slate-400">{counts.total} Total</span>
+                        </div>
+                        {!deleteAllowed && <p id={`category-delete-help-${c.id}`} className="mt-2 text-[10px] font-medium text-amber-500">This category is currently used by products.</p>}
                       </div>
                     </div>
                   );
                 })}
               </div>
+              )}
 
             </motion.div>
           )}
@@ -6457,42 +6614,75 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
 
       {/* --- ADD CATEGORY MODAL --- */}
       {showCategoryModal && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-[#111928] border border-slate-200/50 dark:border-slate-800 rounded-3xl max-w-sm w-full p-6 text-left shadow-2xl">
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeCategoryModal(); }}>
+          <div className="bg-white dark:bg-[#111928] border border-slate-200/50 dark:border-slate-800 rounded-3xl max-w-sm w-full p-6 text-left shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="category-modal-title">
             <div className="flex items-center justify-between mb-4 pb-2 border-b border-slate-100 dark:border-slate-800">
-              <h3 className="text-sm font-bold font-display text-slate-900 dark:text-white">Create Custom Category</h3>
-              <button onClick={() => setShowCategoryModal(false)} className="p-1.5 text-slate-400 hover:text-slate-900 dark:hover:text-white bg-slate-100 dark:bg-slate-800 rounded-full">
-                <X className="h-4 w-4" />
+              <h3 id="category-modal-title" className="text-sm font-bold font-display text-slate-900 dark:text-white">{editingCategory ? 'Edit Category' : 'Create Custom Category'}</h3>
+              <button type="button" onClick={closeCategoryModal} className="flex h-11 w-11 items-center justify-center rounded-full bg-slate-100 text-slate-400 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-500/25 dark:bg-slate-800 dark:hover:text-white" aria-label="Close category dialog">
+                <X className="h-4 w-4" aria-hidden="true" />
               </button>
             </div>
 
             <form onSubmit={handleSaveCategory} className="space-y-4 text-xs dark:text-slate-300">
+              {editingCategory ? (
+                <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 dark:border-slate-700 dark:bg-slate-800">
+                  <span className="block text-[10px] font-bold uppercase text-slate-400">Permanent Category Slug / ID</span>
+                  <span className="mt-1 block font-mono text-xs text-slate-700 dark:text-slate-200">{editingCategory.id}</span>
+                </div>
+              ) : (
               <div>
-                <label className="block text-slate-400 font-bold mb-1 uppercase">Category Slug / ID *</label>
+                <label htmlFor="category-slug" className="block text-slate-400 font-bold mb-1 uppercase">Category Slug / ID *</label>
                 <input
+                  ref={categorySlugInputRef}
+                  id="category-slug"
                   type="text"
                   required
                   placeholder="e.g. smart-watches"
                   value={newCategory.id}
                   onChange={(e) => setNewCategory(prev => ({ ...prev, id: e.target.value }))}
-                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg focus:outline-hidden"
+                  className="min-h-11 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-500/25 dark:border-slate-700 dark:bg-slate-800"
                 />
               </div>
+              )}
               <div>
-                <label className="block text-slate-400 font-bold mb-1 uppercase">Display Name *</label>
+                <label htmlFor="category-name" className="block text-slate-400 font-bold mb-1 uppercase">Display Name *</label>
                 <input
+                  ref={categoryNameInputRef}
+                  id="category-name"
                   type="text"
                   required
                   placeholder="e.g. Smart Watches"
                   value={newCategory.name}
                   onChange={(e) => setNewCategory(prev => ({ ...prev, name: e.target.value }))}
-                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg focus:outline-hidden"
+                  className="min-h-11 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-500/25 dark:border-slate-700 dark:bg-slate-800"
                 />
               </div>
-              <button type="submit" className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl transition-all cursor-pointer">
-                Save Category
+              <div>
+                <label htmlFor="category-icon" className="block text-slate-400 font-bold mb-1 uppercase">Icon Name</label>
+                <input id="category-icon" type="text" value={newCategory.icon} onChange={(e) => setNewCategory(prev => ({ ...prev, icon: e.target.value }))} className="min-h-11 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-500/25 dark:border-slate-700 dark:bg-slate-800" />
+              </div>
+              <div>
+                <label htmlFor="category-image-url" className="block text-slate-400 font-bold mb-1 uppercase">Image URL</label>
+                <input id="category-image-url" type="url" placeholder="https://..." value={newCategory.imageUrl} onChange={(e) => setNewCategory(prev => ({ ...prev, imageUrl: e.target.value }))} className="min-h-11 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-500/25 dark:border-slate-700 dark:bg-slate-800" />
+              </div>
+              <button type="submit" disabled={savingCategory} className="min-h-11 w-full rounded-xl bg-blue-600 py-2.5 font-bold text-white transition-all hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-500/30 disabled:cursor-wait disabled:opacity-60">
+                {savingCategory ? 'Saving...' : editingCategory ? 'Update Category' : 'Save Category'}
               </button>
             </form>
+          </div>
+        </div>
+      )}
+
+      {categoryToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs" role="presentation">
+          <div className="w-full max-w-sm rounded-3xl border border-slate-200/50 bg-white p-6 text-left shadow-2xl dark:border-slate-800 dark:bg-[#111928]" role="alertdialog" aria-modal="true" aria-labelledby="delete-category-title" aria-describedby="delete-category-description">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-red-500/10 text-red-500"><Trash2 className="h-5 w-5" aria-hidden="true" /></div>
+            <h3 id="delete-category-title" className="mt-4 text-base font-bold text-slate-900 dark:text-white">Delete {categoryToDelete.name}?</h3>
+            <p id="delete-category-description" className="mt-2 text-xs leading-relaxed text-slate-500">This empty category will be permanently deleted. Product data will not be changed.</p>
+            <div className="mt-6 flex justify-end gap-3">
+              <button ref={categoryDeleteCancelRef} type="button" onClick={closeCategoryDeleteConfirmation} className="min-h-11 rounded-xl border border-slate-200 px-4 text-xs font-bold text-slate-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-slate-400/25 dark:border-slate-700 dark:text-slate-200">Cancel</button>
+              <button type="button" onClick={confirmDeleteCategory} disabled={savingCategory} className="min-h-11 rounded-xl bg-red-600 px-4 text-xs font-bold text-white hover:bg-red-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-red-500/30 disabled:cursor-wait disabled:opacity-60">{savingCategory ? 'Deleting...' : 'Delete Category'}</button>
+            </div>
           </div>
         </div>
       )}

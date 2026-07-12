@@ -8,6 +8,12 @@ import { Product, Category, CartItem, CustomerProduct, WebsiteSettings } from '.
 import { motion } from 'motion/react';
 import { projectCustomerProducts } from './services/product-search/customerProjection';
 import { searchCustomerProducts } from './services/product-search/customerProductSearch';
+import {
+  buildCategoryProductCounts,
+  categoryMatches,
+  resolveCategoryImage,
+  sortCategoriesAlphabetically,
+} from './services/categories/categoryUtils';
 
 // Components
 import Navbar from './components/Navbar';
@@ -36,13 +42,6 @@ const CATEGORY_IMAGES: Record<string, string> = {
   "home-kitchen": "https://images.unsplash.com/photo-1556911220-e15b29be8c8f?q=80&w=600&auto=format&fit=crop",
   "solar-lighting": "https://images.unsplash.com/photo-1509391366360-2e959784a276?q=80&w=600&auto=format&fit=crop",
   accessories: "https://images.unsplash.com/photo-1505740420928-5e560c06d30e?q=80&w=600&auto=format&fit=crop"
-};
-
-const getCategoryImage = (catId: string, productsList: Product[]) => {
-  if (CATEGORY_IMAGES[catId]) return CATEGORY_IMAGES[catId];
-  const prodImg = productsList.find(p => p.category === catId && p.imageUrl)?.imageUrl;
-  if (prodImg) return prodImg;
-  return "https://images.unsplash.com/photo-1468495244123-6c6c332eeece?q=80&w=600&auto=format&fit=crop";
 };
 
 const formatPrice = (amount: number) => new Intl.NumberFormat('en-LK', {
@@ -331,7 +330,7 @@ export default function App() {
         snap.forEach(doc => {
           catList.push({ id: doc.id, ...doc.data() } as Category);
         });
-        setCategories(catList);
+        setCategories(sortCategoriesAlphabetically(catList));
       });
       if (!isMounted) {
         cUnsub();
@@ -485,8 +484,7 @@ export default function App() {
     return products.filter(prod => {
       const matchesActive = prod.isActive !== false;
       const matchesSearch = matchingCustomerIds.has(prod.id);
-      const matchesCategory = selectedCategory === "all" ||
-                              (prod.category && prod.category.toLowerCase().trim() === selectedCategory.toLowerCase().trim());
+      const matchesCategory = selectedCategory === "all" || categoryMatches(prod.category, selectedCategory);
       const matchesPrice = prod.price <= priceRange;
       return matchesActive && matchesSearch && matchesCategory && matchesPrice;
     }).sort((a, b) => {
@@ -526,15 +524,14 @@ export default function App() {
     [activeProducts]
   );
 
-  const categoryCounts = useMemo(() => {
-    const counts: Record<string, number> = {};
-    categories.forEach((category) => {
-      counts[category.id] = activeProducts.filter((product) =>
-        product.category?.toLowerCase().trim() === category.id.toLowerCase().trim()
-      ).length;
-    });
-    return counts;
-  }, [activeProducts, categories]);
+  const categoryProductCounts = useMemo(
+    () => buildCategoryProductCounts(categories, products),
+    [categories, products],
+  );
+  const categoryCounts = useMemo(
+    () => Object.fromEntries(categories.map((category) => [category.id, categoryProductCounts[category.id]?.active ?? 0])),
+    [categories, categoryProductCounts],
+  );
 
   const activeFilterCount = Number(Boolean(searchQuery.trim())) +
     Number(selectedCategory !== 'all') +
@@ -645,7 +642,7 @@ export default function App() {
                 <div className="flex snap-x snap-mandatory gap-4 overflow-x-auto pb-3 scrollbar-none sm:grid sm:grid-cols-2 sm:overflow-visible sm:pb-0 md:grid-cols-4 sm:gap-5 md:gap-6">
                   {categories.slice(0, 4).map((cat) => {
                     const itemsCount = categoryCounts[cat.id] || 0;
-                    const catImage = getCategoryImage(cat.id, products);
+                    const catImage = resolveCategoryImage(cat, products, CATEGORY_IMAGES);
 
                     return (
                       <motion.button
@@ -1258,7 +1255,7 @@ export default function App() {
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                 {categories.map((cat) => {
                     const itemsCount = categoryCounts[cat.id] || 0;
-                  const catImage = getCategoryImage(cat.id, products);
+                  const catImage = resolveCategoryImage(cat, products, CATEGORY_IMAGES);
 
                   return (
                     <motion.button
@@ -1421,7 +1418,7 @@ export default function App() {
           )}
 
           {/* Dynamic Footer Block */}
-          <Footer settings={settings} setCurrentPage={setCurrentPage} onSelectCategory={setSelectedCategory} />
+          <Footer settings={settings} setCurrentPage={setCurrentPage} onSelectCategory={setSelectedCategory} categories={categories} categoryCounts={categoryCounts} />
 
         </div>
       )}

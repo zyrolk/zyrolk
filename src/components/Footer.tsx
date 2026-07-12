@@ -1,14 +1,16 @@
 import React, { useState } from 'react';
 import { Mail, Phone, MapPin, ShieldCheck, Truck, RefreshCw, Send, Check, Facebook, Instagram, Youtube } from 'lucide-react';
-import { WebsiteSettings } from '../types';
+import { Category, WebsiteSettings } from '../types';
 
 interface FooterProps {
   setCurrentPage: (page: string) => void;
   onSelectCategory: (category: string) => void;
   settings?: WebsiteSettings | null;
+  categories: readonly Category[];
+  categoryCounts: Readonly<Record<string, number>>;
 }
 
-export default function Footer({ setCurrentPage, onSelectCategory, settings }: FooterProps) {
+export default function Footer({ setCurrentPage, onSelectCategory, settings, categories, categoryCounts }: FooterProps) {
   const [email, setEmail] = useState("");
   const [subscribed, setSubscribed] = useState(false);
 
@@ -29,6 +31,7 @@ export default function Footer({ setCurrentPage, onSelectCategory, settings }: F
   };
 
   const footerLogo = settings?.footerLogoUrl || settings?.logoUrl;
+  const topCategories = categories.filter((category) => (categoryCounts[category.id] ?? 0) > 0).slice(0, 5);
 
   return (
     <footer className="bg-slate-950 text-slate-300 pt-16 sm:pt-20 pb-8 border-t border-slate-800">
@@ -148,12 +151,15 @@ export default function Footer({ setCurrentPage, onSelectCategory, settings }: F
         {/* Categorized Products */}
         <div className="space-y-4 text-left">
           <h4 className="text-sm font-black text-white uppercase tracking-wider">Top Categories</h4>
-          <ul className="text-xs">
-            <li><button onClick={() => handleCategoryClick('electronics')} className="inline-flex min-h-11 items-center hover:text-white transition-colors cursor-pointer text-left focus-visible:outline-none focus-visible:text-white focus-visible:underline">Flagship Electronics</button></li>
-            <li><button onClick={() => handleCategoryClick('solar-lighting')} className="inline-flex min-h-11 items-center hover:text-white transition-colors cursor-pointer text-left focus-visible:outline-none focus-visible:text-white focus-visible:underline">Solar & Power Solutions</button></li>
-            <li><button onClick={() => handleCategoryClick('home-kitchen')} className="inline-flex min-h-11 items-center hover:text-white transition-colors cursor-pointer text-left focus-visible:outline-none focus-visible:text-white focus-visible:underline">Premium Home & Kitchen</button></li>
-            <li><button onClick={() => handleCategoryClick('accessories')} className="inline-flex min-h-11 items-center hover:text-white transition-colors cursor-pointer text-left focus-visible:outline-none focus-visible:text-white focus-visible:underline">Sleek Tech Accessories</button></li>
-          </ul>
+          {topCategories.length > 0 ? (
+            <ul className="text-xs">
+              {topCategories.map((category) => (
+                <li key={category.id}><button onClick={() => handleCategoryClick(category.id)} className="inline-flex min-h-11 items-center hover:text-white transition-colors cursor-pointer text-left focus-visible:outline-none focus-visible:text-white focus-visible:underline">{category.name}</button></li>
+              ))}
+            </ul>
+          ) : (
+            <button onClick={() => handleCategoryClick('all')} className="inline-flex min-h-11 items-center text-xs hover:text-white focus-visible:outline-none focus-visible:underline">Browse all products</button>
+          )}
         </div>
 
         {/* Company & Support CMS Pages */}
