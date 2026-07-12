@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ShoppingBag, ArrowRight, ChevronLeft, ChevronRight } from 'lucide-react';
 import { WebsiteSettings } from '../types';
+import { normalizeSlideSpeed } from '../services/hero-slider/heroSlider';
 
 interface HeroBannerProps {
   onExploreProducts: () => void;
@@ -18,7 +19,8 @@ const PREMIUM_DEFAULT_SLIDES = [
     description: "Shop curated gadgets, accessories, smart devices, and lifestyle electronics from Zyro.lk with a clean checkout and local support.",
     image: "https://images.unsplash.com/photo-1546868871-7041f2a55e12?q=80&w=1600",
     bgGradient: "from-black via-zinc-950/90 to-blue-950/20",
-    cta: "Shop Now"
+    cta: "Shop Now",
+    ctaUrl: "/products"
   },
   {
     id: "premium-slide-2",
@@ -28,7 +30,8 @@ const PREMIUM_DEFAULT_SLIDES = [
     description: "Stay ahead of the curve with cutting-edge wearables, immersive sound accessories, and high-performance smart gadgets designed for modern life.",
     image: "https://images.unsplash.com/photo-1505740420928-5e560c06d30e?q=80&w=1600",
     bgGradient: "from-black via-neutral-950/90 to-blue-950/20",
-    cta: "Explore Collection"
+    cta: "Explore Collection",
+    ctaUrl: "/products"
   },
   {
     id: "premium-slide-3",
@@ -38,7 +41,8 @@ const PREMIUM_DEFAULT_SLIDES = [
     description: "We are Sri Lanka's premium electronics hub, offering 100% authentic tech imports, secure cash on delivery islandwide, and unmatched 24/7 client care.",
     image: "https://images.unsplash.com/photo-1586528116311-ad8dd3c8310d?q=80&w=1600",
     bgGradient: "from-black via-zinc-950/90 to-blue-950/20",
-    cta: "Learn More"
+    cta: "Learn More",
+    ctaUrl: "/categories"
   }
 ];
 
@@ -48,8 +52,10 @@ export default function HeroBanner({ onExploreProducts, onBrowseCategories, sett
   const [isPlaying, setIsPlaying] = useState(true);
 
   // Parse slides
-  const slides = settings?.heroBanners && settings.heroBanners.length > 0 
-    ? settings.heroBanners.map((b, idx) => {
+  const hasConfiguredSlides = Boolean(settings?.heroBanners?.length);
+  const configuredSlides = settings?.heroBanners?.filter((banner) => banner.enabled !== false) || [];
+  const slides = configuredSlides.length > 0
+    ? configuredSlides.map((b, idx) => {
         // If it is the default seeded database entries, automatically map them to our premium redesigned ones!
         const isOldDefault = b.title === "Samsung Odyssey OLED G9" || b.title === "Zyro Smart Solar Inverter";
         if (isOldDefault && idx < PREMIUM_DEFAULT_SLIDES.length) {
@@ -63,18 +69,19 @@ export default function HeroBanner({ onExploreProducts, onBrowseCategories, sett
           description: b.description || "Explore fully guaranteed premium electronics with rapid islandwide shipping.",
           image: b.image || PREMIUM_DEFAULT_SLIDES[0].image,
           bgGradient: b.bgGradient || "from-black via-zinc-950/95 to-blue-950/25",
-          cta: b.buttonText || "Shop Now"
+          cta: b.buttonText || "Shop Now",
+          ctaUrl: b.buttonUrl || '/products',
         };
       })
     : PREMIUM_DEFAULT_SLIDES;
 
   // Slide Duration
-  const slideDuration = (settings?.autoSlideSpeed || 6) * 1000; // default 6 seconds
+  const slideDuration = normalizeSlideSpeed(settings?.autoSlideSpeed) * 1000;
   const intervalTime = 50; // update every 50ms for buttery smooth bar filling
   const isSliderActive = settings?.enableSlider !== false;
 
   useEffect(() => {
-    if (!isPlaying || !isSliderActive) return;
+    if (!isPlaying || !isSliderActive || slides.length < 2) return;
 
     const step = (intervalTime / slideDuration) * 100;
     const timer = setInterval(() => {
@@ -90,6 +97,28 @@ export default function HeroBanner({ onExploreProducts, onBrowseCategories, sett
     return () => clearInterval(timer);
   }, [isPlaying, slides.length, isSliderActive, slideDuration]);
 
+  useEffect(() => {
+    setCurrentSlide((current) => Math.min(current, Math.max(0, slides.length - 1)));
+    setProgress(0);
+  }, [slides.length]);
+
+  const handlePrimaryAction = () => {
+    const target = slides[currentSlide].ctaUrl;
+    if (!target || target === '/products') {
+      onExploreProducts();
+      return;
+    }
+    if (target === '/categories' && onBrowseCategories) {
+      onBrowseCategories();
+      return;
+    }
+    if (target.startsWith('/')) {
+      window.location.assign(target);
+      return;
+    }
+    window.open(target, '_blank', 'noopener,noreferrer');
+  };
+
   const handleSlideSelect = (idx: number) => {
     setCurrentSlide(idx);
     setProgress(0);
@@ -104,6 +133,8 @@ export default function HeroBanner({ onExploreProducts, onBrowseCategories, sett
     setCurrentSlide((curr) => (curr + 1) % slides.length);
     setProgress(0);
   };
+
+  if (hasConfiguredSlides && configuredSlides.length === 0) return null;
 
   return (
     <div 
@@ -138,6 +169,7 @@ export default function HeroBanner({ onExploreProducts, onBrowseCategories, sett
               referrerPolicy="no-referrer"
               className="w-full h-full object-cover object-center transform filter brightness-[0.75] contrast-[1.05]"
             />
+            <div className={`absolute inset-0 bg-gradient-to-r ${slides[currentSlide].bgGradient}`} />
             {/* Cinematic Gradient Masking for absolute legibility */}
             {/* Desktop Side Vignette */}
             <div className="absolute inset-0 bg-gradient-to-r from-black via-black/85 to-transparent md:block hidden" />
@@ -199,11 +231,11 @@ export default function HeroBanner({ onExploreProducts, onBrowseCategories, sett
                 className="flex w-full min-w-0 flex-col items-center space-y-3 sm:w-auto sm:flex-row sm:space-y-0 sm:space-x-4"
               >
                 <button
-                  onClick={onExploreProducts}
+                  onClick={handlePrimaryAction}
                   className="zy-button zy-button-primary w-full min-w-0 max-w-full px-5 py-3.5 text-sm rounded-full cursor-pointer sm:w-auto sm:px-7"
                 >
                   <ShoppingBag className="h-4.5 w-4.5 mr-2" />
-                  Shop Now
+                  {slides[currentSlide].cta}
                 </button>
                 <button
                   onClick={onBrowseCategories || onExploreProducts}
@@ -220,7 +252,7 @@ export default function HeroBanner({ onExploreProducts, onBrowseCategories, sett
       </AnimatePresence>
 
       {/* Manual Slide Controls (Arrow buttons, styled premiumly) */}
-      {isSliderActive && (
+      {isSliderActive && slides.length > 1 && (
         <>
           <button
             onClick={handlePrev}

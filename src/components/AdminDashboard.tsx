@@ -26,6 +26,8 @@ import {
 } from '../services/categories/categoryUtils';
 import { Product, Category, Order, WebsiteSettings, SupplierReviewQueueItem } from '../types';
 import { CloudinaryUpload } from './CloudinaryUpload';
+import HeroSliderEditor from './HeroSliderEditor';
+import { normalizeSlideSpeed, validateHeroSlides } from '../services/hero-slider/heroSlider';
 import { 
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, 
   CartesianGrid, Tooltip, PieChart, Pie, Cell, BarChart, Bar, Legend
@@ -1682,10 +1684,17 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
       return;
     }
 
+    const heroErrors = validateHeroSlides(settingsForm.heroBanners);
+    if (heroErrors.length > 0) {
+      showSettingsToast('error', `Hero slider: ${heroErrors[0].message}`);
+      return;
+    }
+
     const chargeNum = parseFloat(tempDeliveryCharge);
     const freeMinNum = parseFloat(tempFreeDeliveryMin);
     const updatedSettings: WebsiteSettings = {
       ...settingsForm,
+      autoSlideSpeed: normalizeSlideSpeed(settingsForm.autoSlideSpeed),
       deliveryCharge: isNaN(chargeNum) ? 0 : chargeNum,
       freeDeliveryMin: isNaN(freeMinNum) ? 0 : freeMinNum
     };
@@ -1709,6 +1718,17 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
   const handleBannerImageUpload = async (e: React.ChangeEvent<HTMLInputElement>, bannerId: string) => {
     const file = e.target.files?.[0];
     if (!file || !settingsForm) return;
+    const allowedTypes = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
+    if (!allowedTypes.has(file.type)) {
+      showSettingsToast('error', 'Banner upload must be a JPG, PNG, WebP, or GIF image.');
+      e.target.value = '';
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      showSettingsToast('error', 'Banner image must be 5 MB or smaller.');
+      e.target.value = '';
+      return;
+    }
     try {
       const fileName = `${Date.now()}_banner_${bannerId}_${file.name.replace(/[^a-zA-Z0-9.]/g, "_")}`;
       const fileRef = storageRef(storage, `banners/${fileName}`);
@@ -1719,8 +1739,12 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
         const updatedBanners = prev.heroBanners.map(b => b.id === bannerId ? { ...b, image: downloadUrl } : b);
         return { ...prev, heroBanners: updatedBanners };
       });
+      showSettingsToast('success', 'Banner image uploaded. Save settings to publish the URL.');
     } catch (err) {
       console.error("Banner upload error:", err);
+      showSettingsToast('error', 'Banner image upload failed. Please try again.');
+    } finally {
+      e.target.value = '';
     }
   };
 
@@ -4517,9 +4541,16 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                   </div>
 
                   {/* Slider Promotional Hero Banners */}
-                  <div className="space-y-4 pt-4 border-t border-slate-100 dark:border-slate-800">
+                  <HeroSliderEditor
+                    settings={settingsForm}
+                    setSettings={setSettingsForm}
+                    bannerErrors={bannerErrors}
+                    setBannerErrors={setBannerErrors}
+                    onImageUpload={handleBannerImageUpload}
+                  />
+                  <div className="hidden">
                     <span className="block text-[10px] font-black uppercase tracking-widest text-blue-500">Promotional Slider Banners</span>
-                    {settingsForm.heroBanners.map((banner, index) => (
+                    {false && settingsForm.heroBanners.map((banner, index) => (
                       <div key={banner.id} className="p-4 bg-slate-100/50 dark:bg-slate-800/40 rounded-2xl border border-slate-200/50 dark:border-slate-800/60 space-y-3">
                         <div className="flex items-center justify-between border-b pb-1.5">
                           <span className="text-[10px] font-bold text-slate-500 uppercase">Banner Slide #{index + 1}</span>

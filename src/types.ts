@@ -78,6 +78,19 @@ export interface Order {
   createdAt: string;
 }
 
+export interface HeroBannerSettings {
+  id: string;
+  badge: string;
+  title: string;
+  subtitle: string;
+  description: string;
+  image: string;
+  bgGradient?: string;
+  buttonText?: string;
+  buttonUrl?: string;
+  enabled?: boolean;
+}
+
 export interface WebsiteSettings {
   storeName: string;
   storeTagline?: string;
@@ -90,17 +103,8 @@ export interface WebsiteSettings {
   contactAddress?: string;
 
   // Homepage / Slider
-  heroBanners: {
-    id: string;
-    badge: string;
-    title: string;
-    subtitle: string;
-    description: string;
-    image: string;
-    bgGradient?: string;
-    buttonText?: string;
-  }[];
-  autoSlideSpeed?: number; // In seconds or milliseconds
+  heroBanners: HeroBannerSettings[];
+  autoSlideSpeed?: number; // Seconds
   enableSlider?: boolean;
 
   // Branding
