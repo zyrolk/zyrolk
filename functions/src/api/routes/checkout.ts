@@ -107,6 +107,7 @@ export function registerCheckoutRoutes(app: express.Express): void {
 
         let itemsSubtotal = 0;
         const verifiedItems = [];
+        const productUpdates: Array<{ ref: FirebaseFirestore.DocumentReference; newStock: number }> = [];
 
         for (const item of validatedCartItems) {
           const productRef = adminDb.collection("products").doc(item.productId);
@@ -140,6 +141,11 @@ export function registerCheckoutRoutes(app: express.Express): void {
             quantity: item.quantity,
             imageUrl: pData.imageUrl || ""
           });
+
+          productUpdates.push({
+            ref: productRef,
+            newStock: currentStock - item.quantity,
+          });
         }
 
         const settingsRef = adminDb.collection("settings").doc("website");
@@ -163,12 +169,9 @@ export function registerCheckoutRoutes(app: express.Express): void {
         transaction.set(counterRef, { currentSeq: nextSeq }, { merge: true });
         const orderNumber = `ZY${nextSeq}`;
 
-        for (const item of validatedCartItems) {
-          const productRef = adminDb.collection("products").doc(item.productId);
-          const productSnap = await transaction.get(productRef);
-          const currentStock = productSnap.data()!.stock || 0;
-          transaction.update(productRef, {
-            stock: Math.max(0, currentStock - item.quantity)
+        for (const update of productUpdates) {
+          transaction.update(update.ref, {
+            stock: Math.max(0, update.newStock),
           });
         }
 
