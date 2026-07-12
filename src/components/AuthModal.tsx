@@ -9,6 +9,7 @@ import {
   updateProfile
 } from 'firebase/auth';
 import { doc, setDoc } from 'firebase/firestore';
+import { getAuthErrorMessage } from '../features/auth/authErrorMessage';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -61,9 +62,9 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
         await signInWithEmailAndPassword(auth, normalizedEmail, password);
       }
       onClose();
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(err);
-      setError(err.message || "Authentication failed. Please check credentials.");
+      setError(getAuthErrorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -88,9 +89,9 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
       }, { merge: true });
 
       onClose();
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.warn("Google popup sign-in failed:", err);
-      setError("Google sign-in could not be completed. Please try again or use email and password.");
+      setError(getAuthErrorMessage(err));
 
     } finally {
       setLoading(false);

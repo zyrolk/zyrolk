@@ -24,11 +24,11 @@ import ProductCard from './components/ProductCard';
 import ProductFilters from './components/ProductFilters';
 import Footer from './components/Footer';
 import FloatingWhatsApp from './components/FloatingWhatsApp';
+import ProductDetailModal from './components/ProductDetailModal';
+import ContactPage from './components/ContactPage';
 
 const AdminDashboard = lazy(() => import('./components/AdminDashboard'));
-const ProductDetailModal = lazy(() => import('./components/ProductDetailModal'));
 const CartDrawer = lazy(() => import('./components/CartDrawer'));
-const ContactPage = lazy(() => import('./components/ContactPage'));
 const AuthModal = lazy(() => import('./components/AuthModal'));
 const CmsPage = lazy(() => import('./components/CmsPage'));
 
@@ -1384,18 +1384,16 @@ export default function App() {
 
           {/* PAGE 5: CONTACT PAGE */}
           {currentPage === 'contact' && (
-            <Suspense fallback={<LazyBlockFallback className="mx-auto my-12 min-h-96 max-w-7xl" />}>
-              <ContactPage
-                settings={settings}
-                isAdmin={isAdminUser}
-                onEdit={(pageId) => {
-                  setAdminInitialTab('pages');
-                  setAdminInitialCmsPageId(pageId);
-                  setIsAdminMode(true);
-                  setCurrentPage('admin');
-                }}
-              />
-            </Suspense>
+            <ContactPage
+              settings={settings}
+              isAdmin={isAdminUser}
+              onEdit={(pageId) => {
+                setAdminInitialTab('pages');
+                setAdminInitialCmsPageId(pageId);
+                setIsAdminMode(true);
+                setCurrentPage('admin');
+              }}
+            />
           )}
 
           {/* PAGE 6: CMS DYNAMIC PAGES */}
@@ -1463,7 +1461,6 @@ export default function App() {
       {(() => {
         const liveSelectedProduct = selectedProduct ? (products.find(p => p.id === selectedProduct.id) || selectedProduct) : null;
         return liveSelectedProduct ? (
-          <Suspense fallback={null}>
           <ProductDetailModal 
             product={liveSelectedProduct}
             isOpen={!!selectedProduct}
@@ -1476,7 +1473,6 @@ export default function App() {
             onBuyNow={handleBuyNow}
             settings={settings}
           />
-          </Suspense>
         ) : null;
       })()}
 
