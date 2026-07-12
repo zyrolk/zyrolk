@@ -7,6 +7,7 @@ export interface RuntimeConfig {
 }
 
 let cachedConfig: RuntimeConfig | null = null;
+const PRODUCTION_ADMIN_EMAIL = "zyrolkofficial@gmail.com";
 
 function parseAllowedOrigins(rawValue: string | undefined): string[] {
   return (rawValue || "")
@@ -16,17 +17,10 @@ function parseAllowedOrigins(rawValue: string | undefined): string[] {
 }
 
 export function loadRuntimeConfig(): RuntimeConfig {
-  const adminEmail = (process.env.ADMIN_EMAIL || "zyrolkofficial@gmail.com").trim().toLowerCase();
-
-  if (!adminEmail) {
-    appLogger.error("Required runtime configuration is missing.", { missing: ["ADMIN_EMAIL"] });
-    throw new Error("Missing required runtime configuration: ADMIN_EMAIL");
-  }
-
   const allowedOrigins = parseAllowedOrigins(process.env.API_ALLOWED_ORIGINS);
 
   return {
-    adminEmail,
+    adminEmail: PRODUCTION_ADMIN_EMAIL,
     allowedOrigins,
     corsAllowsAllOrigins: allowedOrigins.length === 0,
   };

@@ -1,10 +1,10 @@
 import * as express from "express";
 import { getRuntimeConfig } from "../config";
-import { adminAuth, adminDb } from "../firebase";
+import { adminAuth } from "../firebase";
 import { appLogger } from "../logging";
 
-export function hasSupplierAdminAccess(email: string | undefined, userRole: unknown): boolean {
-  return (email || "").toLowerCase() === getRuntimeConfig().adminEmail || userRole === "admin";
+export function hasSupplierAdminAccess(email: string | undefined): boolean {
+  return (email || "").toLowerCase() === getRuntimeConfig().adminEmail;
 }
 
 export const requireAdminAuth: express.RequestHandler = async (req, res, next) => {
@@ -20,15 +20,7 @@ export const requireAdminAuth: express.RequestHandler = async (req, res, next) =
     const decodedToken = await adminAuth.verifyIdToken(match[1]);
     const email = (decodedToken.email || "").toLowerCase();
 
-    if (hasSupplierAdminAccess(email, null)) {
-      next();
-      return;
-    }
-
-    const userSnap = await adminDb.collection("users").doc(decodedToken.uid).get();
-    const userRole = userSnap.exists ? userSnap.data()?.role : null;
-
-    if (hasSupplierAdminAccess(email, userRole)) {
+    if (hasSupplierAdminAccess(email)) {
       next();
       return;
     }

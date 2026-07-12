@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Mail, Phone, MapPin, Send, CheckCircle, Clock, MessageSquare, Edit3 } from 'lucide-react';
 import { WebsiteSettings } from '../types';
 import { db } from '../firebase';
-import { doc, getDoc } from 'firebase/firestore';
+import { addDoc, collection, doc, getDoc, serverTimestamp } from 'firebase/firestore';
 
 interface ContactPageProps {
   settings?: WebsiteSettings | null;
@@ -142,8 +142,11 @@ function parseContactContent(content: string) {
 export default function ContactPage({ settings, isAdmin, onEdit }: ContactPageProps) {
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
+  const [email, setEmail] = useState("");
   const [message, setMessage] = useState("");
   const [submitted, setSubmitted] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState("");
 
   const [cmsPage, setCmsPage] = useState<{ title: string; content: string } | null>(null);
   const [loading, setLoading] = useState(true);
@@ -169,16 +172,29 @@ export default function ContactPage({ settings, isAdmin, onEdit }: ContactPagePr
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, []);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (name && phone && message) {
+    if (!name.trim() || !phone.trim() || !message.trim() || submitting) return;
+    setSubmitting(true);
+    setSubmitError("");
+    try {
+      await addDoc(collection(db, "contact_inquiries"), {
+        name: name.trim(), phone: phone.trim(), email: email.trim(), message: message.trim(),
+        status: "new", createdAt: serverTimestamp(),
+      });
       setSubmitted(true);
       setTimeout(() => {
         setSubmitted(false);
         setName("");
         setPhone("");
+        setEmail("");
         setMessage("");
       }, 4000);
+    } catch (error) {
+      console.error("Contact inquiry persistence failed:", error);
+      setSubmitError("Your inquiry could not be sent. Please try again or contact us through WhatsApp.");
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -396,6 +412,9 @@ export default function ContactPage({ settings, isAdmin, onEdit }: ContactPagePr
                     id="contact-email"
                     type="email"
                     placeholder="kumara@gmail.com"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    maxLength={160}
                     className="min-h-11 w-full text-sm px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus-visible:outline-none focus-visible:border-brand-blue focus-visible:ring-4 focus-visible:ring-brand-blue/15"
                   />
                 </div>
@@ -410,17 +429,21 @@ export default function ContactPage({ settings, isAdmin, onEdit }: ContactPagePr
                     placeholder="Describe what product you are interested in, quantities required, or delivery questions..."
                     value={message}
                     onChange={(e) => setMessage(e.target.value)}
+                    maxLength={2000}
                     className="w-full text-sm px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus-visible:outline-none focus-visible:border-brand-blue focus-visible:ring-4 focus-visible:ring-brand-blue/15"
                   ></textarea>
                 </div>
 
+                {submitError && <p className="text-xs font-semibold text-red-600" role="alert">{submitError}</p>}
+
                 {/* Button */}
                 <button
                   type="submit"
-                  className="w-full min-h-11 px-4 py-3.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-sm font-bold shadow-md shadow-slate-900/10 cursor-pointer flex items-center justify-center transition-all focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-slate-900/25 focus-visible:ring-offset-2"
+                  disabled={submitting}
+                  className="w-full min-h-11 px-4 py-3.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-sm font-bold shadow-md shadow-slate-900/10 cursor-pointer flex items-center justify-center transition-all focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-slate-900/25 focus-visible:ring-offset-2 disabled:cursor-wait disabled:opacity-60"
                 >
                   <Send className="h-4 w-4 mr-1.5" />
-                  Submit Inquiry
+                  {submitting ? "Sending Inquiry..." : "Submit Inquiry"}
                 </button>
 
               </form>

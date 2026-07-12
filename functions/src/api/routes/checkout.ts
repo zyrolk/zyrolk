@@ -189,6 +189,7 @@ export function registerCheckoutRoutes(app: express.Express): void {
           items: verifiedItems,
           totalPrice: grandTotalPrice,
           status: "pending",
+          stockDeducted: true,
           paymentMethod: paymentMethod || "cod",
           createdAt: new Date().toISOString()
         };

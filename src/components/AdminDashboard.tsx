@@ -25,9 +25,11 @@ import {
   sortCategoriesAlphabetically,
 } from '../services/categories/categoryUtils';
 import { Product, Category, Order, WebsiteSettings, SupplierReviewQueueItem } from '../types';
+import { isProductionAdminEmail, PRODUCTION_ADMIN_EMAIL } from '../config/admin';
 import { CloudinaryUpload } from './CloudinaryUpload';
 import HeroSliderEditor from './HeroSliderEditor';
 import { normalizeSlideSpeed, validateHeroSlides } from '../services/hero-slider/heroSlider';
+import { sanitizeFirestoreData } from '../services/firestore/sanitizeFirestoreData';
 import { 
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, 
   CartesianGrid, Tooltip, PieChart, Pie, Cell, BarChart, Bar, Legend
@@ -1175,16 +1177,11 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
         return;
       }
       try {
-        if (currentUser.email === 'zyrolkofficial@gmail.com') {
+        if (isProductionAdminEmail(currentUser.email)) {
           setAuthorized(true);
         } else {
-          const userDoc = await getDoc(doc(db, "users", currentUser.uid));
-          if (userDoc.exists() && userDoc.data().role === 'admin') {
-            setAuthorized(true);
-          } else {
-            setAuthorized(false);
-            setLoading(false);
-          }
+          setAuthorized(false);
+          setLoading(false);
         }
       } catch (err) {
         setAuthorized(false);
@@ -1444,7 +1441,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
         disc = Math.round(((newProduct.originalPrice - (newProduct.price || 0)) / newProduct.originalPrice) * 100);
       }
 
-      const payload = {
+      const payload = sanitizeFirestoreData({
         ...newProduct,
         id: editingProduct ? editingProduct.id : newProduct.id,
         price: Number(newProduct.price),
@@ -1458,7 +1455,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
         supplierItemCode: newProduct.supplierItemCode || undefined,
         costPrice: newProduct.costPrice ? Number(newProduct.costPrice) : undefined,
         marketPrice: newProduct.marketPrice ? Number(newProduct.marketPrice) : undefined
-      };
+      });
 
       if (editingProduct) {
         await updateDoc(doc(db, "products", editingProduct.id), payload);
@@ -1634,7 +1631,15 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
     if (!authorized) return;
     setUpdatingOrderStatus(prev => ({ ...prev, [orderId]: true }));
     try {
-      await updateDoc(doc(db, "orders", orderId), { status: newStatus });
+      const token = await auth.currentUser?.getIdToken();
+      if (!token) throw new Error("Admin authentication is required. Please sign in again.");
+      const response = await fetch(`/api/orders/${encodeURIComponent(orderId)}/status`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ status: newStatus }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.success) throw new Error(result.error || 'Failed to update order status.');
       showSettingsToast("success", `Order #${orderId.substring(0, 8).toUpperCase()} status set to ${newStatus.toUpperCase()}`);
     } catch (err: any) {
       console.error("Order update failed:", err);
@@ -1922,7 +1927,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
           <ShieldCheck className="h-12 w-12 text-red-500 mx-auto" />
           <h2 className="text-xl font-bold">Admin Authorization Required</h2>
           <p className="text-sm text-slate-400 leading-relaxed">
-            Please sign in with a registered corporate administrator account (zyrolkofficial@gmail.com) to access administrative transactions.
+            Please sign in with the registered corporate administrator account ({PRODUCTION_ADMIN_EMAIL}) to access administrative transactions.
           </p>
           <div className="flex gap-4">
             <button onClick={() => window.location.href = '/'} className="flex-1 py-3 bg-slate-800 hover:bg-slate-700 font-semibold rounded-xl text-xs transition-all cursor-pointer">Return Home</button>
@@ -1989,7 +1994,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
             </div>
             <div className="min-w-0 flex-1 text-left">
               <p className="text-xs font-bold text-white truncate">Zyro Admin</p>
-              <p className="text-[10px] text-slate-500 truncate">zyrolkofficial@gmail.com</p>
+              <p className="text-[10px] text-slate-500 truncate">{PRODUCTION_ADMIN_EMAIL}</p>
             </div>
           </div>
           <button onClick={() => auth.signOut()} className="w-full py-2 bg-slate-800 hover:bg-slate-700 hover:text-white text-[11px] font-bold rounded-lg transition-all cursor-pointer flex items-center justify-center space-x-1.5 text-slate-400">

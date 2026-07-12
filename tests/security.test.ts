@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFileSync } from "node:fs";
 import { hasSupplierAdminAccess } from "../functions/src/api/middleware/adminAuth";
 import { validateSupplierRequestTarget } from "../functions/src/api/security/supplierUrlProtection";
 
-test("supplier endpoint admin decision requires admin email or admin role", () => {
-  assert.equal(hasSupplierAdminAccess("zyrolkofficial@gmail.com", null), true);
-  assert.equal(hasSupplierAdminAccess("manager@example.com", "admin"), true);
-  assert.equal(hasSupplierAdminAccess("customer@example.com", "customer"), false);
-  assert.equal(hasSupplierAdminAccess(undefined, undefined), false);
+test("admin decision requires the single production admin email", () => {
+  assert.equal(hasSupplierAdminAccess("zyrolkofficial@gmail.com"), true);
+  assert.equal(hasSupplierAdminAccess("manager@example.com"), false);
+  assert.equal(hasSupplierAdminAccess("customer@example.com"), false);
+  assert.equal(hasSupplierAdminAccess(undefined), false);
 });
 
 test("SSRF protection blocks localhost and private IPs", async () => {
@@ -39,4 +40,18 @@ test("allowlisted supplier URLs succeed with public DNS resolution", async () =>
 
   assert.equal(target.hostname, "supplier.example.com");
   assert.equal(target.targetUrl, "https://supplier.example.com/api/products");
+});
+
+test("Firestore rules reserve order writes for trusted backend code", () => {
+  const rules = readFileSync(new URL('../firestore.rules', import.meta.url), 'utf8');
+  const orderRules = rules.slice(rules.indexOf('match /orders/{orderId}'), rules.indexOf('match /contact_inquiries'));
+  assert.match(orderRules, /allow create, update, delete: if false/);
+  assert.doesNotMatch(orderRules, /customerUid == 'guest'/);
+});
+
+test("admin rules use only the production admin email", () => {
+  const rules = readFileSync(new URL('../firestore.rules', import.meta.url), 'utf8');
+  const adminHelper = rules.slice(rules.indexOf('function isAdmin'), rules.indexOf('function isOwner'));
+  assert.match(adminHelper, /zyrolkofficial@gmail\.com/);
+  assert.doesNotMatch(adminHelper, /role/);
 });

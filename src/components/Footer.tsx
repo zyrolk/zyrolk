@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Mail, Phone, MapPin, ShieldCheck, Truck, RefreshCw, Send, Check, Facebook, Instagram, Youtube } from 'lucide-react';
+import React from 'react';
+import { Mail, Phone, MapPin, ShieldCheck, Truck, RefreshCw, Facebook, Instagram, Youtube } from 'lucide-react';
 import { Category, WebsiteSettings } from '../types';
 
 interface FooterProps {
@@ -11,20 +11,6 @@ interface FooterProps {
 }
 
 export default function Footer({ setCurrentPage, onSelectCategory, settings, categories, categoryCounts }: FooterProps) {
-  const [email, setEmail] = useState("");
-  const [subscribed, setSubscribed] = useState(false);
-
-  const handleSubscribe = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (email) {
-      setSubscribed(true);
-      setTimeout(() => {
-        setSubscribed(false);
-        setEmail("");
-      }, 3000);
-    }
-  };
-
   const handleCategoryClick = (cat: string) => {
     onSelectCategory(cat);
     setCurrentPage('products');
@@ -176,35 +162,10 @@ export default function Footer({ setCurrentPage, onSelectCategory, settings, cat
 
         {/* Newsletter & Sub */}
         <div className="space-y-4 text-left">
-          <h4 className="text-sm font-black text-white uppercase tracking-wider">Exclusive Club</h4>
+          <h4 className="text-sm font-black text-white uppercase tracking-wider">Store Updates</h4>
           <p className="text-xs text-slate-400 font-light leading-relaxed">
-            Subscribe to receive flash discount codes, tech arrival newsletters, and solar optimization tips.
+            Newsletter subscriptions are temporarily unavailable. Follow our verified social channels or contact support for current offers.
           </p>
-          
-          <form onSubmit={handleSubscribe} className="relative mt-2">
-            <label htmlFor="footer-newsletter-email" className="sr-only">Email address for newsletter</label>
-            <input
-              id="footer-newsletter-email"
-              type="email"
-              required
-              placeholder="Enter your email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="zy-input min-h-11 w-full bg-slate-900/80 text-slate-100 text-xs pl-3.5 pr-12 py-2.5 rounded-xl border-slate-700/70 focus-visible:outline-none focus-visible:border-brand-blue focus-visible:ring-4 focus-visible:ring-blue-400/20 transition-all"
-            />
-            <button
-              type="submit"
-              aria-label={subscribed ? 'Newsletter subscription confirmed' : 'Subscribe to newsletter'}
-              className="absolute right-0 top-0 flex h-11 w-11 items-center justify-center bg-brand-blue text-white rounded-xl hover:bg-blue-700 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-300/40"
-            >
-              {subscribed ? <Check className="h-4 w-4" aria-hidden="true" /> : <Send className="h-4 w-4" aria-hidden="true" />}
-            </button>
-          </form>
-          {subscribed && (
-            <p className="text-xs text-emerald-400 font-semibold" role="status" aria-live="polite">
-              Thank you! Welcome to the Zyro Elite Club.
-            </p>
-          )}
         </div>
 
       </div>

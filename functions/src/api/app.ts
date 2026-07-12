@@ -2,6 +2,7 @@ import * as express from "express";
 import { getRuntimeConfig } from "./config";
 import { registerCheckoutRoutes } from "./routes/checkout";
 import { registerSupplierRoutes } from "./routes/supplier";
+import { registerOrderRoutes } from "./routes/orders";
 
 export function createApiApp(): express.Express {
   const app = express();
@@ -40,6 +41,7 @@ export function createApiApp(): express.Express {
   app.use(express.json());
 
   registerCheckoutRoutes(app);
+  registerOrderRoutes(app);
   registerSupplierRoutes(app);
 
   return app;

@@ -4,12 +4,7 @@ service cloud.firestore {
     
     // Helper function to check if the user is an admin
     function isAdmin() {
-      return request.auth != null && (
-        request.auth.token.email == 'zyrolkofficial@gmail.com' || (
-          exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'
-        )
-      );
+      return request.auth != null && request.auth.token.email == 'zyrolkofficial@gmail.com';
     }
 
     // Helper function to check if user owns the document
@@ -139,15 +134,22 @@ service cloud.firestore {
 
     // Orders Rules
     match /orders/{orderId} {
-      // Guests can create orders (customerUid == 'guest'), or authenticated users can create their own orders (customerUid == request.auth.uid)
-      allow create: if (request.resource.data.customerUid == 'guest' && request.auth == null) || 
-                    (request.auth != null && request.resource.data.customerUid == request.auth.uid);
-      
       // Customers can read their own orders. Admins can read all.
       allow read: if isAdmin() || (request.auth != null && resource.data.customerUid == request.auth.uid);
-      
-      // Only admins can update order status or delete/modify orders.
-      allow update, delete: if isAdmin();
+      // Orders are created and mutated only by trusted backend transactions.
+      allow create, update, delete: if false;
+    }
+
+    match /contact_inquiries/{inquiryId} {
+      allow create: if request.resource.data.keys().hasOnly([
+        'name', 'phone', 'email', 'message', 'status', 'createdAt'
+      ]) &&
+      request.resource.data.name is string && request.resource.data.name.size() >= 1 && request.resource.data.name.size() <= 120 &&
+      request.resource.data.phone is string && request.resource.data.phone.size() >= 9 && request.resource.data.phone.size() <= 30 &&
+      request.resource.data.email is string && request.resource.data.email.size() <= 160 &&
+      request.resource.data.message is string && request.resource.data.message.size() >= 1 && request.resource.data.message.size() <= 2000 &&
+      request.resource.data.status == 'new';
+      allow read, update, delete: if isAdmin();
     }
 
     // Checkout idempotency records are written only by trusted backend code.

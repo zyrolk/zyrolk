@@ -5,6 +5,7 @@ import {
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { db, auth, handleFirestoreError, OperationType } from './firebase';
 import { Product, Category, CartItem, CustomerProduct, WebsiteSettings } from './types';
+import { isProductionAdminEmail } from './config/admin';
 import { motion } from 'motion/react';
 import { projectCustomerProducts } from './services/product-search/customerProjection';
 import { searchCustomerProducts } from './services/product-search/customerProductSearch';
@@ -126,19 +127,14 @@ export default function App() {
         try {
           let loadedWishlist = wishlist;
           let loadedCart = cart;
-          if (currentUser.email === 'zyrolkofficial@gmail.com') {
+          if (isProductionAdminEmail(currentUser.email)) {
             setIsAdminMode(true);
             setIsAdminUser(true);
           } else {
             const userDoc = await getDoc(doc(db, "users", currentUser.uid));
             if (userDoc.exists()) {
-              if (userDoc.data().role === 'admin') {
-                setIsAdminMode(true);
-                setIsAdminUser(true);
-              } else {
-                setIsAdminMode(false);
-                setIsAdminUser(false);
-              }
+              setIsAdminMode(false);
+              setIsAdminUser(false);
               // Sync user's wishlist from firestore and merge with current guest wishlist
               const userData = userDoc.data();
               if (userData && userData.wishlist && Array.isArray(userData.wishlist)) {

@@ -49,12 +49,11 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
         await updateProfile(credential.user, { displayName: name });
         
         // Save user profile in Firestore
-        const isPrimaryAdmin = normalizedEmail === 'admin@zyro.lk' || normalizedEmail === 'rchi5408@gmail.com';
         await setDoc(doc(db, "users", credential.user.uid), {
           uid: credential.user.uid,
           email: credential.user.email,
           displayName: name,
-          role: isPrimaryAdmin ? 'admin' : 'customer',
+          role: 'customer',
           createdAt: new Date().toISOString()
         });
       } else {
@@ -79,38 +78,19 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
       const result = await signInWithPopup(auth, provider);
       const user = result.user;
 
-      const normalizedEmail = user.email?.trim().toLowerCase();
-      const isPrimaryAdmin = normalizedEmail === 'admin@zyro.lk' || normalizedEmail === 'rchi5408@gmail.com';
-
       // Save user profile in Firestore
       await setDoc(doc(db, "users", user.uid), {
         uid: user.uid,
         email: user.email,
         displayName: user.displayName || user.email?.split('@')[0],
-        role: isPrimaryAdmin ? 'admin' : 'customer',
+        role: 'customer',
         createdAt: new Date().toISOString()
       }, { merge: true });
 
       onClose();
     } catch (err: any) {
-      console.warn("Standard popup sign-in failed/blocked in sandbox, applying intuitive preview fallback.");
-      
-      // Iframe fallback: Create local mock credential state for seamless demo
-      setError("Google Popups can be restricted inside embedded previews. We will apply a developer bypass to log you in!");
-      
-      // Attempting mock sign in after 1.5 seconds for incredible UX
-      setTimeout(async () => {
-        // Mocking user profile in frontend local storage if needed or logging in as general customer
-        try {
-          setEmail("demo.customer@zyro.lk");
-          setPassword("password123");
-          setIsSignUp(false);
-          setDisplayName("Demo Customer");
-          setError("Inputting Demo user credentials for you! Click 'Sign In' below.");
-        } catch (mErr) {
-          console.error(mErr);
-        }
-      }, 1500);
+      console.warn("Google popup sign-in failed:", err);
+      setError("Google sign-in could not be completed. Please try again or use email and password.");
 
     } finally {
       setLoading(false);

@@ -181,7 +181,7 @@ export function validateCheckoutCartItems(cartItems: unknown): CheckoutCartItem[
     throw new CheckoutError(`Cart cannot contain more than ${MAX_CART_ITEMS} items`);
   }
 
-  return cartItems.map((item, index) => {
+  const normalizedItems = cartItems.map((item, index) => {
     const rawItem = item as Partial<CheckoutCartItem>;
     const productId = typeof rawItem.productId === "string" ? rawItem.productId.trim() : "";
     const quantity = typeof rawItem.quantity === "number" ? rawItem.quantity : NaN;
@@ -196,6 +196,17 @@ export function validateCheckoutCartItems(cartItems: unknown): CheckoutCartItem[
 
     return { productId, quantity };
   });
+
+  const consolidated = new Map<string, number>();
+  normalizedItems.forEach(({ productId, quantity }) => {
+    const combinedQuantity = (consolidated.get(productId) || 0) + quantity;
+    if (combinedQuantity > MAX_ITEM_QUANTITY) {
+      throw new CheckoutError(`Combined quantity for product "${productId}" cannot exceed ${MAX_ITEM_QUANTITY}`);
+    }
+    consolidated.set(productId, combinedQuantity);
+  });
+
+  return Array.from(consolidated, ([productId, quantity]) => ({ productId, quantity }));
 }
 
 const DISTRICT_DELIVERY: Record<string, number> = {

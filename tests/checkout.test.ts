@@ -25,6 +25,21 @@ test("checkout cart validation rejects empty carts and invalid quantities", () =
   assert.throws(() => validateCheckoutCartItems([{ productId: "", quantity: 1 }]), /missing a valid product ID/);
 });
 
+test("checkout consolidates duplicate product IDs before stock calculation", () => {
+  assert.deepEqual(validateCheckoutCartItems([
+    { productId: "p1", quantity: 2 },
+    { productId: "p1", quantity: 3 },
+    { productId: "p2", quantity: 1 },
+  ]), [
+    { productId: "p1", quantity: 5 },
+    { productId: "p2", quantity: 1 },
+  ]);
+  assert.throws(() => validateCheckoutCartItems([
+    { productId: "p1", quantity: 60 },
+    { productId: "p1", quantity: 40 },
+  ]), /Combined quantity/);
+});
+
 test("checkout totals calculation preserves delivery and free delivery behavior", () => {
   assert.deepEqual(calculateCheckoutTotals(4000, "Colombo", null), {
     itemsSubtotal: 4000,

@@ -5,7 +5,7 @@ import { createHash } from "crypto";
 import { createServer as createViteServer } from "vite";
 import { initializeApp, getApps } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
-import { getFirestore } from "firebase-admin/firestore";
+import { FieldValue, getFirestore } from "firebase-admin/firestore";
 import { A2ZConnectorService } from "./src/services/connectors/a2z-website/A2ZConnectorService";
 import { getApprovedSupplierHosts, validateSupplierRequestTarget } from "./src/server/security/supplierUrlProtection";
 
@@ -185,7 +185,7 @@ function validateCheckoutCartItems(cartItems: unknown): CheckoutCartItem[] {
     throw new CheckoutError(`Cart cannot contain more than ${MAX_CART_ITEMS} items`);
   }
 
-  return cartItems.map((item, index) => {
+  const normalizedItems = cartItems.map((item, index) => {
     const rawItem = item as Partial<CheckoutCartItem>;
     const productId = typeof rawItem.productId === "string" ? rawItem.productId.trim() : "";
     const quantity = typeof rawItem.quantity === "number" ? rawItem.quantity : NaN;
@@ -200,6 +200,17 @@ function validateCheckoutCartItems(cartItems: unknown): CheckoutCartItem[] {
 
     return { productId, quantity };
   });
+
+  const consolidated = new Map<string, number>();
+  normalizedItems.forEach(({ productId, quantity }) => {
+    const combinedQuantity = (consolidated.get(productId) || 0) + quantity;
+    if (combinedQuantity > MAX_ITEM_QUANTITY) {
+      throw new CheckoutError(`Combined quantity for product "${productId}" cannot exceed ${MAX_ITEM_QUANTITY}`);
+    }
+    consolidated.set(productId, combinedQuantity);
+  });
+
+  return Array.from(consolidated, ([productId, quantity]) => ({ productId, quantity }));
 }
 
 // Secure transaction-based checkout endpoint
@@ -372,6 +383,7 @@ app.post("/api/checkout", async (req, res) => {
         items: verifiedItems,
         totalPrice: grandTotalPrice,
         status: "pending",
+        stockDeducted: true,
         paymentMethod: paymentMethod || "cod",
         createdAt: new Date().toISOString()
       };
@@ -458,20 +470,67 @@ const requireSupplierAdminAuth: express.RequestHandler = async (req, res, next) 
       return;
     }
 
-    const userSnap = await adminDb.collection("users").doc(decodedToken.uid).get();
-    const userRole = userSnap.exists ? userSnap.data()?.role : null;
-
-    if (userRole === "admin") {
-      next();
-      return;
-    }
-
     res.status(403).json({ error: "Admin access required" });
   } catch (error) {
     console.warn("[Supplier API] Failed admin authentication:", error);
     res.status(401).json({ error: "Invalid or expired authentication token" });
   }
 };
+
+app.post("/api/orders/:orderId/status", requireSupplierAdminAuth, async (req, res) => {
+  const orderId = String(req.params.orderId || "").trim();
+  const newStatus = typeof req.body?.status === "string" ? req.body.status.trim().toLowerCase() : "";
+  const allowedStatuses = new Set(["pending", "confirmed", "packed", "shipped", "delivered", "cancelled"]);
+  if (!orderId || !allowedStatuses.has(newStatus)) {
+    return res.status(400).json({ error: "A valid order ID and status are required" });
+  }
+
+  try {
+    const result = await adminDb.runTransaction(async (transaction) => {
+      const orderRef = adminDb.collection("orders").doc(orderId);
+      const orderSnap = await transaction.get(orderRef);
+      if (!orderSnap.exists) throw new CheckoutError("Order not found", 404);
+      const order = orderSnap.data()!;
+      const currentStatus = String(order.status || "pending").toLowerCase();
+      if (currentStatus === "cancelled" && newStatus !== "cancelled") {
+        throw new CheckoutError("Cancelled orders cannot be moved to another status", 409);
+      }
+
+      const shouldRestoreStock = newStatus === "cancelled" && order.stockDeducted === true && order.stockRestorationApplied !== true;
+      const quantities = new Map<string, number>();
+      if (shouldRestoreStock) {
+        for (const item of Array.isArray(order.items) ? order.items : []) {
+          const productId = typeof item?.productId === "string" ? item.productId.trim() : "";
+          const quantity = Number(item?.quantity);
+          if (productId && Number.isInteger(quantity) && quantity > 0) {
+            quantities.set(productId, (quantities.get(productId) || 0) + quantity);
+          }
+        }
+      }
+
+      const productStocks: Array<{ ref: FirebaseFirestore.DocumentReference; stock: number; quantity: number }> = [];
+      for (const [productId, quantity] of quantities) {
+        const productRef = adminDb.collection("products").doc(productId);
+        const productSnap = await transaction.get(productRef);
+        if (productSnap.exists) {
+          const stock = Number(productSnap.data()?.stock);
+          productStocks.push({ ref: productRef, stock: Number.isFinite(stock) ? stock : 0, quantity });
+        }
+      }
+
+      productStocks.forEach(({ ref, stock, quantity }) => transaction.update(ref, { stock: stock + quantity }));
+      transaction.update(orderRef, {
+        status: newStatus,
+        statusUpdatedAt: FieldValue.serverTimestamp(),
+        ...(shouldRestoreStock ? { stockRestorationApplied: true, stockRestoredAt: FieldValue.serverTimestamp() } : {}),
+      });
+      return { status: newStatus, stockRestored: shouldRestoreStock };
+    });
+    return res.json({ success: true, ...result });
+  } catch (error: any) {
+    return res.status(error.statusCode || 500).json({ error: error.message || "Failed to update order status" });
+  }
+});
 
 // Server-side proxy for testing supplier connections securely (bypasses CORS)
 app.post("/api/test-supplier", requireSupplierAdminAuth, async (req, res) => {
