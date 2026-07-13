@@ -1,5 +1,8 @@
 import { RawA2ZProduct } from './types';
 import { ConnectorLogger } from './ConnectorLogger';
+import { A2Z_PRODUCT_IMAGE_FALLBACK, extractA2ZProductImages } from './productImages';
+
+export { A2Z_PRODUCT_IMAGE_FALLBACK, extractA2ZProductImages } from './productImages';
 
 export class ProductParser {
   /**
@@ -13,7 +16,7 @@ export class ProductParser {
    * 6. Recommended Retail Price (Market Price)
    * 7. Inventory Level (Stock count)
    */
-  public static parseJsonPayload(rawPayload: string | Record<string, any>): RawA2ZProduct {
+  public static parseJsonPayload(rawPayload: string | Record<string, any>, baseUrl = 'https://a2zdropshipping.lk'): RawA2ZProduct {
     let rawObj: Record<string, any>;
 
     if (typeof rawPayload === 'string') {
@@ -32,18 +35,8 @@ export class ProductParser {
     const title = String(rawObj.pro_name || rawObj.title || rawObj.name || rawObj.product_name || '').trim();
     const longDescription = String(rawObj.pro_desc || rawObj.longDescription || rawObj.description || rawObj.details || '').trim();
     
-    // Support plural image arrays or comma-delimited string fields
-    let mediaGallery: string[] = [];
-    if (Array.isArray(rawObj.mediaGallery)) {
-      mediaGallery = rawObj.mediaGallery.map(String);
-    } else if (Array.isArray(rawObj.images)) {
-      mediaGallery = rawObj.images.map(String);
-    } else if (typeof rawObj.imageUrl === 'string' && rawObj.imageUrl !== '') {
-      mediaGallery = [rawObj.imageUrl];
-    } else {
-      // Use a beautiful stock product placeholder image
-      mediaGallery = ['https://images.unsplash.com/photo-1523275335684-37898b6baf30?auto=format&fit=crop&q=80&w=600'];
-    }
+    const extractedImages = extractA2ZProductImages(rawObj, baseUrl);
+    const mediaGallery = extractedImages.length > 0 ? extractedImages : [A2Z_PRODUCT_IMAGE_FALLBACK];
 
     const wholesalePrice = Number(rawObj.wholesale_price || rawObj.wholesalePrice || rawObj.costPrice || rawObj.cost_price || rawObj.supplier_price || 0);
     const recommendedRetailPrice = Number(rawObj.website_price || rawObj.price_min || rawObj.price_max || rawObj.recommendedRetailPrice || rawObj.marketPrice || rawObj.retail_price || rawObj.selling_price || 0);

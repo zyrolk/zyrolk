@@ -8,6 +8,11 @@ import {
   buildA2ZBrowserLoginBody,
   fingerprintA2ZCredentials,
 } from "../functions/src/api/suppliers/a2z/credentialForensics";
+import {
+  extractA2ZProductImages,
+  ProductParser as FunctionsProductParser,
+} from "../functions/src/api/suppliers/a2z/ProductParser";
+import { extractA2ZProductImages as extractBrowserA2ZProductImages } from "../src/services/connectors/a2z-website/productImages";
 
 test("A2Z Secret Manager credentials take precedence over stale Firestore credentials", () => {
   const resolved = resolveA2ZCredentials(
@@ -64,6 +69,55 @@ test("A2Z connector preserves the current form-session authentication contract",
   assert.match(connector, /"User-Agent": this\.BROWSER_USER_AGENT/);
   assert.match(connector, /\/Product\/getAllproducts2/);
   assert.doesNotMatch(connector, /Pre-authentication cookies acquired/);
+});
+
+test("A2Z product images map supplier fields and normalize relative URLs", () => {
+  const raw = {
+    pro_img: "/uploads/products/watch.jpg",
+    images: [
+      { url: "https://cdn.example.com/watch-2.jpg" },
+      "/uploads/products/watch.jpg",
+    ],
+    image_url: "//cdn.example.com/watch-3.jpg",
+  };
+
+  assert.deepEqual(extractA2ZProductImages(raw, "https://a2zdropshipping.lk/dash"), [
+    "https://cdn.example.com/watch-2.jpg",
+    "https://a2zdropshipping.lk/uploads/products/watch.jpg",
+    "https://cdn.example.com/watch-3.jpg",
+  ]);
+});
+
+test("A2Z Functions and browser image helpers keep mapping consistent", () => {
+  const raw = {
+    pro_code: "A2Z-100",
+    pro_name: "Supplier Watch",
+    pro_image: "products/watch.jpg",
+    wholesale_price: 1000,
+    website_price: 1500,
+    bal: 4,
+  };
+
+  const functionsProduct = FunctionsProductParser.parseJsonPayload(raw, "https://a2zdropshipping.lk");
+  const browserImages = extractBrowserA2ZProductImages(raw, "https://a2zdropshipping.lk");
+
+  assert.deepEqual(functionsProduct.mediaGallery, ["https://a2zdropshipping.lk/products/watch.jpg"]);
+  assert.deepEqual(browserImages, functionsProduct.mediaGallery);
+});
+
+test("A2Z image extraction tolerates supplier image-field renames", () => {
+  const raw = {
+    product_pic: "uploads/products/camera.jpg",
+    thumbnail_path: "/uploads/products/camera-thumb.jpg",
+  };
+
+  const expected = [
+    "https://a2zdropshipping.lk/uploads/products/camera.jpg",
+    "https://a2zdropshipping.lk/uploads/products/camera-thumb.jpg",
+  ];
+
+  assert.deepEqual(extractA2ZProductImages(raw, "https://a2zdropshipping.lk"), expected);
+  assert.deepEqual(extractBrowserA2ZProductImages(raw, "https://a2zdropshipping.lk"), expected);
 });
 
 test("A2Z credential bytes remain exact and use browser jQuery form serialization", () => {

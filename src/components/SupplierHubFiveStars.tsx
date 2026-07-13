@@ -31,12 +31,19 @@ import {
   FileText
 } from 'lucide-react';
 import { RawA2ZProduct } from '../services/connectors/a2z-website/types';
+import { A2Z_PRODUCT_IMAGE_FALLBACK } from '../services/connectors/a2z-website/productImages';
 import { collection, doc, getDocs, onSnapshot, setDoc, writeBatch } from 'firebase/firestore';
 import { auth, db, handleFirestoreError, OperationType } from '../firebase';
 import { Product } from '../types';
 import { approveSupplierQueueItem, rejectSupplierQueueItem } from '../services/supplierQueueService';
 import { matchesSupplierSearch } from '../services/supplierSearch';
 import { isActiveWebsiteSupplier } from '../services/supplierSourceUtils';
+import SupplierReviewEditorModal from './SupplierReviewEditorModal';
+import {
+  buildSupplierApprovalItem,
+  createSupplierReviewDraft,
+  SupplierReviewDraft,
+} from '../services/supplierReviewEditor';
 
 interface SupplierHubFiveStarsProps {
   isDarkMode?: boolean;
@@ -70,6 +77,7 @@ export interface ReviewQueueItem {
   batchId?: string;
   createdAt?: string;
   updatedAt?: string;
+  supplierSnapshot?: Record<string, unknown>;
 }
 
 export interface SyncHistoryItem {
@@ -324,6 +332,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
   const [pendingChangesSearch, setPendingChangesSearch] = useState<string>('');
   const [processingChangeId, setProcessingChangeId] = useState<string | null>(null);
   const [comparingChange, setComparingChange] = useState<any | null>(null);
+  const [editingReviewItem, setEditingReviewItem] = useState<ReviewQueueItem | null>(null);
 
   // 3. Settings states
   const [supplierSettings, setSupplierSettings] = useState<any>({
@@ -589,6 +598,19 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
                 createdAt: match ? (match.createdAt || new Date().toISOString()) : new Date().toISOString()
               };
 
+              const supplierSnapshot = {
+                supplierName,
+                supplierSku: prod.sku,
+                productName: prod.title,
+                description: prod.longDescription || '',
+                wholesalePrice: prod.wholesalePrice,
+                recommendedRetailPrice: prod.recommendedRetailPrice,
+                stock: prod.inventoryLevel,
+                imageUrls: [...(prod.mediaGallery || [])],
+                categoryHierarchy: [...(prod.categoryHierarchy || [])],
+                specifications: { ...(prod.specifications || {}) }
+              };
+
               const queueItem: ReviewQueueItem = {
                 id: queueItemId,
                 status: 'Pending' as const,
@@ -605,6 +627,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
                 comparisonStatus,
                 comparison: comparisonResult,
                 productPayload: productPayload, // Store payload for approval
+                supplierSnapshot,
                 matchedProductId: matchedProductId, // Store match info for approval
                 createdAt: new Date().toISOString(),
                 updatedAt: new Date().toISOString()
@@ -678,6 +701,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
                   newValue,
                   status: 'Pending',
                   productPayload: item.productPayload,
+                  supplierSnapshot: item.supplierSnapshot,
                   matchedProductId: item.matchedProductId
                 };
               });
@@ -1079,19 +1103,21 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
   };
 
   // --- REVIEW QUEUE APPROVAL HANDLERS ---
-  const handleApproveReviewItem = async (item: ReviewQueueItem) => {
+  const handleApproveReviewItem = async (item: ReviewQueueItem, draft: SupplierReviewDraft) => {
     setProcessingChangeId(item.id);
     try {
-      await approveSupplierQueueItem(item);
+      const approvalItem = buildSupplierApprovalItem(item, draft);
+      await approveSupplierQueueItem(approvalItem);
       console.log(`[Approval Pipeline] Successfully approved and wrote product for queue item: ${item.id}`);
 
-      setProcessingChangeId(null);
-      setSuccessMsg(`Product "${item.productName}" approved successfully.`);
+      setEditingReviewItem(null);
+      setSuccessMsg(`Product "${draft.productName.trim()}" approved and published successfully.`);
       setTimeout(() => setSuccessMsg(null), 3000);
     } catch (error: any) {
       console.error("Review approval error:", error);
       setErrorMsg(`Failed to approve: ${error.message || 'Unknown error'}`);
       setTimeout(() => setErrorMsg(null), 4000);
+    } finally {
       setProcessingChangeId(null);
     }
   };
@@ -1417,6 +1443,11 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
                                 alt={item.productName} 
                                 className="w-10 h-10 object-cover rounded-lg border border-slate-200 dark:border-slate-800"
                                 referrerPolicy="no-referrer"
+                                loading="lazy"
+                                onError={(event) => {
+                                  event.currentTarget.onerror = null;
+                                  event.currentTarget.src = A2Z_PRODUCT_IMAGE_FALLBACK;
+                                }}
                               />
                             ) : (
                               <div className="w-10 h-10 bg-slate-100 dark:bg-slate-800 rounded-lg flex items-center justify-center text-slate-400 font-bold text-[9px] uppercase">
@@ -1498,12 +1529,12 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
                             {item.status === 'Pending' && (
                               <div className="flex items-center justify-end gap-2">
                                 <button
-                                  onClick={() => handleApproveReviewItem(item)}
+                                  onClick={() => setEditingReviewItem(item)}
                                   disabled={processingChangeId === item.id}
                                   className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-700 text-white font-bold rounded-lg text-[10px] transition-colors flex items-center gap-1 cursor-pointer"
                                 >
                                   <Check className="h-3 w-3" />
-                                  Approve
+                                  Review & Publish
                                 </button>
                                 <button
                                   onClick={() => handleRejectReviewItem(item)}
@@ -1644,6 +1675,11 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
                               alt={item.title} 
                               className="w-10 h-10 object-cover rounded-lg border border-slate-200 dark:border-slate-800"
                               referrerPolicy="no-referrer"
+                              loading="lazy"
+                              onError={(event) => {
+                                event.currentTarget.onerror = null;
+                                event.currentTarget.src = A2Z_PRODUCT_IMAGE_FALLBACK;
+                              }}
                             />
                           ) : (
                             <div className="w-10 h-10 bg-slate-100 dark:bg-slate-800 rounded-lg flex items-center justify-center text-slate-400 font-bold text-[9px] uppercase">
@@ -2937,6 +2973,19 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
             </div>
           </div>
         </div>
+      )}
+
+      {editingReviewItem && (
+        <SupplierReviewEditorModal
+          item={editingReviewItem}
+          initialDraft={createSupplierReviewDraft(editingReviewItem)}
+          categories={categories}
+          isPublishing={processingChangeId === editingReviewItem.id}
+          onClose={() => {
+            if (processingChangeId !== editingReviewItem.id) setEditingReviewItem(null);
+          }}
+          onPublish={(draft) => handleApproveReviewItem(editingReviewItem, draft)}
+        />
       )}
 
       {showResetSettingsConfirm && (

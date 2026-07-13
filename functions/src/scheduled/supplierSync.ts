@@ -290,6 +290,7 @@ function buildPendingChange(
     newValue,
     status: "Pending",
     productPayload: queueItem.productPayload,
+    supplierSnapshot: queueItem.supplierSnapshot,
     matchedProductId: queueItem.matchedProductId,
   };
 }
@@ -477,6 +478,18 @@ export async function runScheduledSupplierSync(): Promise<void> {
           const queueItemId = generateQueueDocId(source.id, product.sku, product.title);
           const productPayload = buildProductPayload(product, match);
           const createdAt = new Date().toISOString();
+          const supplierSnapshot = {
+            supplierName,
+            supplierSku: product.sku,
+            productName: product.title,
+            description: product.longDescription || "",
+            wholesalePrice: product.wholesalePrice,
+            recommendedRetailPrice: product.recommendedRetailPrice,
+            stock: product.inventoryLevel,
+            imageUrls: [...(product.mediaGallery || [])],
+            categoryHierarchy: [...(product.categoryHierarchy || [])],
+            specifications: { ...(product.specifications || {}) },
+          };
           const queueItem = {
             id: queueItemId,
             status: "Pending",
@@ -498,6 +511,7 @@ export async function runScheduledSupplierSync(): Promise<void> {
               changedFields: comparison.changedFields,
             },
             productPayload,
+            supplierSnapshot,
             matchedProductId: match?.id || null,
             createdAt,
             updatedAt: createdAt,

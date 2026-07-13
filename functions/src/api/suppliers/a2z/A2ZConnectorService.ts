@@ -324,7 +324,7 @@ export class A2ZConnectorService {
 
     for (const item of rawList) {
       try {
-        const parsed = ProductParser.parseJsonPayload(item);
+        const parsed = ProductParser.parseJsonPayload(item, baseDomain);
         const isLiveStatus = item.status !== "inactive" && item.active !== false;
         const hasStock = parsed.inventoryLevel > 0;
 

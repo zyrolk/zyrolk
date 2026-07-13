@@ -8,6 +8,7 @@ export interface SupplierQueueDecisionItem {
   sourceId?: string;
   batchId?: string;
   rejectionReason?: string;
+  supplierSnapshot?: Record<string, unknown>;
 }
 
 export interface SupplierQueueReviewer {
@@ -79,6 +80,10 @@ export function buildSupplierQueueDecisionPlan(
     }
 
     auditPayload.productId = productId;
+    if (item.supplierSnapshot) {
+      auditPayload.supplierSnapshot = item.supplierSnapshot;
+    }
+    auditPayload.publishedProductSnapshot = item.productPayload;
     sets.push({
       collection: 'products',
       id: productId,

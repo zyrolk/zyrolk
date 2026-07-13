@@ -339,7 +339,7 @@ export class A2ZConnectorService {
 
     for (const item of rawList) {
       try {
-        const parsed = ProductParser.parseJsonPayload(item);
+        const parsed = ProductParser.parseJsonPayload(item, baseDomain);
         
         // Filter rule: "returns only live products"
         const isLiveStatus = item.status !== 'inactive' && item.active !== false;

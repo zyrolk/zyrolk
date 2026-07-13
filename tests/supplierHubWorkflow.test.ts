@@ -52,12 +52,18 @@ test("supplier test and fetch routes share the connector registry", () => {
 });
 
 test("approval writes products, persists audit, and cleans queues", () => {
+  const supplierSnapshot = {
+    supplierName: "A2Z",
+    supplierSku: "A2Z-100",
+    wholesalePrice: 700,
+  };
   const plan = buildSupplierQueueDecisionPlan(
     {
       id: "review-1",
       sourceId: "a2z",
       batchId: "batch-1",
       productPayload,
+      supplierSnapshot,
     },
     "approved",
     { uid: "admin-1", email: "admin@example.com" },
@@ -67,6 +73,9 @@ test("approval writes products, persists audit, and cleans queues", () => {
 
   assert.equal(plan.sets.some((operation) => operation.collection === "products" && operation.id === "approved-product"), true);
   assert.equal(plan.sets.some((operation) => operation.collection === "supplier_approval_audit" && operation.id === "audit-1"), true);
+  const audit = plan.sets.find((operation) => operation.collection === "supplier_approval_audit");
+  assert.deepEqual(audit?.data.supplierSnapshot, supplierSnapshot);
+  assert.deepEqual(audit?.data.publishedProductSnapshot, productPayload);
   assert.deepEqual(plan.deletes.map((operation) => operation.collection).sort(), [
     "supplier_import_queue",
     "supplier_pending_changes",
