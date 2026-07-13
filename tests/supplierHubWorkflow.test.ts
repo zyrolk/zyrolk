@@ -26,6 +26,31 @@ test("supplier sync regression: sync code does not queue direct writes to produc
   assert.equal(/queuedWrites\.push\(\{\s*collection:\s*["']products["']/.test(scheduledSync), false);
 });
 
+test("visible supplier sync controls invoke the real queue synchronization pipeline", () => {
+  const source = readFileSync("src/components/SupplierHubFiveStars.tsx", "utf8");
+  assert.equal(source.includes("Placeholder Action Only"), false);
+  assert.match(source, /await handleSyncSupplier\(\[id\]\)/);
+  assert.match(source, /onClick=\{\(\) => handleSyncSupplier\(\)\}/);
+});
+
+test("A2Z secrets are bound to both HTTPS and scheduled Functions", () => {
+  const apiEntry = readFileSync("functions/src/index.ts", "utf8");
+  const scheduledSync = readFileSync("functions/src/scheduled/supplierSync.ts", "utf8");
+  const secrets = readFileSync("functions/src/config/secrets.ts", "utf8");
+
+  assert.match(secrets, /defineSecret\("A2Z_USERNAME"\)/);
+  assert.match(secrets, /defineSecret\("A2Z_PASSWORD"\)/);
+  assert.match(apiEntry, /secrets:\s*A2Z_SECRETS/);
+  assert.match(scheduledSync, /secrets:\s*A2Z_SECRETS/);
+});
+
+test("supplier test and fetch routes share the connector registry", () => {
+  const routes = readFileSync("functions/src/api/routes/supplier.ts", "utf8");
+  const fetchService = readFileSync("functions/src/api/suppliers/fetchSupplierProducts.ts", "utf8");
+  assert.match(routes, /SupplierRegistry\.createConnectorForTarget/);
+  assert.match(fetchService, /SupplierRegistry\.createConnectorForTarget/);
+});
+
 test("approval writes products, persists audit, and cleans queues", () => {
   const plan = buildSupplierQueueDecisionPlan(
     {

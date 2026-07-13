@@ -1,10 +1,9 @@
 import { adminDb } from "../firebase";
+import { getA2ZSecretValues } from "../../config/secrets";
 
 export async function getA2ZCredentials(): Promise<{ username: string; password: string }> {
-  let credentials = {
-    username: process.env.A2Z_USERNAME || "",
-    password: process.env.A2Z_PASSWORD || "",
-  };
+  const runtimeSecrets = getA2ZSecretValues();
+  let credentials = { ...runtimeSecrets };
 
   try {
     const sourcesSnap = await adminDb.collection("supplierSources").get();
@@ -18,8 +17,8 @@ export async function getA2ZCredentials(): Promise<{ username: string; password:
         const settings = data.settings || {};
 
         credentials = {
-          username: config.username || settings.username || data.username || process.env.A2Z_USERNAME || "",
-          password: config.password || settings.password || data.password || process.env.A2Z_PASSWORD || "",
+          username: config.username || settings.username || data.username || runtimeSecrets.username,
+          password: config.password || settings.password || data.password || runtimeSecrets.password,
         };
       }
     });

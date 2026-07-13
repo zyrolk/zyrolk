@@ -35,6 +35,8 @@ import { collection, doc, getDocs, onSnapshot, setDoc, writeBatch } from 'fireba
 import { auth, db, handleFirestoreError, OperationType } from '../firebase';
 import { Product } from '../types';
 import { approveSupplierQueueItem, rejectSupplierQueueItem } from '../services/supplierQueueService';
+import { matchesSupplierSearch } from '../services/supplierSearch';
+import { isActiveWebsiteSupplier } from '../services/supplierSourceUtils';
 
 interface SupplierHubFiveStarsProps {
   isDarkMode?: boolean;
@@ -100,6 +102,8 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
   // --- MERGED SECTIONS STATES (PLACEHOLDER/LOCAL STATE) ---
   const [activeSubTab, setActiveSubTab] = useState<'review' | 'import_queue' | 'sources' | 'changes' | 'settings'>('review');
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [reviewSearch, setReviewSearch] = useState<string>('');
+  const [importSearch, setImportSearch] = useState<string>('');
 
   // 1. Supplier Sources & Connect states
   const [supplierSources, setSupplierSources] = useState<any[]>([]);
@@ -151,6 +155,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
             // Map the new structured schema fields to the existing layout keys for full visual compatibility
             name: data.supplierName || data.name || "Unnamed Supplier",
             type: data.supplierType || data.type || "website",
+            supplierType: data.supplierType || data.type || "website",
             websiteUrl: data.websiteUrl || data.config?.targetUrl || "",
             endpoint: data.endpoint || data.config?.apiEndpoint || "",
             connectionStatus: data.connectionStatus || "Not Synced",
@@ -382,7 +387,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
     };
   };
 
-  const handleSyncSupplier = async () => {
+  const handleSyncSupplier = async (sourceIds?: string[]): Promise<boolean> => {
     setIsSyncing(true);
     setErrorMsg(null);
     setSyncStatusMsg("Initiating supplier synchronization checks...");
@@ -398,8 +403,8 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
 
       // 2. Fetch raw products from active website suppliers
       const activeSources = supplierSources.filter(src => 
-        src.sourceStatus === 'active' && 
-        src.supplierType === 'website'
+        isActiveWebsiteSupplier(src) &&
+        (!sourceIds || sourceIds.includes(src.id))
       );
       
       if (activeSources.length === 0) {
@@ -741,6 +746,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
       setTimeout(() => {
         setSyncStatusMsg(null);
       }, 3000);
+      return true;
 
     } catch (err: any) {
       console.error("Error syncing supplier products:", err);
@@ -759,6 +765,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
         handleFirestoreError(historyErr, OperationType.WRITE, `supplier_sync_history/${failedLog.id}`);
       });
       setSyncStatusMsg(null);
+      return false;
     } finally {
       setIsSyncing(false);
     }
@@ -766,9 +773,9 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
 
   // --- CONNECT SUPPLIER HANDLERS ---
   const handleModalTestConnection = async () => {
-    if (newSupplierType === 'website' && (!newSupplierUrl.trim() || !apiEndpoint.trim())) {
+    if (newSupplierType === 'website' && !newSupplierUrl.trim()) {
       setModalTestStatus('Failed');
-      setModalTestError("Website URL and Product Endpoint are required to test connection.");
+      setModalTestError("Website URL is required to test connection.");
       return;
     }
 
@@ -949,15 +956,15 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
     setSyncingSourceId(id);
     setSuccessMsg(`Supplier synchronization started for feed ID: ${id}...`);
     try {
-      await setDoc(doc(db, "supplierSources", id), {
-        lastSync: new Date().toLocaleString(),
-        connectionStatus: 'connected',
-        lastError: 'None'
-      }, { merge: true });
-      setSuccessMsg(`Supplier synchronization completed successfully for feed ID: ${id}.`);
+      const succeeded = await handleSyncSupplier([id]);
+      if (succeeded) {
+        setSuccessMsg(`Supplier synchronization completed for feed ID: ${id}. Review the queued results before publishing.`);
+      } else {
+        setSuccessMsg(null);
+      }
     } catch (err: any) {
       console.error("Sync error:", err);
-      setErrorMsg(`Failed to record sync update in Firestore: ${err.message || err}`);
+      setErrorMsg(`Supplier synchronization failed: ${err.message || err}`);
       setTimeout(() => setErrorMsg(null), 5000);
     } finally {
       setSyncingSourceId(null);
@@ -1181,7 +1188,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
         <div>
           {activeSubTab === 'review' ? (
             <button
-              onClick={handleSyncSupplier}
+              onClick={() => handleSyncSupplier()}
               disabled={isSyncing}
               className="w-full sm:w-auto px-5 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-700 text-white font-extrabold rounded-xl text-xs transition-all shadow-lg shadow-blue-500/20 flex items-center justify-center space-x-2 cursor-pointer"
             >
@@ -1364,9 +1371,20 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
                   </h3>
                   <p className="text-[11px] text-slate-400">Incoming products or changes awaiting admin action.</p>
                 </div>
+                <div className="relative w-full max-w-xs">
+                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="search"
+                    value={reviewSearch}
+                    onChange={(event) => setReviewSearch(event.target.value)}
+                    placeholder="Search product or supplier code..."
+                    aria-label="Search Review Queue"
+                    className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-3 text-xs focus:outline-none dark:border-slate-800 dark:bg-slate-900/50"
+                  />
+                </div>
               </div>
 
-              {reviewQueue.length === 0 ? (
+              {reviewQueue.filter((item) => matchesSupplierSearch(item, reviewSearch)).length === 0 ? (
                 <div className="p-12 text-center rounded-2xl border border-dashed border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/10 space-y-3">
                   <UserCheck className="h-10 w-10 text-slate-300 mx-auto" />
                   <div className="space-y-1">
@@ -1390,7 +1408,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
                       </tr>
                     </thead>
                     <tbody>
-                      {reviewQueue.map((item) => (
+                      {reviewQueue.filter((item) => matchesSupplierSearch(item, reviewSearch)).map((item) => (
                         <tr key={item.id} className="border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50/50 dark:hover:bg-slate-900/30">
                           <td className="py-3 px-4">
                             {item.imageUrl ? (
@@ -1577,9 +1595,20 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
                   {importQueue.length} Items in Queue
                 </span>
               </div>
+              <div className="relative w-full max-w-xs">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="search"
+                  value={importSearch}
+                  onChange={(event) => setImportSearch(event.target.value)}
+                  placeholder="Search product or supplier code..."
+                  aria-label="Search Import Queue"
+                  className="w-full rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-3 text-xs focus:outline-none dark:border-slate-800 dark:bg-slate-900/50"
+                />
+              </div>
             </div>
 
-            {importQueue.length === 0 ? (
+            {importQueue.filter((item) => matchesSupplierSearch(item, importSearch)).length === 0 ? (
               /* Empty State */
               <div className="p-16 text-center rounded-3xl border border-dashed border-slate-250 dark:border-slate-800 bg-slate-50/30 dark:bg-[#111928]/30 space-y-4 max-w-xl mx-auto my-6">
                 <div className="w-14 h-14 bg-blue-500/10 text-blue-500 rounded-2xl flex items-center justify-center mx-auto shadow-inner">
@@ -1606,7 +1635,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
                     </tr>
                   </thead>
                   <tbody>
-                    {importQueue.map((item) => (
+                    {importQueue.filter((item) => matchesSupplierSearch(item, importSearch)).map((item) => (
                       <tr key={item.sku} className="border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50/50 dark:hover:bg-slate-900/30">
                         <td className="py-3 px-4">
                           {item.mediaGallery && item.mediaGallery.length > 0 ? (
@@ -1670,10 +1699,8 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
               </div>
               <button
                 type="button"
-                onClick={() => {
-                  setSuccessMsg("Batch synchronization of all feeds triggered! (Placeholder Action Only)");
-                  setTimeout(() => setSuccessMsg(null), 3000);
-                }}
+                  onClick={() => handleSyncSupplier()}
+                  disabled={isSyncing}
                 className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-extrabold rounded-xl text-xs flex items-center justify-center space-x-2 cursor-pointer transition-all shadow-md shadow-blue-500/10 hover:shadow-lg hover:shadow-blue-500/20"
               >
                 <RefreshCw className="h-3.5 w-3.5 animate-pulse" />
@@ -2146,9 +2173,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
             {(() => {
               const filteredChanges = supplierPendingChanges.filter((change) => {
                 const matchesSearch = 
-                  (change.supplierCode || '').toLowerCase().includes(pendingChangesSearch.toLowerCase()) ||
-                  (change.productName || '').toLowerCase().includes(pendingChangesSearch.toLowerCase()) ||
-                  (change.supplierName || '').toLowerCase().includes(pendingChangesSearch.toLowerCase());
+                  matchesSupplierSearch(change, pendingChangesSearch);
 
                 if (!matchesSearch) return false;
 

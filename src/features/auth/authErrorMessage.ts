@@ -5,6 +5,8 @@ const AUTH_ERROR_MESSAGES: Record<string, string> = {
   'auth/wrong-password': 'Incorrect email or password.',
   'auth/email-already-in-use': 'Email already exists.',
   'auth/network-request-failed': 'Network error. Please try again.',
+  'auth/invalid-email': 'Enter a valid email address.',
+  'auth/too-many-requests': 'Too many attempts. Please wait and try again.',
 };
 
 export function getAuthErrorMessage(error: unknown): string {

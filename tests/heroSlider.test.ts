@@ -27,6 +27,15 @@ test('slide validation requires content and safe CTA URLs', () => {
   assert.equal(isSafeHeroUrl('//evil.example'), false);
 });
 
+test('CTA label requires a non-empty CTA URL', () => {
+  const slide = createHeroSlide('cta-required');
+  slide.buttonText = 'Shop the offer';
+  slide.buttonUrl = '   ';
+  assert.deepEqual(validateHeroSlide(slide).filter((error) => error.field === 'buttonUrl'), [
+    { field: 'buttonUrl', message: 'CTA URL is required when a CTA label is set.' },
+  ]);
+});
+
 test('duplicate creates an independent slide with a new ID', () => {
   const source = createHeroSlide('source');
   const copy = duplicateHeroSlide(source, 'copy');

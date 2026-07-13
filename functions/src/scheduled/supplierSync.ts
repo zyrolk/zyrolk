@@ -1,5 +1,6 @@
 import { logger } from "firebase-functions";
 import { onSchedule } from "firebase-functions/v2/scheduler";
+import { A2Z_SECRETS } from "../config/secrets";
 import { adminDb } from "../api/firebase";
 import { appLogger } from "../api/logging";
 import { SupplierRegistry } from "../api/suppliers/SupplierRegistry";
@@ -603,6 +604,7 @@ export const scheduledSupplierSync = onSchedule({
   timeZone: "Asia/Colombo",
   timeoutSeconds: 540,
   memory: "512MiB",
+  secrets: A2Z_SECRETS,
 }, async () => {
   await runScheduledSupplierSync();
 });

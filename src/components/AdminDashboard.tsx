@@ -558,6 +558,8 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
   const [cmsPageContent, setCmsPageContent] = useState<string>("");
   const [savingCmsPage, setSavingCmsPage] = useState<boolean>(false);
   const [cmsSuccessMessage, setCmsSuccessMessage] = useState<string | null>(null);
+  const [cmsErrorMessage, setCmsErrorMessage] = useState<string | null>(null);
+  const [deletingCmsPage, setDeletingCmsPage] = useState<boolean>(false);
 
   const prevInitialTabRef = React.useRef(initialTab);
   useEffect(() => {
@@ -614,6 +616,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
     if (!authorized || !selectedCmsPageId) return;
     setSavingCmsPage(true);
     setCmsSuccessMessage(null);
+    setCmsErrorMessage(null);
     try {
       const payload = {
         title: cmsPageTitle,
@@ -632,6 +635,58 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
       setTimeout(() => setCmsSuccessMessage(null), 4000);
     } catch (err) {
       console.error("Save CMS page failed:", err);
+      setCmsErrorMessage("Page could not be saved. Please check your connection and try again.");
+    } finally {
+      setSavingCmsPage(false);
+    }
+  };
+
+  const reloadCmsPages = async (): Promise<void> => {
+    const pageSnap = await getDocs(collection(db, "pages"));
+    const pageList: any[] = [];
+    pageSnap.forEach((pageDoc) => pageList.push({ id: pageDoc.id, ...pageDoc.data() }));
+    setStaticPages(pageList);
+  };
+
+  const handleDeleteCustomCmsPage = async (): Promise<void> => {
+    if (!authorized || !selectedCmsPageId) return;
+    const selectedPage = DEFAULT_PAGES.find((page) => page.id === selectedCmsPageId);
+    if (!window.confirm(`Delete the custom version of ${selectedPage?.title || selectedCmsPageId}? The built-in default page will remain available.`)) return;
+
+    setDeletingCmsPage(true);
+    setCmsSuccessMessage(null);
+    setCmsErrorMessage(null);
+    try {
+      await deleteDoc(doc(db, "pages", selectedCmsPageId));
+      await reloadCmsPages();
+      setCmsSuccessMessage("Custom page deleted. The built-in default is now live.");
+    } catch (error) {
+      console.error("Delete CMS page failed:", error);
+      setCmsErrorMessage("Custom page could not be deleted. Please try again.");
+    } finally {
+      setDeletingCmsPage(false);
+    }
+  };
+
+  const handleResetCmsPage = async (): Promise<void> => {
+    if (!authorized || !selectedCmsPageId) return;
+    const fallback = DEFAULT_PAGES.find((page) => page.id === selectedCmsPageId);
+    if (!fallback || !window.confirm(`Reset ${fallback.title} to the built-in default content? This will replace the current custom version.`)) return;
+
+    setSavingCmsPage(true);
+    setCmsSuccessMessage(null);
+    setCmsErrorMessage(null);
+    try {
+      await setDoc(doc(db, "pages", selectedCmsPageId), {
+        title: fallback.title,
+        content: fallback.content,
+        lastUpdated: new Date().toLocaleDateString(),
+      });
+      await reloadCmsPages();
+      setCmsSuccessMessage("Page reset to the built-in default and verified after reload.");
+    } catch (error) {
+      console.error("Reset CMS page failed:", error);
+      setCmsErrorMessage("Page could not be reset. Please try again.");
     } finally {
       setSavingCmsPage(false);
     }
@@ -4126,6 +4181,13 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                 </div>
               )}
 
+              {cmsErrorMessage && (
+                <div className="p-4 bg-rose-500/10 border border-rose-500/30 text-rose-400 rounded-2xl text-xs font-semibold flex items-center gap-2 animate-fadeIn text-left" role="alert">
+                  <AlertCircle className="h-4 w-4 shrink-0" />
+                  <span>{cmsErrorMessage}</span>
+                </div>
+              )}
+
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
                 
                 {/* Left Side: Pages List Selector */}
@@ -4252,19 +4314,25 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
 
                     {/* Action Panel */}
                     <div className="flex items-center justify-between pt-4 border-t border-slate-100 dark:border-slate-800/60">
+                      <div className="flex flex-wrap items-center gap-2">
                       <button
                         type="button"
-                        onClick={() => {
-                          const fallback = DEFAULT_PAGES.find(p => p.id === selectedCmsPageId);
-                          if (fallback && window.confirm("Are you sure you want to revert all changes and load default system templates for this page?")) {
-                            setCmsPageTitle(fallback.title);
-                            setCmsPageContent(fallback.content);
-                          }
-                        }}
+                        onClick={handleResetCmsPage}
+                        disabled={savingCmsPage || deletingCmsPage}
                         className="px-4 py-2.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-300 text-xs font-bold rounded-xl transition-all cursor-pointer"
                       >
-                        Load Standard Default
+                        Reset to Default
                       </button>
+
+                      <button
+                        type="button"
+                        onClick={handleDeleteCustomCmsPage}
+                        disabled={deletingCmsPage || !staticPages.some((page) => page.id === selectedCmsPageId)}
+                        className="px-4 py-2.5 bg-rose-500/10 hover:bg-rose-500/20 disabled:opacity-40 text-rose-500 text-xs font-bold rounded-xl transition-all cursor-pointer"
+                      >
+                        {deletingCmsPage ? "Deleting..." : "Delete Custom Version"}
+                      </button>
+                      </div>
 
                       <button
                         type="submit"

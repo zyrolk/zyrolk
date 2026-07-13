@@ -6,6 +6,8 @@ test('authentication errors are projected to customer-safe messages', () => {
   assert.equal(getAuthErrorMessage({ code: 'auth/invalid-credential' }), 'Incorrect email or password.');
   assert.equal(getAuthErrorMessage({ code: 'auth/email-already-in-use' }), 'Email already exists.');
   assert.equal(getAuthErrorMessage({ code: 'auth/network-request-failed' }), 'Network error. Please try again.');
+  assert.equal(getAuthErrorMessage({ code: 'auth/invalid-email' }), 'Enter a valid email address.');
+  assert.equal(getAuthErrorMessage({ code: 'auth/too-many-requests' }), 'Too many attempts. Please wait and try again.');
 });
 
 test('unknown authentication errors never expose provider details', () => {

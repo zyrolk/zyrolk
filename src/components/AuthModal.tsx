@@ -6,7 +6,8 @@ import {
   createUserWithEmailAndPassword, 
   GoogleAuthProvider, 
   signInWithPopup,
-  updateProfile
+  updateProfile,
+  sendPasswordResetEmail
 } from 'firebase/auth';
 import { doc, setDoc } from 'firebase/firestore';
 import { getAuthErrorMessage } from '../features/auth/authErrorMessage';
@@ -23,6 +24,8 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
   const [displayName, setDisplayName] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [isResetMode, setIsResetMode] = useState(false);
+  const [resetMessage, setResetMessage] = useState("");
 
   if (!isOpen) return null;
 
@@ -98,6 +101,30 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
     }
   };
 
+  const handlePasswordReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (loading) return;
+
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail) {
+      setError("Enter your email address first.");
+      return;
+    }
+
+    setError("");
+    setResetMessage("");
+    setLoading(true);
+    try {
+      await sendPasswordResetEmail(auth, normalizedEmail);
+      setResetMessage("If an account exists for this email, a password reset link has been sent.");
+    } catch (err: unknown) {
+      console.warn("Password reset failed:", err);
+      setError(getAuthErrorMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
       
@@ -132,10 +159,12 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
             />
           </div>
           <h2 id="auth-modal-title" className="text-xl font-bold font-display text-slate-800">
-            {isSignUp ? "Create Premium Account" : "Welcome Back"}
+            {isResetMode ? "Reset Password" : isSignUp ? "Create Premium Account" : "Welcome Back"}
           </h2>
           <p id="auth-modal-description" className="text-xs text-slate-500 font-light">
-            {isSignUp ? "Register to save wishlists and explore genuine items." : "Sign in to access your electronics panel."}
+            {isResetMode
+              ? "Enter your account email and we will send a secure reset link."
+              : isSignUp ? "Register to save wishlists and explore genuine items." : "Sign in to access your electronics panel."}
           </p>
         </div>
 
@@ -147,10 +176,16 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
           </div>
         )}
 
+        {resetMessage && (
+          <div className="mb-5 rounded-2xl border border-emerald-100 bg-emerald-50 p-3 text-xs text-emerald-700" role="status" aria-live="polite">
+            {resetMessage}
+          </div>
+        )}
+
         {/* Standard Email Auth Form */}
-        <form onSubmit={handleEmailAuth} className="space-y-4">
+        <form onSubmit={isResetMode ? handlePasswordReset : handleEmailAuth} className="space-y-4">
           
-          {isSignUp && (
+          {isSignUp && !isResetMode && (
             <div>
               <label htmlFor="auth-display-name" className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Full Name</label>
               <div className="relative">
@@ -184,7 +219,7 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
             </div>
           </div>
 
-          <div>
+          {!isResetMode && <div>
             <label htmlFor="auth-password" className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Password</label>
             <div className="relative">
               <input
@@ -198,7 +233,7 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
               />
               <Lock className="pointer-events-none absolute left-3.5 top-3 h-4.5 w-4.5 text-slate-500" aria-hidden="true" />
             </div>
-          </div>
+          </div>}
 
           <button
             type="submit"
@@ -207,13 +242,30 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
             aria-busy={loading}
           >
             <LogIn className="h-4 w-4 mr-1.5" aria-hidden="true" />
-            {loading ? "Authenticating..." : isSignUp ? "Create Account" : "Sign In"}
+            {loading ? (isResetMode ? "Sending Reset Link..." : "Authenticating...") : isResetMode ? "Send Reset Link" : isSignUp ? "Create Account" : "Sign In"}
           </button>
 
         </form>
 
+        {!isSignUp && (
+          <div className="mt-2 text-center">
+            <button
+              type="button"
+              disabled={loading}
+              onClick={() => {
+                setIsResetMode((current) => !current);
+                setError("");
+                setResetMessage("");
+              }}
+              className="inline-flex min-h-11 items-center rounded-lg px-2 text-xs font-semibold text-brand-blue hover:underline disabled:opacity-50"
+            >
+              {isResetMode ? "Back to Sign In" : "Forgot Password?"}
+            </button>
+          </div>
+        )}
+
         {/* Divider */}
-        <div className="relative my-6 text-center">
+        {!isResetMode && <><div className="relative my-6 text-center">
           <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-slate-100"></div></div>
           <span className="relative bg-white px-3 text-[11px] font-bold text-slate-500 uppercase tracking-wider">or connect via</span>
         </div>
@@ -231,9 +283,10 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
           </svg>
           <span>Continue with Google</span>
         </button>
+        </>}
 
         {/* Toggle signup */}
-        <div className="mt-6 text-center text-xs text-slate-500">
+        {!isResetMode && <div className="mt-6 text-center text-xs text-slate-500">
           {isSignUp ? "Already have a Zyro account?" : "New to Zyro.lk?"}{" "}
           <button
             onClick={() => setIsSignUp(!isSignUp)}
@@ -241,7 +294,7 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
           >
             {isSignUp ? "Sign In" : "Register Now"}
           </button>
-        </div>
+        </div>}
 
       </div>
     </div>

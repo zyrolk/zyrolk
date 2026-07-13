@@ -8,6 +8,7 @@ import {
   HERO_SLIDE_LIMIT,
   HERO_SLIDE_SPEED_MAX,
   HERO_SLIDE_SPEED_MIN,
+  validateHeroSlide,
   validateHeroSlides,
 } from '../services/hero-slider/heroSlider';
 
@@ -137,17 +138,24 @@ export default function HeroSliderEditor({
               ['subtitle', 'Subtitle'],
               ['buttonText', 'CTA label'],
               ['buttonUrl', 'CTA URL'],
-            ] as const).map(([field, label]) => (
+            ] as const).map(([field, label]) => {
+              const fieldError = validateHeroSlide(banner).find((error) => error.field === field);
+              const errorId = `hero-${banner.id}-${field}-error`;
+              return (
               <label key={field} className="space-y-1 text-xs">
                 <span className="text-[10px] font-bold uppercase text-slate-400">{label}</span>
                 <input
                   type="text"
                   value={banner[field] ?? ''}
                   onChange={(event) => updateSlide(banner.id, { [field]: event.target.value })}
-                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900"
+                  aria-invalid={fieldError ? true : undefined}
+                  aria-describedby={fieldError ? errorId : undefined}
+                  className={`w-full rounded-lg border bg-white px-3 py-2 text-xs dark:bg-slate-900 ${fieldError ? 'border-red-500 ring-2 ring-red-500/15 dark:border-red-500' : 'border-slate-200 dark:border-slate-700'}`}
                 />
+                {fieldError && <span id={errorId} className="block text-[10px] font-semibold text-red-500">{fieldError.message}</span>}
               </label>
-            ))}
+              );
+            })}
             <label className="space-y-1 text-xs">
               <span className="text-[10px] font-bold uppercase text-slate-400">Background gradient</span>
               <select value={banner.bgGradient ?? 'from-black via-zinc-950/90 to-blue-950/20'} onChange={(event) => updateSlide(banner.id, { bgGradient: event.target.value })} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900">
@@ -185,7 +193,9 @@ export default function HeroSliderEditor({
             </div>
           </div>
 
-          {validateHeroSlides([banner]).map((error, errorIndex) => <p key={`${error.field}-${errorIndex}`} className="text-xs font-semibold text-red-500">{error.message}</p>)}
+          {validateHeroSlides([banner])
+            .filter((error) => !['badge', 'title', 'subtitle', 'buttonText', 'buttonUrl'].includes(error.field))
+            .map((error, errorIndex) => <p key={`${error.field}-${errorIndex}`} className="text-xs font-semibold text-red-500">{error.message}</p>)}
         </article>
       ))}
 
