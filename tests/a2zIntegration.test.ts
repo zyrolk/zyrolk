@@ -94,6 +94,25 @@ test("A2Z credential diagnostics fingerprint exact UTF-8 bytes without plaintext
   assert.equal(JSON.stringify(fingerprint).includes("päss"), false);
 });
 
+test("A2Z credential resolution emits redacted forensics for every connection test", () => {
+  const credentials = readFileSync("functions/src/api/suppliers/credentials.ts", "utf8");
+  const connector = readFileSync("functions/src/api/suppliers/a2z/A2ZSupplierConnector.ts", "utf8");
+
+  assert.match(credentials, /fingerprintA2ZCredentials\(credentials\.username, credentials\.password\)/);
+  assert.match(credentials, /event: "a2z_credentials_resolved"/);
+  assert.match(credentials, /\.\.\.credentialForensics/);
+
+  const fetchProductsBody = connector.match(
+    /public async fetchProducts\(\): Promise<SupplierFetchResult> \{([\s\S]*?)\n  \}/,
+  )?.[1] || "";
+  const testConnectionBody = connector.match(
+    /public async testConnection\(\): Promise<SupplierConnectionTestResult> \{([\s\S]*?)\n  \}/,
+  )?.[1] || "";
+
+  assert.match(testConnectionBody, /await this\.fetchProducts\(\)/);
+  assert.match(fetchProductsBody, /await getA2ZCredentials\(\)/);
+});
+
 test("A2Z credentials reject BOM, CRLF, newlines, and boundary whitespace without normalization", () => {
   assert.doesNotThrow(() => assertA2ZCredentialByteSafety("exact-user", "exact-password"));
   assert.throws(() => assertA2ZCredentialByteSafety(" user", "password"), /boundary or control bytes/);

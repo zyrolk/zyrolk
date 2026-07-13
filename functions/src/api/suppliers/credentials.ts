@@ -1,6 +1,7 @@
 import { adminDb } from "../firebase";
 import { getA2ZSecretValues } from "../../config/secrets";
 import { A2ZCredentialCandidate, resolveA2ZCredentials } from "./credentialSelection";
+import { fingerprintA2ZCredentials } from "./a2z/credentialForensics";
 
 export async function getA2ZCredentials(): Promise<{ username: string; password: string }> {
   const runtimeSecrets = getA2ZSecretValues();
@@ -30,12 +31,17 @@ export async function getA2ZCredentials(): Promise<{ username: string; password:
 
   const credentials = resolveA2ZCredentials(runtimeSecrets, legacyCandidates);
 
+  const credentialForensics = credentials
+    ? fingerprintA2ZCredentials(credentials.username, credentials.password)
+    : {};
+
   console.info("[A2Z-Connector]", JSON.stringify({
     event: "a2z_credentials_resolved",
     authenticationStage: "credential-selection",
     credentialSource: credentials?.source || "none",
     usernamePresent: Boolean(credentials?.username),
     passwordPresent: Boolean(credentials?.password),
+    ...credentialForensics,
   }));
 
   if (!credentials) {
