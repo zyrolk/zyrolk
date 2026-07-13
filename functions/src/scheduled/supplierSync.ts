@@ -4,7 +4,7 @@ import { A2Z_SECRETS } from "../config/secrets";
 import { adminDb } from "../api/firebase";
 import { appLogger } from "../api/logging";
 import { SupplierRegistry } from "../api/suppliers/SupplierRegistry";
-import { ProductParser } from "../api/suppliers/a2z/ProductParser";
+import { isValidSupplierImageUrl, ProductParser } from "../api/suppliers/a2z/ProductParser";
 import { RawA2ZProduct } from "../api/suppliers/a2z/types";
 
 type SyncStatus = "Success" | "Failed" | "Partial" | "Skipped";
@@ -214,7 +214,8 @@ function buildProductPayload(product: RawA2ZProduct, match: ExistingProduct | un
   const retail = product.recommendedRetailPrice || wholesale * 1.15;
   const price = Math.round(retail);
   const originalPrice = Math.round(retail * 1.1);
-  const imageUrl = product.mediaGallery?.[0] || "https://images.unsplash.com/photo-1523275335684-37898b6baf30?auto=format&fit=crop&q=80&w=600";
+  const imageUrls = [...new Set((product.mediaGallery || []).filter(isValidSupplierImageUrl).map((url) => url.trim()))];
+  const imageUrl = imageUrls[0] || "";
   const categoryName = product.categoryHierarchy?.[0] || "electronics";
 
   return {
@@ -226,7 +227,7 @@ function buildProductPayload(product: RawA2ZProduct, match: ExistingProduct | un
     discount: 10,
     stock: product.inventoryLevel,
     imageUrl,
-    imageUrls: product.mediaGallery || [imageUrl],
+    imageUrls,
     category: generateSlug(categoryName),
     specs: product.specifications || {},
     isNew: true,

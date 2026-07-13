@@ -1,6 +1,18 @@
 import { Product } from '../../types';
 
-export const PRODUCT_IMAGE_FALLBACK = 'https://images.unsplash.com/photo-1531403009284-440f080d1e12?auto=format&fit=crop&w=1200&q=80';
+const PRODUCT_IMAGE_UNAVAILABLE_SVG = `
+  <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1200" viewBox="0 0 1200 1200">
+    <rect width="1200" height="1200" fill="#f8fafc"/>
+    <g fill="none" stroke="#94a3b8" stroke-linecap="round" stroke-linejoin="round" stroke-width="32">
+      <rect x="330" y="310" width="540" height="430" rx="36"/>
+      <path d="m380 680 145-150 105 105 78-78 112 123"/>
+      <circle cx="700" cy="440" r="54"/>
+      <path d="m390 830 420-420"/>
+    </g>
+    <text x="600" y="900" fill="#64748b" font-family="Arial, sans-serif" font-size="52" text-anchor="middle">Image unavailable</text>
+  </svg>`;
+
+export const PRODUCT_IMAGE_FALLBACK = `data:image/svg+xml,${encodeURIComponent(PRODUCT_IMAGE_UNAVAILABLE_SVG)}`;
 
 const cleanString = (value: unknown): string => typeof value === 'string' ? value.trim() : '';
 

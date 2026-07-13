@@ -44,10 +44,8 @@ export const validateHeroSlide = (slide: HeroBannerSettings): HeroSlideValidatio
   const errors: HeroSlideValidationError[] = [];
   if (!slide.title.trim()) errors.push({ field: 'title', message: 'Title is required.' });
   if (!slide.image.trim()) errors.push({ field: 'image', message: 'Image is required.' });
-  if (slide.buttonText?.trim() && !slide.buttonUrl?.trim()) {
-    errors.push({ field: 'buttonUrl', message: 'CTA URL is required when a CTA label is set.' });
-  }
-  if (slide.buttonUrl && !isSafeHeroUrl(slide.buttonUrl)) {
+  const hasCtaLabel = Boolean(slide.buttonText?.trim());
+  if (hasCtaLabel && slide.buttonUrl && !isSafeHeroUrl(slide.buttonUrl)) {
     errors.push({ field: 'buttonUrl', message: 'Use an internal path or an http/https URL.' });
   }
   return errors;

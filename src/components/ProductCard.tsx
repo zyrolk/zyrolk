@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Check, Eye, Star, ShoppingCart, Heart, Phone } from 'lucide-react';
 import { Product } from '../types';
+import { PRODUCT_IMAGE_FALLBACK } from '../features/product-experience/productExperience';
 
 interface ProductCardProps {
   key?: string | number;
@@ -144,7 +145,7 @@ function ProductCard({
       {/* Product Image Stage */}
       <div className="relative w-full aspect-square bg-gradient-to-br from-slate-50 via-white to-blue-50/50 flex items-center justify-center overflow-hidden p-5 sm:p-7">
         <img
-          src={product.imageUrl || 'https://images.unsplash.com/photo-1531403009284-440f080d1e12?auto=format&fit=crop&w=600&q=80'}
+          src={product.imageUrl || PRODUCT_IMAGE_FALLBACK}
           alt={product.name}
           referrerPolicy="no-referrer"
           loading="lazy"
@@ -154,7 +155,7 @@ function ProductCard({
           className="w-full h-full object-contain transform group-hover:scale-[1.06] transition-transform duration-500 ease-out drop-shadow-[0_18px_24px_rgba(15,23,42,0.08)]"
           onError={(e) => {
             e.currentTarget.onerror = null;
-            e.currentTarget.src = 'https://images.unsplash.com/photo-1531403009284-440f080d1e12?auto=format&fit=crop&w=600&q=80';
+            e.currentTarget.src = PRODUCT_IMAGE_FALLBACK;
           }}
         />
         {/* Out of Stock overlay */}

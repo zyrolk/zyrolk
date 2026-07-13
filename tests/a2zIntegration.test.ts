@@ -12,7 +12,10 @@ import {
   extractA2ZProductImages,
   ProductParser as FunctionsProductParser,
 } from "../functions/src/api/suppliers/a2z/ProductParser";
-import { extractA2ZProductImages as extractBrowserA2ZProductImages } from "../src/services/connectors/a2z-website/productImages";
+import {
+  buildA2ZProductImageUrl as buildBrowserA2ZProductImageUrl,
+  extractA2ZProductImages as extractBrowserA2ZProductImages,
+} from "../src/services/connectors/a2z-website/productImages";
 
 test("A2Z Secret Manager credentials take precedence over stale Firestore credentials", () => {
   const resolved = resolveA2ZCredentials(
@@ -118,6 +121,49 @@ test("A2Z image extraction tolerates supplier image-field renames", () => {
 
   assert.deepEqual(extractA2ZProductImages(raw, "https://a2zdropshipping.lk"), expected);
   assert.deepEqual(extractBrowserA2ZProductImages(raw, "https://a2zdropshipping.lk"), expected);
+});
+
+test("A2Z image parser handles nested, escaped, and HTML image values without fake fallbacks", () => {
+  const raw = {
+    pro_code: "A2Z-IMG-2",
+    pro_name: "Image extraction product",
+    productImages: JSON.stringify({ large: "\\/uploads\\/products\\/large.webp" }),
+    thumbnail_html: '<img data-src="//cdn.a2zdropshipping.lk/thumb.jpg">',
+    photo: "https://images.unsplash.com/fake-placeholder",
+  };
+
+  const parsed = FunctionsProductParser.parseJsonPayload(raw, "https://a2zdropshipping.lk/api/products");
+  assert.deepEqual(parsed.mediaGallery, [
+    "https://a2zdropshipping.lk/uploads/products/large.webp",
+    "https://cdn.a2zdropshipping.lk/thumb.jpg",
+  ]);
+});
+
+test("A2Z parser leaves the gallery empty when the supplier provides no valid image", () => {
+  const parsed = FunctionsProductParser.parseJsonPayload({
+    pro_code: "A2Z-NO-IMAGE",
+    pro_name: "No image product",
+    image: "javascript:alert(1)",
+    photo: "https://images.unsplash.com/fake-placeholder",
+  });
+
+  assert.deepEqual(parsed.mediaGallery, []);
+});
+
+test("A2Z parser derives the canonical AYP image from the real catalog product ID", () => {
+  const raw = {
+    pro_id: "92",
+    pro_code: "P00093",
+    pro_name: "A9 Mini Wireless Camera",
+    store_pickup: "0",
+  };
+
+  const functionsProduct = FunctionsProductParser.parseJsonPayload(raw);
+  const expected = ["https://ayp.lk/storage/products/a2z/92.jpg"];
+
+  assert.deepEqual(functionsProduct.mediaGallery, expected);
+  assert.equal(buildBrowserA2ZProductImageUrl(raw.pro_id), expected[0]);
+  assert.doesNotMatch(functionsProduct.mediaGallery[0], /a2zdropshipping\.lk\/0/);
 });
 
 test("A2Z credential bytes remain exact and use browser jQuery form serialization", () => {

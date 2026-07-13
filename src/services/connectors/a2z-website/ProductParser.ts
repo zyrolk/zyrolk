@@ -1,8 +1,8 @@
 import { RawA2ZProduct } from './types';
 import { ConnectorLogger } from './ConnectorLogger';
-import { A2Z_PRODUCT_IMAGE_FALLBACK, extractA2ZProductImages } from './productImages';
+import { buildA2ZProductImageUrl, extractA2ZProductImages } from './productImages';
 
-export { A2Z_PRODUCT_IMAGE_FALLBACK, extractA2ZProductImages } from './productImages';
+export { extractA2ZProductImages } from './productImages';
 
 export class ProductParser {
   /**
@@ -36,7 +36,11 @@ export class ProductParser {
     const longDescription = String(rawObj.pro_desc || rawObj.longDescription || rawObj.description || rawObj.details || '').trim();
     
     const extractedImages = extractA2ZProductImages(rawObj, baseUrl);
-    const mediaGallery = extractedImages.length > 0 ? extractedImages : [A2Z_PRODUCT_IMAGE_FALLBACK];
+    const canonicalImage = buildA2ZProductImageUrl(rawObj.pro_id);
+    const mediaGallery = [...new Set([
+      ...extractedImages,
+      ...(canonicalImage ? [canonicalImage] : []),
+    ])];
 
     const wholesalePrice = Number(rawObj.wholesale_price || rawObj.wholesalePrice || rawObj.costPrice || rawObj.cost_price || rawObj.supplier_price || 0);
     const recommendedRetailPrice = Number(rawObj.website_price || rawObj.price_min || rawObj.price_max || rawObj.recommendedRetailPrice || rawObj.marketPrice || rawObj.retail_price || rawObj.selling_price || 0);

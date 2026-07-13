@@ -1,4 +1,5 @@
 import { Product } from '../types';
+import { normalizeSupplierProductImages } from './connectors/a2z-website/productImages';
 
 export interface SupplierReviewSourceItem {
   id: string;
@@ -96,6 +97,10 @@ export function buildSupplierApprovalItem(
   }
 
   const originalPayload = item.productPayload;
+  const normalizedImages = normalizeSupplierProductImages(originalPayload.imageUrl, originalPayload.imageUrls);
+  if (normalizedImages.length === 0) {
+    throw new Error('A valid supplier product image is required before publishing. Sync the real supplier image and review the item again.');
+  }
   const sellingPrice = finiteNumber(draft.sellingPrice);
   const comparePrice = finiteNumber(draft.comparePrice, sellingPrice);
   const normalizedComparePrice = comparePrice > 0 ? comparePrice : sellingPrice;
@@ -120,6 +125,8 @@ export function buildSupplierApprovalItem(
     supplierSnapshot,
     productPayload: {
       ...originalPayload,
+      imageUrl: normalizedImages[0],
+      imageUrls: normalizedImages,
       name: draft.productName.trim(),
       price: sellingPrice,
       originalPrice: normalizedComparePrice,

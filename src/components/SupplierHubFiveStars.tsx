@@ -31,7 +31,10 @@ import {
   FileText
 } from 'lucide-react';
 import { RawA2ZProduct } from '../services/connectors/a2z-website/types';
-import { A2Z_PRODUCT_IMAGE_FALLBACK } from '../services/connectors/a2z-website/productImages';
+import {
+  isValidSupplierImageUrl,
+  normalizeSupplierProductImages,
+} from '../services/connectors/a2z-website/productImages';
 import { collection, doc, getDocs, onSnapshot, setDoc, writeBatch } from 'firebase/firestore';
 import { auth, db, handleFirestoreError, OperationType } from '../firebase';
 import { Product } from '../types';
@@ -47,6 +50,33 @@ import {
 
 interface SupplierHubFiveStarsProps {
   isDarkMode?: boolean;
+}
+
+function SupplierImagePreview({ src, alt }: { src?: string; alt: string }) {
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    setFailed(false);
+  }, [src]);
+
+  if (!isValidSupplierImageUrl(src) || failed) {
+    return (
+      <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-100 text-center text-[8px] font-bold uppercase leading-tight text-slate-400 dark:bg-slate-800">
+        No image
+      </div>
+    );
+  }
+
+  return (
+    <img
+      src={src}
+      alt={alt}
+      className="h-10 w-10 rounded-lg border border-slate-200 object-cover dark:border-slate-800"
+      referrerPolicy="no-referrer"
+      loading="lazy"
+      onError={() => setFailed(true)}
+    />
+  );
 }
 
 export interface ComparisonResult {
@@ -488,6 +518,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
             // Map and compare each product
             const sourceMappedQueue: ReviewQueueItem[] = [];
             for (const prod of slicedProducts) {
+              const supplierImages = normalizeSupplierProductImages(prod.mediaGallery?.[0], prod.mediaGallery);
               const supplierName = source.supplierName || source.name || 'A2Z Supplier';
               const queueItemId = generateQueueDocId(source.id, prod.sku, prod.title);
               const match = existingProducts.find(p => {
@@ -528,7 +559,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
                 if (prod.longDescription !== match.description) {
                   changedFields.push('Description');
                 }
-                const rawImage = prod.mediaGallery && prod.mediaGallery.length > 0 ? prod.mediaGallery[0] : '';
+                const rawImage = supplierImages[0] || '';
                 const matchImage = match.imageUrl || '';
                 if (rawImage !== matchImage) {
                   changedFields.push('Primary Image');
@@ -563,9 +594,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
               const originalPrice = Math.round(retail * 1.1);
               const discount = 10;
               
-              const imageUrl = prod.mediaGallery && prod.mediaGallery.length > 0 
-                ? prod.mediaGallery[0] 
-                : 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?auto=format&fit=crop&q=80&w=600';
+              const imageUrl = supplierImages[0] || '';
               const categoryName = prod.categoryHierarchy && prod.categoryHierarchy.length > 0 ? prod.categoryHierarchy[0] : 'electronics';
               const categorySlug = generateSlug(categoryName);
 
@@ -578,7 +607,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
                 discount: discount,
                 stock: prod.inventoryLevel,
                 imageUrl: imageUrl,
-                imageUrls: prod.mediaGallery || [imageUrl],
+                imageUrls: supplierImages,
                 category: categorySlug,
                 specs: prod.specifications || {},
                 isNew: true,
@@ -606,7 +635,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
                 wholesalePrice: prod.wholesalePrice,
                 recommendedRetailPrice: prod.recommendedRetailPrice,
                 stock: prod.inventoryLevel,
-                imageUrls: [...(prod.mediaGallery || [])],
+                imageUrls: [...supplierImages],
                 categoryHierarchy: [...(prod.categoryHierarchy || [])],
                 specifications: { ...(prod.specifications || {}) }
               };
@@ -623,7 +652,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
                 costPrice: prod.wholesalePrice,
                 marketPrice: prod.recommendedRetailPrice,
                 stock: prod.inventoryLevel,
-                imageUrl: prod.mediaGallery && prod.mediaGallery.length > 0 ? prod.mediaGallery[0] : undefined,
+                imageUrl: supplierImages[0],
                 comparisonStatus,
                 comparison: comparisonResult,
                 productPayload: productPayload, // Store payload for approval
@@ -637,6 +666,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
 
               allFetchedProducts.push({
                 ...prod,
+                mediaGallery: supplierImages,
                 id: queueItemId,
                 supplierCode: prod.sku,
                 supplierName,
@@ -1437,23 +1467,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
                       {reviewQueue.filter((item) => matchesSupplierSearch(item, reviewSearch)).map((item) => (
                         <tr key={item.id} className="border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50/50 dark:hover:bg-slate-900/30">
                           <td className="py-3 px-4">
-                            {item.imageUrl ? (
-                              <img 
-                                src={item.imageUrl} 
-                                alt={item.productName} 
-                                className="w-10 h-10 object-cover rounded-lg border border-slate-200 dark:border-slate-800"
-                                referrerPolicy="no-referrer"
-                                loading="lazy"
-                                onError={(event) => {
-                                  event.currentTarget.onerror = null;
-                                  event.currentTarget.src = A2Z_PRODUCT_IMAGE_FALLBACK;
-                                }}
-                              />
-                            ) : (
-                              <div className="w-10 h-10 bg-slate-100 dark:bg-slate-800 rounded-lg flex items-center justify-center text-slate-400 font-bold text-[9px] uppercase">
-                                No Img
-                              </div>
-                            )}
+                            <SupplierImagePreview src={item.imageUrl} alt={item.productName} />
                           </td>
                           <td className="py-3 px-4 font-mono font-medium">{item.supplierCode}</td>
                           <td className="py-3 px-4 font-semibold">{item.productName}</td>
@@ -1669,23 +1683,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
                     {importQueue.filter((item) => matchesSupplierSearch(item, importSearch)).map((item) => (
                       <tr key={item.sku} className="border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50/50 dark:hover:bg-slate-900/30">
                         <td className="py-3 px-4">
-                          {item.mediaGallery && item.mediaGallery.length > 0 ? (
-                            <img 
-                              src={item.mediaGallery[0]} 
-                              alt={item.title} 
-                              className="w-10 h-10 object-cover rounded-lg border border-slate-200 dark:border-slate-800"
-                              referrerPolicy="no-referrer"
-                              loading="lazy"
-                              onError={(event) => {
-                                event.currentTarget.onerror = null;
-                                event.currentTarget.src = A2Z_PRODUCT_IMAGE_FALLBACK;
-                              }}
-                            />
-                          ) : (
-                            <div className="w-10 h-10 bg-slate-100 dark:bg-slate-800 rounded-lg flex items-center justify-center text-slate-400 font-bold text-[9px] uppercase">
-                              No Img
-                            </div>
-                          )}
+                          <SupplierImagePreview src={item.mediaGallery?.[0]} alt={item.title} />
                         </td>
                         <td className="py-3 px-4 font-mono font-medium">{item.sku}</td>
                         <td className="py-3 px-4 font-semibold">{item.title}</td>

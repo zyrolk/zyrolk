@@ -6,6 +6,7 @@ import {
   SupplierQueueDecisionItem,
   getSupplierReviewQueueItemId,
 } from './supplierQueueDecisionPlan';
+import { normalizeSupplierProductImages } from './connectors/a2z-website/productImages';
 
 export type { SupplierQueueDecisionItem };
 export { getSupplierReviewQueueItemId };
@@ -17,7 +18,19 @@ export const approveSupplierQueueItem = async (item: SupplierQueueDecisionItem):
     throw new Error(`Product payload not found for queue item: ${item.id}`);
   }
 
-  await writeSupplierQueueDecision(item, 'approved');
+  const normalizedImages = normalizeSupplierProductImages(productPayload.imageUrl, productPayload.imageUrls);
+  if (normalizedImages.length === 0) {
+    throw new Error('A valid supplier product image is required before publishing. Sync the real supplier image and review the item again.');
+  }
+
+  await writeSupplierQueueDecision({
+    ...item,
+    productPayload: {
+      ...productPayload,
+      imageUrl: normalizedImages[0],
+      imageUrls: normalizedImages,
+    },
+  }, 'approved');
 };
 
 export const rejectSupplierQueueItem = async (item: SupplierQueueDecisionItem): Promise<void> => {

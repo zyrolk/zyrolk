@@ -103,3 +103,25 @@ test('approval publishes edited values and preserves immutable supplier values f
   assert.equal(approved.supplierSnapshot?.wholesalePrice, 1000);
   assert.equal((approved.supplierSnapshot?.productPayload as { price: number }).price, 1500);
 });
+
+test('approval rejects missing or fake supplier images', () => {
+  const invalidItem = structuredClone(queueItem);
+  invalidItem.productPayload.imageUrl = 'https://images.unsplash.com/photo-fake';
+  invalidItem.productPayload.imageUrls = ['javascript:alert(1)'];
+
+  assert.throws(() => buildSupplierApprovalItem(invalidItem, createSupplierReviewDraft(invalidItem)), /valid supplier product image/i);
+});
+
+test('approval promotes a valid gallery image and removes invalid entries', () => {
+  const mixedItem = structuredClone(queueItem);
+  mixedItem.productPayload.imageUrl = 'https://images.unsplash.com/photo-fake';
+  mixedItem.productPayload.imageUrls = [
+    'https://a2zdropshipping.lk/uploads/watch.webp',
+    'javascript:alert(1)',
+    'https://a2zdropshipping.lk/uploads/watch.webp',
+  ];
+
+  const approved = buildSupplierApprovalItem(mixedItem, createSupplierReviewDraft(mixedItem));
+  assert.equal(approved.productPayload?.imageUrl, 'https://a2zdropshipping.lk/uploads/watch.webp');
+  assert.deepEqual(approved.productPayload?.imageUrls, ['https://a2zdropshipping.lk/uploads/watch.webp']);
+});

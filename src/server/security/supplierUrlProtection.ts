@@ -43,7 +43,12 @@ function addApprovedHost(hosts: Set<string>, value: unknown): void {
 }
 
 export async function getApprovedSupplierHosts(adminDb: any): Promise<string[]> {
-  const hosts = new Set<string>(parseApprovedHostsFromEnv());
+  const configuredHosts = parseApprovedHostsFromEnv();
+  if (configuredHosts.length > 0) {
+    return configuredHosts;
+  }
+
+  const hosts = new Set<string>();
   const sourcesSnap = await adminDb.collection("supplierSources").get();
 
   sourcesSnap.forEach((doc: any) => {
