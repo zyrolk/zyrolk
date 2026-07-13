@@ -61,3 +61,24 @@ test("A2Z connector preserves the current form-session authentication contract",
   assert.match(connector, /\/Product\/getAllproducts2/);
   assert.doesNotMatch(connector, /Pre-authentication cookies acquired/);
 });
+
+test("A2Z deployment cannot package the legacy bootstrap endpoint or stale Functions output", () => {
+  const auditedFiles = [
+    "functions/src/api/suppliers/a2z/A2ZConnectorService.ts",
+    "src/services/connectors/a2z-website/A2ZConnectorService.ts",
+    "server.ts",
+  ];
+
+  for (const file of auditedFiles) {
+    assert.doesNotMatch(readFileSync(file, "utf8"), /\/dash\/Account\/Login/);
+  }
+
+  const firebaseConfig = JSON.parse(readFileSync("firebase.json", "utf8"));
+  const functionsConfig = Array.isArray(firebaseConfig.functions)
+    ? firebaseConfig.functions[0]
+    : firebaseConfig.functions;
+
+  assert.deepEqual(functionsConfig.predeploy, [
+    "npm --prefix \"$RESOURCE_DIR\" run build",
+  ]);
+});
