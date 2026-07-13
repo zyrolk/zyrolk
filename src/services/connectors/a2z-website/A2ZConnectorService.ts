@@ -20,6 +20,14 @@ export class A2ZConnectorService {
     }
   }
 
+  private static encodeJQueryFormComponent(value: string): string {
+    return encodeURIComponent(value).replace(/%20/g, '+');
+  }
+
+  private static buildBrowserLoginBody(username: string, password: string): string {
+    return `un=${this.encodeJQueryFormComponent(username)}&pw=${this.encodeJQueryFormComponent(password)}`;
+  }
+
   /**
    * Cleans and extracts the base domain from the provided URL.
    */
@@ -148,9 +156,7 @@ export class A2ZConnectorService {
       const authUrl = `${baseDomain}/Login/auth`;
       console.log(`[A2Z-Connector] Posting credentials to: ${authUrl}`);
 
-      const params = new URLSearchParams();
-      params.append('un', username);
-      params.append('pw', password);
+      const loginBody = this.buildBrowserLoginBody(username, password);
 
       const authRes = await this.fetchWithTimeout(authUrl, {
         method: 'POST',
@@ -165,7 +171,7 @@ export class A2ZConnectorService {
           'User-Agent': this.BROWSER_USER_AGENT,
           'X-Requested-With': 'XMLHttpRequest',
         },
-        body: params.toString()
+        body: loginBody
       });
 
       const authBody = await authRes.text();

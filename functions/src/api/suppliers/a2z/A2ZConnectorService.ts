@@ -1,6 +1,11 @@
 import { ProductParser } from "./ProductParser";
 import { RawA2ZProduct } from "./types";
 import { getCookieNames, sanitizeA2ZResponseBody, sanitizeA2ZResponseHeaders } from "./diagnostics";
+import {
+  assertA2ZCredentialByteSafety,
+  buildA2ZBrowserLoginBody,
+  fingerprintA2ZCredentials,
+} from "./credentialForensics";
 
 export class A2ZConnectorService {
   private static sessionCookie: string | null = null;
@@ -116,6 +121,9 @@ export class A2ZConnectorService {
       throw new Error("A2Z credentials are required before attempting supplier login.");
     }
 
+    assertA2ZCredentialByteSafety(username, password);
+    console.info(JSON.stringify(fingerprintA2ZCredentials(username, password)));
+
     try {
       const preLoginUrl = `${baseDomain}/dash`;
       console.log(`[A2Z-Connector] Pre-authenticating GET request to: ${preLoginUrl}`);
@@ -148,9 +156,7 @@ export class A2ZConnectorService {
       const authUrl = `${baseDomain}/Login/auth`;
       console.log(`[A2Z-Connector] Posting credentials to: ${authUrl}`);
 
-      const params = new URLSearchParams();
-      params.append("un", username);
-      params.append("pw", password);
+      const loginBody = buildA2ZBrowserLoginBody(username, password);
 
       const authRes = await this.fetchWithTimeout(authUrl, {
         method: "POST",
@@ -165,7 +171,7 @@ export class A2ZConnectorService {
           "User-Agent": this.BROWSER_USER_AGENT,
           "X-Requested-With": "XMLHttpRequest",
         },
-        body: params.toString()
+        body: loginBody
       });
 
       const authBody = await authRes.text();
