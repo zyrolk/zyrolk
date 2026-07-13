@@ -1,10 +1,32 @@
 import { ProductParser } from "./ProductParser";
 import { RawA2ZProduct } from "./types";
+import { getCookieNames, sanitizeA2ZResponseBody, sanitizeA2ZResponseHeaders } from "./diagnostics";
 
 export class A2ZConnectorService {
   private static sessionCookie: string | null = null;
   private static lastLoginTime = 0;
   private static readonly SESSION_TTL = 15 * 60 * 1000;
+  private static readonly REQUEST_TIMEOUT_MS = 15000;
+  private static readonly BROWSER_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
+
+  private static logDiagnostic(authenticationStage: string, details: Record<string, unknown>): void {
+    console.info("[A2Z-Connector]", JSON.stringify({
+      event: "a2z_integration_diagnostic",
+      authenticationStage,
+      ...details,
+    }));
+  }
+
+  private static async fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), this.REQUEST_TIMEOUT_MS);
+
+    try {
+      return await fetch(url, { ...init, signal: controller.signal });
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
 
   private static getBaseDomain(url: string): string {
     try {
@@ -95,10 +117,17 @@ export class A2ZConnectorService {
     }
 
     try {
-      const preLoginUrl = `${baseDomain}/dash/Account/Login`;
+      const preLoginUrl = `${baseDomain}/dash`;
       console.log(`[A2Z-Connector] Pre-authenticating GET request to: ${preLoginUrl}`);
 
-      const preRes = await fetch(preLoginUrl, { redirect: "error" });
+      const preRes = await this.fetchWithTimeout(preLoginUrl, {
+        redirect: "follow",
+        headers: {
+          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+          "Accept-Language": "en-US,en;q=0.9",
+          "User-Agent": this.BROWSER_USER_AGENT,
+        },
+      });
       const preSetCookie = preRes.headers.get("set-cookie");
       let preCookieStr = "";
       if (typeof preRes.headers.getSetCookie === "function") {
@@ -107,7 +136,14 @@ export class A2ZConnectorService {
         preCookieStr = preSetCookie;
       }
       const cleanPreCookie = this.extractCleanCookies(preCookieStr);
-      console.log(`[A2Z-Connector] Pre-authentication cookies acquired: ${cleanPreCookie || "None"}`);
+      this.logDiagnostic("pre-authentication", {
+        endpoint: preLoginUrl,
+        method: "GET",
+        httpStatus: preRes.status,
+        responseHeaders: sanitizeA2ZResponseHeaders(preRes.headers),
+        responseBody: "[login page body omitted]",
+        cookieNames: getCookieNames(cleanPreCookie),
+      });
 
       const authUrl = `${baseDomain}/Login/auth`;
       console.log(`[A2Z-Connector] Posting credentials to: ${authUrl}`);
@@ -116,18 +152,35 @@ export class A2ZConnectorService {
       params.append("un", username);
       params.append("pw", password);
 
-      const authRes = await fetch(authUrl, {
+      const authRes = await this.fetchWithTimeout(authUrl, {
         method: "POST",
-        redirect: "error",
+        redirect: "follow",
         headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-          "Cookie": cleanPreCookie
+          "Accept": "application/json, text/javascript, */*; q=0.01",
+          "Accept-Language": "en-US,en;q=0.9",
+          "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+          "Cookie": cleanPreCookie,
+          "Origin": baseDomain,
+          "Referer": `${baseDomain}/dash`,
+          "User-Agent": this.BROWSER_USER_AGENT,
+          "X-Requested-With": "XMLHttpRequest",
         },
         body: params.toString()
       });
 
       const authBody = await authRes.text();
-      console.log(`[A2Z-Connector] Authentication response received. Status: ${authRes.status}`);
+      this.logDiagnostic("credential-submission", {
+        endpoint: authUrl,
+        method: "POST",
+        contentType: "application/x-www-form-urlencoded; charset=UTF-8",
+        requestPayloadKeys: ["un", "pw"],
+        requestHeaderNames: ["Accept", "Accept-Language", "Content-Type", "Cookie", "Origin", "Referer", "User-Agent", "X-Requested-With"],
+        redirectMode: "follow",
+        timeoutMs: this.REQUEST_TIMEOUT_MS,
+        httpStatus: authRes.status,
+        responseHeaders: sanitizeA2ZResponseHeaders(authRes.headers),
+        responseBody: sanitizeA2ZResponseBody(authBody),
+      });
 
       let isSuccess = false;
       try {
@@ -191,23 +244,28 @@ export class A2ZConnectorService {
 
     const executeFetch = async (): Promise<boolean> => {
       try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 15000);
-
-        const fetchResponse = await fetch(productsUrl, {
+        const fetchResponse = await this.fetchWithTimeout(productsUrl, {
           method: "GET",
           redirect: "error",
           headers: {
             "Cookie": this.sessionCookie || "",
             "Accept": "application/json"
-          },
-          signal: controller.signal
+          }
         });
 
-        clearTimeout(timeoutId);
+        responseBodyText = await fetchResponse.text();
+        this.logDiagnostic("catalog-fetch", {
+          endpoint: productsUrl,
+          method: "GET",
+          requestPayloadKeys: [],
+          redirectMode: "error",
+          timeoutMs: this.REQUEST_TIMEOUT_MS,
+          httpStatus: fetchResponse.status,
+          responseHeaders: sanitizeA2ZResponseHeaders(fetchResponse.headers),
+          responseBody: sanitizeA2ZResponseBody(responseBodyText),
+        });
 
         if (fetchResponse.status === 200) {
-          responseBodyText = await fetchResponse.text();
           if (responseBodyText.trim().startsWith("<!DOCTYPE html")) {
             console.log("[A2Z-Connector] Received HTML response instead of JSON. Session is likely invalid.");
             return false;

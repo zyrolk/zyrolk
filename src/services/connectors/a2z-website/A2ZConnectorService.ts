@@ -6,6 +6,19 @@ export class A2ZConnectorService {
   private static sessionCookie: string | null = null;
   private static lastLoginTime: number = 0;
   private static readonly SESSION_TTL = 15 * 60 * 1000; // 15-minute cache lifespan
+  private static readonly REQUEST_TIMEOUT_MS = 15000;
+  private static readonly BROWSER_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
+
+  private static async fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), this.REQUEST_TIMEOUT_MS);
+
+    try {
+      return await fetch(url, { ...init, signal: controller.signal });
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
 
   /**
    * Cleans and extracts the base domain from the provided URL.
@@ -100,10 +113,17 @@ export class A2ZConnectorService {
 
     try {
       // Step 1: Pre-authenticate GET request to initialize session cookies
-      const preLoginUrl = `${baseDomain}/dash/Account/Login`;
+      const preLoginUrl = `${baseDomain}/dash`;
       console.log(`[A2Z-Connector] Pre-authenticating GET request to: ${preLoginUrl}`);
       
-      const preRes = await fetch(preLoginUrl, { redirect: 'error' });
+      const preRes = await this.fetchWithTimeout(preLoginUrl, {
+        redirect: 'follow',
+        headers: {
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.9',
+          'User-Agent': this.BROWSER_USER_AGENT,
+        },
+      });
       const preSetCookie = preRes.headers.get('set-cookie');
       let preCookieStr = '';
       if (typeof preRes.headers.getSetCookie === 'function') {
@@ -112,7 +132,17 @@ export class A2ZConnectorService {
         preCookieStr = preSetCookie;
       }
       const cleanPreCookie = this.extractCleanCookies(preCookieStr);
-      console.log(`[A2Z-Connector] Pre-authentication cookies acquired: ${cleanPreCookie || 'None'}`);
+      console.info('[A2Z-Connector]', JSON.stringify({
+        event: 'a2z_integration_diagnostic',
+        authenticationStage: 'pre-authentication',
+        endpoint: preLoginUrl,
+        method: 'GET',
+        httpStatus: preRes.status,
+        cookieNames: cleanPreCookie
+          .split(';')
+          .map((cookie) => cookie.split('=', 1)[0]?.trim())
+          .filter(Boolean),
+      }));
 
       // Step 2: Post credentials to /Login/auth
       const authUrl = `${baseDomain}/Login/auth`;
@@ -122,18 +152,36 @@ export class A2ZConnectorService {
       params.append('un', username);
       params.append('pw', password);
 
-      const authRes = await fetch(authUrl, {
+      const authRes = await this.fetchWithTimeout(authUrl, {
         method: 'POST',
-        redirect: 'error',
+        redirect: 'follow',
         headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'Cookie': cleanPreCookie
+          'Accept': 'application/json, text/javascript, */*; q=0.01',
+          'Accept-Language': 'en-US,en;q=0.9',
+          'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+          'Cookie': cleanPreCookie,
+          'Origin': baseDomain,
+          'Referer': `${baseDomain}/dash`,
+          'User-Agent': this.BROWSER_USER_AGENT,
+          'X-Requested-With': 'XMLHttpRequest',
         },
         body: params.toString()
       });
 
       const authBody = await authRes.text();
-      console.log(`[A2Z-Connector] Authentication response received. Status: ${authRes.status}`);
+      console.info('[A2Z-Connector]', JSON.stringify({
+        event: 'a2z_integration_diagnostic',
+        authenticationStage: 'credential-submission',
+        endpoint: authUrl,
+        method: 'POST',
+        contentType: 'application/x-www-form-urlencoded; charset=UTF-8',
+        requestPayloadKeys: ['un', 'pw'],
+        requestHeaderNames: ['Accept', 'Accept-Language', 'Content-Type', 'Cookie', 'Origin', 'Referer', 'User-Agent', 'X-Requested-With'],
+        redirectMode: 'follow',
+        timeoutMs: this.REQUEST_TIMEOUT_MS,
+        httpStatus: authRes.status,
+        responseBody: authBody.replace(/[\r\n\t]+/g, ' ').slice(0, 500),
+      }));
 
       // A2Z returns a JSON status like {"status":"success","url":"/Drop_dash"} on success
       let isSuccess = false;
@@ -206,23 +254,29 @@ export class A2ZConnectorService {
     
     const executeFetch = async (): Promise<boolean> => {
       try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 15000);
-
-        fetchResponse = await fetch(productsUrl, {
+        fetchResponse = await this.fetchWithTimeout(productsUrl, {
           method: 'GET',
           redirect: 'error',
           headers: {
             'Cookie': this.sessionCookie || '',
             'Accept': 'application/json'
-          },
-          signal: controller.signal
+          }
         });
 
-        clearTimeout(timeoutId);
-        
+        responseBodyText = await fetchResponse.text();
+        console.info('[A2Z-Connector]', JSON.stringify({
+          event: 'a2z_integration_diagnostic',
+          authenticationStage: 'catalog-fetch',
+          endpoint: productsUrl,
+          method: 'GET',
+          requestPayloadKeys: [],
+          redirectMode: 'error',
+          timeoutMs: this.REQUEST_TIMEOUT_MS,
+          httpStatus: fetchResponse.status,
+          responseBody: responseBodyText.replace(/[\r\n\t]+/g, ' ').slice(0, 500),
+        }));
+
         if (fetchResponse.status === 200) {
-          responseBodyText = await fetchResponse.text();
           // If response is HTML (login page), the session is invalid/expired
           if (responseBodyText.trim().startsWith('<!DOCTYPE html')) {
             console.log('[A2Z-Connector] Received HTML response instead of JSON. Session is likely invalid.');

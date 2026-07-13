@@ -1,9 +1,10 @@
 import { adminDb } from "../firebase";
 import { getA2ZSecretValues } from "../../config/secrets";
+import { A2ZCredentialCandidate, resolveA2ZCredentials } from "./credentialSelection";
 
 export async function getA2ZCredentials(): Promise<{ username: string; password: string }> {
   const runtimeSecrets = getA2ZSecretValues();
-  let credentials = { ...runtimeSecrets };
+  const legacyCandidates: A2ZCredentialCandidate[] = [];
 
   try {
     const sourcesSnap = await adminDb.collection("supplierSources").get();
@@ -16,19 +17,30 @@ export async function getA2ZCredentials(): Promise<{ username: string; password:
         const config = data.config || {};
         const settings = data.settings || {};
 
-        credentials = {
-          username: config.username || settings.username || data.username || runtimeSecrets.username,
-          password: config.password || settings.password || data.password || runtimeSecrets.password,
-        };
+        legacyCandidates.push({
+          username: config.username || settings.username || data.username || "",
+          password: config.password || settings.password || data.password || "",
+          source: `firestore:${doc.id}`,
+        });
       }
     });
   } catch {
     console.warn("[A2Z-Connector] Could not read supplier credentials from Firestore; using environment variables if configured.");
   }
 
-  if (!credentials.username || !credentials.password) {
+  const credentials = resolveA2ZCredentials(runtimeSecrets, legacyCandidates);
+
+  console.info("[A2Z-Connector]", JSON.stringify({
+    event: "a2z_credentials_resolved",
+    authenticationStage: "credential-selection",
+    credentialSource: credentials?.source || "none",
+    usernamePresent: Boolean(credentials?.username),
+    passwordPresent: Boolean(credentials?.password),
+  }));
+
+  if (!credentials) {
     throw new Error("A2Z credentials are not configured. Set A2Z_USERNAME and A2Z_PASSWORD in the server environment or save credentials in supplierSources.");
   }
 
-  return credentials;
+  return { username: credentials.username, password: credentials.password };
 }

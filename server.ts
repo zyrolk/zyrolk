@@ -420,10 +420,16 @@ app.post("/api/checkout", async (req, res) => {
 
 // Helper to retrieve credentials from Firebase for any A2Z-related supplier
 async function getA2ZCredentials() {
-  let credentials = {
+  const runtimeCredentials = {
     username: process.env.A2Z_USERNAME || "",
     password: process.env.A2Z_PASSWORD || ""
   };
+
+  if (runtimeCredentials.username && runtimeCredentials.password) {
+    return runtimeCredentials;
+  }
+
+  let credentials = { username: "", password: "" };
   try {
     const sourcesSnap = await adminDb.collection("supplierSources").get();
     sourcesSnap.forEach(doc => {
@@ -436,8 +442,8 @@ async function getA2ZCredentials() {
         const settings = data.settings || {};
         
         credentials = {
-          username: config.username || settings.username || data.username || process.env.A2Z_USERNAME || "",
-          password: config.password || settings.password || data.password || process.env.A2Z_PASSWORD || ""
+          username: config.username || settings.username || data.username || "",
+          password: config.password || settings.password || data.password || ""
         };
       }
     });
