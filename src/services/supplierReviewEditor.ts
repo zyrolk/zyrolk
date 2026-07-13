@@ -39,6 +39,12 @@ export interface SupplierReviewValidationErrors {
   category?: string;
 }
 
+export interface SupplierPublishValidationErrors {
+  imageUrl?: string;
+  sellingPrice?: string;
+  category?: string;
+}
+
 const finiteNumber = (value: unknown, fallback = 0): number => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -70,7 +76,10 @@ export function calculateSupplierProfit(sellingPrice: number, wholesalePrice: nu
   };
 }
 
-export function validateSupplierReviewDraft(draft: SupplierReviewDraft): SupplierReviewValidationErrors {
+export function validateSupplierReviewDraft(
+  draft: SupplierReviewDraft,
+  validCategoryIds?: readonly string[],
+): SupplierReviewValidationErrors {
   const errors: SupplierReviewValidationErrors = {};
 
   if (!draft.productName.trim()) errors.productName = 'Product name is required.';
@@ -78,7 +87,37 @@ export function validateSupplierReviewDraft(draft: SupplierReviewDraft): Supplie
   if (!Number.isFinite(draft.comparePrice) || draft.comparePrice < 0) errors.comparePrice = 'Compare price cannot be negative.';
   if (draft.comparePrice > 0 && draft.comparePrice < draft.sellingPrice) errors.comparePrice = 'Compare price must be at least the selling price.';
   if (!Number.isInteger(draft.stock) || draft.stock < 0) errors.stock = 'Stock must be a whole number of zero or more.';
-  if (!draft.category.trim()) errors.category = 'Category is required.';
+  const category = draft.category.trim();
+  if (!category) {
+    errors.category = 'Category is required.';
+  } else if (validCategoryIds && !validCategoryIds.includes(category)) {
+    errors.category = 'Select a valid Zyro category.';
+  }
+
+  return errors;
+}
+
+export function validateSupplierPublishPayload(
+  item: Pick<SupplierReviewSourceItem, 'productPayload'>,
+  validCategoryIds?: readonly string[],
+): SupplierPublishValidationErrors {
+  const payload = item.productPayload;
+  const errors: SupplierPublishValidationErrors = {};
+  const images = normalizeSupplierProductImages(payload?.imageUrl, payload?.imageUrls);
+  const sellingPrice = finiteNumber(payload?.price, Number.NaN);
+  const category = String(payload?.category || '').trim();
+
+  if (images.length === 0) {
+    errors.imageUrl = 'A valid supplier product image is required before publishing.';
+  }
+  if (!Number.isFinite(sellingPrice) || sellingPrice <= 0) {
+    errors.sellingPrice = 'Selling price must be greater than zero.';
+  }
+  if (!category) {
+    errors.category = 'Category is required.';
+  } else if (validCategoryIds && !validCategoryIds.includes(category)) {
+    errors.category = 'Select a valid Zyro category.';
+  }
 
   return errors;
 }
@@ -86,8 +125,9 @@ export function validateSupplierReviewDraft(draft: SupplierReviewDraft): Supplie
 export function buildSupplierApprovalItem(
   item: SupplierReviewSourceItem,
   draft: SupplierReviewDraft,
+  validCategoryIds?: readonly string[],
 ): SupplierReviewSourceItem {
-  const validationErrors = validateSupplierReviewDraft(draft);
+  const validationErrors = validateSupplierReviewDraft(draft, validCategoryIds);
   if (Object.keys(validationErrors).length > 0) {
     throw new Error('Review editor contains invalid product values.');
   }

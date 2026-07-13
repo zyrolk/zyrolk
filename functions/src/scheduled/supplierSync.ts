@@ -6,6 +6,7 @@ import { appLogger } from "../api/logging";
 import { SupplierRegistry } from "../api/suppliers/SupplierRegistry";
 import { isValidSupplierImageUrl, ProductParser } from "../api/suppliers/a2z/ProductParser";
 import { RawA2ZProduct } from "../api/suppliers/a2z/types";
+import { resolveSupplierCategory, StoreCategoryReference, SupplierCategoryMappings } from "./supplierCategoryMapping";
 
 type SyncStatus = "Success" | "Failed" | "Partial" | "Skipped";
 type ComparisonStatus = "NEW_PRODUCT" | "PRICE_CHANGED" | "STOCK_CHANGED" | "DESCRIPTION_CHANGED" | "IMAGE_CHANGED" | "UNCHANGED";
@@ -19,6 +20,7 @@ interface SupplierSettings {
   defaultImageLimit?: number;
   enabledSupplierIds?: string[];
   enabledSuppliers?: string[];
+  categoryMappings?: SupplierCategoryMappings;
 }
 
 interface SupplierSource {
@@ -208,7 +210,12 @@ function compareProduct(product: RawA2ZProduct, match: ExistingProduct | undefin
   return { status: "DESCRIPTION_CHANGED", changedFields };
 }
 
-function buildProductPayload(product: RawA2ZProduct, match: ExistingProduct | undefined): Record<string, unknown> {
+function buildProductPayload(
+  product: RawA2ZProduct,
+  match: ExistingProduct | undefined,
+  storeCategories: readonly StoreCategoryReference[],
+  categoryMappings: SupplierCategoryMappings | undefined,
+): Record<string, unknown> {
   const docId = match ? match.id : (generateSlug(product.title) || product.sku);
   const wholesale = product.wholesalePrice || 0;
   const retail = product.recommendedRetailPrice || wholesale * 1.15;
@@ -216,7 +223,7 @@ function buildProductPayload(product: RawA2ZProduct, match: ExistingProduct | un
   const originalPrice = Math.round(retail * 1.1);
   const imageUrls = [...new Set((product.mediaGallery || []).filter(isValidSupplierImageUrl).map((url) => url.trim()))];
   const imageUrl = imageUrls[0] || "";
-  const categoryName = product.categoryHierarchy?.[0] || "electronics";
+  const category = resolveSupplierCategory(product.categoryHierarchy, storeCategories, categoryMappings);
 
   return {
     id: docId,
@@ -228,7 +235,7 @@ function buildProductPayload(product: RawA2ZProduct, match: ExistingProduct | un
     stock: product.inventoryLevel,
     imageUrl,
     imageUrls,
-    category: generateSlug(categoryName),
+    category,
     specs: product.specifications || {},
     isNew: true,
     isFeatured: false,
@@ -420,6 +427,12 @@ export async function runScheduledSupplierSync(): Promise<void> {
       ...productDoc.data(),
     })) as ExistingProduct[];
 
+    const categoriesSnap = await adminDb.collection("categories").get();
+    const storeCategories = categoriesSnap.docs.map((categoryDoc) => ({
+      id: categoryDoc.id,
+      name: String(categoryDoc.data().name || categoryDoc.id),
+    }));
+
     const sourcesSnap = await adminDb.collection("supplierSources").get();
     const sources = sourcesSnap.docs
       .map((sourceDoc) => ({ id: sourceDoc.id, ...sourceDoc.data() }) as SupplierSource)
@@ -477,7 +490,7 @@ export async function runScheduledSupplierSync(): Promise<void> {
           const match = findMatchingProduct(product, existingProducts);
           const comparison = compareProduct(product, match);
           const queueItemId = generateQueueDocId(source.id, product.sku, product.title);
-          const productPayload = buildProductPayload(product, match);
+          const productPayload = buildProductPayload(product, match, storeCategories, settings.categoryMappings);
           const createdAt = new Date().toISOString();
           const supplierSnapshot = {
             supplierName,

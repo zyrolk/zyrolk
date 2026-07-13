@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { motion } from 'motion/react';
 import { 
   Activity, 
@@ -28,7 +28,8 @@ import {
   AlertTriangle,
   Search,
   Sparkles,
-  FileText
+  FileText,
+  Trash2
 } from 'lucide-react';
 import { RawA2ZProduct } from '../services/connectors/a2z-website/types';
 import {
@@ -38,15 +39,17 @@ import {
 import { collection, doc, getDocs, onSnapshot, setDoc, writeBatch } from 'firebase/firestore';
 import { auth, db, handleFirestoreError, OperationType } from '../firebase';
 import { Product } from '../types';
-import { approveSupplierQueueItem, rejectSupplierQueueItem } from '../services/supplierQueueService';
+import { approveSupplierQueueItem, deleteSupplierQueueItem, rejectSupplierQueueItem } from '../services/supplierQueueService';
 import { matchesSupplierSearch } from '../services/supplierSearch';
 import { isActiveWebsiteSupplier } from '../services/supplierSourceUtils';
 import SupplierReviewEditorModal from './SupplierReviewEditorModal';
 import {
   buildSupplierApprovalItem,
+  calculateSupplierProfit,
   createSupplierReviewDraft,
   SupplierReviewDraft,
 } from '../services/supplierReviewEditor';
+import { normalizeSupplierCategory, resolveSupplierCategory } from '../services/supplierCategoryMapping';
 
 interface SupplierHubFiveStarsProps {
   isDarkMode?: boolean;
@@ -130,6 +133,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
 
   // Core review queue and sync history states
   const [reviewQueue, setReviewQueue] = useState<ReviewQueueItem[]>([]);
+  const [importQueue, setImportQueue] = useState<any[]>([]);
   const [syncHistory, setSyncHistory] = useState<SyncHistoryItem[]>([]);
   
   // Syncing state
@@ -142,6 +146,8 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [reviewSearch, setReviewSearch] = useState<string>('');
   const [importSearch, setImportSearch] = useState<string>('');
+  const [selectedReviewIds, setSelectedReviewIds] = useState<string[]>([]);
+  const [bulkAction, setBulkAction] = useState<'approve' | 'reject' | 'delete' | null>(null);
 
   // 1. Supplier Sources & Connect states
   const [supplierSources, setSupplierSources] = useState<any[]>([]);
@@ -329,6 +335,38 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
     )).length);
   }, [reviewQueue]);
 
+  const visibleReviewItems = useMemo(
+    () => reviewQueue.filter((item) => matchesSupplierSearch(item, reviewSearch)),
+    [reviewQueue, reviewSearch],
+  );
+  const selectedReviewItems = useMemo(
+    () => reviewQueue.filter((item) => item.status === 'Pending' && selectedReviewIds.includes(item.id)),
+    [reviewQueue, selectedReviewIds],
+  );
+  const validCategoryIds = useMemo(() => categories.map((category) => String(category.id)), [categories]);
+  const supplierCategoryOptions = useMemo(() => {
+    const values = new Map<string, string>();
+    const addCategories = (source: unknown) => {
+      if (!Array.isArray(source)) return;
+      source.forEach((value) => {
+        const label = String(value || '').trim();
+        const normalized = normalizeSupplierCategory(label);
+        if (normalized && !values.has(normalized)) values.set(normalized, label);
+      });
+    };
+
+    reviewQueue.forEach((item) => addCategories(item.supplierSnapshot?.categoryHierarchy));
+    importQueue.forEach((item) => addCategories(item.categoryHierarchy));
+    return Array.from(values.entries())
+      .map(([key, label]) => ({ key, label }))
+      .sort((left, right) => left.label.localeCompare(right.label));
+  }, [importQueue, reviewQueue]);
+
+  useEffect(() => {
+    const pendingIds = new Set(reviewQueue.filter((item) => item.status === 'Pending').map((item) => item.id));
+    setSelectedReviewIds((current) => current.filter((id) => pendingIds.has(id)));
+  }, [reviewQueue]);
+
   // Supplier Settings Engine state
   const [editingSourceId, setEditingSourceId] = useState<string | null>(null);
   const [editSupplierName, setEditSupplierName] = useState<string>('');
@@ -354,8 +392,6 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
   
   const [savingSettingsSourceId, setSavingSettingsSourceId] = useState<string | null>(null);
 
-  const [importQueue, setImportQueue] = useState<any[]>([]);
-
   // 2. Pending Changes states
   const [supplierPendingChanges, setSupplierPendingChanges] = useState<any[]>([]);
   const [pendingChangesFilter, setPendingChangesFilter] = useState<'All' | 'Pending' | 'Approved' | 'Rejected'>('All');
@@ -379,6 +415,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
     defaultProfitMargin: 15,
     defaultMarkup: 10,
     defaultImageLimit: 5,
+    categoryMappings: {},
     lastUpdated: new Date().toISOString(),
     updatedBy: "Admin User"
   });
@@ -595,8 +632,11 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
               const discount = 10;
               
               const imageUrl = supplierImages[0] || '';
-              const categoryName = prod.categoryHierarchy && prod.categoryHierarchy.length > 0 ? prod.categoryHierarchy[0] : 'electronics';
-              const categorySlug = generateSlug(categoryName);
+              const categoryId = resolveSupplierCategory(
+                prod.categoryHierarchy,
+                categories,
+                supplierSettings.categoryMappings,
+              );
 
               const productPayload: Product & Record<string, unknown> = {
                 id: docId,
@@ -608,7 +648,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
                 stock: prod.inventoryLevel,
                 imageUrl: imageUrl,
                 imageUrls: supplierImages,
-                category: categorySlug,
+                category: categoryId,
                 specs: prod.specifications || {},
                 isNew: true,
                 isFeatured: false,
@@ -1102,7 +1142,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
         reviewQueueItemId: change.reviewQueueItemId || linkedReviewItem?.id
       };
 
-      await approveSupplierQueueItem(queueDecisionItem);
+      await approveSupplierQueueItem(queueDecisionItem, validCategoryIds);
       console.log(`[Approval Pipeline] Successfully approved and wrote product for queue item: ${change.id}`);
 
       setProcessingChangeId(null);
@@ -1133,11 +1173,31 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
   };
 
   // --- REVIEW QUEUE APPROVAL HANDLERS ---
+  const getReviewCategoryMappingKey = (item: ReviewQueueItem): string => {
+    const supplierCategory = Array.isArray(item.supplierSnapshot?.categoryHierarchy)
+      ? String(item.supplierSnapshot?.categoryHierarchy[0] || '').trim()
+      : '';
+    return normalizeSupplierCategory(supplierCategory);
+  };
+
+  const persistReviewCategoryMapping = async (item: ReviewQueueItem, categoryId: string) => {
+    const normalized = getReviewCategoryMappingKey(item);
+    if (!normalized || !categoryId || supplierSettings.categoryMappings?.[normalized] === categoryId) return;
+
+    const categoryMappings = {
+      ...(supplierSettings.categoryMappings || {}),
+      [normalized]: categoryId,
+    };
+    await setDoc(doc(db, "supplier_settings", "config"), { categoryMappings }, { merge: true });
+    setSupplierSettings((current: any) => ({ ...current, categoryMappings }));
+  };
+
   const handleApproveReviewItem = async (item: ReviewQueueItem, draft: SupplierReviewDraft) => {
     setProcessingChangeId(item.id);
     try {
-      const approvalItem = buildSupplierApprovalItem(item, draft);
-      await approveSupplierQueueItem(approvalItem);
+      const approvalItem = buildSupplierApprovalItem(item, draft, validCategoryIds);
+      await persistReviewCategoryMapping(item, draft.category.trim());
+      await approveSupplierQueueItem(approvalItem, validCategoryIds);
       console.log(`[Approval Pipeline] Successfully approved and wrote product for queue item: ${item.id}`);
 
       setEditingReviewItem(null);
@@ -1165,6 +1225,95 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
       setErrorMsg(`Failed to reject: ${error.message || 'Unknown error'}`);
       setTimeout(() => setErrorMsg(null), 4000);
       setProcessingChangeId(null);
+    }
+  };
+
+  const toggleReviewSelection = (itemId: string) => {
+    setSelectedReviewIds((current) => current.includes(itemId)
+      ? current.filter((id) => id !== itemId)
+      : [...current, itemId]);
+  };
+
+  const toggleAllVisibleReviews = () => {
+    const visiblePendingIds = visibleReviewItems.filter((item) => item.status === 'Pending').map((item) => item.id);
+    const allSelected = visiblePendingIds.length > 0 && visiblePendingIds.every((id) => selectedReviewIds.includes(id));
+    setSelectedReviewIds((current) => allSelected
+      ? current.filter((id) => !visiblePendingIds.includes(id))
+      : Array.from(new Set([...current, ...visiblePendingIds])));
+  };
+
+  const handleBulkApproveReviews = async () => {
+    if (selectedReviewItems.length === 0) return;
+    setBulkAction('approve');
+    setErrorMsg(null);
+    try {
+      const approvals = selectedReviewItems.map((item) => ({
+        item,
+        draft: createSupplierReviewDraft(item),
+      })).map(({ item, draft }) => ({
+        item,
+        draft,
+        approvalItem: buildSupplierApprovalItem(item, draft, validCategoryIds),
+      }));
+
+      const categoryMappings = approvals.reduce((mappings, { item, draft }) => {
+        const mappingKey = getReviewCategoryMappingKey(item);
+        if (mappingKey) mappings[mappingKey] = draft.category.trim();
+        return mappings;
+      }, { ...(supplierSettings.categoryMappings || {}) } as Record<string, string>);
+      await setDoc(doc(db, "supplier_settings", "config"), { categoryMappings }, { merge: true });
+      setSupplierSettings((current: any) => ({ ...current, categoryMappings }));
+
+      for (const { approvalItem } of approvals) {
+        await approveSupplierQueueItem(approvalItem, validCategoryIds);
+      }
+
+      setSelectedReviewIds([]);
+      setSuccessMsg(`${approvals.length} products approved and published successfully.`);
+      setTimeout(() => setSuccessMsg(null), 3000);
+    } catch (error: any) {
+      setErrorMsg(`Bulk approve stopped: ${error.message || 'Unknown error'}`);
+      setTimeout(() => setErrorMsg(null), 5000);
+    } finally {
+      setBulkAction(null);
+    }
+  };
+
+  const handleBulkRejectReviews = async () => {
+    if (selectedReviewItems.length === 0) return;
+    setBulkAction('reject');
+    setErrorMsg(null);
+    try {
+      for (const item of selectedReviewItems) {
+        await rejectSupplierQueueItem({ ...item, rejectionReason: 'Bulk rejected by admin.' });
+      }
+      setSelectedReviewIds([]);
+      setSuccessMsg(`${selectedReviewItems.length} products rejected with audit records.`);
+      setTimeout(() => setSuccessMsg(null), 3000);
+    } catch (error: any) {
+      setErrorMsg(`Bulk reject stopped: ${error.message || 'Unknown error'}`);
+      setTimeout(() => setErrorMsg(null), 5000);
+    } finally {
+      setBulkAction(null);
+    }
+  };
+
+  const handleBulkDeleteReviews = async () => {
+    if (selectedReviewItems.length === 0) return;
+    setBulkAction('delete');
+    setErrorMsg(null);
+    try {
+      for (const item of selectedReviewItems) {
+        await deleteSupplierQueueItem({ ...item, deletionReason: 'Bulk deleted by admin.' });
+      }
+      setSelectedReviewIds([]);
+      setSuccessMsg(`${selectedReviewItems.length} queue items deleted with audit records.`);
+      setTimeout(() => setSuccessMsg(null), 3000);
+    } catch (error: any) {
+      setErrorMsg(`Bulk delete stopped: ${error.message || 'Unknown error'}`);
+      setTimeout(() => setErrorMsg(null), 5000);
+    } finally {
+      setBulkAction(null);
     }
   };
 
@@ -1206,6 +1355,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
       defaultProfitMargin: 15,
       defaultMarkup: 10,
       defaultImageLimit: 5,
+      categoryMappings: {},
       lastUpdated: new Date().toISOString(),
       updatedBy: "System Default"
     };
@@ -1440,7 +1590,22 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
                 </div>
               </div>
 
-              {reviewQueue.filter((item) => matchesSupplierSearch(item, reviewSearch)).length === 0 ? (
+              <div className="mb-4 flex flex-wrap items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-900/30">
+                <span className="mr-auto text-[11px] font-bold text-slate-500">
+                  {selectedReviewItems.length} selected
+                </span>
+                <button type="button" onClick={handleBulkApproveReviews} disabled={selectedReviewItems.length === 0 || bulkAction !== null} className="rounded-lg bg-emerald-600 px-3 py-2 text-[10px] font-black text-white disabled:cursor-not-allowed disabled:bg-slate-400">
+                  {bulkAction === 'approve' ? 'Approving...' : 'Bulk Approve'}
+                </button>
+                <button type="button" onClick={handleBulkRejectReviews} disabled={selectedReviewItems.length === 0 || bulkAction !== null} className="rounded-lg bg-amber-600 px-3 py-2 text-[10px] font-black text-white disabled:cursor-not-allowed disabled:bg-slate-400">
+                  {bulkAction === 'reject' ? 'Rejecting...' : 'Bulk Reject'}
+                </button>
+                <button type="button" onClick={handleBulkDeleteReviews} disabled={selectedReviewItems.length === 0 || bulkAction !== null} className="flex items-center gap-1 rounded-lg bg-red-600 px-3 py-2 text-[10px] font-black text-white disabled:cursor-not-allowed disabled:bg-slate-400">
+                  <Trash2 className="h-3 w-3" />{bulkAction === 'delete' ? 'Deleting...' : 'Bulk Delete'}
+                </button>
+              </div>
+
+              {visibleReviewItems.length === 0 ? (
                 <div className="p-12 text-center rounded-2xl border border-dashed border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/10 space-y-3">
                   <UserCheck className="h-10 w-10 text-slate-300 mx-auto" />
                   <div className="space-y-1">
@@ -1453,29 +1618,61 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
                   <table className="w-full text-xs text-left border-collapse">
                     <thead>
                       <tr className="border-b border-slate-100 dark:border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
-                        <th className="py-3 px-4 w-16">Image</th>
+                        <th className="py-3 px-2">
+                          <input
+                            type="checkbox"
+                            aria-label="Select all visible review items"
+                            checked={visibleReviewItems.some((item) => item.status === 'Pending') && visibleReviewItems.filter((item) => item.status === 'Pending').every((item) => selectedReviewIds.includes(item.id))}
+                            onChange={toggleAllVisibleReviews}
+                            className="h-4 w-4 accent-blue-600"
+                          />
+                        </th>
+                        <th className="py-3 px-3 w-16">Thumbnail</th>
                         <th className="py-3 px-4">Product Code</th>
                         <th className="py-3 px-4">Product Name</th>
-                        <th className="py-3 px-4 text-right">Cost Price</th>
-                        <th className="py-3 px-4 text-right">Market Price</th>
+                        <th className="py-3 px-3 text-right">Supplier Price</th>
+                        <th className="py-3 px-3 text-right">Selling Price</th>
+                        <th className="py-3 px-3 text-right">Profit</th>
+                        <th className="py-3 px-3 text-right">Margin</th>
                         <th className="py-3 px-4 text-right">Stock</th>
                         <th className="py-3 px-4 text-right">Comparison</th>
                         <th className="py-3 px-4 text-right">Status</th>
+                        <th className="py-3 px-4 text-right">Edit Action</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {reviewQueue.filter((item) => matchesSupplierSearch(item, reviewSearch)).map((item) => (
+                      {visibleReviewItems.map((item) => {
+                        const sellingPrice = Number(item.productPayload?.price ?? item.marketPrice);
+                        const safeSellingPrice = Number.isFinite(sellingPrice) ? sellingPrice : 0;
+                        const metrics = calculateSupplierProfit(safeSellingPrice, item.costPrice);
+                        return (
                         <tr key={item.id} className="border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50/50 dark:hover:bg-slate-900/30">
-                          <td className="py-3 px-4">
+                          <td className="py-3 px-2">
+                            <input
+                              type="checkbox"
+                              aria-label={`Select ${item.productName}`}
+                              checked={selectedReviewIds.includes(item.id)}
+                              disabled={item.status !== 'Pending' || bulkAction !== null}
+                              onChange={() => toggleReviewSelection(item.id)}
+                              className="h-4 w-4 accent-blue-600 disabled:opacity-40"
+                            />
+                          </td>
+                          <td className="py-3 px-3">
                             <SupplierImagePreview src={item.imageUrl} alt={item.productName} />
                           </td>
                           <td className="py-3 px-4 font-mono font-medium">{item.supplierCode}</td>
                           <td className="py-3 px-4 font-semibold">{item.productName}</td>
-                          <td className="py-3 px-4 text-right font-bold text-slate-900 dark:text-white">
+                          <td className="py-3 px-3 text-right font-bold text-slate-900 dark:text-white">
                             LKR {item.costPrice.toLocaleString()}
                           </td>
-                          <td className="py-3 px-4 text-right font-bold text-slate-900 dark:text-white">
-                            LKR {item.marketPrice.toLocaleString()}
+                          <td className="py-3 px-3 text-right font-bold text-blue-600 dark:text-blue-400">
+                            LKR {safeSellingPrice.toLocaleString()}
+                          </td>
+                          <td className={`py-3 px-3 text-right font-bold ${metrics.profit >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                            LKR {metrics.profit.toLocaleString()}
+                          </td>
+                          <td className={`py-3 px-3 text-right font-bold ${metrics.marginPercent >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                            {metrics.marginPercent.toFixed(2)}%
                           </td>
                           <td className="py-3 px-4 text-right font-semibold text-slate-600 dark:text-slate-400">
                             {item.stock} units
@@ -1548,7 +1745,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
                                   className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-700 text-white font-bold rounded-lg text-[10px] transition-colors flex items-center gap-1 cursor-pointer"
                                 >
                                   <Check className="h-3 w-3" />
-                                  Review & Publish
+                                  Edit & Publish
                                 </button>
                                 <button
                                   onClick={() => handleRejectReviewItem(item)}
@@ -1568,7 +1765,8 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
                             )}
                           </td>
                         </tr>
-                      ))}
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -2547,7 +2745,45 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
                 </div>
               </div>
 
-              {/* Section 3: Scheduled Supplier Scope */}
+              {/* Section 3: Supplier Category Mapping */}
+              <div className="space-y-4">
+                <div>
+                  <h4 className="text-[10px] font-black uppercase text-blue-500 tracking-wider">Supplier Category → Zyro Category Mapping</h4>
+                  <p className="mt-1 text-[10px] text-slate-400">Mappings are saved in Supplier Hub settings and applied to both manual and scheduled sync queues.</p>
+                </div>
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                  {supplierCategoryOptions.map(({ key, label }) => (
+                    <label key={key} className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-[#111928]">
+                      <span className="truncate font-bold text-slate-700 dark:text-slate-200" title={label}>{label}</span>
+                      <ArrowRight className="h-3.5 w-3.5 text-slate-400" />
+                      <select
+                        aria-label={`Map supplier category ${label}`}
+                        value={supplierSettings.categoryMappings?.[key] || ''}
+                        onChange={(event) => setSupplierSettings((current: any) => ({
+                          ...current,
+                          categoryMappings: {
+                            ...(current.categoryMappings || {}),
+                            [key]: event.target.value,
+                          },
+                        }))}
+                        className="min-w-0 rounded-lg border border-slate-200 bg-slate-50 px-2 py-2 text-xs dark:border-slate-700 dark:bg-slate-900"
+                      >
+                        <option value="">Select Zyro category</option>
+                        {categories.map((category) => (
+                          <option key={category.id} value={category.id}>{category.name || category.id}</option>
+                        ))}
+                      </select>
+                    </label>
+                  ))}
+                  {supplierCategoryOptions.length === 0 && (
+                    <div className="rounded-xl border border-dashed border-slate-200 p-4 text-[11px] text-slate-400 dark:border-slate-800 md:col-span-2">
+                      Run a supplier sync to discover supplier categories for mapping.
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Section 4: Scheduled Supplier Scope */}
               <div className="space-y-4">
                 <h4 className="text-[10px] font-black uppercase text-blue-500 tracking-wider">Enabled Suppliers for Scheduled Sync</h4>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -2978,6 +3214,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
           item={editingReviewItem}
           initialDraft={createSupplierReviewDraft(editingReviewItem)}
           categories={categories}
+          validCategoryIds={validCategoryIds}
           isPublishing={processingChangeId === editingReviewItem.id}
           onClose={() => {
             if (processingChangeId !== editingReviewItem.id) setEditingReviewItem(null);

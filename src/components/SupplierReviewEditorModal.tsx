@@ -11,6 +11,7 @@ interface SupplierReviewEditorModalProps {
   item: SupplierReviewSourceItem;
   initialDraft: SupplierReviewDraft;
   categories: Array<{ id: string; name?: string }>;
+  validCategoryIds: readonly string[];
   isPublishing: boolean;
   onClose: () => void;
   onPublish: (draft: SupplierReviewDraft) => Promise<void>;
@@ -22,6 +23,7 @@ export default function SupplierReviewEditorModal({
   item,
   initialDraft,
   categories,
+  validCategoryIds,
   isPublishing,
   onClose,
   onPublish,
@@ -29,7 +31,10 @@ export default function SupplierReviewEditorModal({
   const [draft, setDraft] = useState(initialDraft);
   const [submitted, setSubmitted] = useState(false);
   const firstInputRef = useRef<HTMLInputElement>(null);
-  const validationErrors = useMemo(() => validateSupplierReviewDraft(draft), [draft]);
+  const validationErrors = useMemo(
+    () => validateSupplierReviewDraft(draft, validCategoryIds),
+    [draft, validCategoryIds],
+  );
   const profit = useMemo(
     () => calculateSupplierProfit(draft.sellingPrice, item.costPrice),
     [draft.sellingPrice, item.costPrice],

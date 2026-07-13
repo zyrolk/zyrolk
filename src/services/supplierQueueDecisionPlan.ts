@@ -8,6 +8,7 @@ export interface SupplierQueueDecisionItem {
   sourceId?: string;
   batchId?: string;
   rejectionReason?: string;
+  deletionReason?: string;
   supplierSnapshot?: Record<string, unknown>;
 }
 
@@ -16,7 +17,7 @@ export interface SupplierQueueReviewer {
   email: string;
 }
 
-export type SupplierQueueAction = 'approved' | 'rejected';
+export type SupplierQueueAction = 'approved' | 'rejected' | 'deleted';
 
 export interface SupplierQueueSetOperation {
   collection: string;
@@ -94,6 +95,10 @@ export function buildSupplierQueueDecisionPlan(
 
   if (action === 'rejected' && item.rejectionReason) {
     auditPayload.rejectionReason = item.rejectionReason;
+  }
+
+  if (action === 'deleted' && item.deletionReason) {
+    auditPayload.deletionReason = item.deletionReason;
   }
 
   sets.push({

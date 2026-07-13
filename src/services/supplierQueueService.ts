@@ -7,21 +7,28 @@ import {
   getSupplierReviewQueueItemId,
 } from './supplierQueueDecisionPlan';
 import { normalizeSupplierProductImages } from './connectors/a2z-website/productImages';
+import { validateSupplierPublishPayload } from './supplierReviewEditor';
 
 export type { SupplierQueueDecisionItem };
 export { getSupplierReviewQueueItemId };
 
-export const approveSupplierQueueItem = async (item: SupplierQueueDecisionItem): Promise<void> => {
+export const approveSupplierQueueItem = async (
+  item: SupplierQueueDecisionItem,
+  validCategoryIds?: readonly string[],
+): Promise<void> => {
   const productPayload = item.productPayload;
 
   if (!productPayload?.id) {
     throw new Error(`Product payload not found for queue item: ${item.id}`);
   }
 
-  const normalizedImages = normalizeSupplierProductImages(productPayload.imageUrl, productPayload.imageUrls);
-  if (normalizedImages.length === 0) {
-    throw new Error('A valid supplier product image is required before publishing. Sync the real supplier image and review the item again.');
+  const validationErrors = validateSupplierPublishPayload(item, validCategoryIds);
+  const firstError = Object.values(validationErrors)[0];
+  if (firstError) {
+    throw new Error(firstError);
   }
+
+  const normalizedImages = normalizeSupplierProductImages(productPayload.imageUrl, productPayload.imageUrls);
 
   await writeSupplierQueueDecision({
     ...item,
@@ -35,6 +42,10 @@ export const approveSupplierQueueItem = async (item: SupplierQueueDecisionItem):
 
 export const rejectSupplierQueueItem = async (item: SupplierQueueDecisionItem): Promise<void> => {
   await writeSupplierQueueDecision(item, 'rejected');
+};
+
+export const deleteSupplierQueueItem = async (item: SupplierQueueDecisionItem): Promise<void> => {
+  await writeSupplierQueueDecision(item, 'deleted');
 };
 
 const writeSupplierQueueDecision = async (

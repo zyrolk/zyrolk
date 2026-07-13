@@ -4,6 +4,7 @@ import {
   buildSupplierApprovalItem,
   calculateSupplierProfit,
   createSupplierReviewDraft,
+  validateSupplierPublishPayload,
   validateSupplierReviewDraft,
 } from '../src/services/supplierReviewEditor';
 
@@ -75,6 +76,26 @@ test('supplier review validation blocks invalid publish values', () => {
   });
 
   assert.deepEqual(Object.keys(errors).sort(), ['category', 'comparePrice', 'productName', 'sellingPrice', 'stock']);
+});
+
+test('supplier review validation only accepts configured Zyro categories', () => {
+  const draft = createSupplierReviewDraft(queueItem);
+  assert.deepEqual(validateSupplierReviewDraft(draft, ['electronics']), {});
+  assert.equal(validateSupplierReviewDraft({ ...draft, category: 'unknown' }, ['electronics']).category, 'Select a valid Zyro category.');
+});
+
+test('publish payload guard requires image, selling price, and a valid category', () => {
+  const invalidItem = structuredClone(queueItem);
+  invalidItem.productPayload.imageUrl = '';
+  invalidItem.productPayload.imageUrls = [];
+  invalidItem.productPayload.price = 0;
+  invalidItem.productPayload.category = 'unknown';
+
+  assert.deepEqual(validateSupplierPublishPayload(invalidItem, ['electronics']), {
+    imageUrl: 'A valid supplier product image is required before publishing.',
+    sellingPrice: 'Selling price must be greater than zero.',
+    category: 'Select a valid Zyro category.',
+  });
 });
 
 test('approval publishes edited values and preserves immutable supplier values for audit', () => {

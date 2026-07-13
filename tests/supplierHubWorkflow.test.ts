@@ -106,3 +106,35 @@ test("rejection never writes products but still creates audit and queue cleanup"
     { collection: "supplier_import_queue", id: "review-2" },
   ]);
 });
+
+test("bulk delete decisions preserve audit and never write products", () => {
+  const plan = buildSupplierQueueDecisionPlan(
+    {
+      id: "review-3",
+      sourceId: "a2z",
+      batchId: "batch-3",
+      deletionReason: "Bulk deleted by admin.",
+    },
+    "deleted",
+    { uid: "admin-1", email: "admin@example.com" },
+    "SERVER_TIMESTAMP",
+    "audit-3",
+  );
+
+  assert.equal(plan.sets.some((operation) => operation.collection === "products"), false);
+  const audit = plan.sets.find((operation) => operation.collection === "supplier_approval_audit");
+  assert.equal(audit?.data.action, "deleted");
+  assert.equal(audit?.data.deletionReason, "Bulk deleted by admin.");
+  assert.equal(plan.deletes.length, 3);
+});
+
+test("Supplier Hub exposes audited bulk actions and both sync paths resolve persistent category mappings", () => {
+  const supplierHub = readFileSync("src/components/SupplierHubFiveStars.tsx", "utf8");
+  const scheduledSync = readFileSync("functions/src/scheduled/supplierSync.ts", "utf8");
+  assert.match(supplierHub, /Bulk Approve/);
+  assert.match(supplierHub, /Bulk Reject/);
+  assert.match(supplierHub, /Bulk Delete/);
+  assert.match(supplierHub, /resolveSupplierCategory/);
+  assert.match(scheduledSync, /resolveSupplierCategory/);
+  assert.match(scheduledSync, /settings\.categoryMappings/);
+});
