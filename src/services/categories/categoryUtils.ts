@@ -35,6 +35,9 @@ export const sortCategoriesAlphabetically = <T extends Readonly<Category>>(categ
     })
     .map(({ category }) => category);
 
+export const getActiveCategories = <T extends Readonly<Category>>(categories: readonly T[]): T[] =>
+  categories.filter((category) => category.isActive !== false);
+
 export const isDuplicateCategorySlug = (
   categories: readonly Readonly<Category>[],
   slug: string,

@@ -12,6 +12,7 @@ import { searchCustomerProducts } from './services/product-search/customerProduc
 import {
   buildCategoryProductCounts,
   categoryMatches,
+  getActiveCategories,
   resolveCategoryImage,
   sortCategoriesAlphabetically,
 } from './services/categories/categoryUtils';
@@ -65,6 +66,20 @@ export default function App() {
 
   // Website Settings
   const [settings, setSettings] = useState<WebsiteSettings | null>(null);
+
+  useEffect(() => {
+    if (settings?.storeName?.trim()) document.title = settings.storeName.trim();
+    const faviconUrl = settings?.faviconUrl?.trim() || '/favicon.png';
+    let favicon = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
+    if (!favicon) {
+      favicon = document.createElement('link');
+      favicon.rel = 'icon';
+      document.head.appendChild(favicon);
+    }
+    favicon.href = faviconUrl;
+    const appleTouchIcon = document.querySelector<HTMLLinkElement>('link[rel="apple-touch-icon"]');
+    if (appleTouchIcon) appleTouchIcon.href = faviconUrl;
+  }, [settings?.faviconUrl, settings?.storeName]);
 
   // Firestore Data States
   const [products, setProducts] = useState<Product[]>([]);
@@ -328,7 +343,7 @@ export default function App() {
         snap.forEach(doc => {
           catList.push({ id: doc.id, ...doc.data() } as Category);
         });
-        setCategories(sortCategoriesAlphabetically(catList));
+        setCategories(getActiveCategories(sortCategoriesAlphabetically(catList)));
       });
       if (!isMounted) {
         cUnsub();

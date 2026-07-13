@@ -4,6 +4,7 @@ import {
   buildCategoryProductCounts,
   canDeleteCategory,
   categoryMatches,
+  getActiveCategories,
   isDuplicateCategorySlug,
   normalizeCategoryName,
   normalizeCategorySlug,
@@ -46,6 +47,12 @@ test('alphabetical ordering is deterministic, numeric aware, and immutable', () 
   assert.deepEqual(sorted.map((item) => item.id), ['a2', 'a10', 'z']);
   assert.deepEqual(source.map((item) => item.id), before);
   assert.notEqual(sorted, source);
+});
+
+test('active category projection hides only explicitly inactive categories', () => {
+  const legacy = category('legacy', 'Legacy');
+  const inactive = { ...category('inactive', 'Inactive'), isActive: false };
+  assert.deepEqual(getActiveCategories([legacy, inactive]).map((item) => item.id), ['legacy']);
 });
 
 test('category matching uses the shared normalized ID rule', () => {

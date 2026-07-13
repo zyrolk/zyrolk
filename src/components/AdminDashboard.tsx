@@ -30,6 +30,8 @@ import { CloudinaryUpload } from './CloudinaryUpload';
 import HeroSliderEditor from './HeroSliderEditor';
 import { normalizeSlideSpeed, validateHeroSlides } from '../services/hero-slider/heroSlider';
 import { sanitizeFirestoreData } from '../services/firestore/sanitizeFirestoreData';
+import { validateProductForSave } from '../services/products/productValidation';
+import { isHttpUrl, validateStoreSettings } from '../services/settings/storeSettingsValidation';
 import { 
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, 
   CartesianGrid, Tooltip, PieChart, Pie, Cell, BarChart, Bar, Legend
@@ -147,15 +149,7 @@ const DEFAULT_SUPPLIER_SETTINGS = {
   updatedBy: ""
 };
 
-const isValidUrl = (url: string) => {
-  if (!url) return true;
-  try {
-    const parsed = new URL(url);
-    return parsed.protocol === "http:" || parsed.protocol === "https:";
-  } catch (_) {
-    return false;
-  }
-};
+const isValidUrl = (url: string) => !url.trim() || isHttpUrl(url);
 
 const DEFAULT_PAGES = [
   {
@@ -475,7 +469,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
   });
 
   const [showCategoryModal, setShowCategoryModal] = useState(false);
-  const [newCategory, setNewCategory] = useState({ id: "", name: "", icon: "Smartphone", imageUrl: "" });
+  const [newCategory, setNewCategory] = useState({ id: "", name: "", icon: "Smartphone", imageUrl: "", isActive: true });
   const [editingCategory, setEditingCategory] = useState<Category | null>(null);
   const [categoryToDelete, setCategoryToDelete] = useState<Category | null>(null);
   const [savingCategory, setSavingCategory] = useState(false);
@@ -1489,6 +1483,17 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
       return;
     }
 
+    const productErrors = validateProductForSave({
+      product: { ...newProduct, sku: finalSku },
+      products,
+      categories,
+      editingProductId: editingProduct?.id,
+    });
+    if (productErrors.length > 0) {
+      showSettingsToast("error", productErrors[0]);
+      return;
+    }
+
     setSavingProduct(true);
     try {
       let disc = 0;
@@ -1500,6 +1505,8 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
         ...newProduct,
         id: editingProduct ? editingProduct.id : newProduct.id,
         price: Number(newProduct.price),
+        imageUrl: newProduct.imageUrl?.trim(),
+        imageUrls: [...new Set((newProduct.imageUrls || []).map((url) => url.trim()))],
         originalPrice: newProduct.originalPrice ? Number(newProduct.originalPrice) : undefined,
         discount: disc || undefined,
         stock: Number(newProduct.stock),
@@ -1525,7 +1532,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
       setEditingProduct(null);
       setNewProduct({
         name: "", description: "", price: 0, originalPrice: 0, discount: 0,
-        imageUrl: "", imageUrls: [], category: "electronics", stock: 10, specs: {},
+        imageUrl: "", imageUrls: [], category: categories[0]?.id || "", stock: 10, specs: {},
         isNew: false, isFeatured: false, isBestSeller: false, isActive: true, sku: "",
         supplierItemCode: "", costPrice: undefined, marketPrice: undefined
       });
@@ -1596,6 +1603,10 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
       showSettingsToast('error', `Category slug "${id}" already exists.`);
       return;
     }
+    if (newCategory.imageUrl.trim() && !isHttpUrl(newCategory.imageUrl)) {
+      showSettingsToast('error', 'Category image must use a valid http or https URL.');
+      return;
+    }
     setSavingCategory(true);
     try {
       if (!editingCategory) {
@@ -1609,9 +1620,10 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
         name,
         icon: newCategory.icon.trim() || 'Layers',
         imageUrl: newCategory.imageUrl.trim(),
+        isActive: newCategory.isActive,
       }, { merge: Boolean(editingCategory) });
       showSettingsToast('success', `Category "${name}" ${editingCategory ? 'updated' : 'created'} successfully.`);
-      setNewCategory({ id: "", name: "", icon: "Smartphone", imageUrl: "" });
+      setNewCategory({ id: "", name: "", icon: "Smartphone", imageUrl: "", isActive: true });
       closeCategoryModal();
       loadData();
     } catch (err: any) {
@@ -1625,7 +1637,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
   const openCreateCategory = (trigger: HTMLElement) => {
     categoryTriggerRef.current = trigger;
     setEditingCategory(null);
-    setNewCategory({ id: '', name: '', icon: 'Smartphone', imageUrl: '' });
+    setNewCategory({ id: '', name: '', icon: 'Smartphone', imageUrl: '', isActive: true });
     setShowCategoryModal(true);
   };
 
@@ -1637,6 +1649,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
       name: category.name,
       icon: category.icon || 'Layers',
       imageUrl: category.imageUrl || '',
+      isActive: category.isActive !== false,
     });
     setShowCategoryModal(true);
   };
@@ -1721,26 +1734,17 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
     setNewProduct(prev => ({ ...prev, specs: updatedSpecs }));
   };
 
-  const generatePlaceholderImage = () => {
-    const images = [
-      "https://images.unsplash.com/photo-1542751371-adc38448a05e?q=80&w=600",
-      "https://images.unsplash.com/photo-1546868871-7041f2a55e12?q=80&w=600",
-      "https://images.unsplash.com/photo-1572635196237-14b3f281503f?q=80&w=600"
-    ];
-    setNewProduct(prev => ({ ...prev, imageUrl: images[Math.floor(Math.random() * images.length)] }));
-  };
-
   const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!authorized || !settingsForm) return;
 
-    if (
-      (settingsForm.facebookUrl && !isValidUrl(settingsForm.facebookUrl)) ||
-      (settingsForm.instagramUrl && !isValidUrl(settingsForm.instagramUrl)) ||
-      (settingsForm.tiktokUrl && !isValidUrl(settingsForm.tiktokUrl)) ||
-      (settingsForm.youtubeUrl && !isValidUrl(settingsForm.youtubeUrl))
-    ) {
-      alert("Please fix all invalid social media URLs before saving.");
+    const settingsValidation = validateStoreSettings({
+      settings: settingsForm,
+      deliveryCharge: tempDeliveryCharge,
+      freeDeliveryMin: tempFreeDeliveryMin,
+    });
+    if (settingsValidation.errors.length > 0) {
+      showSettingsToast('error', settingsValidation.errors[0]);
       return;
     }
 
@@ -1750,22 +1754,35 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
       return;
     }
 
-    const chargeNum = parseFloat(tempDeliveryCharge);
-    const freeMinNum = parseFloat(tempFreeDeliveryMin);
     const updatedSettings: WebsiteSettings = {
       ...settingsForm,
+      storeName: settingsForm.storeName.trim(),
+      logoUrl: settingsForm.logoUrl?.trim(),
+      faviconUrl: settingsForm.faviconUrl?.trim(),
+      contactEmail: settingsForm.contactEmail?.trim(),
+      contactPhone: settingsForm.contactPhone?.trim(),
+      contactPhone2: settingsForm.contactPhone2?.trim(),
+      whatsappNumber: settingsForm.whatsappNumber.trim(),
+      facebookUrl: settingsForm.facebookUrl?.trim(),
+      instagramUrl: settingsForm.instagramUrl?.trim(),
+      tiktokUrl: settingsForm.tiktokUrl?.trim(),
+      youtubeUrl: settingsForm.youtubeUrl?.trim(),
       autoSlideSpeed: normalizeSlideSpeed(settingsForm.autoSlideSpeed),
-      deliveryCharge: isNaN(chargeNum) ? 0 : chargeNum,
-      freeDeliveryMin: isNaN(freeMinNum) ? 0 : freeMinNum
+      deliveryCharge: settingsValidation.deliveryCharge!,
+      freeDeliveryMin: settingsValidation.freeDeliveryMin!,
     };
 
     setSavingSettings(true);
     try {
       await setDoc(doc(db, "settings", "website"), updatedSettings);
-      setSettings(updatedSettings);
-      setSettingsForm(updatedSettings);
-      showSettingsToast("success", "Website settings updated successfully.");
-      loadData();
+      const persistedSnapshot = await getDoc(doc(db, "settings", "website"));
+      if (!persistedSnapshot.exists()) throw new Error('Settings could not be verified after saving.');
+      const persistedSettings = { ...DEFAULT_WEBSITE_SETTINGS, ...persistedSnapshot.data() } as WebsiteSettings;
+      setSettings(persistedSettings);
+      setSettingsForm(persistedSettings);
+      setTempDeliveryCharge(String(persistedSettings.deliveryCharge));
+      setTempFreeDeliveryMin(String(persistedSettings.freeDeliveryMin));
+      showSettingsToast("success", "Website settings saved and verified.");
     } catch (err: any) {
       console.error("Save settings error:", err);
       const errorMsg = err?.message || "Save failed, check authorization.";
@@ -1811,6 +1828,17 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
   const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !settingsForm) return;
+    const allowedTypes = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml']);
+    if (!allowedTypes.has(file.type)) {
+      showSettingsToast('error', 'Logo upload must be a JPG, PNG, WebP, or SVG image.');
+      e.target.value = '';
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      showSettingsToast('error', 'Logo image must be 2 MB or smaller.');
+      e.target.value = '';
+      return;
+    }
     try {
       const fileName = `${Date.now()}_logo_${file.name.replace(/[^a-zA-Z0-9.]/g, "_")}`;
       const fileRef = storageRef(storage, `logos/${fileName}`);
@@ -1820,8 +1848,12 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
         if (!prev) return prev;
         return { ...prev, logoUrl: downloadUrl };
       });
+      showSettingsToast('success', 'Logo uploaded. Save settings to publish the URL.');
     } catch (err) {
       console.error("Logo upload error:", err);
+      showSettingsToast('error', 'Logo upload failed. Please try again.');
+    } finally {
+      e.target.value = '';
     }
   };
 
@@ -2830,7 +2862,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                     setEditingProduct(null);
                     setNewProduct({
                       name: "", description: "", price: 0, originalPrice: 0, discount: 0,
-                      imageUrl: "", imageUrls: [], category: "electronics", stock: 10, specs: {},
+                      imageUrl: "", imageUrls: [], category: categories.find(category => category.isActive !== false)?.id || categories[0]?.id || "", stock: 10, specs: {},
                       isNew: false, isFeatured: false, isBestSeller: false, isActive: true, sku: nextSku,
                       supplierItemCode: "", costPrice: undefined, marketPrice: undefined, id: ""
                     });
@@ -3009,6 +3041,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                         <div>
                           <h3 className="font-bold text-sm text-slate-800 dark:text-white">{c.name}</h3>
                           <span className="text-[10px] text-slate-400 font-mono">Slug: {c.id}</span>
+                          <span className={`ml-2 rounded-full px-2 py-0.5 text-[9px] font-bold uppercase ${c.isActive !== false ? 'bg-emerald-500/10 text-emerald-500' : 'bg-slate-500/10 text-slate-400'}`}>{c.isActive !== false ? 'Active' : 'Inactive'}</span>
                         </div>
                       </div>
 
@@ -4386,19 +4419,32 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                           onChange={(e) => setSettingsForm(prev => prev ? ({ ...prev, storeName: e.target.value }) : null)}
                           className="w-full px-3 py-2 bg-slate-100/50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-800 rounded-xl focus:outline-hidden"
                         />
+                        <label className="block pt-3 font-bold text-slate-400">Favicon URL</label>
+                        <input
+                          type="url"
+                          placeholder="https://example.com/favicon.png"
+                          value={settingsForm.faviconUrl || ""}
+                          onChange={(e) => setSettingsForm(prev => prev ? ({ ...prev, faviconUrl: e.target.value }) : null)}
+                          aria-invalid={Boolean(settingsForm.faviconUrl?.trim() && !isHttpUrl(settingsForm.faviconUrl))}
+                          className={`w-full rounded-xl border bg-slate-100/50 px-3 py-2 focus:outline-hidden dark:bg-slate-800/60 ${settingsForm.faviconUrl?.trim() && !isHttpUrl(settingsForm.faviconUrl) ? 'border-red-500' : 'border-slate-200/60 dark:border-slate-800'}`}
+                        />
+                        {settingsForm.faviconUrl?.trim() && !isHttpUrl(settingsForm.faviconUrl) && <p className="text-[10px] font-semibold text-red-500">Use a valid http or https image URL.</p>}
                       </div>
                       <div className="space-y-1 text-xs">
                         <label className="text-slate-400 font-bold block">Branding Logo Url</label>
                         <input
-                          type="text"
+                          type="url"
                           value={settingsForm.logoUrl}
                           onChange={(e) => setSettingsForm(prev => prev ? ({ ...prev, logoUrl: e.target.value }) : null)}
-                          className="w-full px-3 py-2 bg-slate-100/50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-800 rounded-xl focus:outline-hidden"
+                          aria-invalid={Boolean(settingsForm.logoUrl?.trim() && !isHttpUrl(settingsForm.logoUrl))}
+                          className={`w-full rounded-xl border bg-slate-100/50 px-3 py-2 focus:outline-hidden dark:bg-slate-800/60 ${settingsForm.logoUrl?.trim() && !isHttpUrl(settingsForm.logoUrl) ? 'border-red-500' : 'border-slate-200/60 dark:border-slate-800'}`}
                         />
+                        {settingsForm.logoUrl?.trim() && !isHttpUrl(settingsForm.logoUrl) && <p className="text-[10px] font-semibold text-red-500">Use a valid http or https image URL.</p>}
                         <div className="mt-1.5 flex items-center space-x-2">
                           <span className="text-[10px] font-bold text-slate-400 uppercase block">Upload File</span>
                           <input
                             type="file"
+                            accept="image/jpeg,image/png,image/webp,image/svg+xml"
                             onChange={handleLogoUpload}
                             className="text-[10px] text-slate-500 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-[10px] file:font-semibold file:bg-slate-200 dark:file:bg-slate-700 dark:file:text-white cursor-pointer"
                           />
@@ -4433,7 +4479,9 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                       <div className="space-y-1 text-xs">
                         <label className="text-slate-400 font-bold block">Flat Courier Charge (LKR)</label>
                         <input
-                          type="text"
+                          type="number"
+                          min="0"
+                          step="0.01"
                           value={tempDeliveryCharge}
                           onChange={(e) => setTempDeliveryCharge(e.target.value)}
                           className="w-full px-3 py-2 bg-slate-100/50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-800 rounded-xl focus:outline-hidden"
@@ -4442,7 +4490,9 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                       <div className="space-y-1 text-xs">
                         <label className="text-slate-400 font-bold block">Free Shipping Threshold Limit (LKR)</label>
                         <input
-                          type="text"
+                          type="number"
+                          min="0"
+                          step="0.01"
                           value={tempFreeDeliveryMin}
                           onChange={(e) => setTempFreeDeliveryMin(e.target.value)}
                           className="w-full px-3 py-2 bg-slate-100/50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-800 rounded-xl focus:outline-hidden"
@@ -6254,7 +6304,8 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                         onChange={(e) => setNewProduct(prev => ({ ...prev, category: e.target.value }))}
                         className="w-full px-3 py-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-hidden focus:border-blue-500 transition-colors text-xs cursor-pointer"
                       >
-                        {categories.map(cat => <option key={cat.id} value={cat.id}>{cat.name}</option>)}
+                        {categories.length === 0 && <option value="">No categories available</option>}
+                        {categories.map(cat => <option key={cat.id} value={cat.id}>{cat.name}{cat.isActive === false ? ' (Inactive)' : ''}</option>)}
                       </select>
                     </div>
                   </div>
@@ -6448,6 +6499,8 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                       <input
                         type="number"
                         required
+                        min="0"
+                        step="1"
                         placeholder="15"
                         value={newProduct.stock ?? 10}
                         onChange={(e) => setNewProduct(prev => ({ ...prev, stock: Number(e.target.value) }))}
@@ -6552,18 +6605,9 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                   
                   {/* Primary Image Upload & Preview */}
                   <div className="space-y-3.5">
-                    <div className="flex items-center justify-between">
-                      <label className="text-slate-400 font-bold flex items-center">
-                        Primary Product Image <span className="text-red-500 ml-0.5">*</span>
-                      </label>
-                      <button 
-                        type="button" 
-                        onClick={generatePlaceholderImage} 
-                        className="text-[10px] text-blue-500 hover:underline font-bold"
-                      >
-                        Use Random Stock Image
-                      </button>
-                    </div>
+                    <label className="flex items-center font-bold text-slate-400">
+                      Primary Product Image <span className="ml-0.5 text-red-500">*</span>
+                    </label>
 
                     <div className="space-y-2">
                       <input
@@ -6590,9 +6634,6 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                             alt="Primary Listing Preview" 
                             className="w-full h-full object-cover"
                             referrerPolicy="no-referrer"
-                            onError={(e) => {
-                              (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1594322436404-5a0526db4d13?q=80&w=600';
-                            }}
                           />
                         ) : (
                           <div className="text-center p-6 space-y-1">
@@ -6769,6 +6810,10 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                 <label htmlFor="category-image-url" className="block text-slate-400 font-bold mb-1 uppercase">Image URL</label>
                 <input id="category-image-url" type="url" placeholder="https://..." value={newCategory.imageUrl} onChange={(e) => setNewCategory(prev => ({ ...prev, imageUrl: e.target.value }))} className="min-h-11 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-500/25 dark:border-slate-700 dark:bg-slate-800" />
               </div>
+              <label className="flex min-h-11 items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 dark:border-slate-700 dark:bg-slate-800">
+                <span className="font-bold uppercase text-slate-400">Active on storefront</span>
+                <input type="checkbox" checked={newCategory.isActive} onChange={(e) => setNewCategory(prev => ({ ...prev, isActive: e.target.checked }))} className="h-4 w-4 accent-blue-600" />
+              </label>
               <button type="submit" disabled={savingCategory} className="min-h-11 w-full rounded-xl bg-blue-600 py-2.5 font-bold text-white transition-all hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-500/30 disabled:cursor-wait disabled:opacity-60">
                 {savingCategory ? 'Saving...' : editingCategory ? 'Update Category' : 'Save Category'}
               </button>

@@ -46,6 +46,7 @@ export interface Category {
   name: string;
   icon: string; // lucide icon name
   imageUrl?: string;
+  isActive?: boolean;
   count?: number;
 }
 
