@@ -1,5 +1,5 @@
 import React from 'react';
-import { Mail, Phone, MapPin, ShieldCheck, Truck, RefreshCw, Facebook, Instagram, Youtube } from 'lucide-react';
+import { Mail, Phone, MapPin, ShieldCheck, ShoppingBag, Truck, Facebook, Instagram, Youtube } from 'lucide-react';
 import { Category, WebsiteSettings } from '../types';
 
 interface FooterProps {
@@ -20,19 +20,31 @@ export default function Footer({ setCurrentPage, onSelectCategory, settings, cat
   const topCategories = categories.filter((category) => (categoryCounts[category.id] ?? 0) > 0).slice(0, 5);
 
   return (
-    <footer className="bg-slate-950 text-slate-300 pt-16 sm:pt-20 pb-8 border-t border-slate-800">
+    <footer className="zy-market-footer text-slate-300 pt-16 sm:pt-20 pb-8 border-t border-blue-900/60">
       
       {/* 1. Trust Pillars Segment */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-12 border-b border-slate-800/80 grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-12 border-b border-white/10 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         
         <div className="flex items-start space-x-4 rounded-3xl border border-white/10 bg-white/5 p-5">
           <div className="p-3 bg-blue-500/12 rounded-2xl text-blue-300">
             <ShieldCheck className="h-6 w-6" />
           </div>
           <div>
-            <h4 className="text-white text-base font-bold font-display mb-1">Authorized Brand Warranty</h4>
+            <h4 className="text-white text-base font-bold font-display mb-1">Cash on Delivery</h4>
             <p className="text-xs text-slate-400 font-light leading-relaxed">
-              We source all devices directly from certified distributors. Every purchase includes official brand service support.
+              Pay when your order arrives.
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-start space-x-4 rounded-3xl border border-white/10 bg-white/5 p-5">
+          <div className="p-3 bg-blue-500/12 rounded-2xl text-blue-300">
+            <ShoppingBag className="h-6 w-6" />
+          </div>
+          <div>
+            <h4 className="text-white text-base font-bold font-display mb-1">Quality Checked Products</h4>
+            <p className="text-xs text-slate-400 font-light leading-relaxed">
+              Carefully selected supplier products.
             </p>
           </div>
         </div>
@@ -42,21 +54,21 @@ export default function Footer({ setCurrentPage, onSelectCategory, settings, cat
             <Truck className="h-6 w-6" />
           </div>
           <div>
-            <h4 className="text-white text-base font-bold font-display mb-1">Safe Islandwide Shipping</h4>
+            <h4 className="text-white text-base font-bold font-display mb-1">Islandwide Delivery</h4>
             <p className="text-xs text-slate-400 font-light leading-relaxed">
-              Fast, secure courier tracking directly to your doorstep in Colombo, Gampaha, Kandy, Galle, and outstation districts.
+              Fast delivery across Sri Lanka, from city centres to outstation districts.
             </p>
           </div>
         </div>
 
         <div className="flex items-start space-x-4 rounded-3xl border border-white/10 bg-white/5 p-5">
           <div className="p-3 bg-blue-500/12 rounded-2xl text-blue-300">
-            <RefreshCw className="h-6 w-6" />
+            <Phone className="h-6 w-6" />
           </div>
           <div>
-            <h4 className="text-white text-base font-bold font-display mb-1">Customer Priority Care</h4>
+            <h4 className="text-white text-base font-bold font-display mb-1">Friendly Customer Support</h4>
             <p className="text-xs text-slate-400 font-light leading-relaxed">
-              7-day direct product replacement policy if you discover any manufacture faults. Outstanding customer ratings.
+              WhatsApp assistance is available before and after purchase whenever you need guidance.
             </p>
           </div>
         </div>
@@ -64,10 +76,10 @@ export default function Footer({ setCurrentPage, onSelectCategory, settings, cat
       </div>
 
       {/* 2. Main Footer Grid */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 sm:py-14 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-8 lg:gap-10">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 sm:py-16 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-8 lg:gap-10">
         
         {/* About & Branding */}
-        <div className="space-y-4 text-left">
+        <div className="space-y-4 text-left lg:col-span-2">
           {footerLogo ? (
             <img 
               src={footerLogo} 
@@ -90,7 +102,7 @@ export default function Footer({ setCurrentPage, onSelectCategory, settings, cat
             </span>
           )}
           <p className="text-xs text-slate-400 font-light leading-relaxed">
-            {settings?.aboutText || "Sri Lanka's premier destination for high-end digital solutions, smart energy solar, kitchen devices, and lifestyle audio components."}
+            {settings?.aboutText || "A growing Sri Lankan marketplace for carefully selected products, convenient ordering, and local customer support."}
           </p>
 
           {/* Social media links */}
@@ -154,17 +166,17 @@ export default function Footer({ setCurrentPage, onSelectCategory, settings, cat
           <ul className="text-xs">
             <li><button onClick={() => setCurrentPage('about-us')} className="inline-flex min-h-11 items-center hover:text-white transition-colors cursor-pointer text-left focus-visible:outline-none focus-visible:text-white focus-visible:underline">About Us</button></li>
             <li><button onClick={() => setCurrentPage('faq')} className="inline-flex min-h-11 items-center hover:text-white transition-colors cursor-pointer text-left focus-visible:outline-none focus-visible:text-white focus-visible:underline">FAQs & Guides</button></li>
-            <li><button onClick={() => setCurrentPage('return-policy')} className="inline-flex min-h-11 items-center hover:text-white transition-colors cursor-pointer text-left focus-visible:outline-none focus-visible:text-white focus-visible:underline">Return & Warranty</button></li>
+            <li><button onClick={() => setCurrentPage('return-policy')} className="inline-flex min-h-11 items-center hover:text-white transition-colors cursor-pointer text-left focus-visible:outline-none focus-visible:text-white focus-visible:underline">Purchase Support Policy</button></li>
             <li><button onClick={() => setCurrentPage('terms-conditions')} className="inline-flex min-h-11 items-center hover:text-white transition-colors cursor-pointer text-left focus-visible:outline-none focus-visible:text-white focus-visible:underline">Terms & Conditions</button></li>
             <li><button onClick={() => setCurrentPage('privacy-policy')} className="inline-flex min-h-11 items-center hover:text-white transition-colors cursor-pointer text-left focus-visible:outline-none focus-visible:text-white focus-visible:underline">Privacy Policy</button></li>
           </ul>
         </div>
 
-        {/* Newsletter & Sub */}
+        {/* Payment & delivery information */}
         <div className="space-y-4 text-left">
-          <h4 className="text-sm font-black text-white uppercase tracking-wider">Store Updates</h4>
+          <h4 className="text-sm font-black text-white uppercase tracking-wider">Payment & Delivery</h4>
           <p className="text-xs text-slate-400 font-light leading-relaxed">
-            Newsletter subscriptions are temporarily unavailable. Follow our verified social channels or contact support for current offers.
+            Cash on Delivery is available with islandwide delivery information confirmed during ordering.
           </p>
         </div>
 

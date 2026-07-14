@@ -109,7 +109,7 @@ export default function HeroSliderEditor({
 
       {settings.heroBanners.length === 0 && (
         <div className="rounded-2xl border border-dashed border-slate-300 p-8 text-center text-xs text-slate-500 dark:border-slate-700">
-          No CMS slides yet. The storefront will continue using its compatible default slides.
+          No CMS slides yet. Create and enable a slide to display the storefront promotional hero.
         </div>
       )}
 

@@ -27,6 +27,7 @@ export interface SupplierComparison {
 
 const PRICE_FIELDS = new Set(['Cost Price', 'Market Price']);
 const DESCRIPTION_FIELDS = new Set(['Product Name', 'Description']);
+const IMAGE_FIELDS = new Set(['Primary Image', 'Images']);
 
 export function getSupplierProductLimit(productLimit: string | undefined, maximum = 250): number {
   const safeMaximum = Math.max(1, Math.floor(maximum));
@@ -36,6 +37,29 @@ export function getSupplierProductLimit(productLimit: string | undefined, maximu
   return Number.isFinite(parsed) && parsed > 0
     ? Math.min(Math.floor(parsed), safeMaximum)
     : safeMaximum;
+}
+
+export function resolveSupplierProductLimit(
+  sourceProductLimit: unknown,
+  hubProductLimit: unknown,
+  maximum = 250,
+): number {
+  const configuredValue = sourceProductLimit !== undefined && sourceProductLimit !== null && sourceProductLimit !== ''
+    ? sourceProductLimit
+    : hubProductLimit;
+  return getSupplierProductLimit(
+    configuredValue === undefined || configuredValue === null || configuredValue === ''
+      ? 'All'
+      : String(configuredValue),
+    maximum,
+  );
+}
+
+export function limitSupplierProducts<T>(products: readonly T[], productLimit: number): T[] {
+  const safeLimit = Number.isFinite(productLimit) && productLimit > 0
+    ? Math.floor(productLimit)
+    : products.length;
+  return products.slice(0, safeLimit);
 }
 
 export function filterSupplierComparison(
@@ -51,7 +75,7 @@ export function filterSupplierComparison(
     if (PRICE_FIELDS.has(field)) return settings?.syncPriceUpdates !== false;
     if (field === 'Stock') return settings?.syncStockUpdates !== false;
     if (DESCRIPTION_FIELDS.has(field)) return settings?.syncDescriptionUpdates !== false;
-    if (field === 'Primary Image') return settings?.syncImageUpdates !== false;
+    if (IMAGE_FIELDS.has(field)) return settings?.syncImageUpdates !== false;
     return false;
   });
 
@@ -60,8 +84,46 @@ export function filterSupplierComparison(
     return { status: 'PRICE_CHANGED', changedFields: allowedFields };
   }
   if (allowedFields.includes('Stock')) return { status: 'STOCK_CHANGED', changedFields: allowedFields };
-  if (allowedFields.includes('Primary Image')) return { status: 'IMAGE_CHANGED', changedFields: allowedFields };
+  if (allowedFields.some((field) => IMAGE_FIELDS.has(field))) return { status: 'IMAGE_CHANGED', changedFields: allowedFields };
   return { status: 'DESCRIPTION_CHANGED', changedFields: allowedFields };
+}
+
+export function getSupplierImageLimit(value: unknown, maximum = 20): number {
+  const safeMaximum = Math.max(1, Math.floor(maximum));
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0
+    ? Math.min(Math.floor(parsed), safeMaximum)
+    : Math.min(5, safeMaximum);
+}
+
+export interface SupplierInitialPricing {
+  sellingPrice: number;
+  comparePrice: number;
+  discountPercent: number;
+}
+
+export function calculateSupplierInitialPricing(
+  costPrice: unknown,
+  recommendedRetailPrice: unknown,
+  markupPercent: unknown,
+  profitMarginPercent: unknown,
+): SupplierInitialPricing {
+  const cost = Math.max(0, Number(costPrice) || 0);
+  const recommended = Math.max(0, Number(recommendedRetailPrice) || 0);
+  const markup = markupPercent === undefined || markupPercent === null || markupPercent === ''
+    ? 10
+    : Math.max(0, Number(markupPercent) || 0);
+  const margin = profitMarginPercent === undefined || profitMarginPercent === null || profitMarginPercent === ''
+    ? 15
+    : Math.max(0, Number(profitMarginPercent) || 0);
+  const calculated = Math.round(cost * (1 + (markup + margin) / 100));
+  const sellingPrice = calculated > 0 ? calculated : Math.round(recommended);
+  const comparePrice = Math.max(sellingPrice, Math.round(recommended));
+  const discountPercent = comparePrice > sellingPrice
+    ? Math.round(((comparePrice - sellingPrice) / comparePrice) * 100)
+    : 0;
+
+  return { sellingPrice, comparePrice, discountPercent };
 }
 
 export function collectDiscoveredSupplierCategories(

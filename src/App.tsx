@@ -532,11 +532,12 @@ export default function App() {
     if (dateB !== dateA) return dateB - dateA;
     return b.id.localeCompare(a.id);
   }), [activeProducts]);
-  const discountedProductCount = useMemo(
-    () => activeProducts.filter(product => product.discount && product.discount > 0).length,
+  const recommendedProducts = activeProducts.slice(0, 8);
+  const discountedProducts = useMemo(
+    () => activeProducts.filter(product => product.discount && product.discount > 0).slice(0, 8),
     [activeProducts]
   );
-
+  const discountedProductCount = discountedProducts.length;
   const categoryProductCounts = useMemo(
     () => buildCategoryProductCounts(categories, products),
     [categories, products],
@@ -597,42 +598,19 @@ export default function App() {
 
           {/* PAGE 1: HOME PAGE */}
           {currentPage === 'home' && (
-            <div className="space-y-14 sm:space-y-18 pb-16 animate-fadeIn">
-              
-              {/* Premium Hero Slider Banner */}
-              <HeroBanner
-                settings={settings}
-                onExploreProducts={() => { setCurrentPage('products'); setSelectedCategory('all'); }}
-                onBrowseCategories={() => { setCurrentPage('categories'); }}
-              />
+            <div className="zy-homepage flex flex-col gap-8 pb-16 animate-fadeIn sm:gap-10">
 
-              {/* Storefront trust badges */}
-              <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 -mt-8 relative z-10">
-                <div className="zy-card grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 p-3 sm:p-4 bg-white/95 backdrop-blur-xl">
-                  {[
-                    { icon: ShieldCheck, title: "Cash on Delivery", text: "Pay when your order arrives" },
-                    { icon: Truck, title: "Fast Delivery", text: "Islandwide courier dispatch" },
-                    { icon: ShoppingBag, title: "Secure Shopping", text: "Protected checkout flow" },
-                    { icon: Star, title: "Quality Products", text: "Curated electronics range" }
-                  ].map((item) => {
-                    const Icon = item.icon;
-                    return (
-                      <div key={item.title} className="flex items-start gap-3 rounded-2xl bg-slate-50/80 border border-slate-100 px-3 py-3.5 text-left">
-                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-brand-blue">
-                          <Icon className="h-4.5 w-4.5" />
-                        </div>
-                        <div className="min-w-0">
-                          <h3 className="text-xs sm:text-sm font-black text-slate-900 leading-tight">{item.title}</h3>
-                          <p className="text-[10px] sm:text-xs text-slate-500 mt-0.5 leading-snug">{item.text}</p>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
+              {/* Premium Hero Slider Banner */}
+              <section className="order-[1] pt-5 sm:pt-7">
+                <HeroBanner
+                  settings={settings}
+                  onExploreProducts={() => { setCurrentPage('products'); setSelectedCategory('all'); }}
+                  onBrowseCategories={() => { setCurrentPage('categories'); }}
+                />
               </section>
 
               {/* Categories segment list */}
-              <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+              <section className="zy-market-shelf zy-market-shelf-categories order-[3] max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                 <div className="flex flex-col md:flex-row md:items-end justify-between mb-8 gap-4">
                   <div className="text-left">
                     <span className="zy-section-eyebrow block mb-2">Curated collections</span>
@@ -640,7 +618,7 @@ export default function App() {
                       Shop by category
                     </h2>
                     <p className="text-sm text-slate-500 mt-2 max-w-xl">
-                      Find the right electronics faster with collections built around how Sri Lankan customers shop.
+                      Explore live collections built around how customers shop, from everyday essentials to the latest arrivals.
                     </p>
                   </div>
                   <button 
@@ -653,7 +631,7 @@ export default function App() {
                 </div>
 
                 <div className="flex snap-x snap-mandatory gap-4 overflow-x-auto pb-3 scrollbar-none sm:grid sm:grid-cols-2 sm:overflow-visible sm:pb-0 md:grid-cols-4 sm:gap-5 md:gap-6">
-                  {categories.slice(0, 4).map((cat) => {
+                  {categories.slice(0, 8).map((cat, categoryIndex) => {
                     const itemsCount = categoryCounts[cat.id] || 0;
                     const catImage = resolveCategoryImage(cat, products, CATEGORY_IMAGES);
 
@@ -668,15 +646,15 @@ export default function App() {
                           setSelectedCategory(cat.id);
                           setCurrentPage('products');
                         }}
-                        className="zy-card zy-card-hover group flex h-full w-[78vw] max-w-[300px] flex-none snap-start cursor-pointer flex-col overflow-hidden text-left focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20 sm:w-auto sm:max-w-none"
+                        className={`zy-category-card zy-category-tone-${categoryIndex % 4} group flex h-full w-[70vw] max-w-[250px] flex-none snap-start cursor-pointer flex-col overflow-hidden text-left focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20 sm:w-auto sm:max-w-none`}
                         aria-label={`Browse ${cat.name}, ${itemsCount} ${itemsCount === 1 ? 'product' : 'products'}`}
                       >
                         {/* Compact Top Image */}
-                        <div className="relative aspect-[4/3] w-full overflow-hidden bg-slate-900 select-none">
+                        <div className="relative aspect-square w-full overflow-hidden select-none">
                           <img 
                             src={catImage} 
                             alt={cat.name} 
-                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500 ease-out"
+                            className="h-full w-full object-contain p-5 mix-blend-multiply transition-transform duration-500 ease-out group-hover:scale-110"
                             referrerPolicy="no-referrer"
                             loading="lazy"
                             decoding="async"
@@ -684,9 +662,14 @@ export default function App() {
                             height="450"
                           />
                           {/* Soft bottom vignette for image blending */}
-                          <div className="absolute inset-0 bg-gradient-to-t from-slate-950/60 via-slate-950/5 to-transparent" />
-                          <div className="absolute left-3 top-3 zy-badge zy-badge-primary bg-white/90 backdrop-blur-sm">
-                            {itemsCount} {itemsCount === 1 ? 'item' : 'items'}
+                          <div className="absolute inset-0 bg-gradient-to-t from-slate-950/18 via-transparent to-white/20" />
+                          {itemsCount > 0 && (
+                            <div className="absolute left-3 top-3 zy-badge border-white/70 bg-white/92 text-slate-800 shadow-sm backdrop-blur-sm">
+                              {itemsCount} {itemsCount === 1 ? 'product' : 'products'}
+                            </div>
+                          )}
+                          <div className="absolute right-3 top-3 flex h-11 w-11 items-center justify-center rounded-2xl border border-white/70 bg-white/90 text-brand-blue shadow-lg backdrop-blur-sm" aria-hidden="true">
+                            <Grid3X3 className="h-5 w-5" />
                           </div>
                         </div>
 
@@ -695,11 +678,12 @@ export default function App() {
                           <h4 className="text-sm md:text-base font-black text-slate-900 font-display group-hover:text-brand-blue transition-colors duration-200 line-clamp-1">
                             {cat.name}
                           </h4>
+                          <p className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-slate-500">Explore this live marketplace collection.</p>
                           <div className="flex items-center justify-between mt-2">
                             <span className="text-[10px] sm:text-xs text-slate-500 font-semibold">
                               Explore collection
                             </span>
-                            <span className="text-[10px] font-bold text-brand-blue/80 opacity-100 sm:opacity-0 group-hover:opacity-100 group-hover:translate-x-0.5 -translate-x-1 transition-all duration-200">
+                            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-50 text-xs font-black text-brand-blue transition-all duration-200 group-hover:translate-x-0.5 group-hover:bg-brand-blue group-hover:text-white">
                               →
                             </span>
                           </div>
@@ -712,7 +696,7 @@ export default function App() {
 
               {/* Homepage Content Sections */}
               {loading ? (
-                <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
+                <div className="order-[4] max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
                   <div className="grid grid-cols-1 min-[480px]:grid-cols-2 lg:grid-cols-4 gap-5 sm:gap-6">
                     {[...Array(4)].map((_, idx) => (
                       <div key={idx} className="bg-white border border-slate-100 rounded-2xl p-4 space-y-4 animate-pulse flex flex-col justify-between h-full">
@@ -743,15 +727,15 @@ export default function App() {
                 <>
                   {/* Featured Products Grid */}
                   {featuredProducts.length > 0 && (
-                    <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                    <section className="zy-market-shelf zy-market-shelf-featured order-[4] max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                       <div className="flex flex-col sm:flex-row sm:items-end justify-between mb-8 gap-4">
                         <div className="text-left max-w-2xl">
-                          <span className="zy-section-eyebrow block">Featured selection</span>
+                          <span className="zy-section-eyebrow zy-section-eyebrow-pill block w-fit">Recommended for you</span>
                           <h2 className="text-2xl sm:text-4xl font-black tracking-tight text-slate-900 font-display mt-2">
-                            Customer-ready electronics, picked for today
+                            Trending Products
                           </h2>
                           <p className="text-sm text-slate-500 mt-2">
-                            Highlighted products from the live catalog with consistent cards, strong pricing, and fast shopping actions.
+                            Highlights from the live catalog with clear pricing and convenient shopping actions.
                           </p>
                         </div>
                         <button 
@@ -781,26 +765,19 @@ export default function App() {
                   )}
 
                   {/* Premium promotional section */}
-                  <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-5">
+                  {discountedProducts.length > 0 && <section className="zy-market-promo-zone zy-flash-deals order-[2] max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                    <div className="mb-5 flex items-end justify-between gap-4 text-left">
+                      <div>
+                        <span className="inline-flex rounded-full border border-white/25 bg-white/15 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-white">Flash Deals</span>
+                        <h2 className="mt-2 text-2xl font-black tracking-tight text-slate-900 font-display sm:text-3xl">Shop what’s happening now</h2>
+                      </div>
+                      <span className="hidden text-xs font-bold text-orange-50 sm:block">Offers from the live catalog</span>
+                    </div>
+                    {discountedProducts.length > 0 && <div className="grid grid-cols-1 gap-4 sm:gap-5">
                       {[
                         {
-                          label: "New Arrivals",
-                          title: "Fresh tech just added",
-                          text: `${newArrivalProducts.length} new products ready to explore`,
-                          icon: ShoppingBag,
-                          tone: "blue"
-                        },
-                        {
-                          label: "Best Sellers",
-                          title: "Popular with customers",
-                          text: `${bestSellerProducts.length} best-selling picks in stock`,
-                          icon: Star,
-                          tone: "slate"
-                        },
-                        {
-                          label: "Limited Offers",
-                          title: "Deals worth checking",
+                          label: "Hot Deals",
+                          title: "Limited-time prices from the live catalog",
                           text: `${discountedProductCount} discounted products available`,
                           icon: RefreshCw,
                           tone: "orange"
@@ -816,7 +793,7 @@ export default function App() {
                           <button
                             key={promo.label}
                             onClick={() => { setCurrentPage('products'); setSelectedCategory('all'); }}
-                            className={`group relative overflow-hidden rounded-3xl p-6 sm:p-7 text-left shadow-lg transition-all duration-300 hover:-translate-y-1 hover:shadow-xl cursor-pointer bg-gradient-to-br ${toneClasses}`}
+                            className={`group relative overflow-hidden rounded-3xl p-6 sm:p-8 text-left shadow-xl transition-all duration-300 hover:-translate-y-1 hover:shadow-2xl cursor-pointer bg-gradient-to-br ${toneClasses}`}
                           >
                             <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.22),transparent_52%)]" />
                             <div className="relative z-10 flex items-start justify-between gap-6">
@@ -833,29 +810,46 @@ export default function App() {
                                   <ArrowRight className="h-3.5 w-3.5 ml-1.5 transition-transform group-hover:translate-x-1" />
                                 </span>
                               </div>
-                              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-white/15 border border-white/20">
-                                <Icon className="h-5.5 w-5.5" />
+                              <div className="flex shrink-0 flex-col items-end gap-3">
+                                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white/15 border border-white/20">
+                                  <Icon className="h-5.5 w-5.5" />
+                                </div>
                               </div>
                             </div>
                           </button>
                         );
                       })}
+                    </div>}
+                    <div className="relative z-10 mt-5 flex snap-x snap-mandatory gap-4 overflow-x-auto pb-3 scrollbar-none" aria-label="Discounted products">
+                      {discountedProducts.map((prod) => (
+                        <div key={prod.id} className="w-[76vw] max-w-[275px] flex-none snap-start sm:w-[275px]">
+                          <ProductCard
+                            product={prod}
+                            isWishlisted={wishlistProductIds.has(prod.id)}
+                            onAddToCart={handleAddToCart}
+                            onToggleWishlist={handleToggleWishlist}
+                            onViewDetail={handleViewProduct}
+                            showWishlist={settings?.enableWishlist !== false}
+                            settings={settings}
+                          />
+                        </div>
+                      ))}
                     </div>
-                  </section>
+                  </section>}
 
                   {/* Brand Why Choose Us Section - Luxury Grid */}
-                  <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                    <div className="bg-slate-950 text-white rounded-[2rem] sm:rounded-[2.5rem] p-6 sm:p-8 md:p-12 relative overflow-hidden text-left border border-slate-800 shadow-2xl">
+                  <section className="order-[9] max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                    <div className="zy-market-assurance text-white rounded-[2rem] sm:rounded-[2.5rem] p-6 sm:p-8 md:p-12 relative overflow-hidden text-left shadow-2xl">
                       <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(29,78,216,0.28)_0,transparent_58%)]"></div>
                       
                       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-center relative z-10">
                         <div className="lg:col-span-4 space-y-4">
                           <span className="text-xs font-extrabold text-blue-300 uppercase tracking-widest">Why choose {settings?.storeName || "Zyro.lk"}?</span>
                           <h3 className="text-2xl sm:text-4xl font-black font-display leading-tight text-white">
-                            A local shopping experience built for trust
+                            Why Shop With {settings?.storeName || "Zyro.lk"}?
                           </h3>
                           <p className="text-sm text-slate-300 font-light leading-relaxed">
-                            Browse premium electronics with clear pricing, secure checkout, islandwide delivery, and a team customers can contact before and after ordering.
+                            Browse carefully selected products with clear pricing, secure checkout, islandwide delivery, and support before and after ordering.
                           </p>
                           <button 
                             onClick={() => setCurrentPage('contact')}
@@ -868,10 +862,10 @@ export default function App() {
 
                         <div className="lg:col-span-8 grid grid-cols-1 sm:grid-cols-2 gap-4">
                           {[
-                            { icon: ShieldCheck, title: "Trusted Products", text: "Curated electronics with clear product details and review support." },
-                            { icon: Truck, title: "Fast Delivery", text: "Delivery options built for Colombo, suburbs, and islandwide orders." },
-                            { icon: ShoppingBag, title: "Local Sri Lankan Store", text: "A local storefront experience designed around COD and support." },
-                            { icon: Phone, title: "Customer Support", text: "Contact options stay close when customers need order guidance." }
+                            { icon: ShieldCheck, title: "Cash on Delivery", text: "Pay when your order arrives." },
+                            { icon: Truck, title: "Islandwide Delivery", text: "Fast delivery across Sri Lanka." },
+                            { icon: ShoppingBag, title: "Quality Checked Products", text: "Carefully selected supplier products." },
+                            { icon: Phone, title: "Friendly Customer Support", text: "WhatsApp assistance before and after purchase." }
                           ].map((item) => {
                             const Icon = item.icon;
                             return (
@@ -893,10 +887,10 @@ export default function App() {
 
                   {/* New Arrivals segment */}
                   {newArrivalProducts.length > 0 && (
-                    <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                    <section className="zy-market-shelf zy-market-shelf-new order-[5] max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                       <div className="flex flex-col sm:flex-row sm:items-end justify-between mb-8 gap-4">
                         <div className="text-left max-w-2xl">
-                          <span className="zy-section-eyebrow block">Fresh stock</span>
+                          <span className="zy-section-eyebrow zy-section-eyebrow-pill block w-fit">Fresh stock</span>
                           <h2 className="text-2xl sm:text-3xl font-black tracking-tight text-slate-900 font-display mt-2">
                             New Arrivals
                           </h2>
@@ -930,10 +924,10 @@ export default function App() {
 
                   {/* Best Sellers Segment */}
                   {bestSellerProducts.length > 0 && (
-                    <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                    <section className="zy-market-shelf zy-market-shelf-best order-[6] max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                       <div className="flex flex-col sm:flex-row sm:items-end justify-between mb-8 gap-4">
                         <div className="text-left max-w-2xl">
-                          <span className="zy-section-eyebrow block">Top volume sales</span>
+                          <span className="zy-section-eyebrow zy-section-eyebrow-pill block w-fit">Top volume sales</span>
                           <h2 className="text-2xl sm:text-3xl font-black tracking-tight text-slate-900 font-display mt-2">
                             Our Best Sellers
                           </h2>
@@ -965,12 +959,47 @@ export default function App() {
                     </section>
                   )}
 
-                  {/* Latest Products segment */}
-                  {latestProducts.length > 0 && (
-                    <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                  {/* Recommended products use the existing active catalog order. */}
+                  {recommendedProducts.length > 0 && (
+                    <section className="zy-market-shelf zy-market-shelf-recommended order-[7] max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                       <div className="flex flex-col sm:flex-row sm:items-end justify-between mb-8 gap-4">
                         <div className="text-left max-w-2xl">
-                          <span className="zy-section-eyebrow block">Recently added</span>
+                          <span className="zy-section-eyebrow zy-section-eyebrow-pill block w-fit">Selected from the live catalog</span>
+                          <h2 className="text-2xl sm:text-3xl font-black tracking-tight text-slate-900 font-display mt-2">Recommended For You</h2>
+                          <p className="text-sm text-slate-500 mt-2">A quick starting point from products currently available in the marketplace.</p>
+                        </div>
+                        <button
+                          onClick={() => { setCurrentPage('products'); setSelectedCategory('all'); }}
+                          className="zy-button zy-button-outline text-xs px-4 py-2 rounded-full flex items-center cursor-pointer"
+                        >
+                          Browse All Products
+                          <ArrowRight className="h-4 w-4 ml-1.5" />
+                        </button>
+                      </div>
+
+                      <div className="grid grid-cols-1 min-[480px]:grid-cols-2 lg:grid-cols-4 gap-5 sm:gap-6 lg:gap-7">
+                        {recommendedProducts.map((prod) => (
+                          <ProductCard
+                            key={prod.id}
+                            product={prod}
+                            isWishlisted={wishlistProductIds.has(prod.id)}
+                            onAddToCart={handleAddToCart}
+                            onToggleWishlist={handleToggleWishlist}
+                            onViewDetail={handleViewProduct}
+                            showWishlist={settings?.enableWishlist !== false}
+                            settings={settings}
+                          />
+                        ))}
+                      </div>
+                    </section>
+                  )}
+
+                  {/* Latest Products segment */}
+                  {latestProducts.length > 0 && (
+                    <section className="zy-market-shelf zy-market-shelf-latest order-[8] max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                      <div className="flex flex-col sm:flex-row sm:items-end justify-between mb-8 gap-4">
+                        <div className="text-left max-w-2xl">
+                          <span className="zy-section-eyebrow zy-section-eyebrow-pill block w-fit">Recently added</span>
                           <h2 className="text-2xl sm:text-3xl font-black tracking-tight text-slate-900 font-display mt-2">
                             Latest Products
                           </h2>
@@ -1007,7 +1036,7 @@ export default function App() {
 
               {/* Beautiful customer testimonials segment */}
               {homepageReviews.length > 0 && (
-                <section className="bg-white/60 py-16 sm:py-20 text-left border-y border-slate-100">
+                <section className="zy-market-testimonials order-[10] py-16 sm:py-20 text-left border-y border-slate-200/70">
                   <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                     <div className="text-center space-y-2 mb-12">
                       <span className="zy-section-eyebrow block">Testimonials</span>
@@ -1056,6 +1085,24 @@ export default function App() {
                   </div>
                 </section>
               )}
+
+              <section className="zy-community-banner order-[11] mx-auto w-[calc(100%-2rem)] max-w-7xl overflow-hidden rounded-[2rem] px-6 py-10 text-left text-white sm:w-[calc(100%-3rem)] sm:px-10 sm:py-12 lg:px-14">
+                <div className="relative z-10 flex flex-col items-start justify-between gap-7 md:flex-row md:items-center">
+                  <div className="max-w-2xl">
+                    <span className="inline-flex rounded-full border border-white/20 bg-white/10 px-3 py-1 text-[10px] font-black uppercase tracking-widest">Community updates</span>
+                    <h2 className="mt-3 text-2xl font-black font-display sm:text-4xl">Join the Zyro.lk Community</h2>
+                    <p className="mt-2 text-sm leading-relaxed text-blue-100 sm:text-base">Discover new arrivals, exclusive deals and special offers from the live marketplace.</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => { setCurrentPage('products'); setSelectedCategory('all'); }}
+                    className="zy-button min-h-12 w-full rounded-2xl border border-white bg-white px-6 text-sm font-black text-brand-blue shadow-xl sm:w-auto"
+                  >
+                    Explore Latest Offers
+                    <ArrowRight className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                </div>
+              </section>
 
             </div>
           )}
@@ -1244,7 +1291,7 @@ export default function App() {
                   Select A Curated Collection
                 </h1>
                 <p className="text-sm text-slate-500 font-light leading-relaxed max-w-xl mx-auto">
-                  Browse high-end direct imports. Choose a category below to filter our high-performance electronic stock instantly.
+                  Browse every live collection in one place. Choose a category below to filter available products instantly.
                 </p>
               </div>
 
@@ -1300,7 +1347,7 @@ export default function App() {
                         
                         {/* Overlay label */}
                         <div className="absolute bottom-4 left-4 md:bottom-6 md:left-6 bg-brand-blue text-white text-[9px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full shadow-md">
-                          Direct Import
+                          Live Collection
                         </div>
                       </div>
 
@@ -1320,12 +1367,12 @@ export default function App() {
                             {cat.name}
                           </h3>
                           <p className="text-xs text-slate-500 font-light leading-relaxed">
-                            Imported solutions with authorized global brand specifications and active local service centers in Sri Lanka.
+                            Explore available products with clear pricing, stock visibility, and convenient shopping actions.
                           </p>
                         </div>
 
                         <div className="flex items-center justify-between pt-6 border-t border-slate-100 mt-6 md:mt-0">
-                          <span className="text-[11px] font-semibold text-slate-400">Warranty Included</span>
+                          <span className="text-[11px] font-semibold text-slate-400">Quality Checked</span>
                           <span className="text-xs font-bold text-brand-blue flex items-center gap-1 bg-blue-50/50 group-hover:bg-brand-blue group-hover:text-white px-3.5 py-1.5 rounded-full transition-all duration-300">
                             Explore Collection
                             <ArrowRight className="h-3.5 w-3.5 group-hover:translate-x-0.5 transition-transform" />
@@ -1351,7 +1398,7 @@ export default function App() {
                     <h1 className="text-2xl sm:text-3xl font-black font-display text-slate-950">Your Wishlist</h1>
                     <span className="inline-flex h-7 min-w-7 items-center justify-center rounded-full bg-red-50 px-2 text-xs font-black text-red-600">{wishlist.length}</span>
                   </div>
-                  <p className="text-xs text-slate-500 font-medium mt-1.5">Compare saved products and return whenever you are ready.</p>
+                  <p className="text-xs text-slate-500 font-medium mt-1.5">Compare saved products and revisit them whenever you are ready.</p>
                 </div>
                 {wishlist.length > 0 && (
                   <button type="button" onClick={() => { setCurrentPage('products'); setSelectedCategory('all'); }} className="zy-button zy-button-outline min-h-11 px-4 text-xs focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20">

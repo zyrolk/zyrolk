@@ -343,12 +343,10 @@ export class A2ZConnectorService {
         
         // Filter rule: "returns only live products"
         const isLiveStatus = item.status !== 'inactive' && item.active !== false;
-        const hasStock = parsed.inventoryLevel > 0;
-        
-        if (parsed.sku && parsed.title && isLiveStatus && hasStock) {
+        if (parsed.sku && parsed.title && isLiveStatus) {
           parsedProducts.push(parsed);
         } else {
-          console.log(`[A2Z-Connector] Filtering out inactive or out-of-stock product SKU: ${parsed.sku}`);
+          console.log(`[A2Z-Connector] Filtering out inactive or invalid product SKU: ${parsed.sku}`);
         }
       } catch (parseErr) {
         console.warn('[A2Z-Connector] Error parsing catalog product item:', parseErr);

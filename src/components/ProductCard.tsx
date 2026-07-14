@@ -105,7 +105,7 @@ function ProductCard({
       role="button"
       tabIndex={0}
       aria-label={`View details for ${product.name}`}
-      className="zy-card zy-card-hover group relative overflow-hidden flex flex-col h-full cursor-pointer border-slate-200/80 bg-white"
+      className="zy-product-card group relative overflow-hidden flex flex-col h-full cursor-pointer bg-white"
     >
       {/* Badges Overlay */}
       <div className="absolute top-3 left-3 z-10 flex flex-col space-y-1">
@@ -133,7 +133,7 @@ function ProductCard({
             e.stopPropagation();
             onToggleWishlist(product);
           }}
-          className="absolute top-3 right-3 z-20 flex h-11 w-11 items-center justify-center bg-white/95 hover:bg-white text-slate-500 hover:text-red-500 rounded-full shadow-md hover:shadow-lg backdrop-blur-xs transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/25"
+          className="absolute top-3 right-3 z-20 flex h-11 w-11 items-center justify-center border border-white/80 bg-white/95 hover:bg-white text-slate-500 hover:text-red-500 rounded-full shadow-md hover:shadow-lg backdrop-blur-xs transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/25"
           title={isWishlisted ? "Remove from Wishlist" : "Add to Wishlist"}
           aria-label={isWishlisted ? `Remove ${product.name} from wishlist` : `Add ${product.name} to wishlist`}
           aria-pressed={isWishlisted}
@@ -143,7 +143,7 @@ function ProductCard({
       )}
 
       {/* Product Image Stage */}
-      <div className="relative w-full aspect-square bg-gradient-to-br from-slate-50 via-white to-blue-50/50 flex items-center justify-center overflow-hidden p-5 sm:p-7">
+      <div className="relative m-3 mb-0 aspect-square w-[calc(100%-1.5rem)] overflow-hidden rounded-[1.4rem] border border-slate-100 bg-gradient-to-br from-slate-50 via-white to-blue-50/80 p-4 sm:p-6 flex items-center justify-center">
         <img
           src={product.imageUrl || PRODUCT_IMAGE_FALLBACK}
           alt={product.name}
@@ -152,7 +152,7 @@ function ProductCard({
           decoding="async"
           width="600"
           height="600"
-          className="w-full h-full object-contain transform group-hover:scale-[1.06] transition-transform duration-500 ease-out drop-shadow-[0_18px_24px_rgba(15,23,42,0.08)]"
+          className="w-full h-full object-contain transform group-hover:scale-[1.07] transition-transform duration-500 ease-out drop-shadow-[0_18px_24px_rgba(15,23,42,0.1)]"
           onError={(e) => {
             e.currentTarget.onerror = null;
             e.currentTarget.src = PRODUCT_IMAGE_FALLBACK;
@@ -173,7 +173,7 @@ function ProductCard({
             e.stopPropagation();
             onViewDetail(product);
           }}
-          className="absolute inset-x-5 bottom-4 z-10 flex min-h-11 items-center justify-center gap-2 rounded-xl border border-white/80 bg-slate-950/90 px-4 py-2.5 text-xs font-black text-white shadow-lg backdrop-blur-md transition-all duration-300 sm:translate-y-3 sm:opacity-0 sm:group-hover:translate-y-0 sm:group-hover:opacity-100 focus-visible:translate-y-0 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/25"
+          className="absolute inset-x-4 bottom-3 z-10 flex min-h-11 items-center justify-center gap-2 rounded-xl border border-white/80 bg-brand-blue/95 px-4 py-2.5 text-xs font-black text-white shadow-lg backdrop-blur-md transition-all duration-300 sm:translate-y-3 sm:opacity-0 sm:group-hover:translate-y-0 sm:group-hover:opacity-100 focus-visible:translate-y-0 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/25"
           aria-label={`Quick view ${product.name}`}
         >
           <Eye className="h-4 w-4" aria-hidden="true" />
@@ -182,7 +182,7 @@ function ProductCard({
       </div>
 
       {/* Content & Details */}
-      <div className="p-4 sm:p-5 flex flex-col flex-1">
+      <div className="flex flex-1 flex-col p-4 pt-4 sm:p-5 sm:pt-4">
         {/* Category Label */}
         <span className="text-[10px] text-slate-500 font-black uppercase tracking-widest mb-1.5">
           {product.category.replace('-', ' ')}
@@ -215,7 +215,7 @@ function ProductCard({
         {/* Pricing & Stock Grid */}
         <div className="mt-auto pt-3.5 border-t border-slate-100/80 flex items-end justify-between flex-wrap gap-2">
           <div className="flex flex-col">
-            <span className="zy-price text-xl leading-none">
+            <span className="zy-price text-xl leading-none sm:text-[1.35rem]">
               {formatPrice(product.price)}
             </span>
             {product.originalPrice && product.originalPrice > product.price && (
@@ -248,11 +248,12 @@ function ProductCard({
               {/* Quick WhatsApp Order */}
               <button
                 onClick={handleWhatsAppQuickBuy}
-                className="zy-button flex h-11 w-11 flex-none items-center justify-center rounded-xl bg-white hover:bg-emerald-50 text-emerald-700 border border-emerald-200 p-0 cursor-pointer shadow-sm focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-emerald-500/20"
+                className="zy-button min-h-11 flex-1 rounded-xl border border-emerald-200 bg-white px-2 text-[11px] text-emerald-700 shadow-sm hover:bg-emerald-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-emerald-500/20"
                 title="Buy Now via WhatsApp"
                 aria-label={`Order ${product.name} through WhatsApp`}
               >
                 <Phone className="h-4 w-4" aria-hidden="true" />
+                <span>Buy Now</span>
               </button>
             </div>
           ) : (

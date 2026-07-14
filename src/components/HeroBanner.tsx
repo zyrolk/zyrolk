@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { TouchEvent, useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ShoppingBag, ArrowRight, ChevronLeft, ChevronRight } from 'lucide-react';
+import { ShoppingBag, ArrowRight, Banknote, ChevronLeft, ChevronRight, Headphones, ShieldCheck, Sparkles, Truck } from 'lucide-react';
 import { WebsiteSettings } from '../types';
 import { normalizeSlideSpeed } from '../services/hero-slider/heroSlider';
 
@@ -10,70 +10,31 @@ interface HeroBannerProps {
   settings?: WebsiteSettings | null;
 }
 
-const PREMIUM_DEFAULT_SLIDES = [
-  {
-    id: "premium-slide-1",
-    badge: "SMART LIVING",
-    title: "Premium Electronics Delivered Across Sri Lanka",
-    subtitle: "Premium Electronics • Islandwide Delivery • Cash on Delivery",
-    description: "Shop curated gadgets, accessories, smart devices, and lifestyle electronics from Zyro.lk with a clean checkout and local support.",
-    image: "https://images.unsplash.com/photo-1546868871-7041f2a55e12?q=80&w=1600",
-    bgGradient: "from-black via-zinc-950/90 to-blue-950/20",
-    cta: "Shop Now",
-    ctaUrl: "/products"
-  },
-  {
-    id: "premium-slide-2",
-    badge: "NEW ARRIVALS",
-    title: "Explore the Latest Gadgets",
-    subtitle: "Discover the newest smart devices and accessories.",
-    description: "Stay ahead of the curve with cutting-edge wearables, immersive sound accessories, and high-performance smart gadgets designed for modern life.",
-    image: "https://images.unsplash.com/photo-1505740420928-5e560c06d30e?q=80&w=1600",
-    bgGradient: "from-black via-neutral-950/90 to-blue-950/20",
-    cta: "Explore Collection",
-    ctaUrl: "/products"
-  },
-  {
-    id: "premium-slide-3",
-    badge: "THE ZYRO PROMISE",
-    title: "Why Choose Zyro.lk?",
-    subtitle: "Trusted products, fast delivery and excellent customer support.",
-    description: "We are Sri Lanka's premium electronics hub, offering 100% authentic tech imports, secure cash on delivery islandwide, and unmatched 24/7 client care.",
-    image: "https://images.unsplash.com/photo-1586528116311-ad8dd3c8310d?q=80&w=1600",
-    bgGradient: "from-black via-zinc-950/90 to-blue-950/20",
-    cta: "Learn More",
-    ctaUrl: "/categories"
-  }
-];
+const campaignTone = (value?: string) => {
+  if (value?.includes('orange')) return 'from-orange-50 via-white to-amber-100';
+  if (value?.includes('emerald')) return 'from-emerald-50 via-white to-cyan-100';
+  if (value?.includes('purple')) return 'from-violet-50 via-white to-blue-100';
+  return 'from-white via-blue-50 to-blue-200';
+};
 
 export default function HeroBanner({ onExploreProducts, onBrowseCategories, settings }: HeroBannerProps) {
   const [currentSlide, setCurrentSlide] = useState(0);
   const [progress, setProgress] = useState(0);
   const [isPlaying, setIsPlaying] = useState(true);
+  const touchStartX = useRef<number | null>(null);
 
-  // Parse slides
-  const hasConfiguredSlides = Boolean(settings?.heroBanners?.length);
   const configuredSlides = settings?.heroBanners?.filter((banner) => banner.enabled !== false) || [];
-  const slides = configuredSlides.length > 0
-    ? configuredSlides.map((b, idx) => {
-        // If it is the default seeded database entries, automatically map them to our premium redesigned ones!
-        const isOldDefault = b.title === "Samsung Odyssey OLED G9" || b.title === "Zyro Smart Solar Inverter";
-        if (isOldDefault && idx < PREMIUM_DEFAULT_SLIDES.length) {
-          return PREMIUM_DEFAULT_SLIDES[idx];
-        }
-        return {
-          id: b.id || `banner-${idx}`,
-          badge: b.badge || "FEATURED PRODUCT",
-          title: b.title,
-          subtitle: b.subtitle,
-          description: b.description || "Explore fully guaranteed premium electronics with rapid islandwide shipping.",
-          image: b.image || PREMIUM_DEFAULT_SLIDES[0].image,
-          bgGradient: b.bgGradient || "from-black via-zinc-950/95 to-blue-950/25",
-          cta: b.buttonText || "Shop Now",
-          ctaUrl: b.buttonUrl || '/products',
-        };
-      })
-    : PREMIUM_DEFAULT_SLIDES;
+  const slides = configuredSlides.map((banner, index) => ({
+    id: banner.id || `banner-${index}`,
+    badge: banner.badge?.trim() || '',
+    title: banner.title,
+    subtitle: banner.subtitle,
+    description: banner.description,
+    image: banner.image,
+    bgGradient: banner.bgGradient,
+    cta: banner.buttonText?.trim() || '',
+    ctaUrl: banner.buttonUrl?.trim() || '',
+  }));
 
   // Slide Duration
   const slideDuration = normalizeSlideSpeed(settings?.autoSlideSpeed) * 1000;
@@ -134,176 +95,204 @@ export default function HeroBanner({ onExploreProducts, onBrowseCategories, sett
     setProgress(0);
   };
 
-  if (hasConfiguredSlides && configuredSlides.length === 0) return null;
+  const handleTouchStart = (event: TouchEvent) => {
+    touchStartX.current = event.touches[0]?.clientX ?? null;
+    setIsPlaying(false);
+  };
+
+  const handleTouchEnd = (event: TouchEvent) => {
+    const startX = touchStartX.current;
+    const endX = event.changedTouches[0]?.clientX;
+    touchStartX.current = null;
+    setIsPlaying(true);
+    if (startX === null || endX === undefined || Math.abs(startX - endX) < 48 || slides.length < 2) return;
+    if (startX > endX) handleNext();
+    else handlePrev();
+  };
+
+  if (slides.length === 0) return null;
 
   return (
-    <div 
-      className="relative min-h-[520px] sm:min-h-[580px] lg:min-h-[640px] w-full overflow-hidden bg-slate-950 text-white group"
+    <div
+      className="zy-hero group relative mx-auto w-full max-w-7xl px-4 text-slate-900 sm:px-6 lg:px-8"
       onMouseEnter={() => setIsPlaying(false)}
       onMouseLeave={() => setIsPlaying(true)}
       role="region"
       aria-roledescription="carousel"
       aria-label="Featured products"
     >
-      {/* Background slide with AnimatePresence */}
-      <AnimatePresence mode="wait">
-        <motion.div
-          key={currentSlide}
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: 0.8 }}
-          className="absolute inset-0 w-full h-full"
+      <div className="zy-hero-stage relative min-h-[340px] touch-pan-y overflow-hidden rounded-[2rem] sm:min-h-[420px] sm:rounded-[2.75rem] lg:min-h-[570px]" onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
+        <div className={`absolute inset-0 bg-gradient-to-br ${campaignTone(slides[currentSlide].bgGradient)}`} />
+        <div className="absolute -right-24 -top-24 h-80 w-80 rounded-full bg-blue-500/20 blur-3xl" />
+        <div className="absolute -bottom-28 left-1/3 h-72 w-72 rounded-full bg-cyan-300/20 blur-3xl" />
+        <div className="absolute right-[8%] top-[12%] hidden h-[76%] w-[42%] rotate-[-4deg] rounded-[3rem] border border-white/60 bg-gradient-to-br from-blue-600 to-blue-800 shadow-2xl shadow-blue-950/25 lg:block" />
+
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={currentSlide}
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            transition={{ duration: 0.45 }}
+            className="relative z-10 grid min-h-[340px] grid-cols-12 items-center gap-3 px-5 py-7 sm:min-h-[420px] sm:gap-6 sm:px-8 sm:py-10 lg:min-h-[570px] lg:px-12"
           role="group"
           aria-roledescription="slide"
           aria-label={`${currentSlide + 1} of ${slides.length}: ${slides[currentSlide].title}`}
         >
-          {/* Background Image */}
-          <div className="absolute inset-0 select-none pointer-events-none">
-            <motion.img
-              initial={{ scale: 1.08 }}
-              animate={{ scale: 1.02 }}
-              transition={{ duration: 6, ease: "easeOut" }}
-              src={slides[currentSlide].image}
-              alt={slides[currentSlide].title}
-              referrerPolicy="no-referrer"
-              className="w-full h-full object-cover object-center transform filter brightness-[0.75] contrast-[1.05]"
-            />
-            <div className={`absolute inset-0 bg-gradient-to-r ${slides[currentSlide].bgGradient}`} />
-            {/* Cinematic Gradient Masking for absolute legibility */}
-            {/* Desktop Side Vignette */}
-            <div className="absolute inset-0 bg-gradient-to-r from-black via-black/85 to-transparent md:block hidden" />
-            {/* Mobile Bottom Vignette */}
-            <div className="absolute inset-0 bg-gradient-to-b from-black/85 via-black/95 to-black md:hidden block" />
-            {/* Ambient Royal Blue Backlight */}
-            <div className="absolute inset-0 bg-[radial-gradient(circle_at_25%_50%,rgba(0,82,254,0.18),transparent_65%)]" />
-          </div>
-
-          {/* Slide Content */}
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 w-full h-full flex flex-col justify-center relative z-10">
-            <div className="w-full md:w-3/5 lg:w-1/2 flex flex-col justify-center text-center md:text-left items-center md:items-start py-10 mt-4 md:mt-0">
-              
-              {/* Badge */}
+            <div className="col-span-7 flex min-w-0 flex-col items-start text-left lg:col-span-6 lg:pr-8">
+              {slides[currentSlide].badge && (
               <motion.span
                 initial={{ opacity: 0, y: 15 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.15, duration: 0.5 }}
-                className="inline-flex items-center px-3.5 py-1 rounded-full text-[10px] sm:text-xs font-mono font-bold tracking-widest bg-blue-500/15 text-blue-200 border border-blue-300/20 mb-4 uppercase shadow-sm"
+                className="mb-4 inline-flex items-center gap-2 rounded-full border border-blue-200 bg-white/85 px-3.5 py-2 text-[10px] font-black uppercase tracking-[0.16em] text-brand-blue shadow-sm backdrop-blur-md"
               >
+                <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
                 {slides[currentSlide].badge}
               </motion.span>
-
-              {/* Title */}
+              )}
               <motion.h1
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.25, duration: 0.6 }}
-                className="w-full min-w-0 max-w-3xl text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-black tracking-tight font-display text-white mb-4 leading-tight"
+                className="max-w-3xl text-[1.7rem] font-black leading-[0.98] tracking-[-0.04em] text-[#111827] font-display sm:text-4xl lg:text-6xl"
+              >
+                Everything You Need,
+                <span className="block text-brand-blue">All In One Marketplace</span>
+              </motion.h1>
+              <motion.p
+                initial={{ opacity: 0, y: 16 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.3, duration: 0.55 }}
+                className="mt-3 max-w-xl text-xs font-black uppercase tracking-[0.12em] text-slate-700 sm:text-sm"
               >
                 {slides[currentSlide].title}
-              </motion.h1>
-
-              {/* Subtitle */}
+              </motion.p>
               <motion.p
                 initial={{ opacity: 0, y: 18 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.35, duration: 0.6 }}
-                className="w-full min-w-0 max-w-xl text-base sm:text-lg md:text-xl font-medium text-blue-100 mb-4"
+                className="mt-3 max-w-xl text-[11px] font-bold leading-relaxed text-brand-blue sm:mt-5 sm:text-sm lg:text-lg"
               >
-                {slides[currentSlide].subtitle}
+                Shop electronics, home essentials, kitchen products, beauty items, accessories and thousands of everyday products from one trusted Sri Lankan marketplace.
               </motion.p>
-
-              {/* Description */}
-              <motion.p
+              {slides[currentSlide].description && <motion.p
                 initial={{ opacity: 0, y: 15 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.45, duration: 0.6 }}
-                className="w-full min-w-0 max-w-lg text-xs sm:text-sm md:text-base text-zinc-300 mb-8 leading-relaxed font-light"
+                className="mt-2 hidden max-w-lg text-sm leading-relaxed text-slate-600 sm:block"
               >
                 {slides[currentSlide].description}
-              </motion.p>
-
-              {/* Actions */}
+              </motion.p>}
               <motion.div
                 initial={{ opacity: 0, y: 15 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.55, duration: 0.6 }}
-                className="flex w-full min-w-0 flex-col items-center space-y-3 sm:w-auto sm:flex-row sm:space-y-0 sm:space-x-4"
+                className="mt-6 flex w-full flex-col gap-3 sm:w-auto sm:flex-row"
               >
-                <button
+                {slides[currentSlide].cta && <button
                   onClick={handlePrimaryAction}
-                  className="zy-button zy-button-primary w-full min-w-0 max-w-full px-5 py-3.5 text-sm rounded-full cursor-pointer sm:w-auto sm:px-7"
+                  className="zy-button zy-button-primary min-h-13 w-full rounded-2xl px-7 text-sm sm:w-auto"
                 >
-                  <ShoppingBag className="h-4.5 w-4.5 mr-2" />
+                  <ShoppingBag className="h-4.5 w-4.5" />
                   {slides[currentSlide].cta}
-                </button>
+                </button>}
                 <button
                   onClick={onBrowseCategories || onExploreProducts}
-                  className="zy-button w-full min-w-0 max-w-full px-5 py-3.5 text-sm rounded-full text-white bg-white/10 hover:bg-white/15 active:bg-white/20 border border-white/20 hover:border-white/30 transition-all backdrop-blur-md cursor-pointer sm:w-auto sm:px-7"
+                  className="zy-button min-h-13 w-full rounded-2xl border border-blue-200 bg-white px-7 text-sm font-black text-slate-800 shadow-lg shadow-blue-950/5 sm:w-auto"
                 >
                   Browse Categories
-                  <ArrowRight className="h-4.5 w-4.5 ml-2 text-zinc-400" />
+                  <ArrowRight className="h-4.5 w-4.5 text-brand-blue" />
                 </button>
               </motion.div>
-
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ delay: 0.7, duration: 0.5 }}
+                className="mt-4 hidden w-full grid-cols-2 gap-2 text-[9px] font-black text-slate-700 sm:grid lg:mt-6 lg:flex lg:w-auto lg:flex-wrap sm:text-[10px]"
+                aria-label="Store benefits"
+              >
+                {[
+                  { label: 'Cash on Delivery', icon: Banknote },
+                  { label: 'Islandwide Delivery', icon: Truck },
+                  { label: 'Secure Payments', icon: ShieldCheck },
+                  { label: 'Customer Support', icon: Headphones },
+                ].map(({ label, icon: Icon }) => (
+                  <span key={label} className="inline-flex items-center gap-1.5 rounded-xl border border-white bg-white/75 px-2.5 py-2 shadow-sm backdrop-blur-md">
+                    <Icon className="h-3.5 w-3.5" aria-hidden="true" />
+                    {label}
+                  </span>
+                ))}
+              </motion.div>
             </div>
-          </div>
-        </motion.div>
-      </AnimatePresence>
 
-      {/* Manual Slide Controls (Arrow buttons, styled premiumly) */}
-      {isSliderActive && slides.length > 1 && (
-        <>
+            <div className="relative col-span-5 min-h-[220px] self-stretch sm:min-h-[330px] lg:col-span-6 lg:min-h-[490px]" aria-label="Promotional product image">
+              <div className="absolute inset-[8%] rounded-full bg-blue-500/18 blur-3xl" />
+              <motion.div initial={{ opacity: 0, scale: 0.94, x: 20 }} animate={{ opacity: 1, scale: 1, x: 0 }} transition={{ duration: 0.55, delay: 0.15 }} className="absolute inset-2 flex items-center justify-center sm:inset-6 lg:inset-8">
+                <div className="relative flex h-full w-full items-center justify-center overflow-hidden rounded-[1.75rem] border border-white/70 bg-white/55 p-2 shadow-2xl shadow-blue-950/15 backdrop-blur-md sm:rounded-[2.5rem] sm:p-5">
+                  <ShoppingBag className="absolute h-16 w-16 text-blue-200" aria-hidden="true" />
+                  <img
+                    src={slides[currentSlide].image}
+                    alt={slides[currentSlide].title}
+                    className="relative z-10 h-full w-full object-contain drop-shadow-[0_24px_30px_rgba(15,23,42,0.18)]"
+                    loading={currentSlide === 0 ? 'eager' : 'lazy'}
+                    decoding="async"
+                    referrerPolicy="no-referrer"
+                    onError={(event) => { event.currentTarget.style.display = 'none'; }}
+                  />
+                </div>
+              </motion.div>
+              {slides[currentSlide].badge && (
+                <motion.div initial={{ opacity: 0, scale: 0.8, rotate: -8 }} animate={{ opacity: 1, scale: 1, rotate: 6 }} transition={{ delay: 0.55 }} className="absolute right-0 top-3 z-20 hidden max-w-28 rounded-2xl border-4 border-white bg-brand-orange px-4 py-3 text-center text-[10px] font-black uppercase leading-tight text-white shadow-2xl shadow-orange-900/20 sm:block lg:right-2 lg:top-10">
+                  {slides[currentSlide].badge}
+                </motion.div>
+              )}
+              <div className="absolute bottom-4 left-0 z-20 hidden rounded-2xl border border-white/70 bg-white/85 px-3 py-2 text-[10px] font-black text-slate-700 shadow-xl backdrop-blur-md sm:flex sm:items-center sm:gap-2 lg:bottom-10">
+                <Truck className="h-4 w-4 shrink-0 text-brand-blue" aria-hidden="true" />
+                <span className="max-w-52 line-clamp-2">{slides[currentSlide].subtitle || 'Islandwide Delivery'}</span>
+              </div>
+            </div>
+          </motion.div>
+        </AnimatePresence>
+
+        {isSliderActive && slides.length > 1 && (
+          <>
           <button
             onClick={handlePrev}
-            className="absolute left-6 top-1/2 -translate-y-1/2 z-20 md:flex hidden items-center justify-center w-12 h-12 rounded-full bg-black/25 hover:bg-brand-blue border border-white/10 hover:border-blue-400 text-white hover:scale-105 transition-all duration-300 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-400/40 cursor-pointer shadow-lg shadow-black/40"
+            className="absolute bottom-5 right-20 z-20 hidden h-11 w-11 items-center justify-center rounded-full border border-blue-100 bg-white text-brand-blue shadow-lg transition-all hover:-translate-y-0.5 hover:bg-blue-50 focus-visible:ring-4 focus-visible:ring-brand-blue/20 sm:flex"
             aria-label="Previous slide"
           >
             <ChevronLeft className="h-5 w-5" />
           </button>
           <button
             onClick={handleNext}
-            className="absolute right-6 top-1/2 -translate-y-1/2 z-20 md:flex hidden items-center justify-center w-12 h-12 rounded-full bg-black/25 hover:bg-brand-blue border border-white/10 hover:border-blue-400 text-white hover:scale-105 transition-all duration-300 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-400/40 cursor-pointer shadow-lg shadow-black/40"
+            className="absolute bottom-5 right-6 z-20 hidden h-11 w-11 items-center justify-center rounded-full bg-brand-blue text-white shadow-lg transition-all hover:-translate-y-0.5 hover:bg-blue-700 focus-visible:ring-4 focus-visible:ring-brand-blue/20 sm:flex"
             aria-label="Next slide"
           >
             <ChevronRight className="h-5 w-5" />
           </button>
-        </>
-      )}
+          </>
+        )}
 
-      {/* Bottom Progress Pill Indicators */}
-      {isSliderActive && slides.length > 1 && (
-        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-20 flex items-center space-x-3 bg-black/45 backdrop-blur-md px-5 py-3 rounded-full border border-white/10 shadow-xl shadow-black/50 select-none">
+        {isSliderActive && slides.length > 1 && (
+        <div className="absolute bottom-4 left-1/2 z-20 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-white/70 bg-white/80 px-3 py-2 shadow-lg backdrop-blur-md sm:bottom-6 sm:left-8 sm:translate-x-0">
           {slides.map((slide, idx) => (
             <button
               key={slide.id}
               onClick={() => handleSlideSelect(idx)}
-              className="group flex min-h-11 items-center rounded-lg px-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 cursor-pointer"
+              className="flex min-h-8 items-center rounded-full px-1 focus-visible:ring-4 focus-visible:ring-brand-blue/20"
               title={`Go to slide ${idx + 1}`}
               aria-label={`Show slide ${idx + 1} of ${slides.length}: ${slide.title}`}
               aria-current={currentSlide === idx ? 'true' : undefined}
             >
-              <div className="flex items-center space-x-2">
-                {/* Slide Number */}
-                <span className={`text-[10px] font-mono font-semibold transition-colors duration-300 ${currentSlide === idx ? 'text-blue-400' : 'text-zinc-500 group-hover:text-zinc-300'}`}>
-                  0{idx + 1}
-                </span>
-                {/* Progress bar channel */}
-                <div className="w-12 sm:w-16 h-1 rounded-full bg-zinc-800 overflow-hidden relative">
-                  {/* Dynamic loader */}
-                  <div 
-                    className="absolute top-0 left-0 h-full rounded-full bg-gradient-to-r from-brand-blue to-blue-400"
-                    style={{ 
-                      width: currentSlide === idx ? `${progress}%` : '0%',
-                      transition: currentSlide === idx && progress > 0 ? 'width 50ms linear' : 'none'
-                    }}
-                  />
-                </div>
+              <div className={`relative h-2 overflow-hidden rounded-full bg-blue-100 transition-all ${currentSlide === idx ? 'w-14' : 'w-2'}`}>
+                <div className="absolute inset-y-0 left-0 rounded-full bg-brand-blue" style={{ width: currentSlide === idx ? `${progress}%` : '0%', transition: currentSlide === idx && progress > 0 ? 'width 50ms linear' : 'none' }} />
               </div>
             </button>
           ))}
         </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }

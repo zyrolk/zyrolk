@@ -2,7 +2,8 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Menu, X, Search, Heart, ShoppingBag, User, 
   LayoutDashboard, LogIn, LogOut, ChevronDown, Phone,
-  ArrowUpRight, Clock3, LoaderCircle, PackageSearch, Tag
+  ArrowUpRight, Clock3, LoaderCircle, Mic, PackageSearch, Tag,
+  ShieldCheck, ShoppingCart, Grid3X3, MessageCircle, Mail, HelpCircle, Info, LockKeyhole
 } from 'lucide-react';
 import { auth, db } from '../firebase';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
@@ -86,9 +87,17 @@ export default function Navbar({
         setIsSearchOpen(false);
         setActiveSuggestionIndex(-1);
       }
+      if (!target?.closest('[data-account-menu]')) setIsProfileOpen(false);
+    };
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setIsProfileOpen(false);
     };
     document.addEventListener('mousedown', handleOutsideClick);
-    return () => document.removeEventListener('mousedown', handleOutsideClick);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handleOutsideClick);
+      document.removeEventListener('keydown', handleEscape);
+    };
   }, []);
 
   const debouncedSearch = useDebouncedValue(tempSearch, 150);
@@ -105,6 +114,9 @@ export default function Navbar({
       category.id.toLowerCase().includes(normalizedTempSearch)
     ).slice(0, 5);
   }, [categories, normalizedTempSearch]);
+  const popularSearches = useMemo(() => Array.from(new Set(
+    products.filter((product) => product.isBestSeller).map((product) => product.name),
+  )).slice(0, 5), [products]);
 
   const saveRecentSearch = (query: string) => {
     if (!query) return;
@@ -234,7 +246,7 @@ export default function Navbar({
         <input
           id={inputId}
           type="search"
-          placeholder="Search products, brands, models or categories..."
+          placeholder="Search products, brands or categories..."
           value={tempSearch}
           onChange={(event) => {
             setTempSearch(event.target.value);
@@ -243,7 +255,7 @@ export default function Navbar({
           }}
           onFocus={() => setIsSearchOpen(true)}
           onKeyDown={handleSearchKeyDown}
-          className="zy-input min-h-12 min-w-0 max-w-full w-full rounded-2xl border-slate-200 bg-slate-50/90 pl-11 pr-24 text-sm text-slate-900 shadow-inner shadow-slate-950/[0.02] transition-all placeholder:text-slate-500 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/15 focus-visible:border-brand-blue/40 focus-visible:bg-white [&::-webkit-search-cancel-button]:appearance-none"
+          className="zy-input zy-market-search min-h-12 min-w-0 max-w-full w-full rounded-2xl pl-11 pr-36 text-sm text-slate-900 transition-all placeholder:text-slate-500 focus-visible:outline-none [&::-webkit-search-cancel-button]:appearance-none"
           role="combobox"
           aria-autocomplete="list"
           aria-expanded={isSearchOpen}
@@ -255,12 +267,15 @@ export default function Navbar({
           <button
             type="button"
             onClick={clearSearch}
-            className="absolute right-12 top-1/2 z-10 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-xl text-slate-500 transition-colors hover:bg-slate-200 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20"
+            className="absolute right-24 top-1/2 z-10 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-xl text-slate-500 transition-colors hover:bg-slate-200 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20"
             aria-label="Clear product search"
           >
             <X className="h-4 w-4" aria-hidden="true" />
           </button>
         )}
+        <button type="button" disabled className="absolute right-12 top-1/2 z-10 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-xl text-slate-400 disabled:cursor-not-allowed disabled:opacity-70" aria-label="Voice search is not enabled" title="Voice search is not enabled">
+          <Mic className="h-4 w-4" aria-hidden="true" />
+        </button>
         <button
           type="submit"
           className="absolute right-0.5 top-1/2 z-10 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-xl bg-brand-blue text-white shadow-sm transition-all hover:bg-blue-700 active:scale-95 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/25"
@@ -357,6 +372,20 @@ export default function Navbar({
                     </div>
                   </div>
                 )}
+                {popularSearches.length > 0 && (
+                  <div>
+                    <span className="mb-2 flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest text-slate-500">
+                      <PackageSearch className="h-3.5 w-3.5" aria-hidden="true" /> Popular searches
+                    </span>
+                    <div className="flex flex-wrap gap-2">
+                      {popularSearches.map((query) => (
+                        <button key={query} type="button" onClick={() => commitSearch(query)} className="min-h-11 rounded-full border border-orange-100 bg-orange-50 px-3 text-xs font-bold text-orange-700 transition-colors hover:border-orange-200 hover:bg-orange-100 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-orange-500/20">
+                          {query}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 <div>
                   <span className="mb-2 flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest text-slate-500">
                     <Tag className="h-3.5 w-3.5" aria-hidden="true" /> Browse categories
@@ -391,9 +420,10 @@ export default function Navbar({
   };
 
   return (
-    <header className="sticky top-0 z-50 w-full bg-white/95 backdrop-blur-xl border-b border-slate-200/60 shadow-sm">
+    <header className="zy-market-header sticky top-0 z-50 w-full border-b border-white/70 bg-white/80 backdrop-blur-2xl">
+      <div className="h-1 w-full bg-gradient-to-r from-brand-blue via-blue-400 to-brand-orange" aria-hidden="true" />
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between h-16">
+        <div className="flex h-[4.25rem] items-center justify-between">
           
           {/* Logo */}
           <button type="button" className="flex min-h-11 flex-shrink-0 items-center rounded-xl cursor-pointer focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20" onClick={() => { setCurrentPage('home'); setIsAdminMode(false); }} aria-label="Go to homepage">
@@ -419,12 +449,12 @@ export default function Navbar({
           </button>
 
           {/* Desktop Search Bar */}
-          <div className="hidden md:flex flex-1 max-w-md mx-8">
+          <div className="hidden md:flex flex-1 max-w-xl mx-6 xl:mx-8">
             {renderSearchBox('desktop')}
           </div>
 
           {/* Desktop Navigation Links */}
-          <nav className="hidden lg:flex space-x-8">
+          <nav className="hidden items-center gap-1 rounded-2xl border border-slate-200/70 bg-slate-50/75 p-1 lg:flex">
             {navLinks.map((link) => (
               <button
                 key={link.id}
@@ -432,10 +462,10 @@ export default function Navbar({
                   setCurrentPage(link.id);
                   setIsAdminMode(false);
                 }}
-                className={`min-h-11 text-sm font-semibold transition-colors cursor-pointer px-1 ${
+                className={`min-h-10 rounded-xl px-3 text-xs font-black transition-all cursor-pointer ${
                   currentPage === link.id && !isAdminMode
-                    ? 'text-brand-blue border-b-2 border-brand-blue'
-                    : 'text-slate-600 hover:text-slate-900'
+                    ? 'bg-white text-brand-blue shadow-sm'
+                    : 'text-slate-600 hover:bg-white hover:text-slate-900'
                 }`}
               >
                 {link.label}
@@ -496,62 +526,99 @@ export default function Navbar({
             </button>
 
             {/* User Dropdown */}
-            <div className="relative hidden sm:block">
+            <div className="relative hidden sm:block" data-account-menu>
               <button
                 onClick={() => setIsProfileOpen(!isProfileOpen)}
                 className="zy-button zy-button-ghost flex h-11 min-w-11 items-center justify-center space-x-1 p-0 text-slate-600 hover:text-slate-900 cursor-pointer rounded-full focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20"
                 aria-label={user ? 'Open account menu' : 'Open sign in menu'}
                 aria-expanded={isProfileOpen}
+                aria-controls="desktop-account-menu"
               >
                 <User className="h-5 w-5" />
                 <ChevronDown className="h-3.5 w-3.5 hidden sm:block" />
               </button>
 
               {isProfileOpen && (
-                <div className="zy-card absolute right-0 mt-2 w-56 rounded-2xl bg-white shadow-lg ring-1 ring-black/5 divide-y divide-slate-100 z-50 overflow-hidden">
-                  <div className="px-4 py-3">
-                    <p className="text-xs text-slate-400">Signed in as</p>
-                    <p className="text-sm font-medium text-slate-800 truncate">
-                      {user ? user.displayName || user.email : "Guest Session"}
-                    </p>
-                  </div>
-                  {isAdminUser && (
-                    <div className="py-1">
-                      {/* Access Admin mode only for admins */}
-                      <button
-                        onClick={() => {
-                          setIsAdminMode(true);
-                          setCurrentPage('admin');
-                          setIsProfileOpen(false);
-                        }}
-                        className={`flex w-full items-center px-4 py-2.5 text-sm text-left cursor-pointer transition-colors ${
-                          isAdminMode ? 'bg-slate-50 text-brand-blue font-semibold' : 'text-slate-700 hover:bg-slate-50 hover:text-slate-900'
-                        }`}
-                      >
-                        <LayoutDashboard className="h-4 w-4 mr-2" />
-                        Admin Dashboard
-                      </button>
+                <div id="desktop-account-menu" className="zy-account-menu absolute right-0 z-50 mt-3 w-[min(25rem,calc(100vw-2rem))] overflow-hidden rounded-3xl border border-blue-100 bg-white shadow-2xl shadow-slate-950/20">
+                  <div className="bg-gradient-to-br from-blue-700 via-brand-blue to-blue-500 px-5 py-5 text-white">
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-white/25 bg-white/15 text-lg font-black shadow-inner" aria-hidden="true">
+                        {(user?.displayName || user?.email || 'G').slice(0, 1).toUpperCase()}
+                      </div>
+                      <div className="min-w-0 flex-1 text-left">
+                        <p className="text-[10px] font-black uppercase tracking-[0.16em] text-blue-100">{user ? 'Welcome back' : 'Welcome to Zyro.lk'}</p>
+                        <p className="mt-0.5 truncate text-base font-black font-display">{user ? user.displayName || 'Zyro.lk Customer' : 'Guest shopper'}</p>
+                        <p className="truncate text-xs text-blue-100">{user?.email || 'Sign in for a personalized shopping experience'}</p>
+                      </div>
+                      {user && <ShieldCheck className="h-5 w-5 shrink-0 text-blue-100" aria-label="Signed in account" />}
                     </div>
-                  )}
-                  <div className="py-1">
-                    {user ? (
+                    <div className="mt-4 grid grid-cols-2 gap-2 border-t border-white/15 pt-4">
+                      <div className="rounded-xl bg-white/10 px-3 py-2"><span className="block text-lg font-black">{wishlistCount}</span><span className="text-[9px] font-bold uppercase tracking-wider text-blue-100">Saved items</span></div>
+                      <div className="rounded-xl bg-white/10 px-3 py-2"><span className="block text-lg font-black">{cartCount}</span><span className="text-[9px] font-bold uppercase tracking-wider text-blue-100">Cart items</span></div>
+                    </div>
+                  </div>
+
+                  <div className="max-h-[min(34rem,calc(100vh-7rem))] space-y-5 overflow-y-auto p-4 text-left">
+                    <div>
+                      <span className="mb-2 block text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">Quick actions</span>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button type="button" onClick={() => { setCurrentPage('products'); setIsAdminMode(false); setIsProfileOpen(false); }} className="zy-account-action">
+                          <PackageSearch className="h-4.5 w-4.5 text-brand-blue" aria-hidden="true" /><span>Shop products</span>
+                        </button>
+                        {isWishlistEnabled && (
+                          <button type="button" onClick={() => { setCurrentPage('wishlist'); setIsAdminMode(false); setIsProfileOpen(false); }} className="zy-account-action">
+                            <Heart className="h-4.5 w-4.5 text-red-500" aria-hidden="true" /><span>Wishlist</span>
+                          </button>
+                        )}
+                        <button type="button" onClick={() => { onOpenCart(); setIsProfileOpen(false); }} className="zy-account-action">
+                          <ShoppingCart className="h-4.5 w-4.5 text-brand-blue" aria-hidden="true" /><span>Cart</span>
+                        </button>
+                        <button type="button" onClick={() => { setCurrentPage('categories'); setIsAdminMode(false); setIsProfileOpen(false); }} className="zy-account-action">
+                          <Grid3X3 className="h-4.5 w-4.5 text-brand-blue" aria-hidden="true" /><span>Categories</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {isAdminUser && (
                       <button
-                        onClick={handleLogout}
-                        className="flex w-full items-center px-4 py-2.5 text-sm text-slate-700 hover:bg-red-50 hover:text-red-600 text-left cursor-pointer transition-colors"
+                        onClick={() => { setIsAdminMode(true); setCurrentPage('admin'); setIsProfileOpen(false); }}
+                        className={`flex min-h-12 w-full items-center justify-between rounded-2xl border px-4 text-sm font-black transition-colors ${isAdminMode ? 'border-blue-200 bg-blue-50 text-brand-blue' : 'border-slate-200 bg-white text-slate-700 hover:border-blue-200 hover:bg-blue-50'}`}
                       >
-                        <LogOut className="h-4 w-4 mr-2" />
-                        Sign Out
+                        <span className="flex items-center gap-2"><LayoutDashboard className="h-4.5 w-4.5" /> Administration</span>
+                        <ArrowUpRight className="h-4 w-4" aria-hidden="true" />
+                      </button>
+                    )}
+
+                    <div>
+                      <span className="mb-2 block text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">Support</span>
+                      <div className="grid grid-cols-2 gap-2">
+                        {settings?.whatsappNumber && (
+                          <a href={`https://wa.me/${settings.whatsappNumber.replace(/\D/g, '')}`} target="_blank" rel="noopener noreferrer" className="zy-account-action">
+                            <MessageCircle className="h-4.5 w-4.5 text-emerald-600" aria-hidden="true" /><span>WhatsApp</span>
+                          </a>
+                        )}
+                        {settings?.contactPhone && (
+                          <a href={`tel:${settings.contactPhone}`} className="zy-account-action"><Phone className="h-4.5 w-4.5 text-brand-blue" aria-hidden="true" /><span>Hotline</span></a>
+                        )}
+                        {settings?.contactEmail && (
+                          <a href={`mailto:${settings.contactEmail}`} className="zy-account-action"><Mail className="h-4.5 w-4.5 text-brand-blue" aria-hidden="true" /><span>Email</span></a>
+                        )}
+                        <button type="button" onClick={() => { setCurrentPage('faq'); setIsAdminMode(false); setIsProfileOpen(false); }} className="zy-account-action"><HelpCircle className="h-4.5 w-4.5 text-brand-blue" aria-hidden="true" /><span>FAQ</span></button>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 border-t border-slate-100 pt-4">
+                      <button type="button" onClick={() => { setCurrentPage('privacy-policy'); setIsAdminMode(false); setIsProfileOpen(false); }} className="zy-account-action"><LockKeyhole className="h-4.5 w-4.5 text-slate-500" aria-hidden="true" /><span>Privacy</span></button>
+                      <button type="button" onClick={() => { setCurrentPage('about-us'); setIsAdminMode(false); setIsProfileOpen(false); }} className="zy-account-action"><Info className="h-4.5 w-4.5 text-slate-500" aria-hidden="true" /><span>About</span></button>
+                    </div>
+
+                    {user ? (
+                      <button onClick={handleLogout} className="flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl border border-red-100 bg-red-50 text-sm font-black text-red-600 transition-colors hover:border-red-200 hover:bg-red-100">
+                        <LogOut className="h-4.5 w-4.5" /> Sign Out
                       </button>
                     ) : (
-                      <button
-                        onClick={() => {
-                          onOpenAuthModal();
-                          setIsProfileOpen(false);
-                        }}
-                        className="flex w-full items-center px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 hover:text-slate-900 text-left cursor-pointer transition-colors"
-                      >
-                        <LogIn className="h-4 w-4 mr-2" />
-                        Sign In / Register
+                      <button onClick={() => { onOpenAuthModal(); setIsProfileOpen(false); }} className="zy-button zy-button-primary min-h-12 w-full rounded-2xl text-sm">
+                        <LogIn className="h-4.5 w-4.5" /> Sign In / Register
                       </button>
                     )}
                   </div>
@@ -581,9 +648,9 @@ export default function Navbar({
 
       {/* Mobile Menu Panel */}
       {isMobileMenuOpen && (
-        <div className="lg:hidden bg-white/95 backdrop-blur-xl border-t border-slate-100 py-3 px-4 space-y-3 animate-fadeIn shadow-sm">
+        <div className="border-t border-blue-100 bg-gradient-to-br from-blue-50 via-white to-slate-50 px-4 py-4 shadow-2xl backdrop-blur-xl lg:hidden animate-fadeIn">
           {/* Mobile Links */}
-          <div className="flex flex-col space-y-2 pt-2">
+          <div className="mx-auto grid max-w-2xl grid-cols-2 gap-2 rounded-3xl border border-white bg-white/70 p-3 shadow-xl shadow-blue-950/8">
             {navLinks.map((link) => (
               <button
                 key={link.id}
@@ -592,10 +659,10 @@ export default function Navbar({
                   setIsAdminMode(false);
                   setIsMobileMenuOpen(false);
                 }}
-                className={`text-left px-3 py-2 rounded-lg text-base font-medium transition-colors ${
+                className={`min-h-12 rounded-2xl border px-3 text-left text-sm font-black transition-all ${
                   currentPage === link.id && !isAdminMode
-                    ? 'bg-brand-blue/10 text-brand-blue'
-                    : 'text-slate-700 hover:bg-slate-50'
+                    ? 'border-blue-200 bg-brand-blue text-white shadow-lg shadow-blue-900/15'
+                    : 'border-slate-100 bg-white text-slate-700 hover:border-blue-100 hover:bg-blue-50'
                 }`}
               >
                 {link.label}
@@ -608,10 +675,10 @@ export default function Navbar({
                   setCurrentPage('admin');
                   setIsMobileMenuOpen(false);
                 }}
-                className={`text-left px-3 py-2 rounded-lg text-base font-medium transition-colors flex items-center ${
+                className={`col-span-2 flex min-h-12 items-center rounded-2xl border px-3 text-left text-sm font-black transition-all ${
                   isAdminMode
-                    ? 'bg-brand-blue/10 text-brand-blue'
-                    : 'text-slate-700 hover:bg-slate-50'
+                    ? 'border-blue-200 bg-brand-blue text-white'
+                    : 'border-slate-100 bg-white text-slate-700 hover:bg-blue-50'
                 }`}
               >
                 <LayoutDashboard className="h-4 w-4 mr-2" />

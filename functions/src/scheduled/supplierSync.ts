@@ -8,10 +8,13 @@ import { isValidSupplierImageUrl, ProductParser } from "../api/suppliers/a2z/Pro
 import { RawA2ZProduct } from "../api/suppliers/a2z/types";
 import { matchesSupplierCategoryFilter, resolveSupplierCategory, StoreCategoryReference, SupplierCategoryMappings } from "./supplierCategoryMapping";
 import {
+  calculateSupplierInitialPricing,
   collectDiscoveredSupplierCategories,
   filterSupplierComparison,
-  getSupplierProductLimit,
+  getSupplierImageLimit,
   isSupplierSourceAutoSyncDue,
+  limitSupplierProducts,
+  resolveSupplierProductLimit,
   SupplierSourceSyncSettings,
 } from "./supplierSyncSettings";
 
@@ -19,14 +22,19 @@ type SyncStatus = "Success" | "Failed" | "Partial" | "Skipped";
 type ComparisonStatus = "NEW_PRODUCT" | "PRICE_CHANGED" | "STOCK_CHANGED" | "DESCRIPTION_CHANGED" | "IMAGE_CHANGED" | "UNCHANGED";
 
 interface SupplierSettings {
+  websiteSyncEnabled?: boolean;
   autoSyncEnabled?: boolean;
   syncInterval?: string;
   lastSync?: string;
   nextSync?: string;
   maxProducts?: number;
+  productLimit?: string | number;
   defaultImageLimit?: number;
+  defaultProfitMargin?: number;
+  defaultMarkup?: number;
   enabledSupplierIds?: string[];
   enabledSuppliers?: string[];
+  enabledSupplierIdsConfigured?: boolean;
   categoryMappings?: SupplierCategoryMappings;
 }
 
@@ -167,7 +175,7 @@ function getNextSyncIso(settings: SupplierSettings, finishedAtMs: number): strin
 }
 
 function getMaxProducts(settings: SupplierSettings): number {
-  const configured = Number(settings.maxProducts || settings.defaultImageLimit || DEFAULT_MAX_PRODUCTS);
+  const configured = Number(settings.maxProducts || DEFAULT_MAX_PRODUCTS);
   if (!Number.isFinite(configured) || configured < 1) {
     return DEFAULT_MAX_PRODUCTS;
   }
@@ -176,9 +184,11 @@ function getMaxProducts(settings: SupplierSettings): number {
 
 function isSourceEnabled(source: SupplierSource, settings: SupplierSettings): boolean {
   const enabledIds = settings.enabledSupplierIds || settings.enabledSuppliers || [];
-  const type = source.supplierType || source.type || "website";
-  const isActiveWebsite = source.sourceStatus === "active" && type.toLowerCase() === "website";
-  return isActiveWebsite && (enabledIds.length === 0 || enabledIds.includes(source.id));
+  const type = String(source.supplierType || source.type || "website").trim().toLowerCase();
+  const status = String(source.sourceStatus || "active").trim().toLowerCase();
+  const isActiveWebsite = status === "active" && type === "website";
+  const usesExplicitScope = settings.enabledSupplierIdsConfigured === true;
+  return isActiveWebsite && ((!usesExplicitScope && enabledIds.length === 0) || enabledIds.includes(source.id));
 }
 
 function normalizeSupplierProducts(products: any[]): RawA2ZProduct[] {
@@ -221,8 +231,13 @@ function compareProduct(product: RawA2ZProduct, match: ExistingProduct | undefin
   if (product.inventoryLevel !== match.stock) changedFields.push("Stock");
   if (product.longDescription !== match.description) changedFields.push("Description");
 
-  const supplierImage = product.mediaGallery?.[0] || "";
-  if (supplierImage !== (match.imageUrl || "")) changedFields.push("Primary Image");
+  const supplierImages = [...new Set(product.mediaGallery || [])];
+  const existingImages = [...new Set(match.imageUrls || (match.imageUrl ? [match.imageUrl] : []))];
+  const imagesMatch = supplierImages.length === existingImages.length &&
+    supplierImages.every((value, index) => value === existingImages[index]);
+  if (!imagesMatch) {
+    changedFields.push(supplierImages[0] !== (match.imageUrl || "") ? "Primary Image" : "Images");
+  }
 
   if (changedFields.length === 0) return { status: "UNCHANGED", changedFields };
   if (changedFields.includes("Cost Price") || changedFields.includes("Market Price")) return { status: "PRICE_CHANGED", changedFields };
@@ -237,22 +252,32 @@ function buildProductPayload(
   storeCategories: readonly StoreCategoryReference[],
   categoryMappings: SupplierCategoryMappings | undefined,
   comparison: { status: ComparisonStatus; changedFields: string[] },
+  settings: SupplierSettings,
 ): Record<string, unknown> {
   const docId = match ? match.id : (generateSlug(product.title) || product.sku);
   const wholesale = product.wholesalePrice || 0;
-  const retail = product.recommendedRetailPrice || wholesale * 1.15;
-  const price = Math.round(retail);
-  const originalPrice = Math.round(retail * 1.1);
-  const imageUrls = [...new Set((product.mediaGallery || []).filter(isValidSupplierImageUrl).map((url) => url.trim()))];
+  const pricing = calculateSupplierInitialPricing(
+    wholesale,
+    product.recommendedRetailPrice,
+    settings.defaultMarkup,
+    settings.defaultProfitMargin,
+  );
+  const price = pricing.sellingPrice;
+  const originalPrice = pricing.comparePrice;
+  const imageLimit = getSupplierImageLimit(settings.defaultImageLimit);
+  const imageUrls = [...new Set((product.mediaGallery || []).filter(isValidSupplierImageUrl).map((url) => url.trim()))].slice(0, imageLimit);
   const supplierImageUrl = imageUrls[0] || "";
   const resolvedCategory = resolveSupplierCategory(product.categoryHierarchy, storeCategories, categoryMappings);
   const isNewProduct = !match;
   const priceUpdateEnabled = isNewProduct || comparison.changedFields.some((field) => field === "Cost Price" || field === "Market Price");
   const stockUpdateEnabled = isNewProduct || comparison.changedFields.includes("Stock");
   const descriptionUpdateEnabled = isNewProduct || comparison.changedFields.some((field) => field === "Product Name" || field === "Description");
-  const imageUpdateEnabled = isNewProduct || comparison.changedFields.includes("Primary Image");
+  const imageUpdateEnabled = isNewProduct || comparison.changedFields.some((field) => field === "Primary Image" || field === "Images");
   const imageUrl = imageUpdateEnabled ? supplierImageUrl : (match?.imageUrl || "");
   const effectiveImageUrls = imageUpdateEnabled ? imageUrls : (match?.imageUrls || (imageUrl ? [imageUrl] : []));
+  const existingIsActive = match
+    ? (typeof match.isActive === "boolean" ? match.isActive : (typeof match.active === "boolean" ? match.active : true))
+    : true;
 
   return {
     id: docId,
@@ -260,17 +285,17 @@ function buildProductPayload(
     description: descriptionUpdateEnabled ? (product.longDescription || "") : (match?.description || ""),
     price: priceUpdateEnabled ? price : (match?.price || price),
     originalPrice: priceUpdateEnabled ? originalPrice : (match?.originalPrice || match?.price || originalPrice),
-    discount: priceUpdateEnabled ? 10 : (match?.discount || 0),
+    discount: priceUpdateEnabled ? pricing.discountPercent : (match?.discount || 0),
     stock: stockUpdateEnabled ? product.inventoryLevel : (match?.stock || 0),
     imageUrl,
     imageUrls: effectiveImageUrls,
-    category: isNewProduct ? resolvedCategory : (match?.category || resolvedCategory),
+    category: isNewProduct ? resolvedCategory : (match?.category || ""),
     specs: descriptionUpdateEnabled ? (product.specifications || {}) : (match?.specs || {}),
     isNew: isNewProduct ? true : match?.isNew === true,
     isFeatured: isNewProduct ? false : match?.isFeatured === true,
     isBestSeller: isNewProduct ? false : match?.isBestSeller === true,
-    isActive: isNewProduct ? true : match?.isActive !== false,
-    active: isNewProduct ? true : match?.active !== false,
+    isActive: existingIsActive,
+    active: existingIsActive,
     published: isNewProduct ? true : match?.published !== false,
     approved: isNewProduct ? true : match?.approved !== false,
     visible: isNewProduct ? true : match?.visible !== false,
@@ -437,8 +462,26 @@ export async function runScheduledSupplierSync(): Promise<void> {
     return;
   }
 
-  const lockAcquired = await acquireSyncLock(startedAt);
-  if (!lockAcquired) {
+  if (settings.websiteSyncEnabled === false) {
+    appLogger.info("Scheduled supplier sync skipped because the Website Sync Channel is disabled.", { batchId });
+    return;
+  }
+
+  const sourcesSnap = await adminDb.collection("supplierSources").get();
+  const sources = sourcesSnap.docs
+    .map((sourceDoc) => ({ id: sourceDoc.id, ...sourceDoc.data() }) as SupplierSource)
+    .filter((source) => isSourceEnabled(source, settings))
+    .filter((source) => isSupplierSourceAutoSyncDue(source.settings?.autoSync, source.lastSync, startedAt.getTime()));
+
+  if (sources.length === 0) {
+    appLogger.info("Scheduled supplier sync found no enabled sources due for synchronization.", { batchId });
+    return;
+  }
+
+  const hasWritableSources = sources.some((source) => source.settings?.dryRunMode !== true);
+  let syncLockAcquired = false;
+  if (hasWritableSources) syncLockAcquired = await acquireSyncLock(startedAt);
+  if (hasWritableSources && !syncLockAcquired) {
     const finishedAt = new Date();
     await writeHistory(batchId, "Skipped", startedAt, finishedAt, metrics, "Scheduled sync skipped because another supplier sync is already running.");
     appLogger.warn("Scheduled supplier sync skipped because lock is already held.", { batchId });
@@ -460,18 +503,21 @@ export async function runScheduledSupplierSync(): Promise<void> {
       name: String(categoryDoc.data().name || categoryDoc.id),
     }));
 
-    const sourcesSnap = await adminDb.collection("supplierSources").get();
-    const sources = sourcesSnap.docs
-      .map((sourceDoc) => ({ id: sourceDoc.id, ...sourceDoc.data() }) as SupplierSource)
-      .filter((source) => isSourceEnabled(source, settings))
-      .filter((source) => isSupplierSourceAutoSyncDue(source.settings?.autoSync, source.lastSync, startedAt.getTime()));
-
-    if (sources.length === 0) {
-      appLogger.info("Scheduled supplier sync found no enabled sources due for synchronization.", { batchId });
-      return;
-    }
+    const [reviewQueueSnap, importQueueSnap] = await Promise.all([
+      adminDb.collection("supplier_review_queue").select("supplierCode").get(),
+      adminDb.collection("supplier_import_queue").select("supplierCode", "sku").get(),
+    ]);
+    const existingQueueIds = new Set([
+      ...reviewQueueSnap.docs.map((queueDoc) => queueDoc.id),
+      ...importQueueSnap.docs.map((queueDoc) => queueDoc.id),
+    ]);
+    const queuedSupplierCodes = new Set([
+      ...reviewQueueSnap.docs.map((queueDoc) => queueDoc.data().supplierCode),
+      ...importQueueSnap.docs.map((queueDoc) => queueDoc.data().supplierCode || queueDoc.data().sku),
+    ].map((value) => String(value || "").trim().toLowerCase()).filter(Boolean));
 
     const maxProducts = getMaxProducts(settings);
+    const imageLimit = getSupplierImageLimit(settings.defaultImageLimit);
     const connectors = await SupplierRegistry.loadEnabledConnectors(settings.enabledSupplierIds || settings.enabledSuppliers || []);
     const connectorBySourceId = new Map(connectors.map((connector) => [connector.id, connector]));
     const queuedWrites: Array<{ collection: string; id: string; data: Record<string, unknown> }> = [];
@@ -488,6 +534,13 @@ export async function runScheduledSupplierSync(): Promise<void> {
 
       if (!websiteUrl) {
         metrics.errors.push(`${supplierName}: missing website URL`);
+        if (!dryRunMode) {
+          queuedWrites.push({
+            collection: "supplierSources",
+            id: source.id,
+            data: { connectionStatus: "Failed", lastError: "Missing website URL" },
+          });
+        }
         continue;
       }
 
@@ -499,7 +552,10 @@ export async function runScheduledSupplierSync(): Promise<void> {
             enabled: true,
           });
         const fetched = await connector.fetchProducts();
-        let products = normalizeSupplierProducts(fetched.products);
+        let products = normalizeSupplierProducts(fetched.products).map((product) => ({
+          ...product,
+          mediaGallery: [...new Set((product.mediaGallery || []).filter(isValidSupplierImageUrl))].slice(0, imageLimit),
+        }));
         const discoveredCategories = collectDiscoveredSupplierCategories(products);
 
         const categoryFilter = source.settings?.categoriesFilter || [];
@@ -521,17 +577,35 @@ export async function runScheduledSupplierSync(): Promise<void> {
           });
         }
 
-        const sourceLimit = getSupplierProductLimit(sourceSettings.productLimit, maxProducts);
-        const productsToProcess = products.slice(0, sourceLimit);
+        const sourceLimit = resolveSupplierProductLimit(
+          sourceSettings.productLimit,
+          settings.productLimit,
+          maxProducts,
+        );
+        const productsToProcess = limitSupplierProducts(products, sourceLimit);
+        const queuedBeforeSource = metrics.productsQueued;
         metrics.productsScanned += productsToProcess.length;
         metrics.suppliers.push(supplierName);
+        appLogger.info("Scheduled supplier Product Limit resolved.", {
+          event: "supplier_product_limit_trace",
+          batchId,
+          sourceId: source.id,
+          firestoreSourceValue: sourceSettings.productLimit ?? null,
+          firestoreHubValue: settings.productLimit ?? null,
+          scheduledMaxProducts: maxProducts,
+          resolvedProductLimit: sourceLimit,
+          filteredCount: products.length,
+          processedCount: productsToProcess.length,
+        });
 
         for (const product of productsToProcess) {
+          const queueItemId = generateQueueDocId(source.id, product.sku, product.title);
+          const normalizedSupplierCode = product.sku.trim().toLowerCase();
+          if (existingQueueIds.has(queueItemId) || queuedSupplierCodes.has(normalizedSupplierCode)) continue;
           const match = findMatchingProduct(product, existingProducts);
           const comparison = filterSupplierComparison(compareProduct(product, match), sourceSettings);
           if (!comparison) continue;
-          const queueItemId = generateQueueDocId(source.id, product.sku, product.title);
-          const productPayload = buildProductPayload(product, match, storeCategories, settings.categoryMappings, comparison);
+          const productPayload = buildProductPayload(product, match, storeCategories, settings.categoryMappings, comparison, settings);
           const createdAt = new Date().toISOString();
           const supplierSnapshot = {
             supplierName,
@@ -576,6 +650,8 @@ export async function runScheduledSupplierSync(): Promise<void> {
             dryRunComparisonCount++;
           } else {
             queuedWrites.push({ collection: "supplier_review_queue", id: queueItemId, data: queueItem });
+            existingQueueIds.add(queueItemId);
+            queuedSupplierCodes.add(normalizedSupplierCode);
             queuedWrites.push({
               collection: "supplier_import_queue",
               id: queueItemId,
@@ -603,16 +679,28 @@ export async function runScheduledSupplierSync(): Promise<void> {
         }
 
         if (!dryRunMode) {
-          await adminDb.collection("supplierSources").doc(source.id).set({
-            lastSync: new Date().toISOString(),
-            connectionStatus: "connected",
-            lastError: "None",
-            settings: {
-              ...sourceSettings,
-              discoveredCategories,
+          queuedWrites.push({
+            collection: "supplierSources",
+            id: source.id,
+            data: {
+              lastSync: new Date().toISOString(),
+              connectionStatus: "connected",
+              lastError: "None",
+              settings: {
+                ...sourceSettings,
+                discoveredCategories,
+              },
             },
-          }, { merge: true });
+          });
         }
+        appLogger.info("Scheduled supplier queue writer received limited products.", {
+          event: "supplier_product_limit_queue_trace",
+          batchId,
+          sourceId: source.id,
+          resolvedProductLimit: sourceLimit,
+          processedCount: productsToProcess.length,
+          queuedCount: metrics.productsQueued - queuedBeforeSource,
+        });
       } catch (error: any) {
         const message = error?.message || "Unknown supplier sync error";
         metrics.errors.push(`${supplierName}: ${message}`);
@@ -679,10 +767,12 @@ export async function runScheduledSupplierSync(): Promise<void> {
       productsQueued: metrics.productsQueued,
       error,
     });
-    await writeHistory(batchId, "Failed", startedAt, finishedAt, metrics, error?.message || "Scheduled sync failed.");
+    if (hasWritableSources) {
+      await writeHistory(batchId, "Failed", startedAt, finishedAt, metrics, error?.message || "Scheduled sync failed.");
+    }
     throw error;
   } finally {
-    await releaseSyncLock(new Date());
+    if (syncLockAcquired) await releaseSyncLock(new Date());
   }
 }
 

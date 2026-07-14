@@ -8,6 +8,7 @@ import { getAuth } from "firebase-admin/auth";
 import { FieldValue, getFirestore } from "firebase-admin/firestore";
 import { A2ZConnectorService } from "./src/services/connectors/a2z-website/A2ZConnectorService";
 import { getApprovedSupplierHosts, validateSupplierRequestTarget } from "./src/server/security/supplierUrlProtection";
+import { getSupplierProductLimit } from "./src/services/supplierSyncSettings";
 
 const app = express();
 const PORT = 3000;
@@ -645,7 +646,17 @@ app.post("/api/test-supplier", requireSupplierAdminAuth, async (req, res) => {
 
 // Server-side proxy for fetching supplier products securely (bypasses CORS)
 app.post("/api/fetch-supplier", requireSupplierAdminAuth, async (req, res) => {
-  const { websiteUrl, endpoint } = req.body;
+  const { websiteUrl, endpoint, productLimit, sourceId, batchId } = req.body;
+  const requestedProductLimit = getSupplierProductLimit(
+    productLimit === undefined || productLimit === null ? 'All' : String(productLimit),
+    250,
+  );
+  console.info('[SupplierLimitTrace] api-request-received', {
+    sourceId: String(sourceId || 'unknown'),
+    batchId: String(batchId || 'unknown'),
+    requestProductLimit: productLimit ?? null,
+    resolvedProductLimit: requestedProductLimit,
+  });
   
   if (!websiteUrl) {
     return res.status(400).json({ error: "Website URL is required" });
@@ -668,7 +679,7 @@ app.post("/api/fetch-supplier", requireSupplierAdminAuth, async (req, res) => {
       console.log("[A2Z-Connector] Orchestrating secure, authenticated catalog sync from A2Z Supplier...");
       const credentials = await getA2ZCredentials();
       const products = await A2ZConnectorService.fetchCatalog(validatedTarget.targetUrl, credentials);
-      return res.json({ success: true, products });
+      return res.json({ success: true, products, requestedProductLimit });
     } catch (error: any) {
       console.error("[A2Z-Connector] Catalog fetch failed:", error);
       return res.status(500).json({
@@ -697,7 +708,7 @@ app.post("/api/fetch-supplier", requireSupplierAdminAuth, async (req, res) => {
       throw new Error("Invalid response format. Expected a JSON array of product objects.");
     }
 
-    return res.json({ success: true, products: data });
+    return res.json({ success: true, products: data, requestedProductLimit });
 
   } catch (error: any) {
     console.error("Fetch supplier error:", error);

@@ -825,7 +825,7 @@ export default function ProductDetailModal({
                   <div className="bg-slate-50 p-6 rounded-3xl border border-slate-100/80 text-left space-y-4">
                     <div className="space-y-1">
                       <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">
-                        Direct Import Promotion
+                        Marketplace Price
                       </span>
                       <div className="flex items-baseline gap-3.5">
                         <span className="text-4xl font-black text-slate-950 tracking-tight font-display">
@@ -981,7 +981,7 @@ export default function ProductDetailModal({
                       <span className="w-1.5 h-1.5 rounded-full bg-slate-200" />
                       <span className="flex items-center gap-1.5">
                         <Check className="h-3.5 w-3.5 text-emerald-500" />
-                        7-Day Exchange Policy
+                        WhatsApp Purchase Support
                       </span>
                     </div>
 
@@ -1126,7 +1126,7 @@ export default function ProductDetailModal({
                             id="product-review-comment"
                             required
                             rows={3}
-                            placeholder="Share details regarding product authenticity, performance, packaging, warranty, or delivery dispatch time..."
+                            placeholder="Share details regarding product quality, performance, packaging, after-sales support, or delivery dispatch time..."
                             value={newComment}
                             maxLength={1500}
                             onChange={(e) => setNewComment(e.target.value)}
@@ -1249,9 +1249,9 @@ export default function ProductDetailModal({
                 <div className="flex justify-between items-center">
                   <div>
                     <h3 className="text-xl font-black text-slate-900 font-display">
-                      Related Products & Direct Imports
+                      Related Products
                     </h3>
-                    <p className="text-xs text-slate-400 mt-1">Explore alternative high-grade electronics matching this category.</p>
+                    <p className="text-xs text-slate-400 mt-1">Explore more carefully selected products from this category.</p>
                   </div>
                   
                   {/* Slider controls arrow buttons */}

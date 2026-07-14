@@ -51,12 +51,39 @@ import {
 } from '../services/supplierReviewEditor';
 import { matchesSupplierCategoryFilter, normalizeSupplierCategory, resolveSupplierCategory } from '../services/supplierCategoryMapping';
 import {
+  calculateSupplierInitialPricing,
   collectDiscoveredSupplierCategories,
   filterSupplierComparison,
-  getSupplierProductLimit,
+  getSupplierImageLimit,
+  limitSupplierProducts,
+  resolveSupplierProductLimit,
 } from '../services/supplierSyncSettings';
 
 const SYNC_HISTORY_LIMIT = 100;
+const FIRESTORE_BATCH_WRITE_LIMIT = 450;
+
+interface SupplierSyncWrite {
+  collectionName: string;
+  id: string;
+  data: Record<string, unknown>;
+}
+
+async function commitSupplierSyncWrites(writes: readonly SupplierSyncWrite[]): Promise<void> {
+  for (let offset = 0; offset < writes.length; offset += FIRESTORE_BATCH_WRITE_LIMIT) {
+    const batch = writeBatch(db);
+    writes.slice(offset, offset + FIRESTORE_BATCH_WRITE_LIMIT).forEach((write) => {
+      batch.set(doc(db, write.collectionName, write.id), write.data, { merge: true });
+    });
+    await batch.commit();
+  }
+}
+
+function supplierImagesMatch(left: readonly string[] | undefined, right: readonly string[] | undefined): boolean {
+  const normalizedLeft = normalizeSupplierProductImages(left?.[0], left);
+  const normalizedRight = normalizeSupplierProductImages(right?.[0], right);
+  return normalizedLeft.length === normalizedRight.length &&
+    normalizedLeft.every((value, index) => value === normalizedRight[index]);
+}
 
 interface SupplierHubFiveStarsProps {
   isDarkMode?: boolean;
@@ -127,7 +154,8 @@ export interface SyncHistoryItem {
   batchId?: string;
   supplierCode: string;
   productsSynced: number;
-  status: 'Success' | 'Failed';
+  productsQueued?: number;
+  status: 'Success' | 'Failed' | 'Partial' | 'Skipped';
   details: string;
 }
 
@@ -148,7 +176,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
   const [syncStatusMsg, setSyncStatusMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // --- MERGED SECTIONS STATES (PLACEHOLDER/LOCAL STATE) ---
+  // Supplier Hub navigation and interaction state
   const [activeSubTab, setActiveSubTab] = useState<'review' | 'import_queue' | 'sources' | 'changes' | 'settings'>('review');
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [reviewSearch, setReviewSearch] = useState<string>('');
@@ -200,6 +228,10 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
         const sources: any[] = [];
         snapshot.forEach((doc) => {
           const data = doc.data();
+          console.info('[SupplierLimitTrace] firestore-source-loaded', {
+            sourceId: doc.id,
+            productLimit: data.settings?.productLimit ?? null,
+          });
           sources.push({
             id: doc.id,
             ...data,
@@ -248,7 +280,12 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
       doc(db, "supplier_settings", "config"),
       (snapshot) => {
         if (snapshot.exists()) {
-          setSupplierSettings(prev => ({ ...prev, ...snapshot.data() }));
+          const persistedSettings = snapshot.data();
+          console.info('[SupplierLimitTrace] firestore-hub-settings-loaded', {
+            productLimit: persistedSettings.productLimit ?? null,
+            scheduledMaxProducts: persistedSettings.maxProducts ?? null,
+          });
+          setSupplierSettings(prev => ({ ...prev, ...persistedSettings }));
         }
       },
       (error) => {
@@ -415,21 +452,19 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
   // 3. Settings states
   const [supplierSettings, setSupplierSettings] = useState<any>({
     websiteSyncEnabled: true,
-    whatsappSyncEnabled: false,
     autoSyncEnabled: true,
-    autoImageDownload: true,
-    notificationEnabled: true,
     syncInterval: "1 Hour",
     maxProducts: 5,
     enabledSupplierIds: [],
+    enabledSupplierIdsConfigured: false,
     lastSync: "",
     nextSync: "",
     defaultProfitMargin: 15,
     defaultMarkup: 10,
     defaultImageLimit: 5,
     categoryMappings: {},
-    lastUpdated: new Date().toISOString(),
-    updatedBy: "Admin User"
+    lastUpdated: "",
+    updatedBy: ""
   });
   const [savingSupplierSettings, setSavingSupplierSettings] = useState<boolean>(false);
   const [showResetSettingsConfirm, setShowResetSettingsConfirm] = useState<boolean>(false);
@@ -456,10 +491,6 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
     if (Number.isNaN(parsed.getTime())) return "";
     const timezoneOffsetMs = parsed.getTimezoneOffset() * 60000;
     return new Date(parsed.getTime() - timezoneOffsetMs).toISOString().slice(0, 16);
-  };
-
-  const fromDateTimeLocalValue = (value: string): string => {
-    return value ? new Date(value).toISOString() : "";
   };
 
   const getSupplierApiHeaders = async (forceRefresh = false) => {
@@ -512,25 +543,71 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
         throw new Error("No active Website supplier was found. Please enable a website supplier source in its Settings panel.");
       }
       dryRunOnly = activeSources.every((source) => source.settings?.dryRunMode === true);
+      if (supplierSettings.websiteSyncEnabled === false) {
+        throw new Error('Website Sync Channel is disabled in Supplier Hub settings.');
+      }
 
       const allFetchedProducts: any[] = [];
       const aggregatedMappedQueue: ReviewQueueItem[] = [];
       const aggregatedPendingChanges: any[] = [];
+      const sourceStatusWrites: SupplierSyncWrite[] = [];
+      const existingQueueIds = new Set([
+        ...reviewQueue.map((item) => item.id),
+        ...importQueue.map((item) => item.id),
+      ]);
+      const queuedSupplierCodes = new Set([
+        ...reviewQueue.map((item) => item.supplierCode),
+        ...importQueue.map((item) => item.supplierCode || item.sku),
+      ].map((value) => String(value || '').trim().toLowerCase()).filter(Boolean));
+      const imageLimit = getSupplierImageLimit(supplierSettings.defaultImageLimit);
       let successCount = 0;
       let writableSuccessCount = 0;
       let dryRunCompared = 0;
-      let errorMsgs: string[] = [];
+      let totalProcessedCount = 0;
+      const errorMsgs: string[] = [];
 
       for (const source of activeSources) {
         const urlToFetch = source.websiteUrl || source.config?.targetUrl || '';
         const endpointToFetch = source.endpoint || source.config?.apiEndpoint || '';
+        const sourceSettings = source.settings || {};
+        const limitNum = resolveSupplierProductLimit(
+          sourceSettings.productLimit,
+          supplierSettings.productLimit,
+          250,
+        );
+        console.info('[SupplierLimitTrace] react-sync-limit-resolved', {
+          sourceId: source.id,
+          firestoreSourceValue: sourceSettings.productLimit ?? null,
+          firestoreHubValue: supplierSettings.productLimit ?? null,
+          scheduledMaxProductsIgnoredByManualSync: supplierSettings.maxProducts ?? null,
+          resolvedProductLimit: limitNum,
+          batchId: syncBatchId,
+        });
         
-        if (!urlToFetch) continue;
+        if (!urlToFetch) {
+          const message = `${source.supplierName || source.name || source.id}: missing website URL`;
+          errorMsgs.push(message);
+          if (source.settings?.dryRunMode !== true) {
+            await setDoc(doc(db, "supplierSources", source.id), {
+              connectionStatus: 'Failed',
+              lastError: 'Missing website URL',
+            }, { merge: true });
+          }
+          continue;
+        }
 
         try {
+          console.info('[SupplierLimitTrace] sync-request-dispatched', {
+            sourceId: source.id,
+            productLimit: limitNum,
+            batchId: syncBatchId,
+          });
           const res = await postSupplierApi('/api/fetch-supplier', {
             websiteUrl: urlToFetch,
             endpoint: endpointToFetch,
+            productLimit: limitNum,
+            sourceId: source.id,
+            batchId: syncBatchId,
           });
 
           if (!res.ok) {
@@ -540,8 +617,14 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
 
           const result = await res.json();
           if (result.success && Array.isArray(result.products)) {
-            const sourceSettings = source.settings || {};
             const dryRunMode = sourceSettings.dryRunMode === true;
+            console.info('[SupplierLimitTrace] api-response-received', {
+              sourceId: source.id,
+              requestedProductLimit: limitNum,
+              apiAcknowledgedProductLimit: result.requestedProductLimit ?? null,
+              fetchedCount: result.products.length,
+              batchId: syncBatchId,
+            });
             const discoveredCategories = collectDiscoveredSupplierCategories(result.products);
             let fetched = result.products;
 
@@ -571,15 +654,24 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
               }
             }
 
-            const limitNum = getSupplierProductLimit(sourceSettings.productLimit, 250);
-            const slicedProducts = fetched.slice(0, limitNum);
+            const slicedProducts = limitSupplierProducts<RawA2ZProduct>(fetched as RawA2ZProduct[], limitNum);
+            totalProcessedCount += slicedProducts.length;
+            console.info('[SupplierLimitTrace] post-filter-limit-applied', {
+              sourceId: source.id,
+              requestedProductLimit: limitNum,
+              filteredCount: fetched.length,
+              processedCount: slicedProducts.length,
+              batchId: syncBatchId,
+            });
 
             // Map and compare each product
             const sourceMappedQueue: ReviewQueueItem[] = [];
             for (const prod of slicedProducts) {
-              const supplierImages = normalizeSupplierProductImages(prod.mediaGallery?.[0], prod.mediaGallery);
+              const supplierImages = normalizeSupplierProductImages(prod.mediaGallery?.[0], prod.mediaGallery).slice(0, imageLimit);
               const supplierName = source.supplierName || source.name || 'A2Z Supplier';
               const queueItemId = generateQueueDocId(source.id, prod.sku, prod.title);
+              const normalizedSupplierCode = prod.sku.trim().toLowerCase();
+              if (existingQueueIds.has(queueItemId) || queuedSupplierCodes.has(normalizedSupplierCode)) continue;
               const match = existingProducts.find(p => {
                 if (p.supplierItemCode && p.supplierItemCode.trim().toLowerCase() === prod.sku.trim().toLowerCase()) {
                   return true;
@@ -618,10 +710,11 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
                 if (prod.longDescription !== match.description) {
                   changedFields.push('Description');
                 }
-                const rawImage = supplierImages[0] || '';
-                const matchImage = match.imageUrl || '';
-                if (rawImage !== matchImage) {
-                  changedFields.push('Primary Image');
+                const matchImages = Array.isArray(match.imageUrls)
+                  ? match.imageUrls
+                  : (match.imageUrl ? [match.imageUrl] : []);
+                if (!supplierImagesMatch(supplierImages, matchImages)) {
+                  changedFields.push(supplierImages[0] !== (match.imageUrl || '') ? 'Primary Image' : 'Images');
                 }
 
                 if (changedFields.length === 0) {
@@ -656,10 +749,15 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
               const docId = match ? match.id : (generateSlug(prod.title) || prod.sku);
               
               const wholesale = prod.wholesalePrice || 0;
-              const retail = prod.recommendedRetailPrice || wholesale * 1.15;
-              const price = Math.round(retail);
-              const originalPrice = Math.round(retail * 1.1);
-              const discount = 10;
+              const pricing = calculateSupplierInitialPricing(
+                wholesale,
+                prod.recommendedRetailPrice,
+                supplierSettings.defaultMarkup,
+                supplierSettings.defaultProfitMargin,
+              );
+              const price = pricing.sellingPrice;
+              const originalPrice = pricing.comparePrice;
+              const discount = pricing.discountPercent;
               
               const supplierImageUrl = supplierImages[0] || '';
               const resolvedCategoryId = resolveSupplierCategory(
@@ -671,12 +769,17 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
               const priceUpdateEnabled = isNewProduct || changedFields.some((field) => field === 'Cost Price' || field === 'Market Price');
               const stockUpdateEnabled = isNewProduct || changedFields.includes('Stock');
               const descriptionUpdateEnabled = isNewProduct || changedFields.some((field) => field === 'Product Name' || field === 'Description');
-              const imageUpdateEnabled = isNewProduct || changedFields.includes('Primary Image');
+              const imageUpdateEnabled = isNewProduct || changedFields.some((field) => field === 'Primary Image' || field === 'Images');
               const imageUrl = imageUpdateEnabled ? supplierImageUrl : (match?.imageUrl || '');
               const imageUrls = imageUpdateEnabled
                 ? supplierImages
                 : (Array.isArray(match?.imageUrls) ? match.imageUrls : (imageUrl ? [imageUrl] : []));
               const existingFlags = (match || {}) as Product & Record<string, unknown>;
+              const existingIsActive = match
+                ? (typeof existingFlags.isActive === 'boolean'
+                    ? existingFlags.isActive
+                    : (typeof existingFlags.active === 'boolean' ? existingFlags.active : true))
+                : true;
 
               const productPayload: Product & Record<string, unknown> = {
                 id: docId,
@@ -688,13 +791,13 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
                 stock: stockUpdateEnabled ? prod.inventoryLevel : (match?.stock || 0),
                 imageUrl: imageUrl,
                 imageUrls,
-                category: isNewProduct ? resolvedCategoryId : (match?.category || resolvedCategoryId),
+                category: isNewProduct ? resolvedCategoryId : (match?.category || ''),
                 specs: descriptionUpdateEnabled ? (prod.specifications || {}) : (match?.specs || {}),
                 isNew: isNewProduct ? true : match?.isNew === true,
                 isFeatured: isNewProduct ? false : match?.isFeatured === true,
                 isBestSeller: isNewProduct ? false : match?.isBestSeller === true,
-                isActive: isNewProduct ? true : match?.isActive !== false,
-                active: isNewProduct ? true : existingFlags.active !== false,
+                isActive: existingIsActive,
+                active: existingIsActive,
                 published: isNewProduct ? true : existingFlags.published !== false,
                 approved: isNewProduct ? true : existingFlags.approved !== false,
                 visible: isNewProduct ? true : existingFlags.visible !== false,
@@ -746,6 +849,8 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
                 dryRunCompared++;
               } else {
                 sourceMappedQueue.push(queueItem);
+                existingQueueIds.add(queueItemId);
+                queuedSupplierCodes.add(normalizedSupplierCode);
                 allFetchedProducts.push({
                   ...prod,
                   mediaGallery: supplierImages,
@@ -764,6 +869,14 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
             }
 
             aggregatedMappedQueue.push(...sourceMappedQueue);
+            console.info('[SupplierLimitTrace] queue-writer-input', {
+              sourceId: source.id,
+              requestedProductLimit: limitNum,
+              processedCount: slicedProducts.length,
+              reviewQueueWriteCount: sourceMappedQueue.length,
+              importQueueWriteCount: dryRunMode ? 0 : sourceMappedQueue.length,
+              batchId: syncBatchId,
+            });
 
             // Generate pending changes for this source
             const sourcePendingChanges = sourceMappedQueue
@@ -824,15 +937,19 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
 
             if (!dryRunMode) {
               writableSuccessCount++;
-              await setDoc(doc(db, "supplierSources", source.id), {
-                lastSync: new Date().toISOString(),
-                connectionStatus: 'connected',
-                lastError: 'None',
-                settings: {
-                  ...sourceSettings,
-                  discoveredCategories,
+              sourceStatusWrites.push({
+                collectionName: 'supplierSources',
+                id: source.id,
+                data: {
+                  lastSync: new Date().toISOString(),
+                  connectionStatus: 'connected',
+                  lastError: 'None',
+                  settings: {
+                    ...sourceSettings,
+                    discoveredCategories,
+                  },
                 },
-              }, { merge: true });
+              });
             }
           } else {
             throw new Error(result.error || "Invalid response format from server");
@@ -874,23 +991,19 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
         createdAt: new Date().toISOString(),
         batchId: syncBatchId,
         supplierCode: 'A2Z',
-        productsSynced: data.length,
-        status: 'Success',
-        details: `Successfully fetched and compared ${data.length} products. Found ${newCount} new, ${priceCount} price changes, ${stockCount} stock changes.`
+        productsSynced: totalProcessedCount,
+        productsQueued: data.length,
+        status: errorMsgs.length > 0 ? 'Partial' : 'Success',
+        details: `Processed ${totalProcessedCount} limited products and queued ${data.length}. Found ${newCount} new, ${priceCount} price changes, ${stockCount} stock changes.${errorMsgs.length > 0 ? ` Errors: ${errorMsgs.join('; ')}` : ''}`
       };
 
-      const batch = writeBatch(db);
-      mappedQueue.forEach((item) => {
-        batch.set(doc(db, "supplier_review_queue", item.id), item, { merge: true });
-      });
-      data.forEach((item) => {
-        batch.set(doc(db, "supplier_import_queue", item.id), item, { merge: true });
-      });
-      aggregatedPendingChanges.forEach((change) => {
-        batch.set(doc(db, "supplier_pending_changes", change.id), change, { merge: true });
-      });
-      batch.set(doc(db, "supplier_sync_history", newLog.id), newLog, { merge: true });
-      await batch.commit();
+      await commitSupplierSyncWrites([
+        ...mappedQueue.map((item) => ({ collectionName: 'supplier_review_queue', id: item.id, data: item as unknown as Record<string, unknown> })),
+        ...data.map((item) => ({ collectionName: 'supplier_import_queue', id: item.id, data: item as Record<string, unknown> })),
+        ...aggregatedPendingChanges.map((change) => ({ collectionName: 'supplier_pending_changes', id: change.id, data: change as Record<string, unknown> })),
+        ...sourceStatusWrites,
+        { collectionName: 'supplier_sync_history', id: newLog.id, data: newLog as unknown as Record<string, unknown> },
+      ]);
       
       setSyncStatusMsg("Synchronization complete!");
       setTimeout(() => {
@@ -988,8 +1101,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
         // Save connectionStatus = 'connected' in Firestore
         await setDoc(doc(db, "supplierSources", source.id), {
           connectionStatus: 'connected',
-          lastError: 'None',
-          lastSync: new Date().toLocaleString()
+          lastError: 'None'
         }, { merge: true });
       } else {
         setErrorMsg(`Connection failed for ${source.name}: ${result.error || 'Endpoint returned error response.'}`);
@@ -1144,6 +1256,17 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
   const handleSaveSettings = async (sourceId: string) => {
     setSavingSettingsSourceId(sourceId);
     try {
+      if (!editSupplierName.trim()) throw new Error('Supplier name is required.');
+      let supplierUrl: URL;
+      try {
+        supplierUrl = new URL(editWebsiteUrl.trim());
+      } catch {
+        throw new Error('Enter a valid supplier website URL.');
+      }
+      if (!['http:', 'https:'].includes(supplierUrl.protocol)) {
+        throw new Error('Supplier website URL must use HTTP or HTTPS.');
+      }
+
       const updatedData = {
         supplierName: editSupplierName.trim(),
         name: editSupplierName.trim(), // for backwards compatibility
@@ -1209,7 +1332,6 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
   const handleRejectPendingChange = async (change: any) => {
     setProcessingChangeId(change.id);
     try {
-      // Only update local state - do NOT write to Firestore
       await rejectSupplierQueueItem(change);
       setProcessingChangeId(null);
       setSuccessMsg(`Change for "${change.productName}" rejected.`);
@@ -1265,7 +1387,6 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
   const handleRejectReviewItem = async (item: ReviewQueueItem) => {
     setProcessingChangeId(item.id);
     try {
-      // Only update local state - do NOT write to Firestore
       await rejectSupplierQueueItem(item);
       setProcessingChangeId(null);
       setSuccessMsg(`Product "${item.productName}" rejected.`);
@@ -1372,9 +1493,37 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
     e.preventDefault();
     setSavingSupplierSettings(true);
     try {
+      const maxProducts = Number(supplierSettings.maxProducts);
+      const imageLimit = Number(supplierSettings.defaultImageLimit);
+      const markup = Number(supplierSettings.defaultMarkup);
+      const profitMargin = Number(supplierSettings.defaultProfitMargin);
+      if (!Number.isInteger(maxProducts) || maxProducts < 1 || maxProducts > 250) {
+        throw new Error('Scheduled Max Products must be a whole number from 1 to 250.');
+      }
+      if (!Number.isInteger(imageLimit) || imageLimit < 1 || imageLimit > 20) {
+        throw new Error('Maximum Image Limit must be a whole number from 1 to 20.');
+      }
+      if (!Number.isFinite(markup) || markup < 0 || markup > 200) {
+        throw new Error('Default Markup Rate must be between 0 and 200%.');
+      }
+      if (!Number.isFinite(profitMargin) || profitMargin < 0 || profitMargin > 100) {
+        throw new Error('Default Profit Margin must be between 0 and 100%.');
+      }
+
       const email = auth.currentUser?.email || "Admin";
       const payload = {
         ...supplierSettings,
+        maxProducts,
+        defaultImageLimit: imageLimit,
+        defaultMarkup: markup,
+        defaultProfitMargin: profitMargin,
+        categoryMappings: validCategoryIds.length > 0
+          ? Object.fromEntries(
+              Object.entries(supplierSettings.categoryMappings || {}).filter(([, categoryId]) =>
+                validCategoryIds.includes(String(categoryId)),
+              ),
+            )
+          : supplierSettings.categoryMappings || {},
         lastUpdated: new Date().toISOString(),
         updatedBy: email
       };
@@ -1393,13 +1542,11 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
   const handleResetSettings = async () => {
     const defaults = {
       websiteSyncEnabled: false,
-      whatsappSyncEnabled: false,
       autoSyncEnabled: true,
-      autoImageDownload: true,
-      notificationEnabled: true,
       syncInterval: "1 Hour",
       maxProducts: 5,
       enabledSupplierIds: [],
+      enabledSupplierIdsConfigured: false,
       lastSync: "",
       nextSync: "",
       defaultProfitMargin: 15,
@@ -2209,14 +2356,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
                               Category Filter (Multi Select)
                             </label>
                             <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto p-1.5 bg-slate-50 dark:bg-slate-900/30 border border-slate-100 dark:border-slate-800 rounded-xl">
-                              {(categories.length > 0 ? categories : [
-                                { id: 'electronics', name: 'Electronics' },
-                                { id: 'accessories', name: 'Accessories' },
-                                { id: 'wearables', name: 'Wearables' },
-                                { id: 'audio', name: 'Audio' },
-                                { id: 'covers', name: 'Covers' },
-                                { id: 'peripherals', name: 'Peripherals' }
-                              ]).map((cat: any) => {
+                              {categories.map((cat: any) => {
                                 const catValue = cat.name || cat.id;
                                 const isSelected = editCategoriesFilter.includes(catValue);
                                 return (
@@ -2241,6 +2381,11 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
                                   </button>
                                 );
                               })}
+                              {categories.length === 0 && (
+                                <span className="px-2 py-1 text-[10px] font-medium text-slate-400">
+                                  No Zyro categories are available for filtering.
+                                </span>
+                              )}
                             </div>
                           </div>
 
@@ -2585,7 +2730,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-slate-50 dark:bg-slate-900/20 p-5 rounded-3xl border border-slate-100 dark:border-slate-800/40">
               <div>
                 <h3 className="text-sm font-extrabold text-slate-900 dark:text-white uppercase tracking-wider">Hub Control Settings</h3>
-                <p className="text-[11px] text-slate-400">Configure synchronizations, markup parameters, image ingestion thresholds, and notifications.</p>
+                <p className="text-[11px] text-slate-400">Configure synchronization scope, pricing rules, image limits, and category mappings.</p>
               </div>
               {supplierSettings && (supplierSettings.lastUpdated || supplierSettings.updatedBy) && (
                 <div className="text-left sm:text-right text-[10px] text-slate-400 font-mono">
@@ -2613,33 +2758,13 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
                         <Globe className="h-4 w-4 text-sky-500" />
                         <span>Website Sync Channel</span>
                       </div>
-                      <p className="text-[10px] text-slate-400">Enable automatic product synchronizations through the Zyro.lk Web Feed.</p>
+                      <p className="text-[10px] text-slate-400">Allow manual and scheduled synchronization from website supplier feeds.</p>
                     </div>
                     <label className="relative inline-flex items-center cursor-pointer shrink-0">
                       <input 
                         type="checkbox" 
                         checked={!!supplierSettings.websiteSyncEnabled}
                         onChange={(e) => setSupplierSettings(prev => ({ ...prev, websiteSyncEnabled: e.target.checked }))}
-                        className="sr-only peer" 
-                      />
-                      <div className="w-10 h-5 bg-slate-200 dark:bg-slate-800 peer-focus:outline-hidden rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
-                    </label>
-                  </div>
-
-                  {/* WhatsApp Sync Channel */}
-                  <div className="p-4 bg-white dark:bg-slate-900/60 border border-slate-150 dark:border-slate-800 rounded-2xl flex items-center justify-between">
-                    <div className="space-y-1 pr-4">
-                      <div className="flex items-center gap-1.5 font-bold text-slate-900 dark:text-white text-xs">
-                        <Phone className="h-4 w-4 text-emerald-500" />
-                        <span>WhatsApp Sync Channel</span>
-                      </div>
-                      <p className="text-[10px] text-slate-400">Process supplier stock and price updates automatically via the WhatsApp channel.</p>
-                    </div>
-                    <label className="relative inline-flex items-center cursor-pointer shrink-0">
-                      <input 
-                        type="checkbox" 
-                        checked={!!supplierSettings.whatsappSyncEnabled}
-                        onChange={(e) => setSupplierSettings(prev => ({ ...prev, whatsappSyncEnabled: e.target.checked }))}
                         className="sr-only peer" 
                       />
                       <div className="w-10 h-5 bg-slate-200 dark:bg-slate-800 peer-focus:outline-hidden rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
@@ -2666,25 +2791,6 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
                     </label>
                   </div>
 
-                  {/* Automated Image Download */}
-                  <div className="p-4 bg-white dark:bg-slate-900/60 border border-slate-150 dark:border-slate-800 rounded-2xl flex items-center justify-between">
-                    <div className="space-y-1 pr-4">
-                      <div className="flex items-center gap-1.5 font-bold text-slate-900 dark:text-white text-xs">
-                        <Camera className="h-4 w-4 text-purple-500" />
-                        <span>Automated Image Downloader</span>
-                      </div>
-                      <p className="text-[10px] text-slate-400">Fetch, optimize and upload new product images directly into Zyro.lk storage.</p>
-                    </div>
-                    <label className="relative inline-flex items-center cursor-pointer shrink-0">
-                      <input 
-                        type="checkbox" 
-                        checked={!!supplierSettings.autoImageDownload}
-                        onChange={(e) => setSupplierSettings(prev => ({ ...prev, autoImageDownload: e.target.checked }))}
-                        className="sr-only peer" 
-                      />
-                      <div className="w-10 h-5 bg-slate-200 dark:bg-slate-800 peer-focus:outline-hidden rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
-                    </label>
-                  </div>
                 </div>
               </div>
 
@@ -2729,7 +2835,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
                     <input
                       type="datetime-local"
                       value={toDateTimeLocalValue(supplierSettings.nextSync)}
-                      onChange={(e) => setSupplierSettings(prev => ({ ...prev, nextSync: fromDateTimeLocalValue(e.target.value) }))}
+                      readOnly
                       className="w-full px-3.5 py-2.5 bg-white dark:bg-[#111928] border border-slate-200 dark:border-slate-800 rounded-xl focus:outline-hidden focus:border-blue-500/50 transition-colors text-xs text-slate-900 dark:text-white font-mono font-bold text-left"
                     />
                   </div>
@@ -2740,7 +2846,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
                     <input
                       type="datetime-local"
                       value={toDateTimeLocalValue(supplierSettings.lastSync)}
-                      onChange={(e) => setSupplierSettings(prev => ({ ...prev, lastSync: fromDateTimeLocalValue(e.target.value) }))}
+                      readOnly
                       className="w-full px-3.5 py-2.5 bg-white dark:bg-[#111928] border border-slate-200 dark:border-slate-800 rounded-xl focus:outline-hidden focus:border-blue-500/50 transition-colors text-xs text-slate-900 dark:text-white font-mono font-bold text-left"
                     />
                   </div>
@@ -2839,7 +2945,8 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {supplierSources.filter(source => (source.supplierType || source.type) === 'website').map((source) => {
                     const enabledIds = supplierSettings.enabledSupplierIds || [];
-                    const isChecked = enabledIds.length === 0 || enabledIds.includes(source.id);
+                    const usesExplicitScope = supplierSettings.enabledSupplierIdsConfigured === true;
+                    const isChecked = (!usesExplicitScope && enabledIds.length === 0) || enabledIds.includes(source.id);
                     return (
                       <label
                         key={source.id}
@@ -2858,6 +2965,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
                               const normalizedIds = currentIds.length === 0 ? allWebsiteIds : currentIds;
                               return {
                                 ...prev,
+                                enabledSupplierIdsConfigured: true,
                                 enabledSupplierIds: e.target.checked
                                   ? Array.from(new Set([...normalizedIds, source.id]))
                                   : normalizedIds.filter((id: string) => id !== source.id)

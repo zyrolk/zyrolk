@@ -5,24 +5,24 @@
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-display: "Space Grotesk", sans-serif;
   --font-mono: "JetBrains Mono", monospace;
-  --color-brand-blue: #1d4ed8;
+  --color-brand-blue: #2563eb;
   --color-brand-blue-dark: #1e3a8a;
-  --color-brand-orange: #f97316;
+  --color-brand-orange: #ff6a00;
   --color-brand-success: #16a34a;
-  --color-brand-dark: #0f172a;
-  --color-storefront-bg: #f8fafc;
+  --color-brand-dark: #1f2937;
+  --color-storefront-bg: #f6f8fc;
   --color-storefront-card: #ffffff;
 }
 
 :root {
-  --zy-color-primary: #1d4ed8;
+  --zy-color-primary: #2563eb;
   --zy-color-primary-dark: #1e40af;
-  --zy-color-accent: #f97316;
+  --zy-color-accent: #ff6a00;
   --zy-color-success: #16a34a;
   --zy-color-danger: #dc2626;
-  --zy-color-ink: #0f172a;
-  --zy-color-muted: #64748b;
-  --zy-color-bg: #f8fafc;
+  --zy-color-ink: #111827;
+  --zy-color-muted: #6b7280;
+  --zy-color-bg: #f6f8fc;
   --zy-color-card: #ffffff;
   --zy-border-soft: rgba(148, 163, 184, 0.22);
   --zy-radius-sm: 0.625rem;
@@ -104,12 +104,347 @@ textarea {
   transition: border-color 180ms ease, box-shadow 180ms ease, transform 180ms ease;
 }
 
+.zy-homepage {
+  background:
+    radial-gradient(circle at 8% 8%, rgba(37, 99, 235, 0.1), transparent 25rem),
+    radial-gradient(circle at 94% 34%, rgba(255, 106, 0, 0.045), transparent 28rem),
+    #f6f8fc;
+}
+
+.zy-home-section {
+  position: relative;
+  scroll-margin-top: 6rem;
+}
+
+.zy-home-search-card {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgba(37, 99, 235, 0.18);
+  border-radius: 2rem;
+  padding: clamp(1.25rem, 3vw, 2.25rem);
+  background:
+    radial-gradient(circle at 92% 8%, rgba(96, 165, 250, 0.22), transparent 19rem),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.97), rgba(239, 246, 255, 0.92));
+  box-shadow: 0 30px 70px -42px rgba(37, 99, 235, 0.58);
+  backdrop-filter: blur(18px);
+}
+
+.zy-home-search-card::after {
+  position: absolute;
+  top: -5rem;
+  right: -4rem;
+  width: 13rem;
+  height: 13rem;
+  border-radius: 999px;
+  content: "";
+  background: rgba(37, 99, 235, 0.08);
+  filter: blur(1px);
+}
+
+.zy-home-search-form {
+  position: relative;
+}
+
+.zy-account-menu {
+  animation: zy-account-menu-in 180ms ease-out both;
+  transform-origin: top right;
+}
+
+.zy-account-action {
+  display: flex;
+  min-height: 3rem;
+  align-items: center;
+  gap: 0.625rem;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 1rem;
+  padding: 0.75rem;
+  background: #f8fafc;
+  color: #334155;
+  font-size: 0.75rem;
+  font-weight: 800;
+  transition: border-color 160ms ease, background-color 160ms ease, color 160ms ease, transform 160ms ease;
+}
+
+.zy-account-action:hover {
+  border-color: rgba(37, 99, 235, 0.25);
+  background: #eff6ff;
+  color: #1d4ed8;
+  transform: translateY(-1px);
+}
+
+@keyframes zy-account-menu-in {
+  from { opacity: 0; transform: translateY(-0.35rem) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.zy-market-shelf {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 2.25rem;
+  padding-top: clamp(1.75rem, 4vw, 3rem);
+  padding-bottom: clamp(1.75rem, 4vw, 3rem);
+  box-shadow: 0 30px 80px -48px rgba(15, 23, 42, 0.55);
+}
+
+.zy-market-shelf::before {
+  position: absolute;
+  inset: 0 auto auto 0;
+  width: 100%;
+  height: 0.25rem;
+  content: "";
+  background: linear-gradient(90deg, #2563eb, #60a5fa 55%, transparent);
+}
+
+.zy-market-shelf-categories {
+  background: linear-gradient(135deg, #eff6ff 0%, #ffffff 48%, #f8fafc 100%);
+  border-color: rgba(37, 99, 235, 0.16);
+}
+
+.zy-market-shelf-featured {
+  background:
+    radial-gradient(circle at 95% 0%, rgba(37, 99, 235, 0.1), transparent 22rem),
+    #ffffff;
+}
+
+.zy-market-shelf-new {
+  background: linear-gradient(145deg, #dbeafe 0%, #eff6ff 44%, #ffffff 100%);
+  border-color: rgba(37, 99, 235, 0.14);
+}
+
+.zy-market-shelf-best {
+  background: linear-gradient(145deg, #fff7ed 0%, #ffffff 52%, #f8fafc 100%);
+  border-color: rgba(255, 106, 0, 0.13);
+}
+
+.zy-market-shelf-latest {
+  background: linear-gradient(145deg, #ffffff 0%, #eef2f7 100%);
+}
+
+.zy-market-shelf-recommended {
+  background: linear-gradient(145deg, #172554 0%, #1e3a8a 38%, #2563eb 100%);
+  border-color: rgba(37, 99, 235, 0.18);
+}
+
+.zy-market-shelf-recommended h2,
+.zy-market-shelf-recommended p {
+  color: #ffffff;
+}
+
+.zy-market-shelf-recommended .zy-section-eyebrow-pill {
+  border-color: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.12);
+  color: #dbeafe;
+}
+
+.zy-market-shelf-best::before {
+  background: linear-gradient(90deg, #1f2937, #64748b 55%, transparent);
+}
+
+.zy-market-shelf-latest::before {
+  background: linear-gradient(90deg, #2563eb, #93c5fd 55%, transparent);
+}
+
+.zy-market-promo-zone {
+  overflow: hidden;
+  border: 1px solid rgba(37, 99, 235, 0.14);
+  border-radius: 2rem;
+  padding-top: 2rem;
+  padding-bottom: 2rem;
+  background:
+    radial-gradient(circle at 100% 0%, rgba(37, 99, 235, 0.12), transparent 20rem),
+    #ffffff;
+  box-shadow: 0 24px 60px -46px rgba(31, 41, 55, 0.58);
+}
+
+.zy-flash-deals {
+  border-color: rgba(255, 106, 0, 0.3);
+  background:
+    radial-gradient(circle at 88% 10%, rgba(255, 255, 255, 0.24), transparent 20rem),
+    linear-gradient(135deg, #ff6a00 0%, #f97316 55%, #fb923c 100%);
+  box-shadow: 0 34px 80px -42px rgba(194, 65, 12, 0.72);
+}
+
+.zy-flash-deals h2 {
+  color: #ffffff;
+}
+
+.zy-market-assurance {
+  border: 1px solid rgba(96, 165, 250, 0.3);
+  background:
+    radial-gradient(circle at 88% 12%, rgba(96, 165, 250, 0.32), transparent 24rem),
+    linear-gradient(135deg, #172554 0%, #1e3a8a 50%, #1d4ed8 100%);
+}
+
+.zy-market-testimonials {
+  background:
+    radial-gradient(circle at 50% 0%, rgba(37, 99, 235, 0.06), transparent 28rem),
+    #ffffff;
+}
+
+.zy-market-footer {
+  background:
+    radial-gradient(circle at 12% 0%, rgba(37, 99, 235, 0.28), transparent 28rem),
+    linear-gradient(145deg, #0f172a 0%, #172554 52%, #111827 100%);
+}
+
+.zy-community-banner {
+  position: relative;
+  background:
+    radial-gradient(circle at 90% 0%, rgba(147, 197, 253, 0.32), transparent 22rem),
+    linear-gradient(135deg, #1d4ed8 0%, #2563eb 58%, #3b82f6 100%);
+  box-shadow: 0 30px 70px -42px rgba(37, 99, 235, 0.75);
+}
+
+.zy-section-eyebrow-pill {
+  border: 1px solid rgba(37, 99, 235, 0.14);
+  border-radius: 999px;
+  padding: 0.35rem 0.7rem;
+  background: rgba(239, 246, 255, 0.9);
+}
+
+.zy-trust-strip {
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 24px 60px -34px rgba(15, 23, 42, 0.42);
+  backdrop-filter: blur(18px);
+}
+
+.zy-category-card,
+.zy-product-card {
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 1.75rem;
+  background: #ffffff;
+  box-shadow: 0 18px 44px -28px rgba(15, 23, 42, 0.48);
+  transition: border-color 220ms ease, box-shadow 220ms ease, transform 220ms ease;
+}
+
+.zy-market-search {
+  border-color: rgba(29, 78, 216, 0.2);
+  background: #ffffff;
+  box-shadow: 0 12px 28px -20px rgba(29, 78, 216, 0.52), inset 0 0 0 1px rgba(255, 255, 255, 0.75);
+}
+
+.zy-market-header {
+  box-shadow: 0 12px 32px -24px rgba(37, 99, 235, 0.48);
+}
+
+.zy-market-search:hover {
+  border-color: rgba(29, 78, 216, 0.4);
+}
+
+.zy-market-search:focus,
+.zy-market-search:focus-visible {
+  border-color: rgba(29, 78, 216, 0.72);
+  box-shadow: 0 0 0 4px rgba(29, 78, 216, 0.12), 0 18px 38px -22px rgba(29, 78, 216, 0.58);
+}
+
+.zy-hero { isolation: isolate; }
+
+.zy-hero-stage {
+  border: 1px solid rgba(37, 99, 235, 0.14);
+  box-shadow: 0 40px 90px -48px rgba(30, 64, 175, 0.55);
+}
+
+.zy-hero-copy {
+  border: 1px solid rgba(255, 255, 255, 0.88);
+  border-radius: 2rem;
+  background: rgba(255, 255, 255, 0.8);
+  box-shadow: 0 34px 80px -42px rgba(37, 99, 235, 0.42);
+  backdrop-filter: blur(16px);
+}
+
+.zy-hero-product {
+  transition: border-color 180ms ease, box-shadow 180ms ease, transform 180ms ease;
+}
+
+.zy-hero-product:hover {
+  border-color: rgba(37, 99, 235, 0.3);
+  box-shadow: 0 28px 64px -30px rgba(37, 99, 235, 0.5);
+}
+
+.zy-category-tone-0 { background: linear-gradient(145deg, #dbeafe, #ffffff 70%); }
+.zy-category-tone-1 { background: linear-gradient(145deg, #ffedd5, #ffffff 70%); }
+.zy-category-tone-2 { background: linear-gradient(145deg, #dcfce7, #ffffff 70%); }
+.zy-category-tone-3 { background: linear-gradient(145deg, #f3e8ff, #ffffff 70%); }
+
+.zy-category-tone-0 > div:first-child { background: #dbeafe; }
+.zy-category-tone-1 > div:first-child { background: #ffedd5; }
+.zy-category-tone-2 > div:first-child { background: #dcfce7; }
+.zy-category-tone-3 > div:first-child { background: #f3e8ff; }
+
+.zy-hero-primary {
+  border: 1px solid rgba(255, 255, 255, 0.88);
+  background: #ffffff;
+  color: var(--zy-color-primary-dark);
+  box-shadow: 0 18px 38px -20px rgba(0, 0, 0, 0.75);
+}
+
+.zy-hero-primary:hover {
+  border-color: #ffffff;
+  background: #eff6ff;
+  color: var(--zy-color-primary);
+  box-shadow: 0 22px 44px -20px rgba(0, 0, 0, 0.82);
+}
+
 @media (hover: hover) and (pointer: fine) {
   .zy-card-hover:hover {
     border-color: rgba(29, 78, 216, 0.22);
     box-shadow: var(--zy-shadow-md);
     transform: translateY(-2px);
   }
+
+  .zy-category-card:hover,
+  .zy-product-card:hover {
+    border-color: rgba(29, 78, 216, 0.26);
+    box-shadow: 0 28px 54px -34px rgba(15, 23, 42, 0.58);
+    transform: translateY(-4px);
+  }
+}
+
+@media (max-width: 639px) {
+.zy-category-card,
+.zy-product-card {
+    border-radius: 1.25rem;
+  }
+
+  .zy-homepage {
+    background:
+      radial-gradient(circle at 10% 5%, rgba(37, 99, 235, 0.07), transparent 18rem),
+      #f5f7fa;
+  }
+
+  .zy-home-search-card {
+    border-radius: 1.5rem;
+  }
+
+  .zy-market-shelf,
+  .zy-market-promo-zone {
+    border-radius: 1.5rem;
+    padding-top: 1.5rem;
+    padding-bottom: 1.5rem;
+  }
+
+  .zy-hero-copy {
+    border-radius: 1.5rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .zy-account-menu {
+    animation: none;
+  }
+
+  .zy-account-action,
+  .zy-category-card,
+  .zy-product-card,
+  .zy-hero-product {
+    transition-duration: 0.01ms;
+  }
+}
+
+.zy-product-card {
+  box-shadow: 0 16px 38px -28px rgba(31, 41, 55, 0.52);
 }
 
 .zy-input {
@@ -303,6 +638,8 @@ textarea {
   }
 
   .zy-card-hover:hover,
+  .zy-category-card:hover,
+  .zy-product-card:hover,
   .zy-button:hover,
   .zy-button:active {
     transform: none;

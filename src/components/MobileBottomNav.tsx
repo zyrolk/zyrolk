@@ -2,7 +2,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import { 
   Home, ShoppingBag, Heart, ShoppingCart, Menu, X, 
   LayoutDashboard, LogIn, LogOut, Phone, MapPin, 
-  ChevronRight, SlidersHorizontal
+  ChevronRight, SlidersHorizontal, UserRound, ShieldCheck, MessageCircle,
+  Mail, HelpCircle, LockKeyhole, Info
 } from 'lucide-react';
 import { auth } from '../firebase';
 import { signOut } from 'firebase/auth';
@@ -212,34 +213,45 @@ export default function MobileBottomNav({
             {/* Inner scroll container */}
             <div className="flex-1 overflow-y-auto overscroll-contain px-5 sm:px-6 space-y-6 text-left">
               
-              {/* Header Greeting panel */}
-              <div className="bg-slate-50 border border-slate-100 rounded-3xl p-4 flex items-center justify-between">
-                <div>
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Logged in as</span>
-                  <span className="text-sm font-bold text-slate-800 font-display block truncate max-w-[180px]">
-                    {user ? user.displayName || user.email : "Guest Visitor"}
-                  </span>
+              {/* Premium profile card */}
+              <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-blue-700 via-brand-blue to-blue-500 p-5 text-white shadow-xl shadow-blue-950/20">
+                <div className="relative z-10 flex items-center gap-3">
+                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-white/25 bg-white/15 text-lg font-black">
+                    {user ? (user.displayName || user.email || 'Z').slice(0, 1).toUpperCase() : <UserRound className="h-5 w-5" />}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <span className="block text-[10px] font-black uppercase tracking-[0.16em] text-blue-100">{user ? 'Welcome back' : 'Welcome to Zyro.lk'}</span>
+                    <span className="block truncate text-base font-black font-display">{user ? user.displayName || 'Zyro.lk Customer' : 'Guest shopper'}</span>
+                    <span className="block truncate text-[11px] text-blue-100">{user?.email || 'Sign in for a personalized shopping experience'}</span>
+                  </div>
+                  {user && <ShieldCheck className="h-5 w-5 shrink-0 text-blue-100" aria-label="Signed in account" />}
                 </div>
-                {user ? (
-                  <button 
-                    onClick={handleLogout}
-                    className="min-h-11 px-3.5 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-red-500/15"
-                  >
-                    <LogOut className="h-3.5 w-3.5 mr-1" />
-                    Sign Out
-                  </button>
-                ) : (
+                <div className="relative z-10 mt-4 grid grid-cols-2 gap-2 border-t border-white/15 pt-4">
+                  <div className="rounded-xl bg-white/10 px-3 py-2"><span className="block text-lg font-black">{wishlistCount}</span><span className="text-[9px] font-bold uppercase tracking-wider text-blue-100">Saved items</span></div>
+                  <div className="rounded-xl bg-white/10 px-3 py-2"><span className="block text-lg font-black">{cartCount}</span><span className="text-[9px] font-bold uppercase tracking-wider text-blue-100">Cart items</span></div>
+                </div>
+                {!user && (
                   <button 
                     onClick={() => {
                       setIsMoreMenuOpen(false);
                       onOpenAuthModal();
                     }}
-                    className="min-h-11 px-3.5 py-1.5 bg-brand-blue text-white rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center shadow-xs focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20"
+                    className="relative z-10 mt-4 min-h-11 w-full rounded-xl border border-white bg-white px-4 text-xs font-black text-brand-blue shadow-lg focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-white/30"
                   >
-                    <LogIn className="h-3.5 w-3.5 mr-1" />
+                    <LogIn className="mr-1 inline h-3.5 w-3.5" />
                     Sign In
                   </button>
                 )}
+              </div>
+
+              <div className="space-y-2.5">
+                <span className="block text-[10px] font-extrabold uppercase tracking-widest text-slate-400">Quick Actions</span>
+                <div className="grid grid-cols-2 gap-2.5">
+                  <button onClick={() => handleTabClick('products')} className="zy-account-action"><ShoppingBag className="h-4.5 w-4.5 text-brand-blue" /><span>Shop products</span></button>
+                  <button onClick={() => handleTabClick('wishlist')} className="zy-account-action"><Heart className="h-4.5 w-4.5 text-red-500" /><span>Wishlist</span></button>
+                  <button onClick={() => { setIsMoreMenuOpen(false); onOpenCart(); }} className="zy-account-action"><ShoppingCart className="h-4.5 w-4.5 text-brand-blue" /><span>Cart</span></button>
+                  <button onClick={() => handleTabClick('categories')} className="zy-account-action"><SlidersHorizontal className="h-4.5 w-4.5 text-brand-blue" /><span>Categories</span></button>
+                </div>
               </div>
 
               {/* Admin Dashboard shortcut */}
@@ -283,8 +295,8 @@ export default function MobileBottomNav({
                     onClick={() => handleCategoryClick('all')}
                     className="p-3 rounded-2xl border border-slate-100 hover:border-slate-200 text-left cursor-pointer transition-colors"
                   >
-                    <span className="text-[11px] font-bold text-slate-800 block">All Electronics</span>
-                    <span className="text-[9px] text-slate-400 font-light">View complete list</span>
+                    <span className="text-[11px] font-bold text-slate-800 block">All Products</span>
+                    <span className="text-[9px] text-slate-400 font-light">View the live catalog</span>
                   </button>
                   {categories.map(cat => (
                     <button
@@ -304,6 +316,12 @@ export default function MobileBottomNav({
                 <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest block">Customer Support</span>
                 
                 <div className="grid grid-cols-1 gap-2">
+                  {settings?.whatsappNumber && (
+                    <a href={`https://wa.me/${settings.whatsappNumber.replace(/\D/g, '')}`} target="_blank" rel="noopener noreferrer" className="flex items-center rounded-2xl border border-emerald-100 bg-emerald-50/70 p-3.5 text-slate-700">
+                      <div className="mr-3 rounded-lg bg-white p-1.5 text-emerald-600"><MessageCircle className="h-4 w-4" /></div>
+                      <div><span className="block text-xs font-bold">WhatsApp Support</span><span className="text-[10px] text-slate-500">Chat before or after ordering</span></div>
+                    </a>
+                  )}
                   {settings?.contactPhone ? (
                     <a 
                       href={`tel:${settings.contactPhone}`}
@@ -346,13 +364,37 @@ export default function MobileBottomNav({
                       </span>
                     </div>
                   </button>
+                  {settings?.contactEmail && (
+                    <a href={`mailto:${settings.contactEmail}`} className="flex items-center rounded-2xl border border-slate-100 bg-slate-50 p-3.5 text-slate-700">
+                      <div className="mr-3 rounded-lg bg-blue-50 p-1.5 text-brand-blue"><Mail className="h-4 w-4" /></div>
+                      <div className="min-w-0"><span className="block text-xs font-bold">Email Support</span><span className="block truncate text-[10px] text-slate-500">{settings.contactEmail}</span></div>
+                    </a>
+                  )}
+                  <button onClick={() => handleTabClick('faq')} className="flex w-full items-center rounded-2xl border border-slate-100 bg-slate-50 p-3.5 text-left text-slate-700">
+                    <div className="mr-3 rounded-lg bg-blue-50 p-1.5 text-brand-blue"><HelpCircle className="h-4 w-4" /></div>
+                    <div><span className="block text-xs font-bold">Frequently Asked Questions</span><span className="text-[10px] text-slate-500">Shopping and delivery guidance</span></div>
+                  </button>
                 </div>
               </div>
+
+              <div className="space-y-2.5">
+                <span className="block text-[10px] font-extrabold uppercase tracking-widest text-slate-400">Information</span>
+                <div className="grid grid-cols-2 gap-2.5">
+                  <button onClick={() => handleTabClick('privacy-policy')} className="zy-account-action"><LockKeyhole className="h-4.5 w-4.5 text-slate-500" /><span>Privacy</span></button>
+                  <button onClick={() => handleTabClick('about-us')} className="zy-account-action"><Info className="h-4.5 w-4.5 text-slate-500" /><span>About</span></button>
+                </div>
+              </div>
+
+              {user && (
+                <button onClick={handleLogout} className="flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl border border-red-100 bg-red-50 text-sm font-black text-red-600 transition-colors hover:bg-red-100 focus-visible:ring-4 focus-visible:ring-red-500/15">
+                  <LogOut className="h-4.5 w-4.5" /> Sign Out
+                </button>
+              )}
 
               {/* Copyright/Footer Info */}
               <div className="pt-4 text-center border-t border-slate-100">
                 <p className="text-[10px] text-slate-400 font-light">
-                  &copy; {new Date().getFullYear()} {settings?.storeName || "Zyro.lk"} &middot; High-Fidelity Electronics Imports
+                  &copy; {new Date().getFullYear()} {settings?.storeName || "Zyro.lk"} &middot; Your trusted Sri Lankan marketplace
                 </p>
               </div>
 
