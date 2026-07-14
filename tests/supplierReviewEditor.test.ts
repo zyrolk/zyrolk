@@ -50,6 +50,8 @@ test('supplier review draft projects editable product values with safe defaults'
     category: 'electronics',
     brand: 'Supplier Brand',
     isActive: true,
+    primaryImageUrl: 'https://a2zdropshipping.lk/products/watch.jpg',
+    galleryImageUrls: [],
   });
 });
 
@@ -73,9 +75,11 @@ test('supplier review validation blocks invalid publish values', () => {
     category: '',
     brand: '',
     isActive: true,
+    primaryImageUrl: '',
+    galleryImageUrls: ['javascript:alert(1)'],
   });
 
-  assert.deepEqual(Object.keys(errors).sort(), ['category', 'comparePrice', 'productName', 'sellingPrice', 'stock']);
+  assert.deepEqual(Object.keys(errors).sort(), ['category', 'comparePrice', 'galleryImageUrls', 'primaryImageUrl', 'productName', 'sellingPrice', 'stock']);
 });
 
 test('supplier review validation only accepts configured Zyro categories', () => {
@@ -108,6 +112,12 @@ test('approval publishes edited values and preserves immutable supplier values f
     category: 'wearables',
     brand: 'Zyro Select',
     isActive: false,
+    primaryImageUrl: 'https://cdn.zyro.lk/watch-primary.webp',
+    galleryImageUrls: [
+      'https://cdn.zyro.lk/watch-side.webp',
+      'https://cdn.zyro.lk/watch-primary.webp',
+      'https://cdn.zyro.lk/watch-side.webp',
+    ],
   });
 
   assert.deepEqual(queueItem, original);
@@ -120,6 +130,11 @@ test('approval publishes edited values and preserves immutable supplier values f
   assert.equal(approved.productPayload?.specs.brand, 'Zyro Select');
   assert.equal(approved.productPayload?.isActive, false);
   assert.equal(approved.productPayload?.visible, false);
+  assert.equal(approved.productPayload?.imageUrl, 'https://cdn.zyro.lk/watch-primary.webp');
+  assert.deepEqual(approved.productPayload?.imageUrls, [
+    'https://cdn.zyro.lk/watch-primary.webp',
+    'https://cdn.zyro.lk/watch-side.webp',
+  ]);
   assert.equal(approved.supplierSnapshot?.supplierSku, 'A2Z-100');
   assert.equal(approved.supplierSnapshot?.wholesalePrice, 1000);
   assert.equal((approved.supplierSnapshot?.productPayload as { price: number }).price, 1500);
@@ -133,7 +148,7 @@ test('approval rejects missing or fake supplier images', () => {
   assert.throws(() => buildSupplierApprovalItem(invalidItem, createSupplierReviewDraft(invalidItem)), /valid supplier product image/i);
 });
 
-test('approval promotes a valid gallery image and removes invalid entries', () => {
+test('approval rejects an invalid primary image even when the gallery is valid', () => {
   const mixedItem = structuredClone(queueItem);
   mixedItem.productPayload.imageUrl = 'https://images.unsplash.com/photo-fake';
   mixedItem.productPayload.imageUrls = [
@@ -142,7 +157,18 @@ test('approval promotes a valid gallery image and removes invalid entries', () =
     'https://a2zdropshipping.lk/uploads/watch.webp',
   ];
 
-  const approved = buildSupplierApprovalItem(mixedItem, createSupplierReviewDraft(mixedItem));
-  assert.equal(approved.productPayload?.imageUrl, 'https://a2zdropshipping.lk/uploads/watch.webp');
-  assert.deepEqual(approved.productPayload?.imageUrls, ['https://a2zdropshipping.lk/uploads/watch.webp']);
+  assert.throws(() => buildSupplierApprovalItem(mixedItem, createSupplierReviewDraft(mixedItem)), /valid supplier product image/i);
+});
+
+test('review draft removes duplicate gallery URLs and keeps the primary separate', () => {
+  const duplicateItem = structuredClone(queueItem);
+  duplicateItem.productPayload.imageUrls = [
+    duplicateItem.productPayload.imageUrl,
+    'https://a2zdropshipping.lk/uploads/watch-side.webp',
+    'https://a2zdropshipping.lk/uploads/watch-side.webp',
+  ];
+
+  const draft = createSupplierReviewDraft(duplicateItem);
+  assert.equal(draft.primaryImageUrl, duplicateItem.productPayload.imageUrl);
+  assert.deepEqual(draft.galleryImageUrls, ['https://a2zdropshipping.lk/uploads/watch-side.webp']);
 });

@@ -1,5 +1,5 @@
 import { Product } from '../types';
-import { normalizeSupplierProductImages } from './connectors/a2z-website/productImages';
+import { isValidSupplierImageUrl, normalizeSupplierProductImages } from './connectors/a2z-website/productImages';
 
 export interface SupplierReviewSourceItem {
   id: string;
@@ -24,6 +24,8 @@ export interface SupplierReviewDraft {
   category: string;
   brand: string;
   isActive: boolean;
+  primaryImageUrl: string;
+  galleryImageUrls: string[];
 }
 
 export interface SupplierProfitMetrics {
@@ -37,10 +39,13 @@ export interface SupplierReviewValidationErrors {
   comparePrice?: string;
   stock?: string;
   category?: string;
+  primaryImageUrl?: string;
+  galleryImageUrls?: string;
 }
 
 export interface SupplierPublishValidationErrors {
   imageUrl?: string;
+  imageUrls?: string;
   sellingPrice?: string;
   category?: string;
 }
@@ -53,6 +58,13 @@ const finiteNumber = (value: unknown, fallback = 0): number => {
 export function createSupplierReviewDraft(item: SupplierReviewSourceItem): SupplierReviewDraft {
   const payload = item.productPayload;
   const specs = payload?.specs || {};
+  const primaryImageUrl = String(payload?.imageUrl || item.imageUrl || '').trim();
+  const galleryImageUrls = [...new Set(
+    (Array.isArray(payload?.imageUrls) ? payload.imageUrls : [])
+      .filter((value): value is string => typeof value === 'string')
+      .map((value) => value.trim())
+      .filter((value) => Boolean(value) && value !== primaryImageUrl),
+  )];
 
   return {
     productName: String(payload?.name || item.productName || ''),
@@ -62,6 +74,8 @@ export function createSupplierReviewDraft(item: SupplierReviewSourceItem): Suppl
     category: String(payload?.category || ''),
     brand: String(specs.brand || specs.Brand || ''),
     isActive: payload?.isActive !== false,
+    primaryImageUrl,
+    galleryImageUrls,
   };
 }
 
@@ -87,6 +101,12 @@ export function validateSupplierReviewDraft(
   if (!Number.isFinite(draft.comparePrice) || draft.comparePrice < 0) errors.comparePrice = 'Compare price cannot be negative.';
   if (draft.comparePrice > 0 && draft.comparePrice < draft.sellingPrice) errors.comparePrice = 'Compare price must be at least the selling price.';
   if (!Number.isInteger(draft.stock) || draft.stock < 0) errors.stock = 'Stock must be a whole number of zero or more.';
+  if (!isValidSupplierImageUrl(draft.primaryImageUrl)) {
+    errors.primaryImageUrl = 'A valid supplier product image is required before publishing.';
+  }
+  if (draft.galleryImageUrls.some((url) => !isValidSupplierImageUrl(url))) {
+    errors.galleryImageUrls = 'Remove or replace invalid gallery image URLs.';
+  }
   const category = draft.category.trim();
   if (!category) {
     errors.category = 'Category is required.';
@@ -103,12 +123,15 @@ export function validateSupplierPublishPayload(
 ): SupplierPublishValidationErrors {
   const payload = item.productPayload;
   const errors: SupplierPublishValidationErrors = {};
-  const images = normalizeSupplierProductImages(payload?.imageUrl, payload?.imageUrls);
+  const primaryImageIsValid = isValidSupplierImageUrl(payload?.imageUrl);
   const sellingPrice = finiteNumber(payload?.price, Number.NaN);
   const category = String(payload?.category || '').trim();
 
-  if (images.length === 0) {
+  if (!primaryImageIsValid) {
     errors.imageUrl = 'A valid supplier product image is required before publishing.';
+  }
+  if ((Array.isArray(payload?.imageUrls) ? payload.imageUrls : []).some((url) => !isValidSupplierImageUrl(url))) {
+    errors.imageUrls = 'Every gallery image must use a valid supplier image URL.';
   }
   if (!Number.isFinite(sellingPrice) || sellingPrice <= 0) {
     errors.sellingPrice = 'Selling price must be greater than zero.';
@@ -129,7 +152,7 @@ export function buildSupplierApprovalItem(
 ): SupplierReviewSourceItem {
   const validationErrors = validateSupplierReviewDraft(draft, validCategoryIds);
   if (Object.keys(validationErrors).length > 0) {
-    throw new Error('Review editor contains invalid product values.');
+    throw new Error(Object.values(validationErrors)[0]);
   }
 
   if (!item.productPayload?.id) {
@@ -137,10 +160,8 @@ export function buildSupplierApprovalItem(
   }
 
   const originalPayload = item.productPayload;
-  const normalizedImages = normalizeSupplierProductImages(originalPayload.imageUrl, originalPayload.imageUrls);
-  if (normalizedImages.length === 0) {
-    throw new Error('A valid supplier product image is required before publishing. Sync the real supplier image and review the item again.');
-  }
+  const normalizedImages = normalizeSupplierProductImages(draft.primaryImageUrl, draft.galleryImageUrls);
+  const primaryImageUrl = draft.primaryImageUrl.trim();
   const sellingPrice = finiteNumber(draft.sellingPrice);
   const comparePrice = finiteNumber(draft.comparePrice, sellingPrice);
   const normalizedComparePrice = comparePrice > 0 ? comparePrice : sellingPrice;
@@ -165,7 +186,7 @@ export function buildSupplierApprovalItem(
     supplierSnapshot,
     productPayload: {
       ...originalPayload,
-      imageUrl: normalizedImages[0],
+      imageUrl: primaryImageUrl,
       imageUrls: normalizedImages,
       name: draft.productName.trim(),
       price: sellingPrice,

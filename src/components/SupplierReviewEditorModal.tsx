@@ -1,11 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Check, Package, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, Check, Image, Package, Plus, Trash2, X } from 'lucide-react';
 import {
   calculateSupplierProfit,
   SupplierReviewDraft,
   SupplierReviewSourceItem,
   validateSupplierReviewDraft,
 } from '../services/supplierReviewEditor';
+import { isValidSupplierImageUrl } from '../services/connectors/a2z-website/productImages';
 
 interface SupplierReviewEditorModalProps {
   item: SupplierReviewSourceItem;
@@ -30,6 +31,8 @@ export default function SupplierReviewEditorModal({
 }: SupplierReviewEditorModalProps) {
   const [draft, setDraft] = useState(initialDraft);
   const [submitted, setSubmitted] = useState(false);
+  const [galleryInput, setGalleryInput] = useState('');
+  const [galleryInputError, setGalleryInputError] = useState('');
   const firstInputRef = useRef<HTMLInputElement>(null);
   const validationErrors = useMemo(
     () => validateSupplierReviewDraft(draft, validCategoryIds),
@@ -65,6 +68,38 @@ export default function SupplierReviewEditorModal({
     setSubmitted(true);
     if (Object.keys(validationErrors).length > 0 || isPublishing) return;
     await onPublish(draft);
+  };
+
+  const addGalleryImage = () => {
+    const imageUrl = galleryInput.trim();
+    if (!isValidSupplierImageUrl(imageUrl)) {
+      setGalleryInputError('Enter a valid http or https supplier image URL.');
+      return;
+    }
+    if (imageUrl === draft.primaryImageUrl.trim() || draft.galleryImageUrls.includes(imageUrl)) {
+      setGalleryInputError('This image URL is already in the product gallery.');
+      return;
+    }
+    setDraft((current) => ({ ...current, galleryImageUrls: [...current.galleryImageUrls, imageUrl] }));
+    setGalleryInput('');
+    setGalleryInputError('');
+  };
+
+  const removeGalleryImage = (index: number) => {
+    setDraft((current) => ({
+      ...current,
+      galleryImageUrls: current.galleryImageUrls.filter((_, imageIndex) => imageIndex !== index),
+    }));
+  };
+
+  const moveGalleryImage = (index: number, offset: -1 | 1) => {
+    setDraft((current) => {
+      const destination = index + offset;
+      if (destination < 0 || destination >= current.galleryImageUrls.length) return current;
+      const galleryImageUrls = [...current.galleryImageUrls];
+      [galleryImageUrls[index], galleryImageUrls[destination]] = [galleryImageUrls[destination], galleryImageUrls[index]];
+      return { ...current, galleryImageUrls };
+    });
   };
 
   const errorFor = (field: keyof typeof validationErrors) => submitted ? validationErrors[field] : undefined;
@@ -141,6 +176,73 @@ export default function SupplierReviewEditorModal({
               <span className="flex items-center gap-2"><input type="checkbox" checked={draft.isActive} onChange={(event) => setDraft((current) => ({ ...current, isActive: event.target.checked }))} />{draft.isActive ? 'Active' : 'Inactive'}</span>
             </label>
           </div>
+
+          <section className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-900/40" aria-labelledby="supplier-product-images-title">
+            <div>
+              <h4 id="supplier-product-images-title" className="text-xs font-black uppercase tracking-wider text-slate-700 dark:text-slate-200">Product Images</h4>
+              <p className="mt-1 text-[10px] text-slate-400">Edit the storefront primary image and gallery order before publishing.</p>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_12rem]">
+              <label className="space-y-1.5 text-xs">
+                <span className="font-bold text-slate-600 dark:text-slate-300">Primary image URL</span>
+                <input
+                  type="url"
+                  value={draft.primaryImageUrl}
+                  onChange={(event) => setDraft((current) => ({ ...current, primaryImageUrl: event.target.value }))}
+                  aria-invalid={Boolean(errorFor('primaryImageUrl'))}
+                  placeholder="https://supplier.example/product.jpg"
+                  className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 dark:border-slate-700 dark:bg-slate-900"
+                />
+                {errorFor('primaryImageUrl') && <span className="block text-[10px] font-semibold text-red-500">{errorFor('primaryImageUrl')}</span>}
+              </label>
+              <div className="flex aspect-square items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
+                {isValidSupplierImageUrl(draft.primaryImageUrl) ? (
+                  <img src={draft.primaryImageUrl.trim()} alt="Primary product preview" className="h-full w-full object-contain" referrerPolicy="no-referrer" />
+                ) : (
+                  <div className="text-center text-slate-400"><Image className="mx-auto h-6 w-6" /><span className="mt-1 block text-[9px] font-bold">No valid preview</span></div>
+                )}
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <span className="text-xs font-bold text-slate-600 dark:text-slate-300">Gallery images</span>
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <input
+                  type="url"
+                  value={galleryInput}
+                  onChange={(event) => { setGalleryInput(event.target.value); setGalleryInputError(''); }}
+                  onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); addGalleryImage(); } }}
+                  placeholder="Add gallery image URL"
+                  aria-invalid={Boolean(galleryInputError)}
+                  className="min-h-11 flex-1 rounded-xl border border-slate-200 bg-white px-3 text-xs dark:border-slate-700 dark:bg-slate-900"
+                />
+                <button type="button" onClick={addGalleryImage} className="flex min-h-11 items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 text-xs font-black text-white"><Plus className="h-4 w-4" />Add image</button>
+              </div>
+              {galleryInputError && <span className="block text-[10px] font-semibold text-red-500">{galleryInputError}</span>}
+              {errorFor('galleryImageUrls') && <span className="block text-[10px] font-semibold text-red-500">{errorFor('galleryImageUrls')}</span>}
+            </div>
+
+            {draft.galleryImageUrls.length === 0 ? (
+              <p className="rounded-xl border border-dashed border-slate-300 px-4 py-6 text-center text-[10px] font-semibold text-slate-400 dark:border-slate-700">No additional gallery images.</p>
+            ) : (
+              <div className="grid gap-3 sm:grid-cols-2">
+                {draft.galleryImageUrls.map((imageUrl, index) => (
+                  <article key={`${imageUrl}-${index}`} className="rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
+                    <div className="mb-2 flex aspect-video items-center justify-center overflow-hidden rounded-lg bg-slate-100 dark:bg-slate-950">
+                      {isValidSupplierImageUrl(imageUrl) ? <img src={imageUrl} alt={`Gallery preview ${index + 1}`} className="h-full w-full object-contain" referrerPolicy="no-referrer" /> : <Image className="h-6 w-6 text-red-400" />}
+                    </div>
+                    <p className="truncate text-[9px] text-slate-400" title={imageUrl}>{imageUrl}</p>
+                    <div className="mt-2 flex justify-end gap-1">
+                      <button type="button" onClick={() => moveGalleryImage(index, -1)} disabled={index === 0} aria-label={`Move gallery image ${index + 1} up`} className="rounded-lg border border-slate-200 p-2 text-slate-500 disabled:opacity-30 dark:border-slate-700"><ArrowUp className="h-3.5 w-3.5" /></button>
+                      <button type="button" onClick={() => moveGalleryImage(index, 1)} disabled={index === draft.galleryImageUrls.length - 1} aria-label={`Move gallery image ${index + 1} down`} className="rounded-lg border border-slate-200 p-2 text-slate-500 disabled:opacity-30 dark:border-slate-700"><ArrowDown className="h-3.5 w-3.5" /></button>
+                      <button type="button" onClick={() => removeGalleryImage(index)} aria-label={`Remove gallery image ${index + 1}`} className="rounded-lg border border-red-500/20 p-2 text-red-500"><Trash2 className="h-3.5 w-3.5" /></button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
+          </section>
 
           <div className="grid gap-3 sm:grid-cols-2" aria-live="polite">
             <div className={`rounded-2xl border p-4 ${profit.profit >= 0 ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-600' : 'border-red-500/20 bg-red-500/10 text-red-600'}`}>
