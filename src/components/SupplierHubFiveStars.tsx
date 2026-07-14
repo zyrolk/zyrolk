@@ -36,7 +36,7 @@ import {
   isValidSupplierImageUrl,
   normalizeSupplierProductImages,
 } from '../services/connectors/a2z-website/productImages';
-import { collection, doc, getDocs, onSnapshot, setDoc, writeBatch } from 'firebase/firestore';
+import { collection, doc, getDocs, limit, onSnapshot, orderBy, query, setDoc, writeBatch } from 'firebase/firestore';
 import { auth, db, handleFirestoreError, OperationType } from '../firebase';
 import { Product } from '../types';
 import { approveSupplierQueueItem, deleteSupplierQueueItem, rejectSupplierQueueItem } from '../services/supplierQueueService';
@@ -49,7 +49,14 @@ import {
   createSupplierReviewDraft,
   SupplierReviewDraft,
 } from '../services/supplierReviewEditor';
-import { normalizeSupplierCategory, resolveSupplierCategory } from '../services/supplierCategoryMapping';
+import { matchesSupplierCategoryFilter, normalizeSupplierCategory, resolveSupplierCategory } from '../services/supplierCategoryMapping';
+import {
+  collectDiscoveredSupplierCategories,
+  filterSupplierComparison,
+  getSupplierProductLimit,
+} from '../services/supplierSyncSettings';
+
+const SYNC_HISTORY_LIMIT = 100;
 
 interface SupplierHubFiveStarsProps {
   isDarkMode?: boolean;
@@ -304,7 +311,11 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
     );
 
     const unsubscribeSyncHistory = onSnapshot(
-      collection(db, "supplier_sync_history"),
+      query(
+        collection(db, "supplier_sync_history"),
+        orderBy("createdAt", "desc"),
+        limit(SYNC_HISTORY_LIMIT),
+      ),
       (snapshot) => {
         const items: SyncHistoryItem[] = [];
         snapshot.forEach((queueDoc) => {
@@ -357,10 +368,11 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
 
     reviewQueue.forEach((item) => addCategories(item.supplierSnapshot?.categoryHierarchy));
     importQueue.forEach((item) => addCategories(item.categoryHierarchy));
+    supplierSources.forEach((source) => addCategories(source.settings?.discoveredCategories));
     return Array.from(values.entries())
       .map(([key, label]) => ({ key, label }))
       .sort((left, right) => left.label.localeCompare(right.label));
-  }, [importQueue, reviewQueue]);
+  }, [importQueue, reviewQueue, supplierSources]);
 
   useEffect(() => {
     const pendingIds = new Set(reviewQueue.filter((item) => item.status === 'Pending').map((item) => item.id));
@@ -450,23 +462,36 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
     return value ? new Date(value).toISOString() : "";
   };
 
-  const getSupplierApiHeaders = async () => {
+  const getSupplierApiHeaders = async (forceRefresh = false) => {
     const user = auth.currentUser;
     if (!user) {
       throw new Error("Admin authentication is required. Please sign in again.");
     }
 
-    const token = await user.getIdToken();
+    const token = await user.getIdToken(forceRefresh);
     return {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${token}`
     };
   };
 
+  const postSupplierApi = async (path: string, body: Record<string, unknown>) => {
+    const request = async (forceRefresh: boolean) => fetch(path, {
+      method: 'POST',
+      headers: await getSupplierApiHeaders(forceRefresh),
+      body: JSON.stringify(body),
+    });
+
+    let response = await request(false);
+    if (response.status === 401) response = await request(true);
+    return response;
+  };
+
   const handleSyncSupplier = async (sourceIds?: string[]): Promise<boolean> => {
     setIsSyncing(true);
     setErrorMsg(null);
     setSyncStatusMsg("Initiating supplier synchronization checks...");
+    let dryRunOnly = false;
     
     try {
       const syncBatchId = `batch-${Date.now()}`;
@@ -486,11 +511,14 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
       if (activeSources.length === 0) {
         throw new Error("No active Website supplier was found. Please enable a website supplier source in its Settings panel.");
       }
+      dryRunOnly = activeSources.every((source) => source.settings?.dryRunMode === true);
 
       const allFetchedProducts: any[] = [];
       const aggregatedMappedQueue: ReviewQueueItem[] = [];
       const aggregatedPendingChanges: any[] = [];
       let successCount = 0;
+      let writableSuccessCount = 0;
+      let dryRunCompared = 0;
       let errorMsgs: string[] = [];
 
       for (const source of activeSources) {
@@ -500,10 +528,9 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
         if (!urlToFetch) continue;
 
         try {
-          const res = await fetch('/api/fetch-supplier', {
-            method: 'POST',
-            headers: await getSupplierApiHeaders(),
-            body: JSON.stringify({ websiteUrl: urlToFetch, endpoint: endpointToFetch })
+          const res = await postSupplierApi('/api/fetch-supplier', {
+            websiteUrl: urlToFetch,
+            endpoint: endpointToFetch,
           });
 
           if (!res.ok) {
@@ -513,17 +540,20 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
 
           const result = await res.json();
           if (result.success && Array.isArray(result.products)) {
+            const sourceSettings = source.settings || {};
+            const dryRunMode = sourceSettings.dryRunMode === true;
+            const discoveredCategories = collectDiscoveredSupplierCategories(result.products);
             let fetched = result.products;
 
             // Apply Category Filter
             const catFilter = source.settings?.categoriesFilter || [];
             if (catFilter.length > 0) {
-              fetched = fetched.filter((prod: RawA2ZProduct) => {
-                const prodCats = prod.categoryHierarchy || [];
-                return prodCats.some(c => 
-                  catFilter.some(fc => fc.trim().toLowerCase() === c.trim().toLowerCase())
-                ) || catFilter.some(fc => prod.title.toLowerCase().includes(fc.trim().toLowerCase()));
-              });
+              fetched = fetched.filter((prod: RawA2ZProduct) => matchesSupplierCategoryFilter(
+                prod.categoryHierarchy,
+                catFilter,
+                categories,
+                supplierSettings.categoryMappings,
+              ));
             }
 
             // Apply Brand Filter
@@ -541,15 +571,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
               }
             }
 
-            // Product Limit & "Download ONLY the first 5 products" constraint
-            let limitNum = 5;
-            if (source.settings?.productLimit && source.settings.productLimit !== 'All') {
-              const savedLimit = parseInt(source.settings.productLimit, 10);
-              if (!isNaN(savedLimit)) {
-                limitNum = Math.min(5, savedLimit);
-              }
-            }
-            
+            const limitNum = getSupplierProductLimit(sourceSettings.productLimit, 250);
             const slicedProducts = fetched.slice(0, limitNum);
 
             // Map and compare each product
@@ -615,6 +637,14 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
                 }
               }
 
+              const enabledComparison = filterSupplierComparison(
+                { status: comparisonStatus, changedFields },
+                sourceSettings,
+              );
+              if (!enabledComparison) continue;
+              comparisonStatus = enabledComparison.status;
+              changedFields.splice(0, changedFields.length, ...enabledComparison.changedFields);
+
               const comparisonResult: ComparisonResult = {
                 matchFound,
                 matchedProductId,
@@ -631,39 +661,49 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
               const originalPrice = Math.round(retail * 1.1);
               const discount = 10;
               
-              const imageUrl = supplierImages[0] || '';
-              const categoryId = resolveSupplierCategory(
+              const supplierImageUrl = supplierImages[0] || '';
+              const resolvedCategoryId = resolveSupplierCategory(
                 prod.categoryHierarchy,
                 categories,
                 supplierSettings.categoryMappings,
               );
+              const isNewProduct = !match;
+              const priceUpdateEnabled = isNewProduct || changedFields.some((field) => field === 'Cost Price' || field === 'Market Price');
+              const stockUpdateEnabled = isNewProduct || changedFields.includes('Stock');
+              const descriptionUpdateEnabled = isNewProduct || changedFields.some((field) => field === 'Product Name' || field === 'Description');
+              const imageUpdateEnabled = isNewProduct || changedFields.includes('Primary Image');
+              const imageUrl = imageUpdateEnabled ? supplierImageUrl : (match?.imageUrl || '');
+              const imageUrls = imageUpdateEnabled
+                ? supplierImages
+                : (Array.isArray(match?.imageUrls) ? match.imageUrls : (imageUrl ? [imageUrl] : []));
+              const existingFlags = (match || {}) as Product & Record<string, unknown>;
 
               const productPayload: Product & Record<string, unknown> = {
                 id: docId,
-                name: prod.title,
-                description: prod.longDescription || '',
-                price: price,
-                originalPrice: originalPrice,
-                discount: discount,
-                stock: prod.inventoryLevel,
+                name: descriptionUpdateEnabled ? prod.title : (match?.name || prod.title),
+                description: descriptionUpdateEnabled ? (prod.longDescription || '') : (match?.description || ''),
+                price: priceUpdateEnabled ? price : (match?.price || price),
+                originalPrice: priceUpdateEnabled ? originalPrice : (match?.originalPrice || match?.price || originalPrice),
+                discount: priceUpdateEnabled ? discount : (match?.discount || 0),
+                stock: stockUpdateEnabled ? prod.inventoryLevel : (match?.stock || 0),
                 imageUrl: imageUrl,
-                imageUrls: supplierImages,
-                category: categoryId,
-                specs: prod.specifications || {},
-                isNew: true,
-                isFeatured: false,
-                isBestSeller: false,
-                isActive: true,
-                active: true,
-                published: true,
-                approved: true,
-                visible: true,
+                imageUrls,
+                category: isNewProduct ? resolvedCategoryId : (match?.category || resolvedCategoryId),
+                specs: descriptionUpdateEnabled ? (prod.specifications || {}) : (match?.specs || {}),
+                isNew: isNewProduct ? true : match?.isNew === true,
+                isFeatured: isNewProduct ? false : match?.isFeatured === true,
+                isBestSeller: isNewProduct ? false : match?.isBestSeller === true,
+                isActive: isNewProduct ? true : match?.isActive !== false,
+                active: isNewProduct ? true : existingFlags.active !== false,
+                published: isNewProduct ? true : existingFlags.published !== false,
+                approved: isNewProduct ? true : existingFlags.approved !== false,
+                visible: isNewProduct ? true : existingFlags.visible !== false,
                 sku: prod.sku,
                 supplierItemCode: prod.sku,
-                costPrice: wholesale,
-                marketPrice: prod.recommendedRetailPrice || 0,
-                rating: match ? (match.rating || 5) : 5,
-                reviewsCount: match ? (match.reviewsCount || 0) : 0,
+                costPrice: priceUpdateEnabled ? wholesale : (match?.costPrice || 0),
+                marketPrice: priceUpdateEnabled ? (prod.recommendedRetailPrice || 0) : (match?.marketPrice || 0),
+                rating: match ? (match.rating ?? 5) : 5,
+                reviewsCount: match ? (match.reviewsCount ?? 0) : 0,
                 createdAt: match ? (match.createdAt || new Date().toISOString()) : new Date().toISOString()
               };
 
@@ -702,22 +742,25 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
                 updatedAt: new Date().toISOString()
               };
 
-              sourceMappedQueue.push(queueItem);
-
-              allFetchedProducts.push({
-                ...prod,
-                mediaGallery: supplierImages,
-                id: queueItemId,
-                supplierCode: prod.sku,
-                supplierName,
-                source: 'Website',
-                sourceId: source.id,
-                batchId: syncBatchId,
-                importStatus: 'Pending',
-                progress: 0,
-                createdAt: queueItem.createdAt,
-                updatedAt: queueItem.updatedAt
-              });
+              if (dryRunMode) {
+                dryRunCompared++;
+              } else {
+                sourceMappedQueue.push(queueItem);
+                allFetchedProducts.push({
+                  ...prod,
+                  mediaGallery: supplierImages,
+                  id: queueItemId,
+                  supplierCode: prod.sku,
+                  supplierName,
+                  source: 'Website',
+                  sourceId: source.id,
+                  batchId: syncBatchId,
+                  importStatus: 'Pending',
+                  progress: 0,
+                  createdAt: queueItem.createdAt,
+                  updatedAt: queueItem.updatedAt
+                });
+              }
             }
 
             aggregatedMappedQueue.push(...sourceMappedQueue);
@@ -779,12 +822,18 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
             aggregatedPendingChanges.push(...sourcePendingChanges);
             successCount++;
 
-            // Update source status in firestore to 'connected' and lastSync timestamp
-            await setDoc(doc(db, "supplierSources", source.id), {
-              lastSync: new Date().toLocaleString(),
-              connectionStatus: 'connected',
-              lastError: 'None'
-            }, { merge: true });
+            if (!dryRunMode) {
+              writableSuccessCount++;
+              await setDoc(doc(db, "supplierSources", source.id), {
+                lastSync: new Date().toISOString(),
+                connectionStatus: 'connected',
+                lastError: 'None',
+                settings: {
+                  ...sourceSettings,
+                  discoveredCategories,
+                },
+              }, { merge: true });
+            }
           } else {
             throw new Error(result.error || "Invalid response format from server");
           }
@@ -792,16 +841,23 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
           console.error(`Error syncing source ${source.id}:`, err);
           errorMsgs.push(`${source.supplierName || source.name || source.id}: ${err.message}`);
 
-          // Update source status in firestore to 'Failed'
-          await setDoc(doc(db, "supplierSources", source.id), {
-            connectionStatus: 'Failed',
-            lastError: err.message || "Failed to fetch from supplier endpoint"
-          }, { merge: true });
+          if (source.settings?.dryRunMode !== true) {
+            await setDoc(doc(db, "supplierSources", source.id), {
+              connectionStatus: 'Failed',
+              lastError: err.message || "Failed to fetch from supplier endpoint"
+            }, { merge: true });
+          }
         }
       }
 
       if (successCount === 0) {
         throw new Error(`Failed to sync from configured suppliers. Errors: ${errorMsgs.join("; ")}`);
+      }
+
+      if (writableSuccessCount === 0) {
+        setSyncStatusMsg(`Dry run complete. Compared ${dryRunCompared} matching product changes and wrote no database records.`);
+        setTimeout(() => setSyncStatusMsg(null), 5000);
+        return true;
       }
 
       const data: any[] = allFetchedProducts;
@@ -846,18 +902,20 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
       console.error("Error syncing supplier products:", err);
       setErrorMsg(err.message || "Failed to fetch from supplier endpoint");
       
-      const failedLog: SyncHistoryItem = {
-        id: `log-${Date.now()}`,
-        timestamp: new Date().toLocaleTimeString(),
-        createdAt: new Date().toISOString(),
-        supplierCode: 'A2Z',
-        productsSynced: 0,
-        status: 'Failed',
-        details: err.message || "Network request failed."
-      };
-      await setDoc(doc(db, "supplier_sync_history", failedLog.id), failedLog, { merge: true }).catch((historyErr) => {
-        handleFirestoreError(historyErr, OperationType.WRITE, `supplier_sync_history/${failedLog.id}`);
-      });
+      if (!dryRunOnly) {
+        const failedLog: SyncHistoryItem = {
+          id: `log-${Date.now()}`,
+          timestamp: new Date().toLocaleTimeString(),
+          createdAt: new Date().toISOString(),
+          supplierCode: 'A2Z',
+          productsSynced: 0,
+          status: 'Failed',
+          details: err.message || "Network request failed."
+        };
+        await setDoc(doc(db, "supplier_sync_history", failedLog.id), failedLog, { merge: true }).catch((historyErr) => {
+          handleFirestoreError(historyErr, OperationType.WRITE, `supplier_sync_history/${failedLog.id}`);
+        });
+      }
       setSyncStatusMsg(null);
       return false;
     } finally {
@@ -881,13 +939,9 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
     const endpointPath = newSupplierType === 'website' ? apiEndpoint.trim() : '';
 
     try {
-      const response = await fetch('/api/test-supplier', {
-        method: 'POST',
-        headers: await getSupplierApiHeaders(),
-        body: JSON.stringify({
-          websiteUrl: targetUrl,
-          endpoint: endpointPath
-        })
+      const response = await postSupplierApi('/api/test-supplier', {
+        websiteUrl: targetUrl,
+        endpoint: endpointPath,
       });
 
       const result = await response.json();
@@ -920,13 +974,9 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
     setSuccessMsg(`Testing connection to ${source.name}...`);
     
     try {
-      const response = await fetch('/api/test-supplier', {
-        method: 'POST',
-        headers: await getSupplierApiHeaders(),
-        body: JSON.stringify({
-          websiteUrl: urlToTest,
-          endpoint: endpointToTest
-        })
+      const response = await postSupplierApi('/api/test-supplier', {
+        websiteUrl: urlToTest,
+        endpoint: endpointToTest,
       });
 
       const result = await response.json();

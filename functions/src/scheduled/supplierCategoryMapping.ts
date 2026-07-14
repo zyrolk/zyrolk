@@ -33,3 +33,34 @@ export function resolveSupplierCategory(
 
   return '';
 }
+
+export function matchesSupplierCategoryFilter(
+  supplierCategories: readonly string[] | undefined,
+  selectedCategories: readonly string[] | undefined,
+  storeCategories: readonly StoreCategoryReference[],
+  mappings: SupplierCategoryMappings | undefined,
+): boolean {
+  const normalizedFilters = new Set(
+    (selectedCategories || [])
+      .map(normalizeSupplierCategory)
+      .filter(Boolean),
+  );
+  if (normalizedFilters.size === 0) return true;
+
+  const selectedStoreCategoryIds = new Set<string>();
+  storeCategories.forEach((category) => {
+    if (
+      normalizedFilters.has(normalizeSupplierCategory(category.id)) ||
+      normalizedFilters.has(normalizeSupplierCategory(category.name))
+    ) {
+      selectedStoreCategoryIds.add(category.id);
+    }
+  });
+
+  const resolvedCategoryId = resolveSupplierCategory(supplierCategories, storeCategories, mappings);
+  if (resolvedCategoryId && selectedStoreCategoryIds.has(resolvedCategoryId)) return true;
+
+  return (supplierCategories || []).some((category) =>
+    normalizedFilters.has(normalizeSupplierCategory(category)),
+  );
+}

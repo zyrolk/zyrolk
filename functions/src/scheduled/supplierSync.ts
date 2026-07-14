@@ -6,7 +6,14 @@ import { appLogger } from "../api/logging";
 import { SupplierRegistry } from "../api/suppliers/SupplierRegistry";
 import { isValidSupplierImageUrl, ProductParser } from "../api/suppliers/a2z/ProductParser";
 import { RawA2ZProduct } from "../api/suppliers/a2z/types";
-import { resolveSupplierCategory, StoreCategoryReference, SupplierCategoryMappings } from "./supplierCategoryMapping";
+import { matchesSupplierCategoryFilter, resolveSupplierCategory, StoreCategoryReference, SupplierCategoryMappings } from "./supplierCategoryMapping";
+import {
+  collectDiscoveredSupplierCategories,
+  filterSupplierComparison,
+  getSupplierProductLimit,
+  isSupplierSourceAutoSyncDue,
+  SupplierSourceSyncSettings,
+} from "./supplierSyncSettings";
 
 type SyncStatus = "Success" | "Failed" | "Partial" | "Skipped";
 type ComparisonStatus = "NEW_PRODUCT" | "PRICE_CHANGED" | "STOCK_CHANGED" | "DESCRIPTION_CHANGED" | "IMAGE_CHANGED" | "UNCHANGED";
@@ -39,8 +46,8 @@ interface SupplierSource {
   settings?: {
     categoriesFilter?: string[];
     brandFilter?: string;
-    productLimit?: string;
-  };
+  } & SupplierSourceSyncSettings;
+  lastSync?: unknown;
 }
 
 interface ExistingProduct {
@@ -53,6 +60,20 @@ interface ExistingProduct {
   marketPrice?: number;
   stock?: number;
   imageUrl?: string;
+  imageUrls?: string[];
+  category?: string;
+  price?: number;
+  originalPrice?: number;
+  discount?: number;
+  specs?: Record<string, string>;
+  isNew?: boolean;
+  isFeatured?: boolean;
+  isBestSeller?: boolean;
+  isActive?: boolean;
+  active?: boolean;
+  published?: boolean;
+  approved?: boolean;
+  visible?: boolean;
   rating?: number;
   reviewsCount?: number;
   createdAt?: string;
@@ -215,6 +236,7 @@ function buildProductPayload(
   match: ExistingProduct | undefined,
   storeCategories: readonly StoreCategoryReference[],
   categoryMappings: SupplierCategoryMappings | undefined,
+  comparison: { status: ComparisonStatus; changedFields: string[] },
 ): Record<string, unknown> {
   const docId = match ? match.id : (generateSlug(product.title) || product.sku);
   const wholesale = product.wholesalePrice || 0;
@@ -222,35 +244,42 @@ function buildProductPayload(
   const price = Math.round(retail);
   const originalPrice = Math.round(retail * 1.1);
   const imageUrls = [...new Set((product.mediaGallery || []).filter(isValidSupplierImageUrl).map((url) => url.trim()))];
-  const imageUrl = imageUrls[0] || "";
-  const category = resolveSupplierCategory(product.categoryHierarchy, storeCategories, categoryMappings);
+  const supplierImageUrl = imageUrls[0] || "";
+  const resolvedCategory = resolveSupplierCategory(product.categoryHierarchy, storeCategories, categoryMappings);
+  const isNewProduct = !match;
+  const priceUpdateEnabled = isNewProduct || comparison.changedFields.some((field) => field === "Cost Price" || field === "Market Price");
+  const stockUpdateEnabled = isNewProduct || comparison.changedFields.includes("Stock");
+  const descriptionUpdateEnabled = isNewProduct || comparison.changedFields.some((field) => field === "Product Name" || field === "Description");
+  const imageUpdateEnabled = isNewProduct || comparison.changedFields.includes("Primary Image");
+  const imageUrl = imageUpdateEnabled ? supplierImageUrl : (match?.imageUrl || "");
+  const effectiveImageUrls = imageUpdateEnabled ? imageUrls : (match?.imageUrls || (imageUrl ? [imageUrl] : []));
 
   return {
     id: docId,
-    name: product.title,
-    description: product.longDescription || "",
-    price,
-    originalPrice,
-    discount: 10,
-    stock: product.inventoryLevel,
+    name: descriptionUpdateEnabled ? product.title : (match?.name || product.title),
+    description: descriptionUpdateEnabled ? (product.longDescription || "") : (match?.description || ""),
+    price: priceUpdateEnabled ? price : (match?.price || price),
+    originalPrice: priceUpdateEnabled ? originalPrice : (match?.originalPrice || match?.price || originalPrice),
+    discount: priceUpdateEnabled ? 10 : (match?.discount || 0),
+    stock: stockUpdateEnabled ? product.inventoryLevel : (match?.stock || 0),
     imageUrl,
-    imageUrls,
-    category,
-    specs: product.specifications || {},
-    isNew: true,
-    isFeatured: false,
-    isBestSeller: false,
-    isActive: true,
-    active: true,
-    published: true,
-    approved: true,
-    visible: true,
+    imageUrls: effectiveImageUrls,
+    category: isNewProduct ? resolvedCategory : (match?.category || resolvedCategory),
+    specs: descriptionUpdateEnabled ? (product.specifications || {}) : (match?.specs || {}),
+    isNew: isNewProduct ? true : match?.isNew === true,
+    isFeatured: isNewProduct ? false : match?.isFeatured === true,
+    isBestSeller: isNewProduct ? false : match?.isBestSeller === true,
+    isActive: isNewProduct ? true : match?.isActive !== false,
+    active: isNewProduct ? true : match?.active !== false,
+    published: isNewProduct ? true : match?.published !== false,
+    approved: isNewProduct ? true : match?.approved !== false,
+    visible: isNewProduct ? true : match?.visible !== false,
     sku: product.sku,
     supplierItemCode: product.sku,
-    costPrice: wholesale,
-    marketPrice: product.recommendedRetailPrice || 0,
-    rating: match?.rating || 5,
-    reviewsCount: match?.reviewsCount || 0,
+    costPrice: priceUpdateEnabled ? wholesale : (match?.costPrice || 0),
+    marketPrice: priceUpdateEnabled ? (product.recommendedRetailPrice || 0) : (match?.marketPrice || 0),
+    rating: match?.rating ?? 5,
+    reviewsCount: match?.reviewsCount ?? 0,
     createdAt: match?.createdAt || new Date().toISOString(),
   };
 }
@@ -404,8 +433,6 @@ export async function runScheduledSupplierSync(): Promise<void> {
   });
 
   if (!isSyncDue(settings, startedAt.getTime())) {
-    const finishedAt = new Date();
-    await writeHistory(batchId, "Skipped", startedAt, finishedAt, metrics, "Scheduled sync skipped because auto sync is disabled, manual-only, or not due yet.");
     appLogger.info("Scheduled supplier sync skipped because it is not due.", { batchId });
     return;
   }
@@ -436,17 +463,28 @@ export async function runScheduledSupplierSync(): Promise<void> {
     const sourcesSnap = await adminDb.collection("supplierSources").get();
     const sources = sourcesSnap.docs
       .map((sourceDoc) => ({ id: sourceDoc.id, ...sourceDoc.data() }) as SupplierSource)
-      .filter((source) => isSourceEnabled(source, settings));
+      .filter((source) => isSourceEnabled(source, settings))
+      .filter((source) => isSupplierSourceAutoSyncDue(source.settings?.autoSync, source.lastSync, startedAt.getTime()));
+
+    if (sources.length === 0) {
+      appLogger.info("Scheduled supplier sync found no enabled sources due for synchronization.", { batchId });
+      return;
+    }
 
     const maxProducts = getMaxProducts(settings);
     const connectors = await SupplierRegistry.loadEnabledConnectors(settings.enabledSupplierIds || settings.enabledSuppliers || []);
     const connectorBySourceId = new Map(connectors.map((connector) => [connector.id, connector]));
     const queuedWrites: Array<{ collection: string; id: string; data: Record<string, unknown> }> = [];
+    let dryRunComparisonCount = 0;
+    let nonDrySourceCount = 0;
 
     for (const source of sources) {
       const supplierName = source.supplierName || source.name || source.id;
       const websiteUrl = source.websiteUrl || source.config?.targetUrl || "";
       const endpoint = source.endpoint || source.config?.apiEndpoint || "";
+      const sourceSettings = source.settings || {};
+      const dryRunMode = sourceSettings.dryRunMode === true;
+      if (!dryRunMode) nonDrySourceCount++;
 
       if (!websiteUrl) {
         metrics.errors.push(`${supplierName}: missing website URL`);
@@ -462,14 +500,16 @@ export async function runScheduledSupplierSync(): Promise<void> {
           });
         const fetched = await connector.fetchProducts();
         let products = normalizeSupplierProducts(fetched.products);
+        const discoveredCategories = collectDiscoveredSupplierCategories(products);
 
         const categoryFilter = source.settings?.categoriesFilter || [];
         if (categoryFilter.length > 0) {
-          products = products.filter((product) => {
-            const categories = product.categoryHierarchy || [];
-            return categories.some((category) => categoryFilter.some((filter) => filter.trim().toLowerCase() === category.trim().toLowerCase())) ||
-              categoryFilter.some((filter) => product.title.toLowerCase().includes(filter.trim().toLowerCase()));
-          });
+          products = products.filter((product) => matchesSupplierCategoryFilter(
+            product.categoryHierarchy,
+            categoryFilter,
+            storeCategories,
+            settings.categoryMappings,
+          ));
         }
 
         const brandFilter = source.settings?.brandFilter || "";
@@ -481,16 +521,17 @@ export async function runScheduledSupplierSync(): Promise<void> {
           });
         }
 
-        const sourceLimit = source.settings?.productLimit && source.settings.productLimit !== "All" ? Number(source.settings.productLimit) : maxProducts;
-        const productsToProcess = products.slice(0, Math.min(maxProducts, Number.isFinite(sourceLimit) ? sourceLimit : maxProducts));
+        const sourceLimit = getSupplierProductLimit(sourceSettings.productLimit, maxProducts);
+        const productsToProcess = products.slice(0, sourceLimit);
         metrics.productsScanned += productsToProcess.length;
         metrics.suppliers.push(supplierName);
 
         for (const product of productsToProcess) {
           const match = findMatchingProduct(product, existingProducts);
-          const comparison = compareProduct(product, match);
+          const comparison = filterSupplierComparison(compareProduct(product, match), sourceSettings);
+          if (!comparison) continue;
           const queueItemId = generateQueueDocId(source.id, product.sku, product.title);
-          const productPayload = buildProductPayload(product, match, storeCategories, settings.categoryMappings);
+          const productPayload = buildProductPayload(product, match, storeCategories, settings.categoryMappings, comparison);
           const createdAt = new Date().toISOString();
           const supplierSnapshot = {
             supplierName,
@@ -531,40 +572,47 @@ export async function runScheduledSupplierSync(): Promise<void> {
             updatedAt: createdAt,
           };
 
-          queuedWrites.push({ collection: "supplier_review_queue", id: queueItemId, data: queueItem });
-          queuedWrites.push({
-            collection: "supplier_import_queue",
-            id: queueItemId,
-            data: {
-              ...product,
+          if (dryRunMode) {
+            dryRunComparisonCount++;
+          } else {
+            queuedWrites.push({ collection: "supplier_review_queue", id: queueItemId, data: queueItem });
+            queuedWrites.push({
+              collection: "supplier_import_queue",
               id: queueItemId,
-              supplierCode: product.sku,
-              supplierName,
-              source: "Website",
-              sourceId: source.id,
-              batchId,
-              importStatus: "Pending",
-              progress: 0,
-              createdAt,
-              updatedAt: createdAt,
-            },
-          });
+              data: {
+                ...product,
+                id: queueItemId,
+                supplierCode: product.sku,
+                supplierName,
+                source: "Website",
+                sourceId: source.id,
+                batchId,
+                importStatus: "Pending",
+                progress: 0,
+                createdAt,
+                updatedAt: createdAt,
+              },
+            });
 
-          const pendingChange = buildPendingChange(queueItem, product, match, comparison.status);
-          if (pendingChange) {
-            queuedWrites.push({ collection: "supplier_pending_changes", id: String(pendingChange.id), data: pendingChange });
-          }
-
-          if (comparison.status !== "UNCHANGED") {
+            const pendingChange = buildPendingChange(queueItem, product, match, comparison.status);
+            if (pendingChange) {
+              queuedWrites.push({ collection: "supplier_pending_changes", id: String(pendingChange.id), data: pendingChange });
+            }
             metrics.productsQueued++;
           }
         }
 
-        await adminDb.collection("supplierSources").doc(source.id).set({
-          lastSync: new Date().toLocaleString("en-US", { timeZone: "Asia/Colombo" }),
-          connectionStatus: "connected",
-          lastError: "None",
-        }, { merge: true });
+        if (!dryRunMode) {
+          await adminDb.collection("supplierSources").doc(source.id).set({
+            lastSync: new Date().toISOString(),
+            connectionStatus: "connected",
+            lastError: "None",
+            settings: {
+              ...sourceSettings,
+              discoveredCategories,
+            },
+          }, { merge: true });
+        }
       } catch (error: any) {
         const message = error?.message || "Unknown supplier sync error";
         metrics.errors.push(`${supplierName}: ${message}`);
@@ -574,11 +622,22 @@ export async function runScheduledSupplierSync(): Promise<void> {
           supplierName,
           error,
         });
-        await adminDb.collection("supplierSources").doc(source.id).set({
-          connectionStatus: "Failed",
-          lastError: message,
-        }, { merge: true });
+        if (source.settings?.dryRunMode !== true) {
+          await adminDb.collection("supplierSources").doc(source.id).set({
+            connectionStatus: "Failed",
+            lastError: message,
+          }, { merge: true });
+        }
       }
+    }
+
+    if (nonDrySourceCount === 0) {
+      appLogger.info("Scheduled supplier dry run completed without database queue or history writes.", {
+        batchId,
+        productsScanned: metrics.productsScanned,
+        comparisons: dryRunComparisonCount,
+      });
+      return;
     }
 
     await commitQueuedItems(queuedWrites);

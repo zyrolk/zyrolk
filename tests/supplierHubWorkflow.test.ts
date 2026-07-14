@@ -24,6 +24,8 @@ test("supplier sync regression: sync code does not queue direct writes to produc
 
   assert.equal(/batch\.set\(doc\(db,\s*["']products["']/.test(supplierHub), false);
   assert.equal(/queuedWrites\.push\(\{\s*collection:\s*["']products["']/.test(scheduledSync), false);
+  assert.match(supplierHub, /if \(!enabledComparison\) continue/);
+  assert.match(scheduledSync, /if \(!comparison\) continue/);
 });
 
 test("visible supplier sync controls invoke the real queue synchronization pipeline", () => {
@@ -31,6 +33,10 @@ test("visible supplier sync controls invoke the real queue synchronization pipel
   assert.equal(source.includes("Placeholder Action Only"), false);
   assert.match(source, /await handleSyncSupplier\(\[id\]\)/);
   assert.match(source, /onClick=\{\(\) => handleSyncSupplier\(\)\}/);
+  assert.match(source, /filterSupplierComparison/);
+  assert.match(source, /getSupplierProductLimit/);
+  assert.match(source, /dryRunMode/);
+  assert.match(source, /discoveredCategories/);
 });
 
 test("A2Z secrets are bound to both HTTPS and scheduled Functions", () => {
@@ -135,6 +141,18 @@ test("Supplier Hub exposes audited bulk actions and both sync paths resolve pers
   assert.match(supplierHub, /Bulk Reject/);
   assert.match(supplierHub, /Bulk Delete/);
   assert.match(supplierHub, /resolveSupplierCategory/);
+  assert.match(supplierHub, /matchesSupplierCategoryFilter/);
   assert.match(scheduledSync, /resolveSupplierCategory/);
+  assert.match(scheduledSync, /matchesSupplierCategoryFilter/);
   assert.match(scheduledSync, /settings\.categoryMappings/);
+  assert.match(scheduledSync, /isSupplierSourceAutoSyncDue/);
+  assert.match(scheduledSync, /filterSupplierComparison/);
+  assert.match(scheduledSync, /dryRunMode/);
+});
+
+test("Supplier Hub limits sync history queries and retries expired admin tokens", () => {
+  const supplierHub = readFileSync("src/components/SupplierHubFiveStars.tsx", "utf8");
+  assert.match(supplierHub, /limit\(SYNC_HISTORY_LIMIT\)/);
+  assert.match(supplierHub, /orderBy\("createdAt", "desc"\)/);
+  assert.match(supplierHub, /if \(response\.status === 401\) response = await request\(true\)/);
 });
