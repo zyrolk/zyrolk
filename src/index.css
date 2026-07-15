@@ -107,8 +107,12 @@ textarea {
 .zy-homepage {
   background:
     radial-gradient(circle at 8% 8%, rgba(37, 99, 235, 0.1), transparent 25rem),
-    radial-gradient(circle at 94% 34%, rgba(255, 106, 0, 0.045), transparent 28rem),
+    radial-gradient(circle at 94% 34%, rgba(96, 165, 250, 0.06), transparent 28rem),
     #f6f8fc;
+}
+
+.zy-homepage .zy-button {
+  min-height: 3rem;
 }
 
 .zy-home-section {
@@ -148,6 +152,7 @@ textarea {
 .zy-account-menu {
   animation: zy-account-menu-in 180ms ease-out both;
   transform-origin: top right;
+  box-shadow: 0 30px 72px -36px rgba(15, 23, 42, 0.56);
 }
 
 .zy-account-action {
@@ -169,7 +174,7 @@ textarea {
   border-color: rgba(37, 99, 235, 0.25);
   background: #eff6ff;
   color: #1d4ed8;
-  transform: translateY(-1px);
+  transform: translateY(-2px);
 }
 
 @keyframes zy-account-menu-in {
@@ -184,7 +189,7 @@ textarea {
   border-radius: 2.25rem;
   padding-top: clamp(1.75rem, 4vw, 3rem);
   padding-bottom: clamp(1.75rem, 4vw, 3rem);
-  box-shadow: 0 30px 80px -48px rgba(15, 23, 42, 0.55);
+  box-shadow: 0 28px 72px -50px rgba(15, 23, 42, 0.48);
 }
 
 .zy-market-shelf::before {
@@ -197,7 +202,9 @@ textarea {
 }
 
 .zy-market-shelf-categories {
-  background: linear-gradient(135deg, #eff6ff 0%, #ffffff 48%, #f8fafc 100%);
+  background:
+    radial-gradient(circle at 92% 8%, rgba(96, 165, 250, 0.16), transparent 18rem),
+    linear-gradient(135deg, #eff6ff 0%, #f8fbff 58%, #ffffff 100%);
   border-color: rgba(37, 99, 235, 0.16);
 }
 
@@ -222,19 +229,21 @@ textarea {
 }
 
 .zy-market-shelf-recommended {
-  background: linear-gradient(145deg, #172554 0%, #1e3a8a 38%, #2563eb 100%);
-  border-color: rgba(37, 99, 235, 0.18);
+  background:
+    radial-gradient(circle at 8% 10%, rgba(59, 130, 246, 0.13), transparent 20rem),
+    linear-gradient(145deg, #eaf2ff 0%, #f7faff 54%, #ffffff 100%);
+  border-color: rgba(37, 99, 235, 0.16);
 }
 
 .zy-market-shelf-recommended h2,
 .zy-market-shelf-recommended p {
-  color: #ffffff;
+  color: #111827;
 }
 
 .zy-market-shelf-recommended .zy-section-eyebrow-pill {
-  border-color: rgba(255, 255, 255, 0.2);
-  background: rgba(255, 255, 255, 0.12);
-  color: #dbeafe;
+  border-color: rgba(37, 99, 235, 0.16);
+  background: rgba(255, 255, 255, 0.76);
+  color: #1d4ed8;
 }
 
 .zy-market-shelf-best::before {
@@ -288,14 +297,6 @@ textarea {
     linear-gradient(145deg, #0f172a 0%, #172554 52%, #111827 100%);
 }
 
-.zy-community-banner {
-  position: relative;
-  background:
-    radial-gradient(circle at 90% 0%, rgba(147, 197, 253, 0.32), transparent 22rem),
-    linear-gradient(135deg, #1d4ed8 0%, #2563eb 58%, #3b82f6 100%);
-  box-shadow: 0 30px 70px -42px rgba(37, 99, 235, 0.75);
-}
-
 .zy-section-eyebrow-pill {
   border: 1px solid rgba(37, 99, 235, 0.14);
   border-radius: 999px;
@@ -315,18 +316,35 @@ textarea {
   border: 1px solid rgba(148, 163, 184, 0.2);
   border-radius: 1.75rem;
   background: #ffffff;
-  box-shadow: 0 18px 44px -28px rgba(15, 23, 42, 0.48);
+  box-shadow: 0 18px 44px -32px rgba(15, 23, 42, 0.5);
   transition: border-color 220ms ease, box-shadow 220ms ease, transform 220ms ease;
+}
+
+.zy-category-collection {
+  isolation: isolate;
+  box-shadow: 0 22px 48px -34px rgba(30, 64, 175, 0.48);
 }
 
 .zy-market-search {
   border-color: rgba(29, 78, 216, 0.2);
-  background: #ffffff;
-  box-shadow: 0 12px 28px -20px rgba(29, 78, 216, 0.52), inset 0 0 0 1px rgba(255, 255, 255, 0.75);
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 16px 38px -24px rgba(29, 78, 216, 0.52), inset 0 0 0 1px rgba(255, 255, 255, 0.75);
 }
 
 .zy-market-header {
-  box-shadow: 0 12px 32px -24px rgba(37, 99, 235, 0.48);
+  border-bottom: 0;
+  background: rgba(246, 248, 252, 0.82);
+  box-shadow: none;
+}
+
+.zy-market-header-shell {
+  margin-top: 0.4rem;
+  margin-bottom: 0.4rem;
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  border-radius: 1.5rem;
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow: 0 22px 48px -32px rgba(15, 23, 42, 0.48);
+  backdrop-filter: blur(22px);
 }
 
 .zy-market-search:hover {
@@ -336,7 +354,8 @@ textarea {
 .zy-market-search:focus,
 .zy-market-search:focus-visible {
   border-color: rgba(29, 78, 216, 0.72);
-  box-shadow: 0 0 0 4px rgba(29, 78, 216, 0.12), 0 18px 38px -22px rgba(29, 78, 216, 0.58);
+  box-shadow: 0 0 0 4px rgba(29, 78, 216, 0.12), 0 22px 44px -22px rgba(29, 78, 216, 0.62);
+  transform: translateY(-1px);
 }
 
 .zy-hero { isolation: isolate; }
@@ -364,12 +383,12 @@ textarea {
 }
 
 .zy-category-tone-0 { background: linear-gradient(145deg, #dbeafe, #ffffff 70%); }
-.zy-category-tone-1 { background: linear-gradient(145deg, #ffedd5, #ffffff 70%); }
+.zy-category-tone-1 { background: linear-gradient(145deg, #e0f2fe, #ffffff 70%); }
 .zy-category-tone-2 { background: linear-gradient(145deg, #dcfce7, #ffffff 70%); }
 .zy-category-tone-3 { background: linear-gradient(145deg, #f3e8ff, #ffffff 70%); }
 
 .zy-category-tone-0 > div:first-child { background: #dbeafe; }
-.zy-category-tone-1 > div:first-child { background: #ffedd5; }
+.zy-category-tone-1 > div:first-child { background: #e0f2fe; }
 .zy-category-tone-2 > div:first-child { background: #dcfce7; }
 .zy-category-tone-3 > div:first-child { background: #f3e8ff; }
 
@@ -397,8 +416,12 @@ textarea {
   .zy-category-card:hover,
   .zy-product-card:hover {
     border-color: rgba(29, 78, 216, 0.26);
-    box-shadow: 0 28px 54px -34px rgba(15, 23, 42, 0.58);
-    transform: translateY(-4px);
+    box-shadow: 0 32px 64px -38px rgba(15, 23, 42, 0.62);
+    transform: translateY(-5px);
+  }
+
+  .zy-wishlist-button:hover {
+    transform: translateY(-2px) scale(1.04);
   }
 }
 
@@ -444,7 +467,31 @@ textarea {
 }
 
 .zy-product-card {
-  box-shadow: 0 16px 38px -28px rgba(31, 41, 55, 0.52);
+  box-shadow: 0 20px 48px -34px rgba(31, 41, 55, 0.56);
+}
+
+.zy-product-image-stage {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.95);
+}
+
+.zy-product-discount {
+  padding: 0.35rem 0.7rem;
+  box-shadow: 0 14px 24px -16px rgba(255, 106, 0, 0.9);
+}
+
+.zy-stock-badge {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+
+.zy-product-primary-action,
+.zy-product-secondary-action {
+  transition: background-color 180ms ease, border-color 180ms ease, color 180ms ease, box-shadow 180ms ease, transform 160ms ease;
+}
+
+.zy-product-action-success {
+  border-color: #15803d;
+  background: #16a34a;
+  box-shadow: 0 16px 28px -18px rgba(22, 163, 74, 0.78);
 }
 
 .zy-input {
@@ -610,8 +657,8 @@ textarea {
 }
 
 .zy-touch-target {
-  min-width: 2.75rem;
-  min-height: 2.75rem;
+  min-width: 3rem;
+  min-height: 3rem;
 }
 
 .zy-safe-bottom {

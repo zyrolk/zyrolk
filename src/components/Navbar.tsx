@@ -246,7 +246,7 @@ export default function Navbar({
         <input
           id={inputId}
           type="search"
-          placeholder="Search products, brands or categories..."
+          placeholder="Search products, brands & categories"
           value={tempSearch}
           onChange={(event) => {
             setTempSearch(event.target.value);
@@ -255,7 +255,7 @@ export default function Navbar({
           }}
           onFocus={() => setIsSearchOpen(true)}
           onKeyDown={handleSearchKeyDown}
-          className="zy-input zy-market-search min-h-12 min-w-0 max-w-full w-full rounded-2xl pl-11 pr-36 text-sm text-slate-900 transition-all placeholder:text-slate-500 focus-visible:outline-none [&::-webkit-search-cancel-button]:appearance-none"
+          className="zy-input zy-market-search min-h-14 min-w-0 max-w-full w-full rounded-2xl pl-11 pr-36 text-base text-slate-900 transition-all placeholder:text-slate-500 focus-visible:outline-none [&::-webkit-search-cancel-button]:appearance-none"
           role="combobox"
           aria-autocomplete="list"
           aria-expanded={isSearchOpen}
@@ -267,18 +267,18 @@ export default function Navbar({
           <button
             type="button"
             onClick={clearSearch}
-            className="absolute right-24 top-1/2 z-10 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-xl text-slate-500 transition-colors hover:bg-slate-200 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20"
+            className="absolute right-24 top-1/2 z-10 flex h-12 w-12 -translate-y-1/2 items-center justify-center rounded-xl text-slate-500 transition-colors hover:bg-slate-200 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20"
             aria-label="Clear product search"
           >
             <X className="h-4 w-4" aria-hidden="true" />
           </button>
         )}
-        <button type="button" disabled className="absolute right-12 top-1/2 z-10 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-xl text-slate-400 disabled:cursor-not-allowed disabled:opacity-70" aria-label="Voice search is not enabled" title="Voice search is not enabled">
+        <button type="button" disabled className="absolute right-12 top-1/2 z-10 flex h-12 w-12 -translate-y-1/2 items-center justify-center rounded-xl text-slate-400 disabled:cursor-not-allowed disabled:opacity-70" aria-label="Voice search is not enabled" title="Voice search is not enabled">
           <Mic className="h-4 w-4" aria-hidden="true" />
         </button>
         <button
           type="submit"
-          className="absolute right-0.5 top-1/2 z-10 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-xl bg-brand-blue text-white shadow-sm transition-all hover:bg-blue-700 active:scale-95 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/25"
+          className="absolute right-0.5 top-1/2 z-10 flex h-12 w-12 -translate-y-1/2 items-center justify-center rounded-xl bg-brand-blue text-white shadow-sm transition-all hover:bg-blue-700 active:scale-95 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/25"
           aria-label="Submit product search"
         >
           <ArrowUpRight className="h-4 w-4" aria-hidden="true" />
@@ -379,7 +379,7 @@ export default function Navbar({
                     </span>
                     <div className="flex flex-wrap gap-2">
                       {popularSearches.map((query) => (
-                        <button key={query} type="button" onClick={() => commitSearch(query)} className="min-h-11 rounded-full border border-orange-100 bg-orange-50 px-3 text-xs font-bold text-orange-700 transition-colors hover:border-orange-200 hover:bg-orange-100 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-orange-500/20">
+                        <button key={query} type="button" onClick={() => commitSearch(query)} className="min-h-12 rounded-full border border-blue-100 bg-blue-50 px-3 text-xs font-bold text-blue-700 transition-colors hover:border-blue-200 hover:bg-blue-100 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20">
                           {query}
                         </button>
                       ))}
@@ -421,8 +421,8 @@ export default function Navbar({
 
   return (
     <header className="zy-market-header sticky top-0 z-50 w-full border-b border-white/70 bg-white/80 backdrop-blur-2xl">
-      <div className="h-1 w-full bg-gradient-to-r from-brand-blue via-blue-400 to-brand-orange" aria-hidden="true" />
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div className="h-1 w-full bg-gradient-to-r from-blue-800 via-brand-blue to-blue-300" aria-hidden="true" />
+      <div className="zy-market-header-shell mx-auto w-[calc(100%-1rem)] max-w-7xl px-4 sm:w-[calc(100%-2rem)] sm:px-6 lg:px-8">
         <div className="flex h-[4.25rem] items-center justify-between">
           
           {/* Logo */}

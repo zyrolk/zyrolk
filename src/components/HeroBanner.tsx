@@ -183,7 +183,7 @@ export default function HeroBanner({
       aria-roledescription="carousel"
       aria-label="Featured products"
     >
-      <div className="zy-hero-stage relative min-h-[380px] touch-pan-y overflow-hidden rounded-[2rem] sm:min-h-[440px] sm:rounded-[2.75rem] lg:min-h-[530px]" onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
+      <div className="zy-hero-stage relative min-h-[390px] touch-pan-y overflow-hidden rounded-[2rem] border border-white/80 shadow-[0_38px_90px_-48px_rgba(30,64,175,0.58)] sm:min-h-[450px] sm:rounded-[2.75rem] lg:min-h-[540px]" onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
         <div className={`absolute inset-0 bg-gradient-to-br ${campaignTone(isPromotionalBadge(slides[currentSlide].badge) ? slides[currentSlide].bgGradient : undefined)}`} />
         <div className="absolute -right-24 -top-24 h-80 w-80 rounded-full bg-blue-500/20 blur-3xl" />
         <div className="absolute -bottom-28 left-1/3 h-72 w-72 rounded-full bg-cyan-300/20 blur-3xl" />
@@ -196,7 +196,7 @@ export default function HeroBanner({
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
             transition={{ duration: 0.45 }}
-            className="relative z-10 grid min-h-[380px] grid-cols-12 items-center gap-3 px-5 py-6 sm:min-h-[440px] sm:gap-6 sm:px-8 sm:py-9 lg:min-h-[530px] lg:px-12"
+            className="relative z-10 grid min-h-[390px] grid-cols-12 items-center gap-3 px-5 py-7 sm:min-h-[450px] sm:gap-6 sm:px-9 sm:py-10 lg:min-h-[540px] lg:px-14"
           role="group"
           aria-roledescription="slide"
           aria-label={`${currentSlide + 1} of ${slides.length}: ${displayTitle || 'Marketplace campaign'}`}
@@ -213,28 +213,28 @@ export default function HeroBanner({
                 {displayBadge}
               </motion.span>
               )}
+              {displayTitle && <motion.p
+                initial={{ opacity: 0, y: 16 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.22, duration: 0.5 }}
+                className="mb-3 max-w-xl text-xs font-black uppercase tracking-[0.14em] text-slate-700 sm:text-sm"
+              >
+                {displayTitle}
+              </motion.p>}
               <motion.h1
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.25, duration: 0.6 }}
-                className="max-w-3xl text-[1.85rem] font-black leading-[0.98] tracking-[-0.04em] text-[#111827] font-display sm:text-4xl lg:text-[3.5rem]"
+                className="max-w-3xl text-[2rem] font-black leading-[0.96] tracking-[-0.045em] text-[#111827] font-display sm:text-[2.75rem] lg:text-[3.75rem]"
               >
                 Everything You Need
                 <span className="block text-brand-blue">Across Every Category</span>
               </motion.h1>
-              {displayTitle && <motion.p
-                initial={{ opacity: 0, y: 16 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.3, duration: 0.55 }}
-                className="mt-3 max-w-xl text-sm font-black text-slate-800 sm:text-base"
-              >
-                {displayTitle}
-              </motion.p>}
               <motion.p
                 initial={{ opacity: 0, y: 18 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.35, duration: 0.6 }}
-                className="mt-3 max-w-xl text-[13px] font-semibold leading-relaxed text-slate-700 sm:mt-4 sm:text-sm lg:text-base"
+                className="mt-4 max-w-xl text-sm font-semibold leading-relaxed text-slate-700 sm:text-[15px] lg:text-base"
               >
                 {displaySubtitle}
               </motion.p>
@@ -250,18 +250,18 @@ export default function HeroBanner({
                 initial={{ opacity: 0, y: 15 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.55, duration: 0.6 }}
-                className="mt-5 flex w-full flex-col gap-2.5 sm:w-auto sm:flex-row"
+                className="mt-6 flex w-full flex-col gap-2.5 sm:w-auto sm:flex-row"
               >
                 {displayCta && <button
                   onClick={handlePrimaryAction}
-                  className="zy-button zy-button-primary min-h-12 w-full rounded-2xl px-7 text-sm sm:w-auto"
+                  className="zy-button zy-button-primary min-h-12 w-full rounded-2xl px-8 text-sm shadow-[0_18px_34px_-18px_rgba(29,78,216,0.9)] sm:min-h-14 sm:w-auto"
                 >
                   <ShoppingBag className="h-4.5 w-4.5" />
                   {displayCta}
                 </button>}
                 <button
                   onClick={onBrowseCategories || onExploreProducts}
-                  className="zy-button min-h-12 w-full rounded-2xl border border-blue-200 bg-white px-7 text-sm font-black text-slate-800 shadow-lg shadow-blue-950/5 sm:w-auto"
+                  className="zy-button min-h-12 w-full rounded-2xl border border-white/90 bg-white/90 px-8 text-sm font-black text-slate-800 shadow-[0_16px_34px_-22px_rgba(15,23,42,0.5)] backdrop-blur-md sm:min-h-14 sm:w-auto"
                 >
                   Browse Categories
                   <ArrowRight className="h-4.5 w-4.5 text-brand-blue" />
@@ -288,10 +288,10 @@ export default function HeroBanner({
               </motion.div>
             </div>
 
-            <div className="relative col-span-4 min-h-[230px] self-stretch sm:col-span-5 sm:min-h-[340px] lg:col-span-6 lg:min-h-[470px]" aria-label="Live catalog product showcase">
+            <div className="relative col-span-4 min-h-[250px] self-stretch sm:col-span-5 sm:min-h-[360px] lg:col-span-6 lg:min-h-[490px]" aria-label="Live catalog product showcase">
               <div className="absolute inset-[8%] rounded-full bg-blue-500/18 blur-3xl" />
-              <motion.div initial={{ opacity: 0, scale: 0.94, x: 20 }} animate={{ opacity: 1, scale: 1, x: 0 }} transition={{ duration: 0.55, delay: 0.15 }} className="absolute inset-2 flex items-center justify-center sm:inset-6 lg:inset-8">
-                <div className="relative flex h-full w-full items-center justify-center overflow-hidden rounded-[1.75rem] border border-white/70 bg-white/55 p-2 shadow-2xl shadow-blue-950/15 backdrop-blur-md sm:rounded-[2.5rem] sm:p-5">
+              <motion.div initial={{ opacity: 0, scale: 0.94, x: 20 }} animate={{ opacity: 1, scale: 1, x: 0 }} transition={{ duration: 0.55, delay: 0.15 }} className="absolute inset-0 flex items-center justify-center sm:inset-2 lg:inset-5">
+                <div className="relative flex h-full w-full items-center justify-center overflow-hidden rounded-[1.75rem] border border-white/80 bg-white/62 p-1.5 shadow-[0_38px_70px_-34px_rgba(30,64,175,0.58)] backdrop-blur-lg sm:rounded-[2.5rem] sm:p-4">
                   <ShoppingBag className="absolute h-16 w-16 text-blue-200" aria-hidden="true" />
                   {slides[currentSlide].image && <img
                     src={slides[currentSlide].image}
@@ -310,7 +310,7 @@ export default function HeroBanner({
                   initial={{ opacity: 0, scale: 0.9 }}
                   animate={{ opacity: 1, scale: 1 }}
                   transition={{ delay: 0.45 + (index * 0.1) }}
-                  className={`absolute z-20 hidden h-24 w-24 overflow-hidden rounded-3xl border border-white/80 bg-white/90 p-2 shadow-xl backdrop-blur-md lg:block ${index === 0 ? 'bottom-9 left-0 -rotate-6' : 'right-0 top-20 rotate-6'}`}
+                  className={`absolute z-20 hidden h-28 w-28 overflow-hidden rounded-3xl border border-white/90 bg-white/92 p-2.5 shadow-[0_24px_46px_-22px_rgba(15,23,42,0.52)] backdrop-blur-md lg:block ${index === 0 ? 'bottom-5 -left-3 -rotate-6' : '-right-2 top-16 rotate-6'}`}
                 >
                   <img src={product.imageUrl} alt={product.name} className="h-full w-full object-contain" loading="lazy" decoding="async" referrerPolicy="no-referrer" />
                 </motion.div>

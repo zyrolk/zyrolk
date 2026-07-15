@@ -518,25 +518,35 @@ export default function App() {
     () => activeProducts.filter(product => product.isFeatured),
     [activeProducts]
   );
-  const newArrivalProducts = useMemo(
-    () => activeProducts.filter(product => product.isNew),
-    [activeProducts]
-  );
-  const bestSellerProducts = useMemo(
-    () => activeProducts.filter(product => product.isBestSeller),
-    [activeProducts]
-  );
   const latestProducts = useMemo(() => [...activeProducts].sort((a, b) => {
     const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
     const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
     if (dateB !== dateA) return dateB - dateA;
     return b.id.localeCompare(a.id);
   }), [activeProducts]);
-  const recommendedProducts = activeProducts.slice(0, 8);
   const discountedProducts = useMemo(
     () => activeProducts.filter(product => product.discount && product.discount > 0).slice(0, 8),
     [activeProducts]
   );
+  const trendingProducts = useMemo(() => {
+    const dealIds = new Set(discountedProducts.map(product => product.id));
+    return featuredProducts.filter(product => !dealIds.has(product.id)).slice(0, 8);
+  }, [discountedProducts, featuredProducts]);
+  const recommendedProducts = useMemo(() => {
+    const usedIds = new Set([
+      ...discountedProducts.map(product => product.id),
+      ...trendingProducts.map(product => product.id),
+    ]);
+    return activeProducts.filter(product => !usedIds.has(product.id)).slice(0, 8);
+  }, [activeProducts, discountedProducts, trendingProducts]);
+  const homepageLatestProducts = useMemo(() => {
+    const usedIds = new Set([
+      ...discountedProducts.map(product => product.id),
+      ...trendingProducts.map(product => product.id),
+      ...recommendedProducts.map(product => product.id),
+    ]);
+    return latestProducts.filter(product => !usedIds.has(product.id)).slice(0, 8);
+  }, [discountedProducts, latestProducts, recommendedProducts, trendingProducts]);
   const discountedProductCount = discountedProducts.length;
   const categoryProductCounts = useMemo(
     () => buildCategoryProductCounts(categories, products),
@@ -546,6 +556,17 @@ export default function App() {
     () => Object.fromEntries(categories.map((category) => [category.id, categoryProductCounts[category.id]?.active ?? 0])),
     [categories, categoryProductCounts],
   );
+  const homepageCategories = useMemo(() => categories.flatMap((category) => {
+    const itemsCount = categoryCounts[category.id] || 0;
+    if (itemsCount === 0) return [];
+
+    const storedImage = category.imageUrl?.trim();
+    const productImage = activeProducts.find(
+      product => categoryMatches(product.category, category.id) && Boolean(product.imageUrl?.trim()),
+    )?.imageUrl?.trim();
+    const image = storedImage || productImage;
+    return image ? [{ category, image, itemsCount }] : [];
+  }).slice(0, 8), [activeProducts, categories, categoryCounts]);
 
   const activeFilterCount = Number(Boolean(searchQuery.trim())) +
     Number(selectedCategory !== 'all') +
@@ -604,14 +625,16 @@ export default function App() {
               <section className="order-[1] pt-5 sm:pt-7">
                 <HeroBanner
                   settings={settings}
+                  products={activeProducts}
+                  categories={categories}
                   onExploreProducts={() => { setCurrentPage('products'); setSelectedCategory('all'); }}
                   onBrowseCategories={() => { setCurrentPage('categories'); }}
                 />
               </section>
 
               {/* Categories segment list */}
-              <section className="zy-market-shelf zy-market-shelf-categories order-[3] max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                <div className="flex flex-col md:flex-row md:items-end justify-between mb-8 gap-4">
+              {homepageCategories.length > 0 && <section className="zy-market-shelf zy-market-shelf-categories order-[3] max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                <div className="mb-7 flex flex-col justify-between gap-4 md:flex-row md:items-end sm:mb-9">
                   <div className="text-left">
                     <span className="zy-section-eyebrow block mb-2">Curated collections</span>
                     <h2 className="text-2xl sm:text-4xl font-black tracking-tight text-slate-900 font-display">
@@ -630,23 +653,17 @@ export default function App() {
                   </button>
                 </div>
 
-                <div className="flex snap-x snap-mandatory gap-4 overflow-x-auto pb-3 scrollbar-none sm:grid sm:grid-cols-2 sm:overflow-visible sm:pb-0 md:grid-cols-4 sm:gap-5 md:gap-6">
-                  {categories.slice(0, 8).map((cat, categoryIndex) => {
-                    const itemsCount = categoryCounts[cat.id] || 0;
-                    const catImage = resolveCategoryImage(cat, products, CATEGORY_IMAGES);
-
+                <div className="flex snap-x snap-mandatory gap-4 overflow-x-auto pb-4 pr-5 scrollbar-none sm:grid sm:grid-cols-2 sm:overflow-visible sm:pb-0 sm:pr-0 md:grid-cols-4 sm:gap-5 md:gap-6">
+                  {homepageCategories.map(({ category: cat, image: catImage, itemsCount }, categoryIndex) => {
                     return (
                       <motion.button
                         type="button"
                         key={cat.id}
-                        whileHover={{ y: -4, scale: 1.02 }}
-                        whileTap={{ scale: 0.96 }}
-                        transition={{ type: "spring", stiffness: 400, damping: 25 }}
                         onClick={() => {
                           setSelectedCategory(cat.id);
                           setCurrentPage('products');
                         }}
-                        className={`zy-category-card zy-category-tone-${categoryIndex % 4} group flex h-full w-[70vw] max-w-[250px] flex-none snap-start cursor-pointer flex-col overflow-hidden text-left focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20 sm:w-auto sm:max-w-none`}
+                        className={`zy-category-card zy-category-collection zy-category-tone-${categoryIndex % 4} group flex h-full w-[76vw] max-w-[280px] flex-none snap-start cursor-pointer flex-col overflow-hidden text-left focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20 sm:w-auto sm:max-w-none`}
                         aria-label={`Browse ${cat.name}, ${itemsCount} ${itemsCount === 1 ? 'product' : 'products'}`}
                       >
                         {/* Compact Top Image */}
@@ -654,7 +671,7 @@ export default function App() {
                           <img 
                             src={catImage} 
                             alt={cat.name} 
-                            className="h-full w-full object-contain p-5 mix-blend-multiply transition-transform duration-500 ease-out group-hover:scale-110"
+                            className="h-full w-full object-contain p-3 mix-blend-multiply transition-transform duration-500 ease-out group-hover:scale-[1.06] sm:p-4"
                             referrerPolicy="no-referrer"
                             loading="lazy"
                             decoding="async"
@@ -663,27 +680,22 @@ export default function App() {
                           />
                           {/* Soft bottom vignette for image blending */}
                           <div className="absolute inset-0 bg-gradient-to-t from-slate-950/18 via-transparent to-white/20" />
-                          {itemsCount > 0 && (
-                            <div className="absolute left-3 top-3 zy-badge border-white/70 bg-white/92 text-slate-800 shadow-sm backdrop-blur-sm">
-                              {itemsCount} {itemsCount === 1 ? 'product' : 'products'}
-                            </div>
-                          )}
-                          <div className="absolute right-3 top-3 flex h-11 w-11 items-center justify-center rounded-2xl border border-white/70 bg-white/90 text-brand-blue shadow-lg backdrop-blur-sm" aria-hidden="true">
-                            <Grid3X3 className="h-5 w-5" />
+                          <div className="absolute left-3 top-3 zy-badge border-white/70 bg-white/92 text-slate-800 shadow-sm backdrop-blur-sm">
+                            {itemsCount} {itemsCount === 1 ? 'product' : 'products'}
                           </div>
                         </div>
 
                         {/* Text and Count Container */}
-                        <div className="p-3.5 sm:p-4.5 flex flex-col flex-grow text-left">
-                          <h4 className="text-sm md:text-base font-black text-slate-900 font-display group-hover:text-brand-blue transition-colors duration-200 line-clamp-1">
+                        <div className="flex flex-grow flex-col p-4 text-left sm:p-5">
+                          <h4 className="line-clamp-1 font-display text-base font-black text-slate-900 transition-colors duration-200 group-hover:text-brand-blue sm:text-lg">
                             {cat.name}
                           </h4>
-                          <p className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-slate-500">Explore this live marketplace collection.</p>
-                          <div className="flex items-center justify-between mt-2">
-                            <span className="text-[10px] sm:text-xs text-slate-500 font-semibold">
+                          <p className="mt-1.5 hidden line-clamp-2 text-sm leading-relaxed text-slate-600 sm:block">Explore products available in this collection.</p>
+                          <div className="mt-3 flex items-center justify-between">
+                            <span className="text-sm text-slate-600 font-semibold">
                               Explore collection
                             </span>
-                            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-50 text-xs font-black text-brand-blue transition-all duration-200 group-hover:translate-x-0.5 group-hover:bg-brand-blue group-hover:text-white">
+                            <span className="flex h-12 w-12 items-center justify-center rounded-full bg-blue-50 text-base font-black text-brand-blue transition-all duration-200 group-hover:translate-x-0.5 group-hover:bg-brand-blue group-hover:text-white">
                               →
                             </span>
                           </div>
@@ -692,12 +704,12 @@ export default function App() {
                     );
                   })}
                 </div>
-              </section>
+              </section>}
 
               {/* Homepage Content Sections */}
               {loading ? (
                 <div className="order-[4] max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
-                  <div className="grid grid-cols-1 min-[480px]:grid-cols-2 lg:grid-cols-4 gap-5 sm:gap-6">
+                  <div className="grid grid-cols-2 gap-3 sm:gap-6 lg:grid-cols-4">
                     {[...Array(4)].map((_, idx) => (
                       <div key={idx} className="bg-white border border-slate-100 rounded-2xl p-4 space-y-4 animate-pulse flex flex-col justify-between h-full">
                         <div className="space-y-4">
@@ -726,7 +738,7 @@ export default function App() {
               ) : (
                 <>
                   {/* Featured Products Grid */}
-                  {featuredProducts.length > 0 && (
+                  {trendingProducts.length > 0 && (
                     <section className="zy-market-shelf zy-market-shelf-featured order-[4] max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                       <div className="flex flex-col sm:flex-row sm:items-end justify-between mb-8 gap-4">
                         <div className="text-left max-w-2xl">
@@ -747,8 +759,8 @@ export default function App() {
                         </button>
                       </div>
 
-                      <div className="grid grid-cols-1 min-[480px]:grid-cols-2 lg:grid-cols-4 gap-5 sm:gap-6 lg:gap-7">
-                        {featuredProducts.slice(0, 8).map((prod) => (
+                      <div className="grid grid-cols-2 gap-3 sm:gap-6 lg:grid-cols-4 lg:gap-7">
+                        {trendingProducts.map((prod) => (
                           <ProductCard 
                             key={prod.id}
                             product={prod}
@@ -838,7 +850,7 @@ export default function App() {
                   </section>}
 
                   {/* Brand Why Choose Us Section - Luxury Grid */}
-                  <section className="order-[9] max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                  <section className="order-[7] max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                     <div className="zy-market-assurance text-white rounded-[2rem] sm:rounded-[2.5rem] p-6 sm:p-8 md:p-12 relative overflow-hidden text-left shadow-2xl">
                       <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(29,78,216,0.28)_0,transparent_58%)]"></div>
                       
@@ -885,87 +897,13 @@ export default function App() {
                     </div>
                   </section>
 
-                  {/* New Arrivals segment */}
-                  {newArrivalProducts.length > 0 && (
-                    <section className="zy-market-shelf zy-market-shelf-new order-[5] max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                      <div className="flex flex-col sm:flex-row sm:items-end justify-between mb-8 gap-4">
-                        <div className="text-left max-w-2xl">
-                          <span className="zy-section-eyebrow zy-section-eyebrow-pill block w-fit">Fresh stock</span>
-                          <h2 className="text-2xl sm:text-3xl font-black tracking-tight text-slate-900 font-display mt-2">
-                            New Arrivals
-                          </h2>
-                          <p className="text-sm text-slate-500 mt-2">Recently added products from the live storefront catalog.</p>
-                        </div>
-                        <button 
-                          onClick={() => { setCurrentPage('products'); setSelectedCategory('all'); }}
-                          className="zy-button zy-button-outline text-xs px-4 py-2 rounded-full flex items-center cursor-pointer"
-                        >
-                          Browse New Arrivals
-                          <ArrowRight className="h-4 w-4 ml-1.5" />
-                        </button>
-                      </div>
-
-                      <div className="grid grid-cols-1 min-[480px]:grid-cols-2 lg:grid-cols-4 gap-5 sm:gap-6 lg:gap-7">
-                        {newArrivalProducts.slice(0, 8).map((prod) => (
-                          <ProductCard 
-                            key={prod.id}
-                            product={prod}
-                            isWishlisted={wishlistProductIds.has(prod.id)}
-                            onAddToCart={handleAddToCart}
-                            onToggleWishlist={handleToggleWishlist}
-                            onViewDetail={handleViewProduct}
-                            showWishlist={settings?.enableWishlist !== false}
-                            settings={settings}
-                          />
-                        ))}
-                      </div>
-                    </section>
-                  )}
-
-                  {/* Best Sellers Segment */}
-                  {bestSellerProducts.length > 0 && (
-                    <section className="zy-market-shelf zy-market-shelf-best order-[6] max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                      <div className="flex flex-col sm:flex-row sm:items-end justify-between mb-8 gap-4">
-                        <div className="text-left max-w-2xl">
-                          <span className="zy-section-eyebrow zy-section-eyebrow-pill block w-fit">Top volume sales</span>
-                          <h2 className="text-2xl sm:text-3xl font-black tracking-tight text-slate-900 font-display mt-2">
-                            Our Best Sellers
-                          </h2>
-                          <p className="text-sm text-slate-500 mt-2">Popular picks that help new customers shop with confidence.</p>
-                        </div>
-                        <button 
-                          onClick={() => { setCurrentPage('products'); setSelectedCategory('all'); }}
-                          className="zy-button zy-button-outline text-xs px-4 py-2 rounded-full flex items-center cursor-pointer"
-                        >
-                          Explore Catalog
-                          <ArrowRight className="h-4 w-4 ml-1.5" />
-                        </button>
-                      </div>
-
-                      <div className="grid grid-cols-1 min-[480px]:grid-cols-2 lg:grid-cols-4 gap-5 sm:gap-6 lg:gap-7">
-                        {bestSellerProducts.slice(0, 8).map((prod) => (
-                          <ProductCard 
-                            key={prod.id}
-                            product={prod}
-                            isWishlisted={wishlistProductIds.has(prod.id)}
-                            onAddToCart={handleAddToCart}
-                            onToggleWishlist={handleToggleWishlist}
-                            onViewDetail={handleViewProduct}
-                            showWishlist={settings?.enableWishlist !== false}
-                            settings={settings}
-                          />
-                        ))}
-                      </div>
-                    </section>
-                  )}
-
                   {/* Recommended products use the existing active catalog order. */}
                   {recommendedProducts.length > 0 && (
-                    <section className="zy-market-shelf zy-market-shelf-recommended order-[7] max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                    <section className="zy-market-shelf zy-market-shelf-recommended order-[5] max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                       <div className="flex flex-col sm:flex-row sm:items-end justify-between mb-8 gap-4">
                         <div className="text-left max-w-2xl">
                           <span className="zy-section-eyebrow zy-section-eyebrow-pill block w-fit">Selected from the live catalog</span>
-                          <h2 className="text-2xl sm:text-3xl font-black tracking-tight text-slate-900 font-display mt-2">Recommended For You</h2>
+                          <h2 className="text-2xl sm:text-3xl font-black tracking-tight text-slate-900 font-display mt-2">Recommended Picks</h2>
                           <p className="text-sm text-slate-500 mt-2">A quick starting point from products currently available in the marketplace.</p>
                         </div>
                         <button
@@ -977,7 +915,7 @@ export default function App() {
                         </button>
                       </div>
 
-                      <div className="grid grid-cols-1 min-[480px]:grid-cols-2 lg:grid-cols-4 gap-5 sm:gap-6 lg:gap-7">
+                      <div className="grid grid-cols-2 gap-3 sm:gap-6 lg:grid-cols-4 lg:gap-7">
                         {recommendedProducts.map((prod) => (
                           <ProductCard
                             key={prod.id}
@@ -995,8 +933,8 @@ export default function App() {
                   )}
 
                   {/* Latest Products segment */}
-                  {latestProducts.length > 0 && (
-                    <section className="zy-market-shelf zy-market-shelf-latest order-[8] max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                  {homepageLatestProducts.length > 0 && (
+                    <section className="zy-market-shelf zy-market-shelf-latest order-[6] max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                       <div className="flex flex-col sm:flex-row sm:items-end justify-between mb-8 gap-4">
                         <div className="text-left max-w-2xl">
                           <span className="zy-section-eyebrow zy-section-eyebrow-pill block w-fit">Recently added</span>
@@ -1014,8 +952,8 @@ export default function App() {
                         </button>
                       </div>
 
-                      <div className="grid grid-cols-1 min-[480px]:grid-cols-2 lg:grid-cols-4 gap-5 sm:gap-6 lg:gap-7">
-                        {latestProducts.slice(0, 8)
+                      <div className="grid grid-cols-2 gap-3 sm:gap-6 lg:grid-cols-4 lg:gap-7">
+                        {homepageLatestProducts
                           .map((prod) => (
                             <ProductCard 
                               key={prod.id}
@@ -1036,7 +974,7 @@ export default function App() {
 
               {/* Beautiful customer testimonials segment */}
               {homepageReviews.length > 0 && (
-                <section className="zy-market-testimonials order-[10] py-16 sm:py-20 text-left border-y border-slate-200/70">
+                <section className="zy-market-testimonials order-[8] py-16 sm:py-20 text-left border-y border-slate-200/70">
                   <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                     <div className="text-center space-y-2 mb-12">
                       <span className="zy-section-eyebrow block">Testimonials</span>
@@ -1085,24 +1023,6 @@ export default function App() {
                   </div>
                 </section>
               )}
-
-              <section className="zy-community-banner order-[11] mx-auto w-[calc(100%-2rem)] max-w-7xl overflow-hidden rounded-[2rem] px-6 py-10 text-left text-white sm:w-[calc(100%-3rem)] sm:px-10 sm:py-12 lg:px-14">
-                <div className="relative z-10 flex flex-col items-start justify-between gap-7 md:flex-row md:items-center">
-                  <div className="max-w-2xl">
-                    <span className="inline-flex rounded-full border border-white/20 bg-white/10 px-3 py-1 text-[10px] font-black uppercase tracking-widest">Community updates</span>
-                    <h2 className="mt-3 text-2xl font-black font-display sm:text-4xl">Join the Zyro.lk Community</h2>
-                    <p className="mt-2 text-sm leading-relaxed text-blue-100 sm:text-base">Discover new arrivals, exclusive deals and special offers from the live marketplace.</p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => { setCurrentPage('products'); setSelectedCategory('all'); }}
-                    className="zy-button min-h-12 w-full rounded-2xl border border-white bg-white px-6 text-sm font-black text-brand-blue shadow-xl sm:w-auto"
-                  >
-                    Explore Latest Offers
-                    <ArrowRight className="h-4 w-4" aria-hidden="true" />
-                  </button>
-                </div>
-              </section>
 
             </div>
           )}

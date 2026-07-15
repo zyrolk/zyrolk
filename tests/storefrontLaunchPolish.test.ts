@@ -8,6 +8,7 @@ const footer = readFileSync('src/components/Footer.tsx', 'utf8');
 const productDetail = readFileSync('src/components/ProductDetailModal.tsx', 'utf8');
 const navbar = readFileSync('src/components/Navbar.tsx', 'utf8');
 const mobileNavigation = readFileSync('src/components/MobileBottomNav.tsx', 'utf8');
+const productCard = readFileSync('src/components/ProductCard.tsx', 'utf8');
 
 test('launch storefront uses the approved generic trust messages', () => {
   for (const message of [
@@ -38,8 +39,7 @@ test('homepage uses the marketplace visual system without changing product handl
     'zy-market-shelf-categories',
     'zy-market-shelf-featured',
     'zy-market-promo-zone',
-    'zy-market-shelf-new',
-    'zy-market-shelf-best',
+    'zy-market-shelf-recommended',
     'zy-market-shelf-latest',
   ]) {
     assert.match(homepage, new RegExp(className));
@@ -64,7 +64,7 @@ test('launch marketplace is CMS-driven and keeps search in the sticky header', (
   assert.match(hero, /Secure Checkout/);
   assert.doesNotMatch(hero, /PREMIUM_DEFAULT_SLIDES/);
   assert.doesNotMatch(homepage, /zy-home-search-card/);
-  assert.match(navbar, /Search products, brands or categories\.\.\./);
+  assert.match(navbar, /Search products, brands & categories/);
   assert.match(navbar, /Recent searches/);
   assert.match(navbar, /Popular searches/);
   assert.match(navbar, /Browse categories/);
@@ -72,17 +72,29 @@ test('launch marketplace is CMS-driven and keeps search in the sticky header', (
   assert.match(homepage, /discountedProducts\.map/);
   assert.match(homepage, /discountedProducts\.length > 0 && <section className="zy-market-promo-zone zy-flash-deals/);
   assert.doesNotMatch(homepage, /No active promotions/);
-  assert.match(homepage, /itemsCount > 0/);
+  assert.match(homepage, /if \(itemsCount === 0\) return \[\]/);
+  assert.match(homepage, /storedImage \|\| productImage/);
   assert.match(homepage, /zy-category-tone-/);
   assert.match(homepage, /Premium Hero Slider Banner[\s\S]*order-\[1\]/);
   assert.match(homepage, /zy-market-promo-zone zy-flash-deals order-\[2\]/);
   assert.match(homepage, /zy-market-shelf-categories order-\[3\]/);
   assert.match(homepage, /zy-market-shelf-featured order-\[4\]/);
-  assert.match(homepage, /zy-market-shelf-new order-\[5\]/);
-  assert.match(homepage, /zy-market-shelf-best order-\[6\]/);
-  assert.match(homepage, /zy-market-shelf-recommended order-\[7\]/);
-  assert.match(homepage, /zy-market-shelf-latest order-\[8\]/);
-  assert.match(homepage, /zy-community-banner order-\[11\]/);
+  assert.match(homepage, /zy-market-shelf-recommended order-\[5\]/);
+  assert.match(homepage, /zy-market-shelf-latest order-\[6\]/);
+  assert.match(homepage, /order-\[7\][^\n]*max-w-7xl/);
+  assert.match(homepage, /zy-market-testimonials order-\[8\]/);
+  assert.doesNotMatch(homepage, /zy-community-banner|Join the Zyro\.lk Community|Newsletter/);
+});
+
+test('homepage uses live catalog visuals, unique shelves, and mobile-safe product actions', () => {
+  assert.match(hero, /liveCatalogVisuals/);
+  assert.match(hero, /liveCategoryVisuals/);
+  assert.match(homepage, /const usedIds = new Set/);
+  assert.match(homepage, /homepageLatestProducts/);
+  assert.doesNotMatch(homepage, /newArrivalProducts|bestSellerProducts/);
+  assert.match(productCard, /hidden min-h-12[\s\S]*lg:flex/);
+  assert.match(productCard, /aria-label=\{`View \$\{product\.name\}`\}/);
+  assert.doesNotMatch(productCard, /role="button"/);
 });
 
 test('customer account menus retain working storefront and support destinations', () => {
