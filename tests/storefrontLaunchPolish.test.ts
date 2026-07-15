@@ -53,12 +53,15 @@ test('homepage uses the marketplace visual system without changing product handl
 test('launch marketplace is CMS-driven and keeps search in the sticky header', () => {
   assert.match(hero, /configuredSlides\.map/);
   assert.match(hero, /slides\[currentSlide\]\.image/);
-  assert.match(hero, /campaignTone\(slides\[currentSlide\]\.bgGradient\)/);
+  assert.match(hero, /campaignTone\(isPromotionalBadge\(slides\[currentSlide\]\.badge\)/);
   assert.match(hero, /onTouchStart=\{handleTouchStart\}/);
   assert.match(hero, /onTouchEnd=\{handleTouchEnd\}/);
-  assert.match(hero, /Everything You Need,/);
-  assert.match(hero, /All In One Marketplace/);
-  assert.match(hero, /Secure Payments/);
+  assert.match(hero, /Everything You Need/);
+  assert.match(hero, /Across Every Category/);
+  assert.match(hero, /Shop fashion, home, beauty, electronics, lifestyle, accessories and thousands of products in one trusted Sri Lankan marketplace\./);
+  assert.match(hero, /marketplaceSafeSubtitle/);
+  assert.match(hero, /replacePremiumElectronics/);
+  assert.match(hero, /Secure Checkout/);
   assert.doesNotMatch(hero, /PREMIUM_DEFAULT_SLIDES/);
   assert.doesNotMatch(homepage, /zy-home-search-card/);
   assert.match(navbar, /Search products, brands or categories\.\.\./);
