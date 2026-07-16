@@ -319,7 +319,7 @@ export default function ProductDetailModal({
     const totalPrice = formatPrice(product.price * quantity);
     const skuLine = product.sku ? `\n*SKU:* ${product.sku}` : "";
     const message = encodeURIComponent(
-      `Hello Zyro.lk! I want to order the following genuine device:\n\n*Product:* ${product.name}${skuLine}\n*Quantity:* ${quantity}\n*Unit Price:* ${formatPrice(product.price)}\n*Total Price:* ${totalPrice}\n\nPlease proceed with my COD islandwide delivery confirmation details.`
+      `Hello Zyro.lk! I want to order the following product:\n\n*Product:* ${product.name}${skuLine}\n*Quantity:* ${quantity}\n*Unit Price:* ${formatPrice(product.price)}\n*Total Price:* ${totalPrice}\n\nPlease proceed with my COD islandwide delivery confirmation details.`
     );
     const whatsappNum = settings?.whatsappNumber 
       ? settings.whatsappNumber.replace(/[^0-9+]/g, "") 
@@ -528,7 +528,7 @@ export default function ProductDetailModal({
   return (
     <div
       ref={modalRef}
-      className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/70 backdrop-blur-xl flex items-center justify-center p-0 sm:p-4 md:p-6 animate-fadeIn"
+      className="zy-overlay fixed inset-0 z-50 overflow-y-auto bg-slate-950/70 backdrop-blur-xl flex items-center justify-center p-0 sm:p-4 md:p-6 animate-fadeIn"
       role="dialog"
       aria-modal="true"
       aria-labelledby="product-detail-title"
@@ -536,14 +536,14 @@ export default function ProductDetailModal({
       <div className="sr-only" role="status" aria-live="polite">{announcement}</div>
       
       {/* Immersive Apple/Samsung-style Premium Modal Layout */}
-      <div className="relative w-full max-w-6xl bg-white sm:rounded-[2.5rem] overflow-hidden shadow-[0_25px_60px_-15px_rgba(0,0,0,0.25)] border border-slate-100 flex flex-col min-h-screen sm:min-h-0 sm:h-[94vh]">
+      <div className="zy-product-detail-shell relative w-full max-w-6xl bg-white overflow-hidden flex flex-col min-h-screen sm:min-h-0 sm:h-[94vh]">
         
         {/* Top Header Sticky Rail */}
         <div className="absolute top-0 left-0 right-0 z-40 p-4 sm:p-6 flex justify-between items-center bg-gradient-to-b from-white/95 via-white/80 to-transparent pointer-events-none">
           <div className="pointer-events-auto bg-white/90 backdrop-blur-md border border-slate-100 px-4 py-2 rounded-full shadow-xs flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-brand-blue animate-pulse" />
             <span className="text-[10px] font-black text-slate-800 uppercase tracking-widest">
-              Live Showcase
+              Product Details
             </span>
           </div>
           
@@ -598,7 +598,7 @@ export default function ProductDetailModal({
                   <div className="space-y-4">
                     <div 
                       ref={galleryButtonRef}
-                      className="relative aspect-square w-full rounded-3xl bg-gradient-to-br from-slate-50 via-white to-blue-50/40 border border-slate-200/80 overflow-hidden select-none group/zoom shadow-sm cursor-zoom-in focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20"
+                      className="zy-product-gallery relative aspect-square w-full rounded-3xl bg-gradient-to-br from-slate-50 via-white to-blue-50/40 border border-slate-200/80 overflow-hidden select-none group/zoom cursor-zoom-in focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20"
                       onTouchStart={handleTouchStart}
                       onTouchMove={handleTouchMove}
                       onTouchEnd={handleTouchEnd}
@@ -755,7 +755,7 @@ export default function ProductDetailModal({
                 </div>
 
                 {/* RIGHT SIDE: CORE CONVERSIONS ENGINE (TITLES, PRICES, BADGES, AND ACTION CTAs) */}
-                <div className="lg:col-span-6 space-y-8 text-left lg:sticky lg:top-2">
+                <div className="zy-product-purchase lg:col-span-6 space-y-8 text-left lg:sticky lg:top-2">
                   
                   {/* Category Pill + Stock Status Row */}
                   <div className="flex flex-wrap items-center gap-2.5">
@@ -789,7 +789,7 @@ export default function ProductDetailModal({
                       </span>
                       <span className="inline-flex items-center text-[10px] font-bold uppercase tracking-widest text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-md gap-1">
                         <CheckCircle2 className="h-3 w-3" />
-                        Genuine Product
+                        Live Product Listing
                       </span>
                     </div>
 
@@ -841,7 +841,7 @@ export default function ProductDetailModal({
 
                     {/* Absolute and percentage savings calculation */}
                     {product.originalPrice && product.originalPrice > product.price && (
-                      <div className="text-xs font-bold text-white bg-brand-blue/90 w-fit px-3 py-1.5 rounded-xl flex items-center gap-1 shadow-md shadow-brand-blue/10 animate-pulse">
+                      <div className="w-fit rounded-xl bg-brand-orange px-3 py-1.5 text-xs font-bold text-white shadow-md shadow-orange-500/20 flex items-center gap-1">
                         <span>Save {formatPrice(product.originalPrice - product.price)} ({product.discount}% OFF)</span>
                       </div>
                     )}
@@ -855,7 +855,7 @@ export default function ProductDetailModal({
                         {isEligibleForFreeDelivery ? (
                           <>
                             <span className="text-xs font-black text-emerald-600 block">Eligible for FREE Shipping</span>
-                            <span className="text-[10px] text-slate-400 block font-light">Direct prompt dispatch from center</span>
+                            <span className="text-[10px] text-slate-400 block font-light">Your current product total meets the configured threshold</span>
                           </>
                         ) : (
                           <>
@@ -1222,7 +1222,7 @@ export default function ProductDetailModal({
                   ) : (
                     <div className="text-center py-12 text-xs text-slate-400 font-light bg-slate-50/50 rounded-3xl border border-dashed border-slate-200 flex flex-col items-center justify-center gap-1">
                       <span className="font-bold text-slate-700">No active reviews published</span>
-                      <span>Certified buyers haven't posted comments on this device yet. Be the first!</span>
+                      <span>Verified buyers haven't posted a review for this product yet. Be the first!</span>
                     </div>
                   )}
                   {reviews.length > visibleReviewCount && (
@@ -1362,7 +1362,7 @@ export default function ProductDetailModal({
             <div className="flex justify-between items-center w-full max-w-6xl mx-auto py-2">
               <div className="text-white/60 text-xs font-bold uppercase tracking-wider flex items-center gap-2">
                 <Maximize2 className="h-4 w-4" />
-                <span>Device Inspector Mode</span>
+                <span>Product Image Viewer</span>
               </div>
               <button
                 ref={lightboxCloseButtonRef}

@@ -1,13 +1,13 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Menu, X, Search, Heart, ShoppingBag, User, 
-  LayoutDashboard, LogIn, LogOut, ChevronDown, Phone,
-  ArrowUpRight, Clock3, LoaderCircle, Mic, PackageSearch, Tag,
-  ShieldCheck, ShoppingCart, Grid3X3, MessageCircle, Mail, HelpCircle, Info, LockKeyhole
+  LayoutDashboard, LogIn, LogOut, ChevronDown,
+  ArrowUpRight, Clock3, LoaderCircle, PackageSearch, Tag,
+  ShieldCheck, Grid3X3, MessageCircle, MapPin, Bell,
+  Ticket, Settings, Headphones, ReceiptText, Home, Sparkles
 } from 'lucide-react';
-import { auth, db } from '../firebase';
+import { auth } from '../firebase';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore';
 import { Category, CustomerProduct, WebsiteSettings } from '../types';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { searchCustomerProducts } from '../services/product-search/customerProductSearch';
@@ -59,6 +59,7 @@ export default function Navbar({
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [tempSearch, setTempSearch] = useState("");
   const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [isScrolled, setIsScrolled] = useState(false);
   const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(-1);
   const [recentSearches, setRecentSearches] = useState<string[]>(() => {
     try {
@@ -78,6 +79,13 @@ export default function Navbar({
       setUser(currentUser);
     });
     return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    const updateHeaderState = () => setIsScrolled(window.scrollY > 12);
+    updateHeaderState();
+    window.addEventListener('scroll', updateHeaderState, { passive: true });
+    return () => window.removeEventListener('scroll', updateHeaderState);
   }, []);
 
   useEffect(() => {
@@ -226,12 +234,37 @@ export default function Navbar({
 
   const isWishlistEnabled = settings?.enableWishlist !== false;
 
+  const navigateToPage = (page: string) => {
+    setCurrentPage(page);
+    setIsAdminMode(false);
+    setIsMobileMenuOpen(false);
+    setIsProfileOpen(false);
+  };
+
+  const navigateToDeals = () => {
+    navigateToPage('home');
+    window.setTimeout(() => {
+      document.getElementById('phase-one-deals-title')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 0);
+  };
+
   const navLinks = [
-    { id: 'home', label: 'Home' },
-    { id: 'products', label: 'Products' },
-    { id: 'categories', label: 'Categories' },
-    ...(isWishlistEnabled ? [{ id: 'wishlist', label: 'Wishlist' }] : []),
-    { id: 'contact', label: 'Contact Us' }
+    { id: 'home', label: 'Home', icon: Home, action: () => navigateToPage('home') },
+    { id: 'categories', label: 'Categories', icon: Grid3X3, action: () => navigateToPage('categories') },
+    { id: 'deals', label: 'Deals', icon: Tag, action: navigateToDeals },
+    { id: 'new-arrivals', label: 'New Arrivals', icon: Sparkles, action: () => navigateToPage('products') },
+    { id: 'contact', label: 'Contact', icon: MessageCircle, action: () => navigateToPage('contact') }
+  ];
+
+  const accountItems = [
+    { label: 'My Account', icon: User, action: user ? undefined : () => { onOpenAuthModal(); setIsProfileOpen(false); }, pending: Boolean(user) },
+    { label: 'Orders', icon: ReceiptText, action: undefined, pending: true },
+    ...(isWishlistEnabled ? [{ label: 'Wishlist', icon: Heart, action: () => navigateToPage('wishlist'), pending: false }] : []),
+    { label: 'Addresses', icon: MapPin, action: undefined, pending: true },
+    { label: 'Notifications', icon: Bell, action: undefined, pending: true },
+    { label: 'Coupons', icon: Ticket, action: undefined, pending: true },
+    { label: 'Support', icon: Headphones, action: () => navigateToPage('contact'), pending: false },
+    { label: 'Settings', icon: Settings, action: undefined, pending: true }
   ];
 
   const renderSearchBox = (idPrefix: string) => {
@@ -255,7 +288,7 @@ export default function Navbar({
           }}
           onFocus={() => setIsSearchOpen(true)}
           onKeyDown={handleSearchKeyDown}
-          className="zy-input zy-market-search min-h-14 min-w-0 max-w-full w-full rounded-2xl pl-11 pr-36 text-base text-slate-900 transition-all placeholder:text-slate-500 focus-visible:outline-none [&::-webkit-search-cancel-button]:appearance-none"
+          className="zy-input zy-market-search min-h-14 min-w-0 max-w-full w-full rounded-2xl pl-11 pr-32 text-base text-slate-900 transition-all placeholder:text-slate-500 focus-visible:outline-none [&::-webkit-search-cancel-button]:appearance-none"
           role="combobox"
           aria-autocomplete="list"
           aria-expanded={isSearchOpen}
@@ -267,20 +300,18 @@ export default function Navbar({
           <button
             type="button"
             onClick={clearSearch}
-            className="absolute right-24 top-1/2 z-10 flex h-12 w-12 -translate-y-1/2 items-center justify-center rounded-xl text-slate-500 transition-colors hover:bg-slate-200 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20"
+            className="absolute right-[5.75rem] top-1/2 z-10 flex h-12 w-10 -translate-y-1/2 items-center justify-center rounded-xl text-slate-500 transition-colors hover:bg-slate-200 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20"
             aria-label="Clear product search"
           >
             <X className="h-4 w-4" aria-hidden="true" />
           </button>
         )}
-        <button type="button" disabled className="absolute right-12 top-1/2 z-10 flex h-12 w-12 -translate-y-1/2 items-center justify-center rounded-xl text-slate-400 disabled:cursor-not-allowed disabled:opacity-70" aria-label="Voice search is not enabled" title="Voice search is not enabled">
-          <Mic className="h-4 w-4" aria-hidden="true" />
-        </button>
         <button
           type="submit"
-          className="absolute right-0.5 top-1/2 z-10 flex h-12 w-12 -translate-y-1/2 items-center justify-center rounded-xl bg-brand-blue text-white shadow-sm transition-all hover:bg-blue-700 active:scale-95 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/25"
+          className="absolute right-0.5 top-1/2 z-10 flex h-12 min-w-[5.25rem] -translate-y-1/2 items-center justify-center gap-1.5 rounded-xl bg-brand-blue px-3 text-xs font-black text-white shadow-sm transition-all hover:bg-blue-700 active:scale-95 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/25"
           aria-label="Submit product search"
         >
+          <span>Search</span>
           <ArrowUpRight className="h-4 w-4" aria-hidden="true" />
         </button>
 
@@ -420,13 +451,12 @@ export default function Navbar({
   };
 
   return (
-    <header className="zy-market-header sticky top-0 z-50 w-full border-b border-white/70 bg-white/80 backdrop-blur-2xl">
-      <div className="h-1 w-full bg-gradient-to-r from-blue-800 via-brand-blue to-blue-300" aria-hidden="true" />
-      <div className="zy-market-header-shell mx-auto w-[calc(100%-1rem)] max-w-7xl px-4 sm:w-[calc(100%-2rem)] sm:px-6 lg:px-8">
-        <div className="flex h-[4.25rem] items-center justify-between">
+    <header className={`zy-market-header sticky top-0 z-50 w-full ${isScrolled ? 'is-scrolled' : ''}`}>
+      <div className="zy-market-header-shell mx-auto w-full max-w-[1480px] px-4 sm:px-6 lg:px-8">
+        <div className="flex h-16 items-center justify-between gap-2 md:h-20 md:gap-3">
           
           {/* Logo */}
-          <button type="button" className="flex min-h-11 flex-shrink-0 items-center rounded-xl cursor-pointer focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20" onClick={() => { setCurrentPage('home'); setIsAdminMode(false); }} aria-label="Go to homepage">
+          <button type="button" className="flex min-h-12 flex-shrink-0 items-center rounded-xl cursor-pointer focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20" onClick={() => navigateToPage('home')} aria-label="Go to homepage">
             {settings?.logoUrl ? (
               <img 
                 src={settings.logoUrl} 
@@ -449,23 +479,20 @@ export default function Navbar({
           </button>
 
           {/* Desktop Search Bar */}
-          <div className="hidden md:flex flex-1 max-w-xl mx-6 xl:mx-8">
+          <div className="mx-3 hidden min-w-[18rem] max-w-2xl flex-1 md:flex lg:mx-5">
             {renderSearchBox('desktop')}
           </div>
 
           {/* Desktop Navigation Links */}
-          <nav className="hidden items-center gap-1 rounded-2xl border border-slate-200/70 bg-slate-50/75 p-1 lg:flex">
+          <nav className="hidden shrink-0 items-center gap-0.5 xl:flex" aria-label="Primary storefront navigation">
             {navLinks.map((link) => (
               <button
                 key={link.id}
-                onClick={() => {
-                  setCurrentPage(link.id);
-                  setIsAdminMode(false);
-                }}
-                className={`min-h-10 rounded-xl px-3 text-xs font-black transition-all cursor-pointer ${
+                onClick={link.action}
+                className={`zy-navbar-link min-h-12 rounded-xl px-3 text-xs font-black transition-all cursor-pointer ${
                   currentPage === link.id && !isAdminMode
-                    ? 'bg-white text-brand-blue shadow-sm'
-                    : 'text-slate-600 hover:bg-white hover:text-slate-900'
+                    ? 'is-active text-brand-blue'
+                    : 'text-slate-600 hover:text-brand-blue'
                 }`}
               >
                 {link.label}
@@ -474,29 +501,13 @@ export default function Navbar({
           </nav>
 
           {/* Action Icons */}
-          <div className="flex items-center space-x-2 sm:space-x-4">
-            
-            {/* Sri Lankan Customer Hot-Line */}
-            {settings?.contactPhone ? (
-              <a 
-                href={`tel:${settings.contactPhone}`} 
-                className="hidden xl:flex items-center text-xs font-bold text-slate-700 bg-slate-100/80 border border-slate-200/60 py-1.5 px-3 rounded-full hover:bg-white hover:text-brand-blue transition-colors"
-              >
-                <Phone className="h-3.5 w-3.5 mr-1 text-brand-blue" />
-                <span>{settings.contactPhone}</span>
-              </a>
-            ) : (
-              <div className="hidden xl:flex items-center text-xs font-semibold text-slate-400 bg-slate-100/50 py-1.5 px-3 rounded-full">
-                <Phone className="h-3.5 w-3.5 mr-1 text-slate-300" />
-                <span>Hotline pending setup</span>
-              </div>
-            )}
+          <div className="flex shrink-0 items-center gap-1.5 md:gap-2">
 
             {/* Wishlist Button */}
             {isWishlistEnabled && (
               <button 
                 onClick={() => { setCurrentPage('wishlist'); setIsAdminMode(false); }}
-                className="zy-button zy-button-ghost h-11 w-11 p-0 text-slate-600 hover:text-red-500 relative cursor-pointer rounded-full"
+                className="zy-navbar-action relative hidden h-12 w-12 items-center justify-center rounded-2xl text-slate-600 hover:text-red-500 md:flex"
                 title="Wishlist"
                 aria-label={`Open wishlist with ${wishlistCount} saved ${wishlistCount === 1 ? 'product' : 'products'}`}
                 aria-current={currentPage === 'wishlist' ? 'page' : undefined}
@@ -513,7 +524,7 @@ export default function Navbar({
             {/* Cart Button */}
             <button 
               onClick={onOpenCart}
-              className="zy-button zy-button-ghost h-11 w-11 p-0 text-slate-600 hover:text-brand-blue relative cursor-pointer rounded-full"
+              className="zy-navbar-action relative flex h-12 w-12 items-center justify-center rounded-2xl text-slate-600 hover:text-brand-blue"
               title="Shopping Cart"
               aria-label={`Open shopping cart with ${cartCount} ${cartCount === 1 ? 'item' : 'items'}`}
             >
@@ -526,10 +537,10 @@ export default function Navbar({
             </button>
 
             {/* User Dropdown */}
-            <div className="relative hidden sm:block" data-account-menu>
+            <div className="relative hidden md:block" data-account-menu>
               <button
                 onClick={() => setIsProfileOpen(!isProfileOpen)}
-                className="zy-button zy-button-ghost flex h-11 min-w-11 items-center justify-center space-x-1 p-0 text-slate-600 hover:text-slate-900 cursor-pointer rounded-full focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20"
+                className="zy-navbar-action flex h-12 min-w-12 items-center justify-center gap-1 rounded-2xl text-slate-600 hover:text-brand-blue"
                 aria-label={user ? 'Open account menu' : 'Open sign in menu'}
                 aria-expanded={isProfileOpen}
                 aria-controls="desktop-account-menu"
@@ -539,85 +550,56 @@ export default function Navbar({
               </button>
 
               {isProfileOpen && (
-                <div id="desktop-account-menu" className="zy-account-menu absolute right-0 z-50 mt-3 w-[min(25rem,calc(100vw-2rem))] overflow-hidden rounded-3xl border border-blue-100 bg-white shadow-2xl shadow-slate-950/20">
-                  <div className="bg-gradient-to-br from-blue-700 via-brand-blue to-blue-500 px-5 py-5 text-white">
+                <div id="desktop-account-menu" className="zy-account-menu absolute right-0 z-[100] mt-3 w-[min(23rem,calc(100vw-2rem))] overflow-hidden rounded-[1.75rem] border border-white/80 bg-white/95 shadow-2xl shadow-slate-950/20 backdrop-blur-2xl">
+                  <div className="bg-gradient-to-br from-blue-800 via-brand-blue to-blue-500 px-5 py-5 text-white">
                     <div className="flex items-center gap-3">
-                      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-white/25 bg-white/15 text-lg font-black shadow-inner" aria-hidden="true">
+                      <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-white/25 bg-white/15 text-xl font-black shadow-inner" aria-hidden="true">
                         {(user?.displayName || user?.email || 'G').slice(0, 1).toUpperCase()}
                       </div>
                       <div className="min-w-0 flex-1 text-left">
-                        <p className="text-[10px] font-black uppercase tracking-[0.16em] text-blue-100">{user ? 'Welcome back' : 'Welcome to Zyro.lk'}</p>
+                        <p className="text-[10px] font-black uppercase tracking-[0.18em] text-blue-100">{user ? 'Your marketplace account' : 'Welcome to Zyro.lk'}</p>
                         <p className="mt-0.5 truncate text-base font-black font-display">{user ? user.displayName || 'Zyro.lk Customer' : 'Guest shopper'}</p>
-                        <p className="truncate text-xs text-blue-100">{user?.email || 'Sign in for a personalized shopping experience'}</p>
+                        <p className="mt-0.5 truncate text-xs text-blue-100">{user?.email || 'Sign in to manage your shopping'}</p>
                       </div>
                       {user && <ShieldCheck className="h-5 w-5 shrink-0 text-blue-100" aria-label="Signed in account" />}
                     </div>
-                    <div className="mt-4 grid grid-cols-2 gap-2 border-t border-white/15 pt-4">
-                      <div className="rounded-xl bg-white/10 px-3 py-2"><span className="block text-lg font-black">{wishlistCount}</span><span className="text-[9px] font-bold uppercase tracking-wider text-blue-100">Saved items</span></div>
-                      <div className="rounded-xl bg-white/10 px-3 py-2"><span className="block text-lg font-black">{cartCount}</span><span className="text-[9px] font-bold uppercase tracking-wider text-blue-100">Cart items</span></div>
-                    </div>
                   </div>
 
-                  <div className="max-h-[min(34rem,calc(100vh-7rem))] space-y-5 overflow-y-auto p-4 text-left">
-                    <div>
-                      <span className="mb-2 block text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">Quick actions</span>
-                      <div className="grid grid-cols-2 gap-2">
-                        <button type="button" onClick={() => { setCurrentPage('products'); setIsAdminMode(false); setIsProfileOpen(false); }} className="zy-account-action">
-                          <PackageSearch className="h-4.5 w-4.5 text-brand-blue" aria-hidden="true" /><span>Shop products</span>
+                  <div className="max-h-[min(34rem,calc(100vh-7rem))] overflow-y-auto p-3 text-left">
+                    <span className="mb-2 block px-2 pt-1 text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Account</span>
+                    <div className="space-y-1">
+                      {accountItems.map(({ label, icon: Icon, action, pending }) => (
+                        <button
+                          key={label}
+                          type="button"
+                          onClick={action}
+                          disabled={pending}
+                          className="zy-account-row"
+                          aria-disabled={pending || undefined}
+                        >
+                          <span className="zy-account-row-icon"><Icon className="h-4.5 w-4.5" aria-hidden="true" /></span>
+                          <span className="min-w-0 flex-1">{label}</span>
+                          {pending ? <span className="text-[9px] font-black uppercase tracking-wider text-slate-400">Coming soon</span> : <ArrowUpRight className="h-4 w-4 text-slate-400" aria-hidden="true" />}
                         </button>
-                        {isWishlistEnabled && (
-                          <button type="button" onClick={() => { setCurrentPage('wishlist'); setIsAdminMode(false); setIsProfileOpen(false); }} className="zy-account-action">
-                            <Heart className="h-4.5 w-4.5 text-red-500" aria-hidden="true" /><span>Wishlist</span>
-                          </button>
-                        )}
-                        <button type="button" onClick={() => { onOpenCart(); setIsProfileOpen(false); }} className="zy-account-action">
-                          <ShoppingCart className="h-4.5 w-4.5 text-brand-blue" aria-hidden="true" /><span>Cart</span>
-                        </button>
-                        <button type="button" onClick={() => { setCurrentPage('categories'); setIsAdminMode(false); setIsProfileOpen(false); }} className="zy-account-action">
-                          <Grid3X3 className="h-4.5 w-4.5 text-brand-blue" aria-hidden="true" /><span>Categories</span>
-                        </button>
-                      </div>
+                      ))}
                     </div>
 
                     {isAdminUser && (
                       <button
                         onClick={() => { setIsAdminMode(true); setCurrentPage('admin'); setIsProfileOpen(false); }}
-                        className={`flex min-h-12 w-full items-center justify-between rounded-2xl border px-4 text-sm font-black transition-colors ${isAdminMode ? 'border-blue-200 bg-blue-50 text-brand-blue' : 'border-slate-200 bg-white text-slate-700 hover:border-blue-200 hover:bg-blue-50'}`}
+                        className={`mt-2 flex min-h-12 w-full items-center justify-between rounded-2xl border px-4 text-sm font-black transition-colors ${isAdminMode ? 'border-blue-200 bg-blue-50 text-brand-blue' : 'border-slate-200 bg-white text-slate-700 hover:border-blue-200 hover:bg-blue-50'}`}
                       >
                         <span className="flex items-center gap-2"><LayoutDashboard className="h-4.5 w-4.5" /> Administration</span>
                         <ArrowUpRight className="h-4 w-4" aria-hidden="true" />
                       </button>
                     )}
 
-                    <div>
-                      <span className="mb-2 block text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">Support</span>
-                      <div className="grid grid-cols-2 gap-2">
-                        {settings?.whatsappNumber && (
-                          <a href={`https://wa.me/${settings.whatsappNumber.replace(/\D/g, '')}`} target="_blank" rel="noopener noreferrer" className="zy-account-action">
-                            <MessageCircle className="h-4.5 w-4.5 text-emerald-600" aria-hidden="true" /><span>WhatsApp</span>
-                          </a>
-                        )}
-                        {settings?.contactPhone && (
-                          <a href={`tel:${settings.contactPhone}`} className="zy-account-action"><Phone className="h-4.5 w-4.5 text-brand-blue" aria-hidden="true" /><span>Hotline</span></a>
-                        )}
-                        {settings?.contactEmail && (
-                          <a href={`mailto:${settings.contactEmail}`} className="zy-account-action"><Mail className="h-4.5 w-4.5 text-brand-blue" aria-hidden="true" /><span>Email</span></a>
-                        )}
-                        <button type="button" onClick={() => { setCurrentPage('faq'); setIsAdminMode(false); setIsProfileOpen(false); }} className="zy-account-action"><HelpCircle className="h-4.5 w-4.5 text-brand-blue" aria-hidden="true" /><span>FAQ</span></button>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-2 border-t border-slate-100 pt-4">
-                      <button type="button" onClick={() => { setCurrentPage('privacy-policy'); setIsAdminMode(false); setIsProfileOpen(false); }} className="zy-account-action"><LockKeyhole className="h-4.5 w-4.5 text-slate-500" aria-hidden="true" /><span>Privacy</span></button>
-                      <button type="button" onClick={() => { setCurrentPage('about-us'); setIsAdminMode(false); setIsProfileOpen(false); }} className="zy-account-action"><Info className="h-4.5 w-4.5 text-slate-500" aria-hidden="true" /><span>About</span></button>
-                    </div>
-
                     {user ? (
-                      <button onClick={handleLogout} className="flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl border border-red-100 bg-red-50 text-sm font-black text-red-600 transition-colors hover:border-red-200 hover:bg-red-100">
-                        <LogOut className="h-4.5 w-4.5" /> Sign Out
+                      <button onClick={handleLogout} className="mt-3 flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl border border-red-100 bg-red-50 text-sm font-black text-red-600 transition-colors hover:border-red-200 hover:bg-red-100">
+                        <LogOut className="h-4.5 w-4.5" /> Logout
                       </button>
                     ) : (
-                      <button onClick={() => { onOpenAuthModal(); setIsProfileOpen(false); }} className="zy-button zy-button-primary min-h-12 w-full rounded-2xl text-sm">
+                      <button onClick={() => { onOpenAuthModal(); setIsProfileOpen(false); }} className="zy-button zy-button-primary mt-3 min-h-12 w-full rounded-2xl text-sm">
                         <LogIn className="h-4.5 w-4.5" /> Sign In / Register
                       </button>
                     )}
@@ -629,7 +611,7 @@ export default function Navbar({
             {/* Mobile Hamburger Menu Button */}
             <button
               onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-              className="zy-button zy-button-ghost flex h-11 w-11 items-center justify-center lg:hidden p-0 text-slate-600 hover:text-slate-900 cursor-pointer rounded-full focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20"
+              className="zy-navbar-action flex h-12 w-12 items-center justify-center rounded-2xl text-slate-600 hover:text-brand-blue xl:hidden"
               aria-label={isMobileMenuOpen ? 'Close navigation menu' : 'Open navigation menu'}
               aria-expanded={isMobileMenuOpen}
             >
@@ -640,7 +622,7 @@ export default function Navbar({
         </div>
       </div>
 
-      <div className="min-w-0 max-w-full border-t border-slate-100 px-4 pb-3 pt-2 md:hidden">
+      <div className="zy-navbar-mobile-search min-w-0 max-w-full px-4 pb-3 md:hidden">
         <div className="mx-auto min-w-0 max-w-7xl">
           {renderSearchBox('mobile')}
         </div>
@@ -648,26 +630,49 @@ export default function Navbar({
 
       {/* Mobile Menu Panel */}
       {isMobileMenuOpen && (
-        <div className="border-t border-blue-100 bg-gradient-to-br from-blue-50 via-white to-slate-50 px-4 py-4 shadow-2xl backdrop-blur-xl lg:hidden animate-fadeIn">
-          {/* Mobile Links */}
-          <div className="mx-auto grid max-w-2xl grid-cols-2 gap-2 rounded-3xl border border-white bg-white/70 p-3 shadow-xl shadow-blue-950/8">
-            {navLinks.map((link) => (
-              <button
-                key={link.id}
-                onClick={() => {
-                  setCurrentPage(link.id);
-                  setIsAdminMode(false);
-                  setIsMobileMenuOpen(false);
-                }}
-                className={`min-h-12 rounded-2xl border px-3 text-left text-sm font-black transition-all ${
-                  currentPage === link.id && !isAdminMode
-                    ? 'border-blue-200 bg-brand-blue text-white shadow-lg shadow-blue-900/15'
-                    : 'border-slate-100 bg-white text-slate-700 hover:border-blue-100 hover:bg-blue-50'
-                }`}
-              >
-                {link.label}
-              </button>
-            ))}
+        <div className="zy-mobile-market-menu px-4 pb-5 pt-2 xl:hidden">
+          <div className="mx-auto max-w-2xl overflow-hidden rounded-[1.75rem] border border-white/80 bg-white/95 shadow-2xl shadow-blue-950/15 backdrop-blur-2xl">
+            <div className="bg-gradient-to-br from-blue-800 via-brand-blue to-blue-500 p-4 text-white">
+              <div className="flex items-center gap-3">
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-white/25 bg-white/15 text-lg font-black" aria-hidden="true">
+                  {(user?.displayName || user?.email || 'G').slice(0, 1).toUpperCase()}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-black">{user ? user.displayName || 'Zyro.lk Customer' : 'Welcome to Zyro.lk'}</p>
+                  <p className="mt-0.5 truncate text-xs text-blue-100">{user?.email || 'Sign in to manage your shopping'}</p>
+                </div>
+                {!user && (
+                  <button type="button" onClick={() => { onOpenAuthModal(); setIsMobileMenuOpen(false); }} className="min-h-12 rounded-xl border border-white/25 bg-white/15 px-3 text-xs font-black hover:bg-white/25">
+                    Sign in
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <nav className="grid grid-cols-2 gap-2 p-3" aria-label="Mobile storefront navigation">
+              {navLinks.map(({ id, label, icon: Icon, action }) => (
+                <button
+                  key={id}
+                  onClick={action}
+                  className={`zy-mobile-nav-card min-h-14 ${currentPage === id && !isAdminMode ? 'is-active' : ''}`}
+                  aria-current={currentPage === id && !isAdminMode ? 'page' : undefined}
+                >
+                  <Icon className="h-5 w-5" aria-hidden="true" />
+                  <span>{label}</span>
+                </button>
+              ))}
+            </nav>
+
+            <div className="border-t border-slate-100 p-3">
+              <span className="mb-2 block px-1 text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Shopping account</span>
+              <div className="grid grid-cols-2 gap-2">
+                {isWishlistEnabled && (
+                  <button type="button" onClick={() => navigateToPage('wishlist')} className="zy-mobile-account-card"><Heart className="h-5 w-5" aria-hidden="true" /><span>Wishlist</span>{wishlistCount > 0 && <b>{wishlistCount}</b>}</button>
+                )}
+                <button type="button" onClick={() => navigateToPage('contact')} className="zy-mobile-account-card"><Headphones className="h-5 w-5" aria-hidden="true" /><span>Support</span></button>
+              </div>
+            </div>
+
             {isAdminUser && (
               <button
                 onClick={() => {
@@ -675,7 +680,7 @@ export default function Navbar({
                   setCurrentPage('admin');
                   setIsMobileMenuOpen(false);
                 }}
-                className={`col-span-2 flex min-h-12 items-center rounded-2xl border px-3 text-left text-sm font-black transition-all ${
+                className={`mx-3 mb-3 flex min-h-12 w-[calc(100%-1.5rem)] items-center rounded-2xl border px-3 text-left text-sm font-black transition-all ${
                   isAdminMode
                     ? 'border-blue-200 bg-brand-blue text-white'
                     : 'border-slate-100 bg-white text-slate-700 hover:bg-blue-50'
@@ -684,6 +689,14 @@ export default function Navbar({
                 <LayoutDashboard className="h-4 w-4 mr-2" />
                 Admin Dashboard
               </button>
+            )}
+
+            {user && (
+              <div className="border-t border-slate-100 p-3">
+                <button type="button" onClick={handleLogout} className="flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl bg-red-50 text-sm font-black text-red-600 hover:bg-red-100">
+                  <LogOut className="h-4.5 w-4.5" aria-hidden="true" /> Logout
+                </button>
+              </div>
             )}
           </div>
         </div>

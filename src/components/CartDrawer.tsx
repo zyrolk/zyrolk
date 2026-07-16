@@ -225,17 +225,17 @@ export default function CartDrawer({
   };
 
   return (
-    <div className="fixed inset-0 z-50 overflow-hidden bg-black/60 backdrop-blur-xs flex justify-end" role="dialog" aria-modal="true" aria-labelledby="cart-drawer-title">
+    <div className="zy-overlay fixed inset-0 z-50 overflow-hidden bg-black/60 backdrop-blur-xs flex justify-end" role="dialog" aria-modal="true" aria-labelledby="cart-drawer-title">
       
       {/* Cart Container */}
-      <div className="w-full max-w-lg bg-white h-[100dvh] shadow-2xl flex flex-col justify-between animate-slideLeft overflow-hidden">
+      <div className="zy-cart-drawer w-full max-w-lg bg-white h-[100dvh] flex flex-col justify-between animate-slideLeft overflow-hidden">
         
         {/* Header */}
-        <div className="flex flex-none items-center justify-between border-b border-slate-200 bg-white/95 px-4 py-3 backdrop-blur-xl sm:px-6 sm:py-4">
+        <div className="zy-cart-header flex flex-none items-center justify-between border-b border-blue-400/20 bg-gradient-to-r from-blue-800 via-brand-blue to-blue-500 px-4 py-4 text-white sm:px-6 sm:py-5">
           <div className="flex items-center space-x-2">
-            <ShoppingBag className="h-5 w-5 text-brand-blue" />
-            <h2 id="cart-drawer-title" className="text-lg font-bold tracking-tight font-display">Shopping Cart</h2>
-            <span className="text-xs bg-brand-blue/10 text-brand-blue font-bold px-2 py-0.5 rounded-full">
+            <ShoppingBag className="h-5 w-5 text-white" />
+            <h2 id="cart-drawer-title" className="text-lg font-bold tracking-tight font-display text-white">Shopping Cart</h2>
+            <span className="rounded-full border border-white/20 bg-white/15 px-2 py-0.5 text-xs font-bold text-white">
               {cartItems.length}
             </span>
           </div>
@@ -243,7 +243,7 @@ export default function CartDrawer({
             ref={closeButtonRef}
             type="button"
             onClick={onClose}
-            className="flex h-11 w-11 items-center justify-center text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-full cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20"
+            className="flex h-11 w-11 items-center justify-center rounded-full border border-white/20 bg-white/10 text-white transition-colors hover:bg-white/20 cursor-pointer focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-white/30"
             aria-label="Close shopping cart"
           >
             <X className="h-5 w-5" />
@@ -313,7 +313,7 @@ export default function CartDrawer({
                       <span className="font-semibold text-slate-700">
                         {isEligibleForFreeDelivery ? (
                           <span className="text-emerald-600 flex items-center gap-1.5 font-bold">
-                            🎉 Free Islandwide Delivery unlocked!
+                            Free islandwide delivery unlocked!
                           </span>
                         ) : (
                           <span>
@@ -341,13 +341,14 @@ export default function CartDrawer({
               {cartItems.length === 0 ? (
                 <div className="text-center py-16 text-slate-500 space-y-4">
                   <ShoppingBag className="h-12 w-12 mx-auto text-slate-300" />
-                  <p className="text-sm font-medium">Your shopping cart is empty.</p>
+                  <p className="text-base font-black font-display text-slate-900">Your shopping cart is empty</p>
+                  <p className="mx-auto max-w-xs text-xs leading-relaxed text-slate-500">Discover products across every live collection and add your favourites when you are ready.</p>
                   <button
                     type="button"
                     onClick={onClose}
                     className="min-h-11 rounded-xl px-4 text-xs font-bold text-brand-blue hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20"
                   >
-                    Explore our electronics store
+                    Explore the marketplace
                   </button>
                 </div>
               ) : (
@@ -355,11 +356,11 @@ export default function CartDrawer({
                   <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Cart Items</h4>
                   <div className="divide-y divide-slate-100">
                     {cartItems.map((item) => (
-                      <div key={item.product.id} className="flex items-start py-4 first:pt-0 last:pb-0">
+                      <div key={item.product.id} className="zy-cart-item flex items-start py-4 first:pt-0 last:pb-0">
                         <img
                           src={item.product.imageUrl}
                           alt={item.product.name}
-                          className="w-14 h-14 rounded-xl object-contain p-1 bg-slate-50 border border-slate-100 flex-shrink-0"
+                          className="h-18 w-18 rounded-2xl object-contain p-2 bg-slate-50 border border-slate-100 flex-shrink-0"
                           referrerPolicy="no-referrer"
                           loading="lazy"
                           decoding="async"
@@ -413,7 +414,7 @@ export default function CartDrawer({
 
               {/* Delivery and Summary Box */}
               {cartItems.length > 0 && (
-                <div className="bg-slate-50 border border-slate-100 p-4 rounded-2xl space-y-3.5">
+                <div className="zy-cart-summary bg-slate-50 border border-slate-100 p-5 rounded-3xl space-y-3.5">
                   <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Order Summary</h4>
                   <div className="space-y-2 text-xs">
                     <div className="flex justify-between">
@@ -434,7 +435,7 @@ export default function CartDrawer({
 
                     {isEligibleForFreeDelivery && (
                       <div className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded-lg text-center">
-                        🎉 Free shipping minimum of {formatPrice(freeDeliveryThreshold)} exceeded!
+                        Free delivery threshold of {formatPrice(freeDeliveryThreshold)} reached.
                       </div>
                     )}
 
@@ -448,7 +449,7 @@ export default function CartDrawer({
 
               {/* Checkout Form */}
               {cartItems.length > 0 && (
-                <form onSubmit={handleCheckout} className="space-y-4">
+                <form onSubmit={handleCheckout} className="zy-checkout-form space-y-4">
                   <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Delivery Details</h4>
                   
                   <div className="grid grid-cols-1 gap-3.5">
@@ -460,7 +461,7 @@ export default function CartDrawer({
                         id="cart-recipient-name"
                         type="text"
                         required
-                        placeholder="John Doe"
+                        placeholder="Enter recipient name"
                         value={customerName}
                         onChange={(e) => setCustomerName(e.target.value)}
                         className="min-h-11 w-full text-sm px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/15"

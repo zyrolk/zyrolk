@@ -126,11 +126,11 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+    <div className="zy-overlay fixed inset-0 z-50 overflow-y-auto bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
       
       {/* Modal Stage */}
       <div
-        className="relative w-full max-w-md bg-white rounded-3xl overflow-hidden shadow-2xl border border-slate-100 p-6 md:p-8 animate-fadeIn text-left"
+        className="zy-auth-shell relative w-full max-w-md bg-white overflow-hidden p-6 md:p-8 animate-fadeIn text-left"
         role="dialog"
         aria-modal="true"
         aria-labelledby="auth-modal-title"
@@ -159,12 +159,12 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
             />
           </div>
           <h2 id="auth-modal-title" className="text-xl font-bold font-display text-slate-800">
-            {isResetMode ? "Reset Password" : isSignUp ? "Create Premium Account" : "Welcome Back"}
+            {isResetMode ? "Reset Password" : isSignUp ? "Create Your Account" : "Welcome Back"}
           </h2>
           <p id="auth-modal-description" className="text-xs text-slate-500 font-light">
             {isResetMode
               ? "Enter your account email and we will send a secure reset link."
-              : isSignUp ? "Register to save wishlists and explore genuine items." : "Sign in to access your electronics panel."}
+              : isSignUp ? "Register to save wishlists and shop across every collection." : "Sign in to continue your Zyro.lk shopping experience."}
           </p>
         </div>
 
@@ -196,7 +196,7 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
                   placeholder="Amara Wijesinghe"
                   value={displayName}
                   onChange={(e) => setDisplayName(e.target.value)}
-                  className="min-h-11 w-full text-sm pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus-visible:outline-none focus-visible:border-brand-blue focus-visible:ring-4 focus-visible:ring-brand-blue/15"
+                  className="zy-input min-h-12 w-full text-sm pl-10 pr-4 py-2.5"
                 />
                 <User className="pointer-events-none absolute left-3.5 top-3 h-4.5 w-4.5 text-slate-500" aria-hidden="true" />
               </div>
@@ -213,7 +213,7 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
                 placeholder="amara@gmail.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="min-h-11 w-full text-sm pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus-visible:outline-none focus-visible:border-brand-blue focus-visible:ring-4 focus-visible:ring-brand-blue/15"
+                className="zy-input min-h-12 w-full text-sm pl-10 pr-4 py-2.5"
               />
               <Mail className="pointer-events-none absolute left-3.5 top-3 h-4.5 w-4.5 text-slate-500" aria-hidden="true" />
             </div>
@@ -229,7 +229,7 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
                 placeholder="••••••••"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="min-h-11 w-full text-sm pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus-visible:outline-none focus-visible:border-brand-blue focus-visible:ring-4 focus-visible:ring-brand-blue/15"
+                className="zy-input min-h-12 w-full text-sm pl-10 pr-4 py-2.5"
               />
               <Lock className="pointer-events-none absolute left-3.5 top-3 h-4.5 w-4.5 text-slate-500" aria-hidden="true" />
             </div>
@@ -238,7 +238,7 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
           <button
             type="submit"
             disabled={loading}
-            className="w-full min-h-11 px-4 py-3 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-sm font-semibold transition-all cursor-pointer flex items-center justify-center shadow-xs focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-slate-900/25 focus-visible:ring-offset-2 disabled:cursor-wait disabled:opacity-70"
+            className="zy-button zy-button-primary w-full min-h-12 px-4 py-3 text-sm cursor-pointer flex items-center justify-center disabled:cursor-wait disabled:opacity-70"
             aria-busy={loading}
           >
             <LogIn className="h-4 w-4 mr-1.5" aria-hidden="true" />

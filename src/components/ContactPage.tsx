@@ -12,10 +12,10 @@ interface ContactPageProps {
 
 const DEFAULT_CONTACT_CONTENT = `Get In Touch
 
-Have questions about brand warranties, solar solutions, or custom product ordering? Our professional sales team is standing by to assist you.
+Have a question about a product, stock availability, delivery, or an existing order? Our customer care team is ready to help.
 
 Customer Support
-Our back-office representative will respond with pricing, quotation invoices, or warranty details within 2 hours.
+Send your enquiry with the details available to you and our team will respond through your preferred contact channel.
 
 Operating Hours
 • Weekdays: 9:00 AM - 7:00 PM
@@ -212,8 +212,8 @@ export default function ContactPage({ settings, isAdmin, onEdit }: ContactPagePr
 
   // Default values
   let pageTitle = "Get In Touch With " + (settings?.storeName || "Zyro.lk");
-  let intro = "Have questions about brand warranties, solar solutions, or custom product ordering? Our professional sales team is standing by to assist you.";
-  let supportDesc = "Our back-office representative will respond with pricing, quotation invoices, or warranty details within 2 hours.";
+  let intro = "Have a question about a product, stock availability, delivery, or an existing order? Our customer care team is ready to help.";
+  let supportDesc = "Send your enquiry with the details available to you and our team will respond through your preferred contact channel.";
   let hoursTitle = "Operating Hours";
   let hoursItems = [
     { label: "Weekdays", value: "9:00 AM - 7:00 PM" },
@@ -241,7 +241,7 @@ export default function ContactPage({ settings, isAdmin, onEdit }: ContactPagePr
   if (parsed.closingMessage) closingMessage = parsed.closingMessage;
 
   return (
-    <div className="bg-slate-50 min-h-screen py-12 px-4 sm:px-6 lg:px-8">
+    <div className="zy-storefront-page zy-contact-page min-h-screen py-12 px-4 sm:px-6 lg:px-8">
       <div className="max-w-6xl mx-auto space-y-12">
         
         {/* Navigation Action Row */}
@@ -273,53 +273,53 @@ export default function ContactPage({ settings, isAdmin, onEdit }: ContactPagePr
           {/* Direct Channels Cards (Left) */}
           <div className="lg:col-span-5 space-y-6 text-left">
             
-            <div className="bg-white border border-slate-100 rounded-3xl p-6 shadow-xs">
+            {(settings?.contactAddress || settings?.contactPhone || settings?.contactEmail) && <div className="zy-surface p-6">
               <h3 className="text-lg font-bold text-slate-900 font-display mb-4">Direct Touchpoints</h3>
               
               <div className="space-y-4">
                 {/* Location */}
-                <div className="flex items-start space-x-3.5">
+                {settings?.contactAddress && <div className="flex items-start space-x-3.5">
                   <div className="p-2.5 bg-blue-50 text-brand-blue rounded-xl">
                     <MapPin className="h-5 w-5" />
                   </div>
                   <div>
                     <span className="block text-xs text-slate-400 font-bold uppercase tracking-wider">Showroom</span>
                     <span className="text-sm font-medium text-slate-800 leading-relaxed">
-                      {settings?.contactAddress || "Showroom address pending setup"}
+                      {settings.contactAddress}
                     </span>
                   </div>
-                </div>
+                </div>}
 
                 {/* Phone support */}
-                <div className="flex items-start space-x-3.5">
+                {settings?.contactPhone && <div className="flex items-start space-x-3.5">
                   <div className="p-2.5 bg-blue-50 text-brand-blue rounded-xl">
                     <Phone className="h-5 w-5" />
                   </div>
                   <div>
                     <span className="block text-xs text-slate-400 font-bold uppercase tracking-wider">Direct Hotline</span>
                     <span className="text-sm font-medium text-slate-800 leading-relaxed block">
-                      {settings?.contactPhone || "Hotline pending setup"}
+                      {settings.contactPhone}
                     </span>
                   </div>
-                </div>
+                </div>}
 
                 {/* Email */}
-                <div className="flex items-start space-x-3.5">
+                {settings?.contactEmail && <div className="flex items-start space-x-3.5">
                   <div className="p-2.5 bg-blue-50 text-brand-blue rounded-xl">
                     <Mail className="h-5 w-5" />
                   </div>
                   <div>
                     <span className="block text-xs text-slate-400 font-bold uppercase tracking-wider">Sales Email</span>
                     <span className="text-sm font-medium text-slate-800 leading-relaxed">
-                      {settings?.contactEmail || "Email pending setup"}
+                      {settings.contactEmail}
                     </span>
                   </div>
-                </div>
+                </div>}
               </div>
-            </div>
+            </div>}
 
             {/* Hours card */}
-            <div className="bg-white border border-slate-100 rounded-3xl p-6 shadow-xs">
+            <div className="zy-surface p-6">
               <h3 className="text-lg font-bold text-slate-900 font-display mb-4 flex items-center">
                 <Clock className="h-5 w-5 text-brand-blue mr-2" />
                 {hoursTitle}
@@ -337,7 +337,7 @@ export default function ContactPage({ settings, isAdmin, onEdit }: ContactPagePr
             </div>
 
             {/* WhatsApp CTA card */}
-            <div className="bg-emerald-50 border border-emerald-100 rounded-3xl p-6 text-center space-y-4">
+            {settings?.whatsappNumber && <div className="bg-emerald-50 border border-emerald-100 rounded-3xl p-6 text-center space-y-4">
               <MessageSquare className="h-8 w-8 text-emerald-600 mx-auto" />
               <div className="space-y-1">
                 <h4 className="text-base font-bold text-emerald-900 font-display">{helpTitle}</h4>
@@ -353,12 +353,12 @@ export default function ContactPage({ settings, isAdmin, onEdit }: ContactPagePr
                 <Phone className="h-3.5 w-3.5 mr-2 text-white fill-white" />
                 Chat on WhatsApp
               </button>
-            </div>
+            </div>}
 
           </div>
 
           {/* Interactive Form (Right) */}
-          <div className="lg:col-span-7 bg-white border border-slate-100 rounded-3xl p-6 md:p-8 shadow-xs text-left">
+          <div className="zy-surface lg:col-span-7 p-6 md:p-8 text-left">
             <h3 className="text-xl font-bold text-slate-900 font-display mb-2">Send us an Inquiry</h3>
             <p className="text-xs text-slate-400 font-light leading-relaxed mb-6">
               {supportDesc}

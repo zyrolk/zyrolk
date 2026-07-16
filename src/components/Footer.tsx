@@ -18,6 +18,7 @@ export default function Footer({ setCurrentPage, onSelectCategory, settings, cat
 
   const footerLogo = settings?.footerLogoUrl || settings?.logoUrl;
   const topCategories = categories.filter((category) => (categoryCounts[category.id] ?? 0) > 0).slice(0, 5);
+  const hasContactDetails = Boolean(settings?.contactAddress || settings?.contactPhone || settings?.contactEmail);
 
   return (
     <footer className="zy-market-footer text-slate-300 pt-16 sm:pt-20 pb-8 border-t border-blue-900/60">
@@ -25,7 +26,7 @@ export default function Footer({ setCurrentPage, onSelectCategory, settings, cat
       {/* 1. Trust Pillars Segment */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-12 border-b border-white/10 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         
-        <div className="flex items-start space-x-4 rounded-3xl border border-white/10 bg-white/5 p-5">
+        <div className="zy-footer-trust-card flex items-start space-x-4 rounded-3xl border border-white/10 bg-white/5 p-5">
           <div className="p-3 bg-blue-500/12 rounded-2xl text-blue-300">
             <ShieldCheck className="h-6 w-6" />
           </div>
@@ -37,7 +38,7 @@ export default function Footer({ setCurrentPage, onSelectCategory, settings, cat
           </div>
         </div>
 
-        <div className="flex items-start space-x-4 rounded-3xl border border-white/10 bg-white/5 p-5">
+        <div className="zy-footer-trust-card flex items-start space-x-4 rounded-3xl border border-white/10 bg-white/5 p-5">
           <div className="p-3 bg-blue-500/12 rounded-2xl text-blue-300">
             <ShoppingBag className="h-6 w-6" />
           </div>
@@ -49,7 +50,7 @@ export default function Footer({ setCurrentPage, onSelectCategory, settings, cat
           </div>
         </div>
 
-        <div className="flex items-start space-x-4 rounded-3xl border border-white/10 bg-white/5 p-5">
+        <div className="zy-footer-trust-card flex items-start space-x-4 rounded-3xl border border-white/10 bg-white/5 p-5">
           <div className="p-3 bg-blue-500/12 rounded-2xl text-blue-300">
             <Truck className="h-6 w-6" />
           </div>
@@ -61,7 +62,7 @@ export default function Footer({ setCurrentPage, onSelectCategory, settings, cat
           </div>
         </div>
 
-        <div className="flex items-start space-x-4 rounded-3xl border border-white/10 bg-white/5 p-5">
+        <div className="zy-footer-trust-card flex items-start space-x-4 rounded-3xl border border-white/10 bg-white/5 p-5">
           <div className="p-3 bg-blue-500/12 rounded-2xl text-blue-300">
             <Phone className="h-6 w-6" />
           </div>
@@ -184,20 +185,20 @@ export default function Footer({ setCurrentPage, onSelectCategory, settings, cat
 
       {/* 3. Showroom & Contact details bottom */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8 border-t border-slate-800/80 flex flex-col md:flex-row justify-between text-xs text-slate-500 font-light space-y-4 md:space-y-0 text-left">
-        <div className="flex flex-col md:flex-row space-y-2 md:space-y-0 md:space-x-6">
-          <span className="flex items-center">
-            <MapPin className="h-4 w-4 mr-1.5 text-brand-blue animate-pulse" />
-            {settings?.contactAddress || "Address pending setup"}
-          </span>
-          <span className="flex items-center">
+        {hasContactDetails && <div className="flex flex-col md:flex-row space-y-2 md:space-y-0 md:space-x-6">
+          {settings?.contactAddress && <span className="flex items-center">
+            <MapPin className="h-4 w-4 mr-1.5 text-brand-blue" />
+            {settings.contactAddress}
+          </span>}
+          {settings?.contactPhone && <a href={`tel:${settings.contactPhone}`} className="flex min-h-11 items-center hover:text-white">
             <Phone className="h-4 w-4 mr-1.5 text-brand-blue" />
-            Hotline: {settings?.contactPhone || "Pending setup"}{settings?.contactPhone2 ? ` / ${settings.contactPhone2}` : ""}
-          </span>
-          <span className="flex items-center">
+            Hotline: {settings.contactPhone}{settings.contactPhone2 ? ` / ${settings.contactPhone2}` : ""}
+          </a>}
+          {settings?.contactEmail && <a href={`mailto:${settings.contactEmail}`} className="flex min-h-11 items-center hover:text-white">
             <Mail className="h-4 w-4 mr-1.5 text-brand-blue" />
-            {settings?.contactEmail || "Email pending setup"}
-          </span>
-        </div>
+            {settings.contactEmail}
+          </a>}
+        </div>}
         <div>
           Designed for maximum speed & mobile-first efficiency.
         </div>

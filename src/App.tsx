@@ -13,7 +13,6 @@ import {
   buildCategoryProductCounts,
   categoryMatches,
   getActiveCategories,
-  resolveCategoryImage,
   sortCategoriesAlphabetically,
 } from './services/categories/categoryUtils';
 
@@ -27,6 +26,7 @@ import Footer from './components/Footer';
 import FloatingWhatsApp from './components/FloatingWhatsApp';
 import ProductDetailModal from './components/ProductDetailModal';
 import ContactPage from './components/ContactPage';
+import MarketplaceHomePhase1 from './components/MarketplaceHomePhase1';
 
 const AdminDashboard = lazy(() => import('./components/AdminDashboard'));
 const CartDrawer = lazy(() => import('./components/CartDrawer'));
@@ -38,13 +38,6 @@ import {
   ShieldCheck, Truck, RefreshCw, Star, ArrowRight,
   SlidersHorizontal, ShoppingBag, Phone, Heart, X, Grid3X3
 } from 'lucide-react';
-
-const CATEGORY_IMAGES: Record<string, string> = {
-  electronics: "https://images.unsplash.com/photo-1546868871-7041f2a55e12?q=80&w=600&auto=format&fit=crop",
-  "home-kitchen": "https://images.unsplash.com/photo-1556911220-e15b29be8c8f?q=80&w=600&auto=format&fit=crop",
-  "solar-lighting": "https://images.unsplash.com/photo-1509391366360-2e959784a276?q=80&w=600&auto=format&fit=crop",
-  accessories: "https://images.unsplash.com/photo-1505740420928-5e560c06d30e?q=80&w=600&auto=format&fit=crop"
-};
 
 const formatPrice = (amount: number) => new Intl.NumberFormat('en-LK', {
   style: 'currency',
@@ -518,6 +511,14 @@ export default function App() {
     () => activeProducts.filter(product => product.isFeatured),
     [activeProducts]
   );
+  const newArrivalProducts = useMemo(
+    () => activeProducts.filter(product => product.isNew).slice(0, 8),
+    [activeProducts]
+  );
+  const bestSellerProducts = useMemo(
+    () => activeProducts.filter(product => product.isBestSeller).slice(0, 8),
+    [activeProducts]
+  );
   const latestProducts = useMemo(() => [...activeProducts].sort((a, b) => {
     const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
     const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
@@ -525,7 +526,11 @@ export default function App() {
     return b.id.localeCompare(a.id);
   }), [activeProducts]);
   const discountedProducts = useMemo(
-    () => activeProducts.filter(product => product.discount && product.discount > 0).slice(0, 8),
+    () => activeProducts.filter(product => (
+      Boolean(product.discount && product.discount > 0) &&
+      typeof product.originalPrice === 'number' &&
+      product.originalPrice > product.price
+    )).slice(0, 8),
     [activeProducts]
   );
   const trendingProducts = useMemo(() => {
@@ -556,6 +561,11 @@ export default function App() {
     () => Object.fromEntries(categories.map((category) => [category.id, categoryProductCounts[category.id]?.active ?? 0])),
     [categories, categoryProductCounts],
   );
+  const storefrontCategories = useMemo(
+    () => categories.filter((category) => (categoryCounts[category.id] || 0) > 0),
+    [categories, categoryCounts],
+  );
+  const isCategoriesPageLoading = loading;
   const homepageCategories = useMemo(() => categories.flatMap((category) => {
     const itemsCount = categoryCounts[category.id] || 0;
     if (itemsCount === 0) return [];
@@ -593,7 +603,7 @@ export default function App() {
         searchQuery={searchQuery}
         setSearchQuery={setSearchQuery}
         products={customerProducts}
-        categories={categories}
+        categories={storefrontCategories}
         isLoading={loading}
         onSelectCategory={setSelectedCategory}
         onSelectProduct={handleCustomerSearchSelection}
@@ -617,8 +627,31 @@ export default function App() {
         <div className="flex-1 pb-[calc(7rem+env(safe-area-inset-bottom))] md:pb-0">
           {/* Main Content Pages */}
 
-          {/* PAGE 1: HOME PAGE */}
+          {/* PAGE 1: STOREFRONT V2 PHASE 1 */}
           {currentPage === 'home' && (
+            <MarketplaceHomePhase1
+              settings={settings}
+              products={activeProducts}
+              categories={storefrontCategories}
+              categoryVisuals={homepageCategories}
+              discountedProducts={discountedProducts}
+              featuredProducts={trendingProducts}
+              newArrivalProducts={newArrivalProducts}
+              bestSellerProducts={bestSellerProducts}
+              recommendedProducts={recommendedProducts}
+              wishlistProductIds={wishlistProductIds}
+              loading={loading}
+              onExploreProducts={() => { setCurrentPage('products'); setSelectedCategory('all'); }}
+              onBrowseCategories={() => setCurrentPage('categories')}
+              onSelectCategory={(categoryId) => { setSelectedCategory(categoryId); setCurrentPage('products'); }}
+              onAddToCart={handleAddToCart}
+              onToggleWishlist={handleToggleWishlist}
+              onViewDetail={handleViewProduct}
+            />
+          )}
+
+          {/* Legacy homepage retained temporarily outside every customer route during Phase 1 validation. */}
+          {currentPage === 'legacy-home' && (
             <div className="zy-homepage flex flex-col gap-8 pb-16 animate-fadeIn sm:gap-10">
 
               {/* Premium Hero Slider Banner */}
@@ -626,11 +659,34 @@ export default function App() {
                 <HeroBanner
                   settings={settings}
                   products={activeProducts}
-                  categories={categories}
+                  categories={storefrontCategories}
                   onExploreProducts={() => { setCurrentPage('products'); setSelectedCategory('all'); }}
                   onBrowseCategories={() => { setCurrentPage('categories'); }}
                 />
               </section>
+
+              {!loading && activeProductCount === 0 && (
+                <section className="order-[2] mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8" aria-labelledby="catalog-refresh-title">
+                  <div className="zy-home-empty-catalog relative overflow-hidden rounded-[2rem] border border-blue-100 bg-white px-6 py-8 text-left shadow-lg sm:px-9 sm:py-10">
+                    <div className="relative z-10 flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="flex max-w-2xl items-start gap-4">
+                        <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-blue-50 text-brand-blue">
+                          <RefreshCw className="h-6 w-6" aria-hidden="true" />
+                        </div>
+                        <div>
+                          <span className="zy-section-eyebrow">Live marketplace update</span>
+                          <h2 id="catalog-refresh-title" className="mt-1.5 text-2xl font-black font-display text-slate-950">The catalog is being refreshed</h2>
+                          <p className="mt-2 text-sm leading-relaxed text-slate-600">Published products and collections will appear here automatically as soon as they are available.</p>
+                        </div>
+                      </div>
+                      <button type="button" onClick={() => setCurrentPage('contact')} className="zy-button zy-button-primary min-h-12 shrink-0 rounded-2xl px-6 text-sm">
+                        Contact customer support
+                        <ArrowRight className="h-4 w-4" aria-hidden="true" />
+                      </button>
+                    </div>
+                  </div>
+                </section>
+              )}
 
               {/* Categories segment list */}
               {homepageCategories.length > 0 && <section className="zy-market-shelf zy-market-shelf-categories order-[3] max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -1029,14 +1085,23 @@ export default function App() {
 
           {/* PAGE 2: PRODUCTS BROWSER */}
           {currentPage === 'products' && (
-            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 animate-fadeIn text-left">
+            <div className="zy-storefront-page zy-catalog-page max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 animate-fadeIn text-left">
+              <header className="zy-page-banner mb-8 overflow-hidden rounded-[2rem] px-6 py-8 text-white sm:px-9 sm:py-10">
+                <div className="relative z-10 max-w-2xl">
+                  <span className="text-xs font-black uppercase tracking-[0.16em] text-blue-200">Zyro.lk marketplace</span>
+                  <h1 className="mt-2 text-3xl font-black tracking-tight font-display sm:text-5xl">Find your next favourite</h1>
+                  <p className="mt-3 text-sm leading-relaxed text-blue-100 sm:text-base">
+                    Search, compare and shop across {activeProductCount} currently published {activeProductCount === 1 ? 'product' : 'products'} with live pricing and stock visibility.
+                  </p>
+                </div>
+              </header>
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
                 
                 {/* Left Side Filters Sidebar */}
                 <div className="hidden lg:col-span-3 lg:block">
-                  <div className="sticky top-24 rounded-3xl border border-slate-200/80 bg-white p-5 shadow-2xs">
+                  <div className="zy-surface zy-filter-panel sticky top-24 p-5">
                     <ProductFilters
-                      categories={categories}
+                      categories={storefrontCategories}
                       categoryCounts={categoryCounts}
                       activeProductCount={activeProductCount}
                       selectedCategory={selectedCategory}
@@ -1057,7 +1122,7 @@ export default function App() {
                 <div className="lg:col-span-9 space-y-6">
                   
                   {/* Results summary header */}
-                  <div className="space-y-4 rounded-3xl border border-slate-200/80 bg-white p-5 shadow-2xs">
+                  <div className="zy-surface zy-results-toolbar space-y-4 p-5">
                     <div className="flex items-center justify-between gap-4">
                       <div>
                         <h2 className="text-lg font-black font-display text-slate-950">
@@ -1108,21 +1173,25 @@ export default function App() {
 
                   {/* Products list or empty state */}
                   {filteredProducts.length === 0 ? (
-                    <div className="bg-white border border-slate-200/80 rounded-3xl px-6 py-16 text-center space-y-4">
+                    <div className="zy-surface zy-empty-state px-6 py-16 text-center space-y-4">
                       <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-50">
                         <SlidersHorizontal className="h-8 w-8 text-slate-400" aria-hidden="true" />
                       </div>
                       <div>
-                        <p className="text-base font-black text-slate-900">No products match your selection</p>
-                        <p className="mx-auto mt-1 max-w-md text-xs leading-relaxed text-slate-500">Try clearing a filter or searching by product name, brand, model, or category.</p>
+                        <p className="text-base font-black text-slate-900">{activeProductCount === 0 ? 'The catalog is currently empty' : 'No products match your selection'}</p>
+                        <p className="mx-auto mt-1 max-w-md text-xs leading-relaxed text-slate-500">
+                          {activeProductCount === 0
+                            ? 'Published products will appear here as soon as they are available.'
+                            : 'Try clearing a filter or searching by product name, brand, model, or category.'}
+                        </p>
                       </div>
-                      <button
+                      {activeProductCount > 0 && <button
                         type="button"
                         onClick={clearAllFilters}
                         className="zy-button zy-button-primary mx-auto min-h-11 px-5 text-xs focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/25"
                       >
                         Clear Filters and View All
-                      </button>
+                      </button>}
                     </div>
                   ) : (
                     <div className="grid grid-cols-1 min-[480px]:grid-cols-2 lg:grid-cols-3 gap-5 sm:gap-6">
@@ -1155,7 +1224,7 @@ export default function App() {
                 onClick={() => setIsFilterDrawerOpen(false)}
                 aria-label="Close product filters"
               />
-              <aside className="absolute inset-y-0 right-0 flex w-[min(92vw,390px)] flex-col bg-white shadow-2xl animate-slideInRight">
+              <aside className="zy-mobile-panel absolute inset-y-0 right-0 flex w-[min(92vw,390px)] flex-col bg-white shadow-2xl animate-slideInRight">
                 <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
                   <div>
                     <h2 id="mobile-filter-title" className="text-lg font-black font-display text-slate-950">Refine Products</h2>
@@ -1172,7 +1241,7 @@ export default function App() {
                 </div>
                 <div className="flex-1 overflow-y-auto px-5 py-5">
                   <ProductFilters
-                    categories={categories}
+                    categories={storefrontCategories}
                     categoryCounts={categoryCounts}
                     activeProductCount={activeProductCount}
                     selectedCategory={selectedCategory}
@@ -1202,115 +1271,134 @@ export default function App() {
 
           {/* PAGE 3: CATEGORIES OVERVIEW PAGE */}
           {currentPage === 'categories' && (
-            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16 animate-fadeIn text-left space-y-12">
-              <div className="text-center max-w-2xl mx-auto space-y-3">
-                <span className="text-xs font-extrabold text-brand-blue uppercase tracking-widest bg-blue-50 px-3.5 py-1.5 rounded-full w-fit mx-auto">
-                  Premium Categories
-                </span>
-                <h1 className="text-3xl sm:text-4xl font-black font-display tracking-tight text-slate-900">
-                  Select A Curated Collection
-                </h1>
-                <p className="text-sm text-slate-500 font-light leading-relaxed max-w-xl mx-auto">
-                  Browse every live collection in one place. Choose a category below to filter available products instantly.
-                </p>
-              </div>
-
-              {categories.length === 0 ? (
-                <div className="rounded-[2rem] border border-slate-200/80 bg-white px-6 py-14 text-center shadow-2xs">
-                  <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-blue-50 text-brand-blue">
-                    <Grid3X3 className="h-8 w-8" aria-hidden="true" />
+            <section
+              className="zy-storefront-page zy-categories-page animate-fadeIn text-left"
+              aria-labelledby="categories-page-title"
+            >
+              <div className="zy-categories-shell">
+                <header className="zy-categories-intro">
+                  <div className="zy-categories-intro-copy">
+                    <span className="zy-section-eyebrow zy-categories-eyebrow">Premium collections</span>
+                    <h1 id="categories-page-title" className="zy-categories-title">
+                      Shop by collection
+                    </h1>
+                    <p className="zy-categories-description">
+                      Discover every live marketplace collection, then explore available products with one simple selection.
+                    </p>
                   </div>
-                  <h2 className="mt-5 text-lg font-black font-display text-slate-950">Collections are being refreshed</h2>
-                  <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-slate-500">Browse all products while our curated category shelves are being prepared.</p>
-                  <button
-                    type="button"
-                    onClick={() => { setCurrentPage('products'); setSelectedCategory('all'); }}
-                    className="zy-button zy-button-primary mx-auto mt-5 min-h-11 px-5 text-xs focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/25"
-                  >
-                    Explore All Products
-                    <ArrowRight className="ml-1.5 h-4 w-4" aria-hidden="true" />
-                  </button>
-                </div>
-              ) : (
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                {categories.map((cat) => {
-                    const itemsCount = categoryCounts[cat.id] || 0;
-                  const catImage = resolveCategoryImage(cat, products, CATEGORY_IMAGES);
+                  {!isCategoriesPageLoading && storefrontCategories.length > 0 && (
+                    <div className="zy-categories-summary" aria-label={`${storefrontCategories.length} live collections`}>
+                      <span className="zy-categories-summary-value">{storefrontCategories.length}</span>
+                      <span className="zy-categories-summary-label">
+                        Live {storefrontCategories.length === 1 ? 'collection' : 'collections'}
+                      </span>
+                    </div>
+                  )}
+                </header>
 
-                  return (
-                    <motion.button
-                      type="button"
-                      key={cat.id}
-                      whileHover={{ y: -8, scale: 1.01 }}
-                      whileTap={{ scale: 0.99 }}
-                      transition={{ type: "spring", stiffness: 300, damping: 22 }}
-                      onClick={() => {
-                        setSelectedCategory(cat.id);
-                        setCurrentPage('products');
-                      }}
-                      className="group grid min-h-[300px] cursor-pointer grid-cols-1 overflow-hidden rounded-[2rem] border border-slate-200/80 bg-white text-left shadow-sm transition-all duration-500 hover:border-brand-blue/20 hover:shadow-xl focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20 md:grid-cols-12 md:rounded-[2.5rem]"
-                      aria-label={`Explore ${cat.name}, ${itemsCount} ${itemsCount === 1 ? 'product' : 'products'}`}
-                    >
-                      {/* Left: Thumbnail card background */}
-                      <div className="md:col-span-5 h-56 md:h-full bg-slate-950 overflow-hidden relative">
-                        <img 
-                          src={catImage} 
-                          alt={cat.name} 
-                          className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700 ease-out"
-                          referrerPolicy="no-referrer"
-                          loading="lazy"
-                          decoding="async"
-                          width="720"
-                          height="540"
-                        />
-                        <div className="absolute inset-0 bg-gradient-to-t md:bg-gradient-to-r from-slate-950/80 via-slate-950/30 to-transparent"></div>
-                        
-                        {/* Overlay label */}
-                        <div className="absolute bottom-4 left-4 md:bottom-6 md:left-6 bg-brand-blue text-white text-[9px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full shadow-md">
-                          Live Collection
-                        </div>
-                      </div>
-
-                      {/* Right: Info panel */}
-                      <div className="md:col-span-7 p-6 md:p-8 flex flex-col justify-between text-left">
-                        <div className="space-y-2">
-                          <div className="flex items-center justify-between">
-                            <span className="text-[10px] font-bold text-brand-blue uppercase tracking-widest bg-blue-50 px-2.5 py-1 rounded-full">
-                              Curated Shelf
-                            </span>
-                            <span className="text-[11px] font-bold text-slate-400">
-                              {itemsCount} {itemsCount === 1 ? 'Product' : 'Products'}
-                            </span>
+                {isCategoriesPageLoading ? (
+                  <div className="zy-categories-grid" aria-label="Loading shopping collections" aria-busy="true">
+                    {Array.from({ length: 6 }, (_, index) => (
+                      <div className="zy-category-collection-item" key={`category-skeleton-${index}`} aria-hidden="true">
+                        <div className="zy-category-collection-card zy-category-skeleton">
+                          <div className="zy-category-skeleton-media" />
+                          <div className="zy-category-skeleton-copy">
+                            <span className="zy-category-skeleton-line zy-category-skeleton-line-short" />
+                            <span className="zy-category-skeleton-line zy-category-skeleton-line-title" />
+                            <span className="zy-category-skeleton-line" />
+                            <span className="zy-category-skeleton-line zy-category-skeleton-line-cta" />
                           </div>
-                          
-                          <h3 className="text-2xl font-black text-slate-900 font-display group-hover:text-brand-blue transition-colors duration-300">
-                            {cat.name}
-                          </h3>
-                          <p className="text-xs text-slate-500 font-light leading-relaxed">
-                            Explore available products with clear pricing, stock visibility, and convenient shopping actions.
-                          </p>
-                        </div>
-
-                        <div className="flex items-center justify-between pt-6 border-t border-slate-100 mt-6 md:mt-0">
-                          <span className="text-[11px] font-semibold text-slate-400">Quality Checked</span>
-                          <span className="text-xs font-bold text-brand-blue flex items-center gap-1 bg-blue-50/50 group-hover:bg-brand-blue group-hover:text-white px-3.5 py-1.5 rounded-full transition-all duration-300">
-                            Explore Collection
-                            <ArrowRight className="h-3.5 w-3.5 group-hover:translate-x-0.5 transition-transform" />
-                          </span>
                         </div>
                       </div>
+                    ))}
+                  </div>
+                ) : storefrontCategories.length === 0 ? (
+                  <div className="zy-categories-empty" role="status">
+                    <div className="zy-categories-empty-icon">
+                      <Grid3X3 className="h-7 w-7" aria-hidden="true" />
+                    </div>
+                    <div>
+                      <h2>Collections are being refreshed</h2>
+                      <p>Browse all products while new marketplace collections are prepared.</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => { setCurrentPage('products'); setSelectedCategory('all'); }}
+                      className="zy-button zy-button-primary min-h-12 px-5 text-xs focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/25"
+                    >
+                      Explore All Products
+                      <ArrowRight className="ml-1.5 h-4 w-4" aria-hidden="true" />
+                    </button>
+                  </div>
+                ) : (
+                  <div className="zy-categories-grid" role="list" aria-label="Shopping collections">
+                    {storefrontCategories.map((cat) => {
+                      const itemsCount = categoryCounts[cat.id] || 0;
+                      const catImage = cat.imageUrl?.trim() || activeProducts.find(
+                        product => categoryMatches(product.category, cat.id) && Boolean(product.imageUrl?.trim()),
+                      )?.imageUrl?.trim();
 
-                    </motion.button>
-                  );
-                })}
+                      return (
+                        <div className="zy-category-collection-item" role="listitem" key={cat.id}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedCategory(cat.id);
+                              setCurrentPage('products');
+                            }}
+                            className="zy-category-collection-card group"
+                            aria-label={`Explore ${cat.name}, ${itemsCount} ${itemsCount === 1 ? 'product' : 'products'}`}
+                          >
+                            <div className="zy-category-collection-media">
+                              {catImage ? (
+                                <img
+                                  src={catImage}
+                                  alt=""
+                                  className="zy-category-collection-image"
+                                  referrerPolicy="no-referrer"
+                                  loading="lazy"
+                                  decoding="async"
+                                  width="720"
+                                  height="540"
+                                />
+                              ) : (
+                                <div className="zy-category-image-placeholder" aria-hidden="true">
+                                  <span className="zy-category-image-placeholder-icon">
+                                    <Grid3X3 className="h-8 w-8" />
+                                  </span>
+                                  <span>Collection image coming soon</span>
+                                </div>
+                              )}
+                              <div className="zy-category-media-shade" aria-hidden="true" />
+                              <span className="zy-category-live-badge">Live collection</span>
+                            </div>
+
+                            <div className="zy-category-collection-copy">
+                              <div className="zy-category-collection-heading">
+                                <h2 title={cat.name}>{cat.name}</h2>
+                                <span className="zy-category-product-count">
+                                  {itemsCount} {itemsCount === 1 ? 'product' : 'products'}
+                                </span>
+                              </div>
+                              <p>Explore live products selected for this marketplace collection.</p>
+                              <span className="zy-category-collection-cta" aria-hidden="true">
+                                Explore Collection
+                                <ArrowRight className="h-4 w-4" />
+                              </span>
+                            </div>
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
-              )}
-            </div>
+            </section>
           )}
 
           {/* PAGE 4: WISHLIST */}
           {currentPage === 'wishlist' && (
-            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 sm:py-12 animate-fadeIn text-left space-y-8">
+            <div className="zy-storefront-page zy-wishlist-page max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 sm:py-12 animate-fadeIn text-left space-y-8">
               <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 border-b border-slate-200 pb-5">
                 <div>
                   <span className="zy-section-eyebrow">Saved for later</span>
@@ -1329,7 +1417,7 @@ export default function App() {
               </div>
 
               {wishlist.length === 0 ? (
-                <div className="bg-white border border-slate-200/80 rounded-[2rem] px-6 py-16 sm:py-20 text-center space-y-5 shadow-2xs">
+                <div className="zy-surface zy-empty-state px-6 py-16 sm:py-20 text-center space-y-5">
                   <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full bg-red-50 text-red-500">
                     <Heart className="h-9 w-9" aria-hidden="true" />
                   </div>
@@ -1396,7 +1484,7 @@ export default function App() {
           )}
 
           {/* Dynamic Footer Block */}
-          <Footer settings={settings} setCurrentPage={setCurrentPage} onSelectCategory={setSelectedCategory} categories={categories} categoryCounts={categoryCounts} />
+          <Footer settings={settings} setCurrentPage={setCurrentPage} onSelectCategory={setSelectedCategory} categories={storefrontCategories} categoryCounts={categoryCounts} />
 
         </div>
       )}
@@ -1434,7 +1522,7 @@ export default function App() {
           isAdminMode={isAdminMode}
           setIsAdminMode={setIsAdminMode}
           settings={settings}
-          categories={categories}
+          categories={storefrontCategories}
           setSelectedCategory={setSelectedCategory}
         />
       )}

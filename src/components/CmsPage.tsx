@@ -344,7 +344,7 @@ export default function CmsPage({ pageId, onBackToHome, isAdmin, onEdit }: CmsPa
   const detailedSections = parsedSections.filter(s => s.title);
 
   return (
-    <div className="relative min-h-screen pb-20">
+    <div className="zy-storefront-page zy-cms-page relative min-h-screen pb-20">
       {/* Premium subtle glow background */}
       <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full max-w-7xl h-[450px] bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-blue-500/5 via-transparent to-transparent pointer-events-none blur-3xl opacity-75" />
 

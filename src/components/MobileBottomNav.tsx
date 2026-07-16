@@ -86,7 +86,7 @@ export default function MobileBottomNav({
     <>
       {/* ==================== FLOATING BOTTOM NAV DOCK ==================== */}
       <nav className="zy-bottom-dock fixed left-3 right-3 z-40 md:hidden" aria-label="Mobile storefront navigation">
-        <div className="bg-white/95 backdrop-blur-xl border border-slate-200/80 rounded-2xl shadow-2xl px-1.5 py-1.5 flex justify-around items-stretch">
+        <div className="zy-mobile-dock bg-white/95 backdrop-blur-xl border border-slate-200/80 rounded-2xl px-1.5 py-1.5 flex justify-around items-stretch">
           
           {/* Tab 1: Home */}
           <button 
@@ -192,7 +192,7 @@ export default function MobileBottomNav({
           />
 
           {/* Drawer content board */}
-          <div className="absolute bottom-0 left-0 right-0 max-h-[88dvh] bg-white rounded-t-[2rem] sm:rounded-t-[2.5rem] shadow-2xl border-t border-slate-100 flex flex-col overflow-hidden pb-[calc(6.75rem+env(safe-area-inset-bottom))] animate-slideUp">
+          <div className="zy-mobile-sheet absolute bottom-0 left-0 right-0 max-h-[88dvh] bg-white rounded-t-[2rem] sm:rounded-t-[2.5rem] shadow-2xl border-t border-slate-100 flex flex-col overflow-hidden pb-[calc(6.75rem+env(safe-area-inset-bottom))] animate-slideUp">
             
             {/* Grab handle indicator for touch feel */}
             <div className="w-12 h-1 bg-slate-200 rounded-full mx-auto my-3.5 flex-shrink-0"></div>
@@ -335,17 +335,7 @@ export default function MobileBottomNav({
                         <span className="text-[10px] text-slate-500 font-mono">{settings.contactPhone}</span>
                       </div>
                     </a>
-                  ) : (
-                    <div className="flex items-center p-3.5 bg-slate-50 rounded-2xl border border-slate-100 text-slate-400">
-                      <div className="p-1.5 bg-slate-100 text-slate-300 rounded-lg mr-3">
-                        <Phone className="h-4 w-4" />
-                      </div>
-                      <div>
-                        <span className="text-xs font-bold block">Hotline Call Support</span>
-                        <span className="text-[10px] text-slate-400 font-mono">Hotline pending setup</span>
-                      </div>
-                    </div>
-                  )}
+                  ) : null}
 
                   <button 
                     onClick={() => {
@@ -358,9 +348,9 @@ export default function MobileBottomNav({
                       <MapPin className="h-4 w-4" />
                     </div>
                     <div>
-                      <span className="text-xs font-bold block">Showroom Location</span>
+                      <span className="text-xs font-bold block">Contact &amp; Support</span>
                       <span className="text-[10px] text-slate-500 font-light truncate block max-w-[230px]">
-                        Colombo, Sri Lanka
+                        View available support options
                       </span>
                     </div>
                   </button>
