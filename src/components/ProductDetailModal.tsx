@@ -50,6 +50,7 @@ export default function ProductDetailModal({
   const [activeImageIndex, setActiveImageIndex] = useState(0);
   const [touchStartX, setTouchStartX] = useState(0);
   const [touchEndX, setTouchEndX] = useState(0);
+  const [isMainImageLoading, setIsMainImageLoading] = useState(true);
 
   // Layout states
   const [quantity, setQuantity] = useState(1);
@@ -251,6 +252,20 @@ export default function ProductDetailModal({
   }, [galleryImages.length]);
 
   useEffect(() => {
+    setIsMainImageLoading(true);
+    if (galleryImages.length <= 1) return;
+    const adjacentIndexes = [
+      (activeImageIndex + 1) % galleryImages.length,
+      (activeImageIndex - 1 + galleryImages.length) % galleryImages.length,
+    ];
+    adjacentIndexes.forEach((index) => {
+      const image = new Image();
+      image.referrerPolicy = 'no-referrer';
+      image.src = galleryImages[index];
+    });
+  }, [activeImageIndex, galleryImages]);
+
+  useEffect(() => {
     if (!isOpen || !stickySentinelRef.current || !scrollContainerRef.current) return;
     const observer = new IntersectionObserver(([entry]) => setShowStickyBar(!entry.isIntersecting), {
       root: scrollContainerRef.current,
@@ -315,7 +330,6 @@ export default function ProductDetailModal({
   };
 
   const handleWhatsAppCheckout = () => {
-    // TODO(security): add noopener/noreferrer when WhatsApp window handling is updated consistently.
     const totalPrice = formatPrice(product.price * quantity);
     const skuLine = product.sku ? `\n*SKU:* ${product.sku}` : "";
     const message = encodeURIComponent(
@@ -328,7 +342,7 @@ export default function ProductDetailModal({
       alert("WhatsApp checkout is currently being configured by the store administrator. Please try again soon or contact support!");
       return;
     }
-    window.open(`https://wa.me/${whatsappNum.replace("+", "")}?text=${message}`, '_blank');
+    window.open(`https://wa.me/${whatsappNum.replace("+", "")}?text=${message}`, '_blank', 'noopener,noreferrer');
   };
 
   const handleWhatsAppEnquiry = () => {
@@ -343,7 +357,7 @@ export default function ProductDetailModal({
       alert("WhatsApp support is currently being configured by the store administrator. Please try again soon!");
       return;
     }
-    window.open(`https://wa.me/${whatsappNum.replace("+", "")}?text=${message}`, '_blank');
+    window.open(`https://wa.me/${whatsappNum.replace("+", "")}?text=${message}`, '_blank', 'noopener,noreferrer');
   };
 
   const handleSubmitReview = async (e: React.FormEvent) => {
@@ -508,7 +522,7 @@ export default function ProductDetailModal({
   const ratingDistribution = reviewSummary.distribution;
 
   // Specifications list construction
-  const brandName = product.specs?.Brand || product.specs?.brand || "Authorized Import";
+  const brandName = product.specs?.Brand || product.specs?.brand || "Brand not specified";
   const activeImageUrl = galleryImages[activeImageIndex] || product.imageUrl;
 
   // Filter out current product for related items
@@ -528,7 +542,7 @@ export default function ProductDetailModal({
   return (
     <div
       ref={modalRef}
-      className="zy-overlay fixed inset-0 z-50 overflow-y-auto bg-slate-950/70 backdrop-blur-xl flex items-center justify-center p-0 sm:p-4 md:p-6 animate-fadeIn"
+      className="zy-overlay zy-product-experience-overlay fixed inset-0 z-50 overflow-y-auto bg-slate-950/70 backdrop-blur-xl flex items-center justify-center p-0 sm:p-4 md:p-6 animate-fadeIn"
       role="dialog"
       aria-modal="true"
       aria-labelledby="product-detail-title"
@@ -536,11 +550,11 @@ export default function ProductDetailModal({
       <div className="sr-only" role="status" aria-live="polite">{announcement}</div>
       
       {/* Immersive Apple/Samsung-style Premium Modal Layout */}
-      <div className="zy-product-detail-shell relative w-full max-w-6xl bg-white overflow-hidden flex flex-col min-h-screen sm:min-h-0 sm:h-[94vh]">
+      <div className="zy-product-detail-shell zy-product-experience relative w-full max-w-7xl bg-white overflow-hidden flex flex-col min-h-screen sm:min-h-0 sm:h-[94vh]">
         
         {/* Top Header Sticky Rail */}
-        <div className="absolute top-0 left-0 right-0 z-40 p-4 sm:p-6 flex justify-between items-center bg-gradient-to-b from-white/95 via-white/80 to-transparent pointer-events-none">
-          <div className="pointer-events-auto bg-white/90 backdrop-blur-md border border-slate-100 px-4 py-2 rounded-full shadow-xs flex items-center gap-2">
+        <div className="zy-product-experience-header absolute top-0 left-0 right-0 z-40 p-4 sm:p-6 flex justify-between items-center bg-gradient-to-b from-white/95 via-white/80 to-transparent pointer-events-none">
+          <div className="zy-product-experience-header-label pointer-events-auto bg-white/90 backdrop-blur-md border border-slate-100 px-4 py-2 rounded-full shadow-xs flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-brand-blue animate-pulse" />
             <span className="text-[10px] font-black text-slate-800 uppercase tracking-widest">
               Product Details
@@ -563,7 +577,7 @@ export default function ProductDetailModal({
         <div 
           id="modal-scrollable-container" 
           ref={scrollContainerRef}
-          className="flex-1 overflow-y-auto pt-24 p-5 sm:p-8 md:p-12 space-y-16 scroll-smooth"
+          className="zy-product-experience-scroll flex-1 overflow-y-auto pt-24 p-5 sm:p-8 md:p-12 space-y-16 scroll-smooth"
         >
           <div ref={stickySentinelRef} className="h-px w-full" aria-hidden="true" />
           {isTransitioning ? (
@@ -589,16 +603,16 @@ export default function ProductDetailModal({
           ) : (
             <>
               {/* UPPER MAIN LAYOUT SECTION */}
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-14 items-start">
+              <div className="zy-product-experience-main grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-14 items-start">
                 
                 {/* LEFT SIDE: MULTI-IMAGE CAROUSEL, THUMBNAILS, SPECIFICATIONS & TRUST RAILS */}
-                <div className="lg:col-span-6 space-y-8">
+                <div className="zy-product-experience-gallery-column lg:col-span-7 space-y-8">
                   
                   {/* Premium Slider Container */}
                   <div className="space-y-4">
                     <div 
                       ref={galleryButtonRef}
-                      className="zy-product-gallery relative aspect-square w-full rounded-3xl bg-gradient-to-br from-slate-50 via-white to-blue-50/40 border border-slate-200/80 overflow-hidden select-none group/zoom cursor-zoom-in focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20"
+                      className="zy-product-gallery zy-product-experience-gallery relative aspect-square w-full rounded-3xl bg-gradient-to-br from-slate-50 via-white to-blue-50/40 border border-slate-200/80 overflow-hidden select-none group/zoom cursor-zoom-in focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20"
                       onTouchStart={handleTouchStart}
                       onTouchMove={handleTouchMove}
                       onTouchEnd={handleTouchEnd}
@@ -624,8 +638,14 @@ export default function ProductDetailModal({
                       </div>
 
                       {/* Frame Zoom on Hover (Desktop) */}
+                      {isMainImageLoading && (
+                        <div className="zy-product-experience-image-loading" role="status" aria-label="Loading product image">
+                          <span aria-hidden="true" />
+                        </div>
+                      )}
+
                       <div 
-                        className="w-full h-full flex items-center justify-center p-6 sm:p-10"
+                        className="zy-product-experience-image-stage w-full h-full flex items-center justify-center p-6 sm:p-10"
                         onMouseEnter={() => setIsZooming(true)}
                         onMouseLeave={() => setIsZooming(false)}
                         onMouseMove={handleMouseMove}
@@ -639,9 +659,11 @@ export default function ProductDetailModal({
                           alt={product.name}
                           referrerPolicy="no-referrer"
                           loading="eager"
+                          fetchPriority="high"
                           decoding="async"
-                          onError={(event) => { event.currentTarget.onerror = null; event.currentTarget.src = PRODUCT_IMAGE_FALLBACK; }}
-                          className="max-h-full max-w-full object-contain transition-transform duration-75 ease-out"
+                          onLoad={() => setIsMainImageLoading(false)}
+                          onError={(event) => { setIsMainImageLoading(false); event.currentTarget.onerror = null; event.currentTarget.src = PRODUCT_IMAGE_FALLBACK; }}
+                          className="zy-product-experience-image max-h-full max-w-full object-contain transition-transform duration-75 ease-out"
                           style={
                             isZooming 
                               ? {
@@ -697,7 +719,7 @@ export default function ProductDetailModal({
 
                     {/* Thumbnails visual row indicator */}
                     {galleryImages.length > 1 && (
-                      <div className="flex items-center space-x-2.5 overflow-x-auto py-1 scrollbar-none justify-start">
+                      <div className="zy-product-experience-thumbnails flex items-center space-x-2.5 overflow-x-auto py-1 scrollbar-none justify-start" role="group" aria-label="Product images">
                         {galleryImages.map((url, idx) => (
                           <button
                             type="button"
@@ -719,7 +741,7 @@ export default function ProductDetailModal({
                   </div>
 
                   {/* Trust badge strip row */}
-                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 bg-slate-50/70 p-4 sm:p-5 rounded-3xl border border-slate-200/80 text-left">
+                  <div className="zy-product-experience-trust-grid grid grid-cols-2 gap-3 sm:grid-cols-4 bg-slate-50/70 p-4 sm:p-5 rounded-3xl border border-slate-200/80 text-left">
                     <div className="rounded-2xl bg-white p-3.5 border border-slate-100 space-y-1.5">
                       <div className="p-2 bg-blue-50/80 text-brand-blue rounded-xl w-fit">
                         <Banknote className="h-5 w-5" aria-hidden="true" />
@@ -755,10 +777,10 @@ export default function ProductDetailModal({
                 </div>
 
                 {/* RIGHT SIDE: CORE CONVERSIONS ENGINE (TITLES, PRICES, BADGES, AND ACTION CTAs) */}
-                <div className="zy-product-purchase lg:col-span-6 space-y-8 text-left lg:sticky lg:top-2">
+                <div className="zy-product-purchase zy-product-experience-purchase lg:col-span-5 space-y-8 text-left lg:sticky lg:top-2">
                   
                   {/* Category Pill + Stock Status Row */}
-                  <div className="flex flex-wrap items-center gap-2.5">
+                  <div className="zy-product-experience-status flex flex-wrap items-center gap-2.5">
                     <span className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue bg-blue-50 border border-blue-100/50 px-3.5 py-1.5 rounded-full flex items-center gap-1.5">
                       <Sparkles className="h-3 w-3" />
                       {product.category.replace('-', ' ')}
@@ -782,7 +804,7 @@ export default function ProductDetailModal({
                   </div>
 
                   {/* Title & Brand Badging block */}
-                  <div className="space-y-3">
+                  <div className="zy-product-experience-title space-y-3">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="inline-flex items-center text-[10px] font-bold uppercase tracking-widest text-slate-400 bg-slate-100 px-2.5 py-1 rounded-md">
                         Brand: {brandName}
@@ -808,21 +830,21 @@ export default function ProductDetailModal({
                           {[...Array(5)].map((_, i) => (
                             <Star 
                               key={i} 
-                              className={`h-4 w-4 ${i < Math.round(product.rating) ? 'fill-amber-400 text-amber-400' : 'text-slate-200'}`} 
+                              className={`h-4 w-4 ${i < Math.round(Number(averageRating)) ? 'fill-amber-400 text-amber-400' : 'text-slate-200'}`}
                             />
                           ))}
                         </div>
                         <span className="text-sm font-black text-slate-800">{averageRating}</span>
                         <span className="text-slate-300">|</span>
                         <span className="text-xs font-bold text-slate-500 underline group-hover:text-brand-blue transition-colors">
-                          {totalReviews > 0 ? `${totalReviews} Customer Review${totalReviews > 1 ? 's' : ''}` : `${product.reviewsCount} verified reviews`}
+                          {totalReviews} Customer Review{totalReviews > 1 ? 's' : ''}
                         </span>
                       </button>
                     )}
                   </div>
 
                   {/* Price Conversions Box (Strikethrough, absolute savings, free delivery) */}
-                  <div className="bg-slate-50 p-6 rounded-3xl border border-slate-100/80 text-left space-y-4">
+                  <div className="zy-product-experience-price bg-slate-50 p-6 rounded-3xl border border-slate-100/80 text-left space-y-4">
                     <div className="space-y-1">
                       <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">
                         Marketplace Price
@@ -868,7 +890,7 @@ export default function ProductDetailModal({
                   </div>
 
                   {/* Core Description */}
-                  <div className="space-y-2.5">
+                  <div className="zy-product-experience-overview space-y-2.5">
                     <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
                       Product Overview
                     </h4>
@@ -878,7 +900,7 @@ export default function ProductDetailModal({
                   </div>
 
                   {/* Quantity selector input element */}
-                  <div className="flex items-center justify-between gap-4 bg-slate-50 p-4 rounded-2xl border border-slate-200/80 sm:p-4.5">
+                  <div className="zy-product-experience-quantity flex items-center justify-between gap-4 bg-slate-50 p-4 rounded-2xl border border-slate-200/80 sm:p-4.5">
                     <div>
                       <span className="text-xs font-black text-slate-800 block">Quantity Selection</span>
                       <span className="text-[10px] text-slate-400 font-light block mt-0.5">Adjust units for dispatch</span>
@@ -907,7 +929,7 @@ export default function ProductDetailModal({
                   </div>
 
                   {/* Action CTAs Cluster */}
-                  <div className="space-y-4 pt-2">
+                  <div className="zy-product-experience-actions space-y-4 pt-2">
                     
                     {product.stock > 0 && product.isActive !== false ? (
                       <>
@@ -973,7 +995,7 @@ export default function ProductDetailModal({
                     )}
 
                     {/* Trust assurances check labels row */}
-                    <div className="flex flex-wrap justify-center items-center gap-3 text-[10px] text-slate-600 font-bold uppercase tracking-wider px-3 py-2.5 bg-slate-50 rounded-xl border border-slate-100 sm:gap-6">
+                    <div className="zy-product-experience-purchase-trust flex flex-wrap justify-center items-center gap-3 text-[10px] text-slate-600 font-bold uppercase tracking-wider px-3 py-2.5 bg-slate-50 rounded-xl border border-slate-100 sm:gap-6">
                       <span className="flex items-center gap-1.5">
                         <Check className="h-3.5 w-3.5 text-emerald-500" />
                         Cash on Delivery Eligible
@@ -1006,7 +1028,7 @@ export default function ProductDetailModal({
 
               {/* SECTION: PREMIUM CUSTOMER REVIEWS & FEEDBACK ENGINE */}
               {isReviewsEnabled && (
-                <div id="customer-reviews-section" className="border-t border-slate-100 pt-14 text-left space-y-8">
+                <div id="customer-reviews-section" className="zy-product-experience-reviews border-t border-slate-100 pt-14 text-left space-y-8">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                   <div>
                     <h3 className="text-xl font-black text-slate-900 font-display flex items-center gap-2.5">
@@ -1149,7 +1171,7 @@ export default function ProductDetailModal({
                         </div>
                         <p className="text-xs text-slate-500 font-bold">Authorized Account Required</p>
                         <p className="text-[11px] text-slate-400 font-light max-w-sm mx-auto">
-                          Please log in or register with your email in the store navbar to write and publish verified reviews for products.
+                          Please log in or register with your email in the store navbar to write and publish customer reviews for products.
                         </p>
                       </div>
                     )}
@@ -1222,7 +1244,7 @@ export default function ProductDetailModal({
                   ) : (
                     <div className="text-center py-12 text-xs text-slate-400 font-light bg-slate-50/50 rounded-3xl border border-dashed border-slate-200 flex flex-col items-center justify-center gap-1">
                       <span className="font-bold text-slate-700">No active reviews published</span>
-                      <span>Verified buyers haven't posted a review for this product yet. Be the first!</span>
+                      <span>Customers haven't posted a review for this product yet. Be the first!</span>
                     </div>
                   )}
                   {reviews.length > visibleReviewCount && (
@@ -1241,7 +1263,7 @@ export default function ProductDetailModal({
                 onScroll={scrollRelated}
                 onSelect={(item) => {
                   onSelectProduct(item);
-                  scrollContainerRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+                  scrollContainerRef.current?.scrollTo({ top: 0, behavior: prefersReducedMotion ? 'auto' : 'smooth' });
                 }}
                 formatPrice={formatPrice}
               />
@@ -1353,7 +1375,7 @@ export default function ProductDetailModal({
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={handleLightboxClose}
-            className="fixed inset-0 z-50 bg-black/95 backdrop-blur-2xl flex flex-col justify-between p-4 cursor-zoom-out select-none"
+            className="zy-product-experience-lightbox fixed inset-0 z-50 bg-black/95 backdrop-blur-2xl flex flex-col justify-between p-4 cursor-zoom-out select-none"
             role="dialog"
             aria-modal="true"
             aria-label={`Expanded image viewer for ${product.name}`}
@@ -1377,8 +1399,11 @@ export default function ProductDetailModal({
 
             {/* Main Interactive Zoom Box Area */}
             <div 
-              className="relative flex-1 w-full max-w-5xl mx-auto flex items-center justify-center overflow-hidden"
+              className="zy-product-experience-lightbox-stage relative flex-1 w-full max-w-5xl mx-auto flex items-center justify-center overflow-hidden"
               onClick={(e) => e.stopPropagation()}
+              onTouchStart={(event) => { if (lightboxZoom === 1) handleTouchStart(event); }}
+              onTouchMove={(event) => { if (lightboxZoom === 1) handleTouchMove(event); }}
+              onTouchEnd={() => { if (lightboxZoom === 1) handleTouchEnd(); }}
             >
               {/* Image pan scale holder */}
               <div
@@ -1485,14 +1510,17 @@ export default function ProductDetailModal({
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: 100, opacity: 0 }}
             transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-            className="fixed bottom-0 left-0 right-0 z-[60] bg-white/97 border-t border-slate-200 px-4 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] shadow-[0_-15px_40px_rgba(0,0,0,0.14)] md:hidden backdrop-blur-xl"
+            className="zy-product-experience-mobile-bar fixed bottom-0 left-0 right-0 z-[60] bg-white/97 border-t border-slate-200 px-4 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] shadow-[0_-15px_40px_rgba(0,0,0,0.14)] md:hidden backdrop-blur-xl"
             aria-label="Mobile purchase actions"
           >
             <div className="mx-auto max-w-xl space-y-2.5">
               <div className="flex items-center justify-between gap-3 text-left">
                 <div className="min-w-0">
                   <span className="block truncate text-[11px] font-extrabold text-slate-900">{product.name}</span>
-                  <span className="block text-base font-black text-brand-blue">{formatPrice(product.price)}</span>
+                  <span className="flex items-center gap-2 text-base font-black text-brand-blue">
+                    {formatPrice(product.price)}
+                    <small className="rounded-full bg-blue-50 px-2 py-0.5 text-[9px] font-extrabold uppercase tracking-wide text-blue-700">Qty {quantity}</small>
+                  </span>
                 </div>
                 <span className={`flex-none rounded-full border px-2.5 py-1 text-[9px] font-extrabold uppercase tracking-wide ${product.stock <= 0 ? 'border-red-100 bg-red-50 text-red-700' : product.stock <= 5 ? 'border-amber-100 bg-amber-50 text-amber-700' : 'border-emerald-100 bg-emerald-50 text-emerald-700'}`}>
                   {product.stock <= 0 ? 'Out of stock' : product.stock <= 5 ? `Only ${product.stock} left` : 'In stock'}
