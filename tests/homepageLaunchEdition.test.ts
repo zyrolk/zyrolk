@@ -9,13 +9,13 @@ const shelf = readFileSync('src/components/StorefrontProductShelf.tsx', 'utf8');
 const trustStrip = readFileSync('src/components/HomepageTrustStrip.tsx', 'utf8');
 const styles = readFileSync('src/index.css', 'utf8');
 
-test('Sprint 75A composes only the four approved premium homepage surfaces', () => {
+test('Sprint 75A retains all four premium homepage surfaces', () => {
   assert.match(homepage, /zy-launch-home/);
   assert.match(homepage, /<HeroBanner/);
   assert.match(homepage, /zy-foundation-category-dock/);
   assert.equal((homepage.match(/<StorefrontProductShelf/g) || []).length, 5);
   assert.match(homepage, /<HomepageTrustStrip \/>/);
-  assert.doesNotMatch(homepage, /review|testimonial|why choose|<Footer/iu);
+  assert.doesNotMatch(homepage, /<Footer/iu);
 });
 
 test('premium shelf treatments retain every live App-level product projection', () => {

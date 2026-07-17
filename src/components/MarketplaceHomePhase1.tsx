@@ -1,7 +1,9 @@
 import { ArrowRight, Grid3X3, Layers3 } from 'lucide-react';
 import { Category, Product, WebsiteSettings } from '../types';
 import HeroBanner from './HeroBanner';
+import HomepageCustomerReviews, { HomepageReview } from './HomepageCustomerReviews';
 import HomepageTrustStrip from './HomepageTrustStrip';
+import HomepageWhyChoose from './HomepageWhyChoose';
 import StorefrontProductShelf from './StorefrontProductShelf';
 
 export interface HomepageCategoryVisual {
@@ -20,6 +22,7 @@ interface MarketplaceHomePhase1Props {
   newArrivalProducts: Product[];
   bestSellerProducts: Product[];
   recommendedProducts: Product[];
+  reviews: readonly HomepageReview[];
   wishlistProductIds: ReadonlySet<string>;
   loading: boolean;
   onExploreProducts: () => void;
@@ -42,6 +45,7 @@ export default function MarketplaceHomePhase1({
   newArrivalProducts,
   bestSellerProducts,
   recommendedProducts,
+  reviews,
   wishlistProductIds,
   loading,
   onExploreProducts,
@@ -119,6 +123,10 @@ export default function MarketplaceHomePhase1({
 
       <div className="zy-foundation-container zy-launch-trust-wrap">
         <HomepageTrustStrip />
+      </div>
+
+      <div className="zy-foundation-container zy-launch-why-wrap">
+        <HomepageWhyChoose />
       </div>
 
       <div className="zy-foundation-container zy-foundation-shelf-stack">
@@ -220,6 +228,14 @@ export default function MarketplaceHomePhase1({
           onToggleWishlist={onToggleWishlist}
           onViewDetail={onViewDetail}
           settings={settings}
+        />
+      </div>
+
+      <div className="zy-foundation-container zy-launch-reviews-wrap">
+        <HomepageCustomerReviews
+          reviews={reviews}
+          products={products}
+          enabled={settings?.enableReviews !== false}
         />
       </div>
     </main>

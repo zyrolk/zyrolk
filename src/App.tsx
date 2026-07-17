@@ -639,6 +639,7 @@ export default function App() {
               newArrivalProducts={newArrivalProducts}
               bestSellerProducts={bestSellerProducts}
               recommendedProducts={recommendedProducts}
+              reviews={homepageReviews}
               wishlistProductIds={wishlistProductIds}
               loading={loading}
               onExploreProducts={() => { setCurrentPage('products'); setSelectedCategory('all'); }}

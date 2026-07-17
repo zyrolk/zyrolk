@@ -2572,6 +2572,681 @@ textarea {
   }
 }
 
+/* Sprint 75B — Homepage launch polish */
+.zy-launch-section-heading {
+  max-width: 44rem;
+}
+
+.zy-launch-section-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: #60a5fa;
+  font-size: 0.66rem;
+  font-weight: 900;
+  letter-spacing: 0.17em;
+  text-transform: uppercase;
+}
+
+.zy-launch-section-eyebrow::before {
+  width: 1.5rem;
+  height: 1px;
+  content: "";
+  background: currentColor;
+}
+
+.zy-launch-why-wrap {
+  margin-top: clamp(3.75rem, 7vw, 6rem);
+}
+
+.zy-launch-why {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  border: 1px solid rgba(96, 165, 250, 0.2);
+  border-radius: 2.25rem;
+  padding: clamp(1.4rem, 4vw, 3.25rem);
+  background:
+    radial-gradient(circle at 88% 4%, rgba(96, 165, 250, 0.25), transparent 26rem),
+    radial-gradient(circle at 8% 100%, rgba(14, 165, 233, 0.14), transparent 22rem),
+    linear-gradient(145deg, #07132c 0%, #10275d 55%, #123c8f 100%);
+  color: #ffffff;
+  box-shadow: 0 42px 90px -52px rgba(15, 23, 42, 0.82);
+  animation: zy-launch-section-in 620ms ease-out both;
+}
+
+.zy-launch-why::before {
+  position: absolute;
+  z-index: -1;
+  top: -7rem;
+  right: -5rem;
+  width: 20rem;
+  height: 20rem;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 50%;
+  content: "";
+  box-shadow: 0 0 0 3.5rem rgba(255, 255, 255, 0.025), 0 0 0 7rem rgba(255, 255, 255, 0.018);
+}
+
+.zy-launch-why .zy-launch-section-heading h2 {
+  margin-top: 0.65rem;
+  color: #ffffff;
+  font-size: clamp(2rem, 4vw, 3.25rem);
+  font-weight: 850;
+  letter-spacing: -0.045em;
+  line-height: 1;
+  text-wrap: balance;
+}
+
+.zy-launch-why .zy-launch-section-heading > p {
+  max-width: 38rem;
+  margin-top: 0.9rem;
+  color: #bfdbfe;
+  font-size: 0.86rem;
+  line-height: 1.7;
+}
+
+.zy-launch-why-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.8rem;
+  margin-top: clamp(2rem, 4vw, 3rem);
+}
+
+.zy-launch-why-card {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid rgba(191, 219, 254, 0.15);
+  border-radius: 1.5rem;
+  padding: 1.2rem;
+  background: rgba(255, 255, 255, 0.075);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.09);
+  backdrop-filter: blur(16px);
+  transition: border-color 200ms ease, background-color 200ms ease, transform 200ms ease;
+}
+
+.zy-launch-why-number {
+  position: absolute;
+  top: 0.9rem;
+  right: 1rem;
+  color: rgba(191, 219, 254, 0.42);
+  font-size: 0.62rem;
+  font-weight: 900;
+  letter-spacing: 0.16em;
+}
+
+.zy-launch-why-icon {
+  display: flex;
+  width: 3rem;
+  height: 3rem;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(191, 219, 254, 0.2);
+  border-radius: 1rem;
+  background: rgba(219, 234, 254, 0.11);
+  color: #93c5fd;
+}
+
+.zy-launch-why-card h3 {
+  margin-top: 1.15rem;
+  color: #ffffff;
+  font-size: 0.9rem;
+  font-weight: 850;
+  letter-spacing: -0.015em;
+  line-height: 1.3;
+}
+
+.zy-launch-why-card p {
+  margin-top: 0.55rem;
+  color: #bfdbfe;
+  font-size: 0.7rem;
+  line-height: 1.65;
+}
+
+.zy-launch-reviews-wrap {
+  margin-top: clamp(5rem, 9vw, 8rem);
+}
+
+.zy-launch-reviews {
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 2.25rem;
+  background:
+    radial-gradient(circle at 0% 0%, rgba(219, 234, 254, 0.72), transparent 25rem),
+    linear-gradient(145deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 0.94));
+  box-shadow: 0 36px 80px -58px rgba(15, 23, 42, 0.72);
+  animation: zy-launch-section-in 620ms ease-out both;
+}
+
+.zy-launch-reviews-shell {
+  display: grid;
+  grid-template-columns: minmax(15rem, 0.78fr) minmax(0, 2.22fr);
+  gap: clamp(1.5rem, 4vw, 3.5rem);
+  padding: clamp(1.4rem, 4vw, 3.25rem);
+}
+
+.zy-launch-reviews-intro {
+  align-self: center;
+}
+
+.zy-launch-reviews-intro .zy-launch-section-eyebrow {
+  color: #2563eb;
+}
+
+.zy-launch-reviews-intro h2 {
+  margin-top: 0.65rem;
+  color: #0f172a;
+  font-size: clamp(1.9rem, 3.5vw, 2.85rem);
+  font-weight: 850;
+  letter-spacing: -0.045em;
+  line-height: 1.04;
+  text-wrap: balance;
+}
+
+.zy-launch-reviews-intro > p {
+  margin-top: 0.85rem;
+  color: #64748b;
+  font-size: 0.78rem;
+  line-height: 1.65;
+}
+
+.zy-launch-reviews-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  margin-top: 1.5rem;
+}
+
+.zy-launch-reviews-summary > strong {
+  color: #0f172a;
+  font-size: 2.4rem;
+  font-weight: 900;
+  letter-spacing: -0.06em;
+  line-height: 1;
+}
+
+.zy-launch-reviews-summary small {
+  display: block;
+  margin-top: 0.25rem;
+  color: #64748b;
+  font-size: 0.62rem;
+  font-weight: 750;
+}
+
+.zy-launch-reviews-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
+.zy-launch-review-card {
+  display: flex;
+  min-width: 0;
+  min-height: 13.5rem;
+  flex-direction: column;
+  justify-content: space-between;
+  border: 1px solid rgba(148, 163, 184, 0.17);
+  border-radius: 1.4rem;
+  padding: 1.1rem;
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow: 0 20px 44px -38px rgba(15, 23, 42, 0.62);
+  transition: border-color 200ms ease, box-shadow 200ms ease, transform 200ms ease;
+}
+
+.zy-launch-review-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.zy-launch-review-quote {
+  display: flex;
+  width: 2.4rem;
+  height: 2.4rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.8rem;
+  background: #eff6ff;
+  color: #2563eb;
+}
+
+.zy-launch-review-stars {
+  display: inline-flex;
+  gap: 0.12rem;
+  color: #cbd5e1;
+}
+
+.zy-launch-review-stars .is-filled {
+  fill: #f59e0b;
+  color: #f59e0b;
+}
+
+.zy-launch-review-card blockquote {
+  display: -webkit-box;
+  margin-block: 1rem;
+  overflow: hidden;
+  color: #334155;
+  font-size: 0.78rem;
+  font-weight: 600;
+  line-height: 1.65;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+}
+
+.zy-launch-review-card footer {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.7rem;
+  border-top: 1px solid rgba(148, 163, 184, 0.14);
+  padding-top: 0.85rem;
+}
+
+.zy-launch-review-avatar {
+  display: flex;
+  width: 2.25rem;
+  height: 2.25rem;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.8rem;
+  background: linear-gradient(145deg, #1d4ed8, #3b82f6);
+  color: #ffffff;
+  font-size: 0.63rem;
+  font-weight: 900;
+  box-shadow: 0 14px 26px -18px rgba(37, 99, 235, 0.86);
+}
+
+.zy-launch-review-card footer > div {
+  min-width: 0;
+}
+
+.zy-launch-review-card footer strong,
+.zy-launch-review-card footer small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.zy-launch-review-card footer strong {
+  color: #172033;
+  font-size: 0.7rem;
+  font-weight: 850;
+}
+
+.zy-launch-review-card footer small {
+  margin-top: 0.16rem;
+  color: #64748b;
+  font-size: 0.58rem;
+}
+
+.zy-launch-reviews-empty {
+  display: flex;
+  min-height: 17rem;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  border: 1px dashed rgba(96, 165, 250, 0.36);
+  border-radius: 1.5rem;
+  padding: 1.5rem;
+  background: rgba(239, 246, 255, 0.58);
+}
+
+.zy-launch-reviews-empty > span {
+  display: flex;
+  width: 3.5rem;
+  height: 3.5rem;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: 1.1rem;
+  background: #ffffff;
+  color: #2563eb;
+  box-shadow: 0 18px 34px -28px rgba(37, 99, 235, 0.75);
+}
+
+.zy-launch-reviews-empty h3 {
+  color: #172033;
+  font-size: 0.9rem;
+  font-weight: 850;
+}
+
+.zy-launch-reviews-empty p {
+  max-width: 28rem;
+  margin-top: 0.35rem;
+  color: #64748b;
+  font-size: 0.7rem;
+  line-height: 1.6;
+}
+
+.zy-launch-footer {
+  position: relative;
+  overflow: hidden;
+  border-top: 1px solid rgba(96, 165, 250, 0.22);
+  padding: clamp(2.5rem, 6vw, 5rem) 0 1.5rem;
+  background:
+    radial-gradient(circle at 8% 0%, rgba(37, 99, 235, 0.34), transparent 30rem),
+    radial-gradient(circle at 94% 82%, rgba(14, 165, 233, 0.12), transparent 28rem),
+    linear-gradient(145deg, #050b18 0%, #0b1733 54%, #0f234c 100%);
+  color: #94a3b8;
+}
+
+.zy-launch-footer::before {
+  position: absolute;
+  inset: 0 0 auto;
+  height: 1px;
+  content: "";
+  background: linear-gradient(90deg, transparent, #60a5fa, transparent);
+}
+
+.zy-launch-footer-container {
+  position: relative;
+  width: min(100% - 2rem, 86rem);
+  margin-inline: auto;
+}
+
+.zy-launch-footer-cta {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 1.15rem;
+  overflow: hidden;
+  border: 1px solid rgba(147, 197, 253, 0.22);
+  border-radius: 1.75rem;
+  padding: clamp(1.1rem, 3vw, 1.75rem);
+  background:
+    radial-gradient(circle at 92% 0%, rgba(147, 197, 253, 0.24), transparent 20rem),
+    linear-gradient(135deg, rgba(30, 64, 175, 0.88), rgba(29, 78, 216, 0.64));
+  box-shadow: 0 30px 70px -45px rgba(59, 130, 246, 0.85), inset 0 1px 0 rgba(255, 255, 255, 0.11);
+}
+
+.zy-launch-footer-cta-icon {
+  display: flex;
+  width: 3.5rem;
+  height: 3.5rem;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 1.1rem;
+  background: rgba(255, 255, 255, 0.11);
+  color: #dbeafe;
+}
+
+.zy-launch-footer-cta-copy > span {
+  color: #93c5fd;
+  font-size: 0.61rem;
+  font-weight: 900;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.zy-launch-footer-cta-copy h2 {
+  margin-top: 0.28rem;
+  color: #ffffff;
+  font-size: clamp(1.2rem, 2.3vw, 1.8rem);
+  font-weight: 850;
+  letter-spacing: -0.03em;
+}
+
+.zy-launch-footer-cta-copy p {
+  margin-top: 0.28rem;
+  color: #bfdbfe;
+  font-size: 0.7rem;
+}
+
+.zy-launch-footer-cta-actions {
+  display: flex;
+  gap: 0.6rem;
+}
+
+.zy-launch-footer-primary,
+.zy-launch-footer-secondary {
+  display: inline-flex;
+  min-height: 2.8rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 0.9rem;
+  padding-inline: 0.95rem;
+  font-size: 0.65rem;
+  font-weight: 850;
+  transition: border-color 180ms ease, background-color 180ms ease, color 180ms ease, transform 180ms ease;
+}
+
+.zy-launch-footer-primary {
+  background: #ffffff;
+  color: #1d4ed8;
+}
+
+.zy-launch-footer-secondary {
+  background: rgba(255, 255, 255, 0.08);
+  color: #ffffff;
+}
+
+.zy-launch-footer-grid {
+  display: grid;
+  grid-template-columns: minmax(15rem, 1.8fr) repeat(3, minmax(9rem, 1fr));
+  gap: clamp(2rem, 5vw, 4.5rem);
+  padding-block: clamp(3rem, 6vw, 5rem);
+}
+
+.zy-launch-footer-brand {
+  max-width: 25rem;
+}
+
+.zy-launch-footer-logo {
+  width: auto;
+  max-width: 11rem;
+  height: 2.7rem;
+  object-fit: contain;
+  object-position: left center;
+}
+
+.zy-launch-footer-wordmark {
+  display: inline-block;
+  color: #ffffff;
+  font-size: 1.65rem;
+  font-weight: 900;
+  letter-spacing: -0.045em;
+}
+
+.zy-launch-footer-brand > p {
+  margin-top: 1.15rem;
+  color: #94a3b8;
+  font-size: 0.72rem;
+  line-height: 1.75;
+}
+
+.zy-launch-footer-socials {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  margin-top: 1.25rem;
+}
+
+.zy-launch-footer-socials a {
+  display: flex;
+  width: 2.65rem;
+  height: 2.65rem;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 0.85rem;
+  background: rgba(255, 255, 255, 0.055);
+  color: #cbd5e1;
+  transition: border-color 180ms ease, background-color 180ms ease, color 180ms ease, transform 180ms ease;
+}
+
+.zy-launch-footer-links h2 {
+  margin-bottom: 1rem;
+  color: #ffffff;
+  font-size: 0.7rem;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.zy-launch-footer-links li + li {
+  margin-top: 0.18rem;
+}
+
+.zy-launch-footer-links button,
+.zy-launch-footer-empty-link {
+  min-height: 2.35rem;
+  color: #94a3b8;
+  font-size: 0.69rem;
+  line-height: 1.35;
+  text-align: left;
+  transition: color 180ms ease, transform 180ms ease;
+}
+
+.zy-launch-footer-contact {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem 1.5rem;
+  border-block: 1px solid rgba(148, 163, 184, 0.14);
+  padding-block: 1.15rem;
+}
+
+.zy-launch-footer-contact span,
+.zy-launch-footer-contact a {
+  display: inline-flex;
+  min-height: 2.25rem;
+  align-items: center;
+  gap: 0.45rem;
+  color: #94a3b8;
+  font-size: 0.68rem;
+}
+
+.zy-launch-footer-contact svg {
+  flex: none;
+  color: #60a5fa;
+}
+
+.zy-launch-footer-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding-top: 1.4rem;
+  color: #64748b;
+  font-size: 0.62rem;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .zy-launch-why-card:hover,
+  .zy-launch-review-card:hover {
+    transform: translateY(-4px);
+  }
+
+  .zy-launch-why-card:hover {
+    border-color: rgba(147, 197, 253, 0.34);
+    background: rgba(255, 255, 255, 0.11);
+  }
+
+  .zy-launch-review-card:hover {
+    border-color: rgba(96, 165, 250, 0.32);
+    box-shadow: 0 28px 50px -38px rgba(30, 64, 175, 0.5);
+  }
+
+  .zy-launch-footer-primary:hover,
+  .zy-launch-footer-secondary:hover,
+  .zy-launch-footer-socials a:hover {
+    transform: translateY(-2px);
+  }
+
+  .zy-launch-footer-secondary:hover,
+  .zy-launch-footer-socials a:hover {
+    border-color: rgba(147, 197, 253, 0.42);
+    background: rgba(96, 165, 250, 0.14);
+    color: #ffffff;
+  }
+
+  .zy-launch-footer-links button:hover,
+  .zy-launch-footer-empty-link:hover,
+  .zy-launch-footer-contact a:hover {
+    color: #ffffff;
+  }
+
+  .zy-launch-footer-links button:hover,
+  .zy-launch-footer-empty-link:hover {
+    transform: translateX(3px);
+  }
+}
+
+@media (max-width: 1100px) {
+  .zy-launch-why-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .zy-launch-reviews-shell { grid-template-columns: 1fr; }
+  .zy-launch-reviews-intro { max-width: 38rem; }
+  .zy-launch-footer-cta { grid-template-columns: auto minmax(0, 1fr); }
+  .zy-launch-footer-cta-actions { grid-column: 2; }
+  .zy-launch-footer-grid { grid-template-columns: minmax(14rem, 1.5fr) repeat(2, minmax(9rem, 1fr)); }
+  .zy-launch-footer-links:last-child { grid-column: 2 / -1; }
+}
+
+@media (max-width: 767px) {
+  .zy-launch-why-wrap { margin-top: 3.5rem; }
+  .zy-launch-why { border-radius: 1.5rem; padding: 1.15rem; }
+  .zy-launch-why .zy-launch-section-heading h2 { font-size: 2rem; }
+  .zy-launch-why-grid { gap: 0.65rem; margin-top: 1.6rem; }
+  .zy-launch-why-card { border-radius: 1.2rem; padding: 1rem; }
+  .zy-launch-why-card h3 { font-size: 0.78rem; }
+  .zy-launch-why-card p { font-size: 0.64rem; }
+
+  .zy-launch-reviews-wrap { margin-top: 4.5rem; }
+  .zy-launch-reviews { border-radius: 1.5rem; }
+  .zy-launch-reviews-shell { gap: 1.5rem; padding: 1.15rem; }
+  .zy-launch-reviews-intro h2 { font-size: 2rem; }
+  .zy-launch-reviews-grid {
+    display: flex;
+    margin-inline: -1.15rem;
+    padding: 0 1.15rem 0.35rem;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scroll-snap-type: x mandatory;
+    scrollbar-width: none;
+  }
+  .zy-launch-reviews-grid::-webkit-scrollbar { display: none; }
+  .zy-launch-review-card { width: min(82vw, 19rem); min-width: min(82vw, 19rem); scroll-snap-align: start; }
+  .zy-launch-reviews-empty { min-height: 13rem; align-items: flex-start; flex-direction: column; }
+
+  .zy-launch-footer { padding-top: 1rem; }
+  .zy-launch-footer-container { width: min(100% - 1rem, 86rem); }
+  .zy-launch-footer-cta { grid-template-columns: 1fr; border-radius: 1.4rem; padding: 1.1rem; }
+  .zy-launch-footer-cta-icon { width: 3rem; height: 3rem; }
+  .zy-launch-footer-cta-actions { grid-column: auto; flex-wrap: wrap; }
+  .zy-launch-footer-primary,
+  .zy-launch-footer-secondary { flex: 1 1 9rem; }
+  .zy-launch-footer-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2.4rem 1rem; padding-block: 3rem; }
+  .zy-launch-footer-brand { grid-column: 1 / -1; }
+  .zy-launch-footer-links:last-child { grid-column: 1 / -1; }
+  .zy-launch-footer-contact { align-items: flex-start; flex-direction: column; gap: 0.15rem; }
+  .zy-launch-footer-bottom { align-items: flex-start; flex-direction: column; }
+}
+
+@media (max-width: 389px) {
+  .zy-launch-why-grid { grid-template-columns: 1fr; }
+  .zy-launch-footer-grid { grid-template-columns: 1fr; }
+  .zy-launch-footer-brand,
+  .zy-launch-footer-links:last-child { grid-column: auto; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .zy-launch-why,
+  .zy-launch-reviews { animation: none; }
+  .zy-launch-why-card,
+  .zy-launch-review-card,
+  .zy-launch-footer-primary,
+  .zy-launch-footer-secondary,
+  .zy-launch-footer-socials a,
+  .zy-launch-footer-links button { transition-duration: 0.01ms; }
+}
+
 @media (max-width: 1023px) {
   .zy-launch-trust-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .zy-launch-trust-item:nth-child(3) { border-left: 0; }

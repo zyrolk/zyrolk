@@ -1,5 +1,15 @@
-import React from 'react';
-import { Mail, Phone, MapPin, ShieldCheck, ShoppingBag, Truck, Facebook, Instagram, Youtube } from 'lucide-react';
+import {
+  ArrowRight,
+  Facebook,
+  Headphones,
+  Instagram,
+  Mail,
+  MapPin,
+  Music2,
+  Phone,
+  ShoppingBag,
+  Youtube,
+} from 'lucide-react';
 import { Category, WebsiteSettings } from '../types';
 
 interface FooterProps {
@@ -11,199 +21,145 @@ interface FooterProps {
 }
 
 export default function Footer({ setCurrentPage, onSelectCategory, settings, categories, categoryCounts }: FooterProps) {
-  const handleCategoryClick = (cat: string) => {
-    onSelectCategory(cat);
+  const handleCategoryClick = (categoryId: string) => {
+    onSelectCategory(categoryId);
     setCurrentPage('products');
   };
 
+  const handleBrowseProducts = () => handleCategoryClick('all');
   const footerLogo = settings?.footerLogoUrl || settings?.logoUrl;
-  const topCategories = categories.filter((category) => (categoryCounts[category.id] ?? 0) > 0).slice(0, 5);
+  const storeName = settings?.storeName?.trim() || 'Zyro.lk';
+  const topCategories = categories.filter(category => (categoryCounts[category.id] ?? 0) > 0).slice(0, 5);
   const hasContactDetails = Boolean(settings?.contactAddress || settings?.contactPhone || settings?.contactEmail);
+  const hasSocialLinks = Boolean(settings?.facebookUrl || settings?.instagramUrl || settings?.tiktokUrl || settings?.youtubeUrl);
 
   return (
-    <footer className="zy-market-footer text-slate-300 pt-16 sm:pt-20 pb-8 border-t border-blue-900/60">
-      
-      {/* 1. Trust Pillars Segment */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-12 border-b border-white/10 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-        
-        <div className="zy-footer-trust-card flex items-start space-x-4 rounded-3xl border border-white/10 bg-white/5 p-5">
-          <div className="p-3 bg-blue-500/12 rounded-2xl text-blue-300">
-            <ShieldCheck className="h-6 w-6" />
+    <footer className="zy-market-footer zy-launch-footer">
+      <div className="zy-launch-footer-container">
+        <section className="zy-launch-footer-cta" aria-labelledby="footer-marketplace-title">
+          <div className="zy-launch-footer-cta-icon" aria-hidden="true"><ShoppingBag className="h-7 w-7" /></div>
+          <div className="zy-launch-footer-cta-copy">
+            <span>Continue exploring</span>
+            <h2 id="footer-marketplace-title">Your next marketplace find is waiting.</h2>
+            <p>Browse the live catalogue or contact the Zyro.lk team when you need help.</p>
           </div>
-          <div>
-            <h4 className="text-white text-base font-bold font-display mb-1">Cash on Delivery</h4>
-            <p className="text-xs text-slate-400 font-light leading-relaxed">
-              Pay when your order arrives.
-            </p>
+          <div className="zy-launch-footer-cta-actions">
+            <button type="button" onClick={handleBrowseProducts} className="zy-launch-footer-primary">
+              Shop marketplace
+              <ArrowRight className="h-4 w-4" aria-hidden="true" />
+            </button>
+            <button type="button" onClick={() => setCurrentPage('contact')} className="zy-launch-footer-secondary">
+              <Headphones className="h-4 w-4" aria-hidden="true" />
+              Get support
+            </button>
           </div>
-        </div>
+        </section>
 
-        <div className="zy-footer-trust-card flex items-start space-x-4 rounded-3xl border border-white/10 bg-white/5 p-5">
-          <div className="p-3 bg-blue-500/12 rounded-2xl text-blue-300">
-            <ShoppingBag className="h-6 w-6" />
-          </div>
-          <div>
-            <h4 className="text-white text-base font-bold font-display mb-1">Quality Checked Products</h4>
-            <p className="text-xs text-slate-400 font-light leading-relaxed">
-              Carefully selected supplier products.
-            </p>
-          </div>
-        </div>
-
-        <div className="zy-footer-trust-card flex items-start space-x-4 rounded-3xl border border-white/10 bg-white/5 p-5">
-          <div className="p-3 bg-blue-500/12 rounded-2xl text-blue-300">
-            <Truck className="h-6 w-6" />
-          </div>
-          <div>
-            <h4 className="text-white text-base font-bold font-display mb-1">Islandwide Delivery</h4>
-            <p className="text-xs text-slate-400 font-light leading-relaxed">
-              Fast delivery across Sri Lanka, from city centres to outstation districts.
-            </p>
-          </div>
-        </div>
-
-        <div className="zy-footer-trust-card flex items-start space-x-4 rounded-3xl border border-white/10 bg-white/5 p-5">
-          <div className="p-3 bg-blue-500/12 rounded-2xl text-blue-300">
-            <Phone className="h-6 w-6" />
-          </div>
-          <div>
-            <h4 className="text-white text-base font-bold font-display mb-1">Friendly Customer Support</h4>
-            <p className="text-xs text-slate-400 font-light leading-relaxed">
-              WhatsApp assistance is available before and after purchase whenever you need guidance.
-            </p>
-          </div>
-        </div>
-
-      </div>
-
-      {/* 2. Main Footer Grid */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 sm:py-16 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-8 lg:gap-10">
-        
-        {/* About & Branding */}
-        <div className="space-y-4 text-left lg:col-span-2">
-          {footerLogo ? (
-            <img 
-              src={footerLogo} 
-              alt={settings?.storeName || "Zyro.lk"} 
-              className="h-10 max-w-[180px] object-contain" 
-              referrerPolicy="no-referrer"
-              loading="lazy"
-              decoding="async"
-            />
-          ) : (
-            <span className="text-2xl font-bold font-display text-white">
-              {settings?.storeName ? (
-                <>
-                  {settings.storeName.split('.')[0]}
-                  {settings.storeName.includes('.') && <span className="text-brand-blue">.{settings.storeName.split('.').slice(1).join('.')}</span>}
-                </>
-              ) : (
-                <>Zyro<span className="text-brand-blue">.lk</span></>
-              )}
-            </span>
-          )}
-          <p className="text-xs text-slate-400 font-light leading-relaxed">
-            {settings?.aboutText || "A growing Sri Lankan marketplace for carefully selected products, convenient ordering, and local customer support."}
-          </p>
-
-          {/* Social media links */}
-          <div className="flex space-x-3 pt-2">
-            {settings?.facebookUrl && (
-              <a href={settings.facebookUrl} target="_blank" rel="noopener noreferrer" aria-label="Visit Zyro.lk on Facebook" className="flex h-11 w-11 items-center justify-center bg-slate-800 hover:bg-brand-blue text-white rounded-xl transition-colors focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-400/40">
-                <Facebook className="h-4 w-4" aria-hidden="true" />
-              </a>
+        <div className="zy-launch-footer-grid">
+          <section className="zy-launch-footer-brand" aria-label={`${storeName} overview`}>
+            {footerLogo ? (
+              <img
+                src={footerLogo}
+                alt={storeName}
+                className="zy-launch-footer-logo"
+                referrerPolicy="no-referrer"
+                loading="lazy"
+                decoding="async"
+              />
+            ) : (
+              <span className="zy-launch-footer-wordmark">{storeName}</span>
             )}
-            {settings?.instagramUrl && (
-              <a href={settings.instagramUrl} target="_blank" rel="noopener noreferrer" aria-label="Visit Zyro.lk on Instagram" className="flex h-11 w-11 items-center justify-center bg-slate-800 hover:bg-pink-600 text-white rounded-xl transition-colors focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-pink-400/40">
-                <Instagram className="h-4 w-4" aria-hidden="true" />
-              </a>
-            )}
-            {settings?.tiktokUrl && (
-              <a href={settings.tiktokUrl} target="_blank" rel="noopener noreferrer" aria-label="Visit Zyro.lk on TikTok" className="flex h-11 w-11 items-center justify-center bg-slate-800 hover:bg-zinc-800 text-white rounded-xl transition-colors focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-white/30 font-bold text-xs">
-                <span aria-hidden="true">🎵</span>
-              </a>
-            )}
-            {settings?.youtubeUrl && (
-              <a href={settings.youtubeUrl} target="_blank" rel="noopener noreferrer" aria-label="Visit Zyro.lk on YouTube" className="flex h-11 w-11 items-center justify-center bg-slate-800 hover:bg-red-600 text-white rounded-xl transition-colors focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-red-400/40">
-                <Youtube className="h-4 w-4" aria-hidden="true" />
-              </a>
-            )}
-          </div>
+            <p>{settings?.aboutText || 'A growing Sri Lankan marketplace for product discovery, convenient ordering and local customer support.'}</p>
 
-          <div className="pt-2 text-xs text-slate-500 font-light">
-            {settings?.copyrightText || `© ${new Date().getFullYear()} ${settings?.storeName || "Zyro.lk"}. All rights reserved.`}
-          </div>
-        </div>
+            {hasSocialLinks && (
+              <div className="zy-launch-footer-socials" aria-label="Social media links">
+                {settings?.facebookUrl && (
+                  <a href={settings.facebookUrl} target="_blank" rel="noopener noreferrer" aria-label={`Visit ${storeName} on Facebook`}>
+                    <Facebook className="h-4 w-4" aria-hidden="true" />
+                  </a>
+                )}
+                {settings?.instagramUrl && (
+                  <a href={settings.instagramUrl} target="_blank" rel="noopener noreferrer" aria-label={`Visit ${storeName} on Instagram`}>
+                    <Instagram className="h-4 w-4" aria-hidden="true" />
+                  </a>
+                )}
+                {settings?.tiktokUrl && (
+                  <a href={settings.tiktokUrl} target="_blank" rel="noopener noreferrer" aria-label={`Visit ${storeName} on TikTok`}>
+                    <Music2 className="h-4 w-4" aria-hidden="true" />
+                  </a>
+                )}
+                {settings?.youtubeUrl && (
+                  <a href={settings.youtubeUrl} target="_blank" rel="noopener noreferrer" aria-label={`Visit ${storeName} on YouTube`}>
+                    <Youtube className="h-4 w-4" aria-hidden="true" />
+                  </a>
+                )}
+              </div>
+            )}
+          </section>
 
-        {/* Quick Links */}
-        <div className="space-y-4 text-left">
-          <h4 className="text-sm font-black text-white uppercase tracking-wider">Explore Store</h4>
-          <ul className="text-xs">
-            <li><button onClick={() => setCurrentPage('home')} className="inline-flex min-h-11 items-center hover:text-white transition-colors cursor-pointer text-left focus-visible:outline-none focus-visible:text-white focus-visible:underline">Homepage</button></li>
-            <li><button onClick={() => setCurrentPage('products')} className="inline-flex min-h-11 items-center hover:text-white transition-colors cursor-pointer text-left focus-visible:outline-none focus-visible:text-white focus-visible:underline">Browse All Products</button></li>
-            <li><button onClick={() => setCurrentPage('categories')} className="inline-flex min-h-11 items-center hover:text-white transition-colors cursor-pointer text-left focus-visible:outline-none focus-visible:text-white focus-visible:underline">Product Categories</button></li>
-            <li><button onClick={() => setCurrentPage('wishlist')} className="inline-flex min-h-11 items-center hover:text-white transition-colors cursor-pointer text-left focus-visible:outline-none focus-visible:text-white focus-visible:underline">My Saved Wishlist</button></li>
-            <li><button onClick={() => setCurrentPage('contact')} className="inline-flex min-h-11 items-center hover:text-white transition-colors cursor-pointer text-left focus-visible:outline-none focus-visible:text-white focus-visible:underline">Support & Directions</button></li>
-          </ul>
-        </div>
-
-        {/* Categorized Products */}
-        <div className="space-y-4 text-left">
-          <h4 className="text-sm font-black text-white uppercase tracking-wider">Top Categories</h4>
-          {topCategories.length > 0 ? (
-            <ul className="text-xs">
-              {topCategories.map((category) => (
-                <li key={category.id}><button onClick={() => handleCategoryClick(category.id)} className="inline-flex min-h-11 items-center hover:text-white transition-colors cursor-pointer text-left focus-visible:outline-none focus-visible:text-white focus-visible:underline">{category.name}</button></li>
-              ))}
+          <nav className="zy-launch-footer-links" aria-labelledby="footer-shop-title">
+            <h2 id="footer-shop-title">Shop</h2>
+            <ul>
+              <li><button type="button" onClick={() => setCurrentPage('home')}>Homepage</button></li>
+              <li><button type="button" onClick={handleBrowseProducts}>All products</button></li>
+              <li><button type="button" onClick={() => setCurrentPage('categories')}>Categories</button></li>
+              <li><button type="button" onClick={() => setCurrentPage('wishlist')}>Wishlist</button></li>
             </ul>
-          ) : (
-            <button onClick={() => handleCategoryClick('all')} className="inline-flex min-h-11 items-center text-xs hover:text-white focus-visible:outline-none focus-visible:underline">Browse all products</button>
-          )}
+          </nav>
+
+          <nav className="zy-launch-footer-links" aria-labelledby="footer-categories-title">
+            <h2 id="footer-categories-title">Popular categories</h2>
+            {topCategories.length > 0 ? (
+              <ul>
+                {topCategories.map(category => (
+                  <li key={category.id}>
+                    <button type="button" onClick={() => handleCategoryClick(category.id)}>{category.name}</button>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <button type="button" onClick={handleBrowseProducts} className="zy-launch-footer-empty-link">Browse all products</button>
+            )}
+          </nav>
+
+          <nav className="zy-launch-footer-links" aria-labelledby="footer-help-title">
+            <h2 id="footer-help-title">Help & company</h2>
+            <ul>
+              <li><button type="button" onClick={() => setCurrentPage('contact')}>Contact & support</button></li>
+              <li><button type="button" onClick={() => setCurrentPage('about-us')}>About us</button></li>
+              <li><button type="button" onClick={() => setCurrentPage('faq')}>FAQs & guides</button></li>
+              <li><button type="button" onClick={() => setCurrentPage('return-policy')}>Purchase support policy</button></li>
+              <li><button type="button" onClick={() => setCurrentPage('terms-conditions')}>Terms & conditions</button></li>
+              <li><button type="button" onClick={() => setCurrentPage('privacy-policy')}>Privacy policy</button></li>
+            </ul>
+          </nav>
         </div>
 
-        {/* Company & Support CMS Pages */}
-        <div className="space-y-4 text-left">
-          <h4 className="text-sm font-black text-white uppercase tracking-wider">Company & Legal</h4>
-          <ul className="text-xs">
-            <li><button onClick={() => setCurrentPage('about-us')} className="inline-flex min-h-11 items-center hover:text-white transition-colors cursor-pointer text-left focus-visible:outline-none focus-visible:text-white focus-visible:underline">About Us</button></li>
-            <li><button onClick={() => setCurrentPage('faq')} className="inline-flex min-h-11 items-center hover:text-white transition-colors cursor-pointer text-left focus-visible:outline-none focus-visible:text-white focus-visible:underline">FAQs & Guides</button></li>
-            <li><button onClick={() => setCurrentPage('return-policy')} className="inline-flex min-h-11 items-center hover:text-white transition-colors cursor-pointer text-left focus-visible:outline-none focus-visible:text-white focus-visible:underline">Purchase Support Policy</button></li>
-            <li><button onClick={() => setCurrentPage('terms-conditions')} className="inline-flex min-h-11 items-center hover:text-white transition-colors cursor-pointer text-left focus-visible:outline-none focus-visible:text-white focus-visible:underline">Terms & Conditions</button></li>
-            <li><button onClick={() => setCurrentPage('privacy-policy')} className="inline-flex min-h-11 items-center hover:text-white transition-colors cursor-pointer text-left focus-visible:outline-none focus-visible:text-white focus-visible:underline">Privacy Policy</button></li>
-          </ul>
-        </div>
+        {hasContactDetails && (
+          <div className="zy-launch-footer-contact" aria-label="Store contact details">
+            {settings?.contactAddress && (
+              <span><MapPin className="h-4 w-4" aria-hidden="true" />{settings.contactAddress}</span>
+            )}
+            {settings?.contactPhone && (
+              <a href={`tel:${settings.contactPhone}`}>
+                <Phone className="h-4 w-4" aria-hidden="true" />
+                {settings.contactPhone}{settings.contactPhone2 ? ` / ${settings.contactPhone2}` : ''}
+              </a>
+            )}
+            {settings?.contactEmail && (
+              <a href={`mailto:${settings.contactEmail}`}>
+                <Mail className="h-4 w-4" aria-hidden="true" />
+                {settings.contactEmail}
+              </a>
+            )}
+          </div>
+        )}
 
-        {/* Payment & delivery information */}
-        <div className="space-y-4 text-left">
-          <h4 className="text-sm font-black text-white uppercase tracking-wider">Payment & Delivery</h4>
-          <p className="text-xs text-slate-400 font-light leading-relaxed">
-            Cash on Delivery is available with islandwide delivery information confirmed during ordering.
-          </p>
+        <div className="zy-launch-footer-bottom">
+          <p>{settings?.copyrightText || `© ${new Date().getFullYear()} ${storeName}. All rights reserved.`}</p>
+          <p>Made for convenient shopping across Sri Lanka.</p>
         </div>
-
       </div>
-
-      {/* 3. Showroom & Contact details bottom */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8 border-t border-slate-800/80 flex flex-col md:flex-row justify-between text-xs text-slate-500 font-light space-y-4 md:space-y-0 text-left">
-        {hasContactDetails && <div className="flex flex-col md:flex-row space-y-2 md:space-y-0 md:space-x-6">
-          {settings?.contactAddress && <span className="flex items-center">
-            <MapPin className="h-4 w-4 mr-1.5 text-brand-blue" />
-            {settings.contactAddress}
-          </span>}
-          {settings?.contactPhone && <a href={`tel:${settings.contactPhone}`} className="flex min-h-11 items-center hover:text-white">
-            <Phone className="h-4 w-4 mr-1.5 text-brand-blue" />
-            Hotline: {settings.contactPhone}{settings.contactPhone2 ? ` / ${settings.contactPhone2}` : ""}
-          </a>}
-          {settings?.contactEmail && <a href={`mailto:${settings.contactEmail}`} className="flex min-h-11 items-center hover:text-white">
-            <Mail className="h-4 w-4 mr-1.5 text-brand-blue" />
-            {settings.contactEmail}
-          </a>}
-        </div>}
-        <div>
-          Designed for maximum speed & mobile-first efficiency.
-        </div>
-      </div>
-
     </footer>
   );
 }
