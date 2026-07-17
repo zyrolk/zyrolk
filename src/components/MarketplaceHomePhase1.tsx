@@ -1,6 +1,7 @@
 import { ArrowRight, Grid3X3, Layers3 } from 'lucide-react';
 import { Category, Product, WebsiteSettings } from '../types';
 import HeroBanner from './HeroBanner';
+import HomepageTrustStrip from './HomepageTrustStrip';
 import StorefrontProductShelf from './StorefrontProductShelf';
 
 export interface HomepageCategoryVisual {
@@ -53,7 +54,7 @@ export default function MarketplaceHomePhase1({
   const hasCategories = categoryVisuals.length > 0;
 
   return (
-    <main className="zy-foundation-home animate-fadeIn">
+    <main className="zy-foundation-home zy-launch-home animate-fadeIn">
       <div className="zy-foundation-hero-wrap">
         <HeroBanner
           settings={settings}
@@ -66,9 +67,10 @@ export default function MarketplaceHomePhase1({
 
       <section className="zy-foundation-category-dock" aria-labelledby="phase-one-categories-title">
         <header className="zy-foundation-dock-header">
-          <div>
+          <div className="zy-foundation-dock-copy">
             <span className="zy-foundation-eyebrow">Quick shopping</span>
             <h2 id="phase-one-categories-title">Explore categories</h2>
+            <p>Browse live collections and find what you need faster.</p>
           </div>
           <button type="button" onClick={onBrowseCategories} className="zy-foundation-text-link">
             View all
@@ -115,9 +117,15 @@ export default function MarketplaceHomePhase1({
         )}
       </section>
 
+      <div className="zy-foundation-container zy-launch-trust-wrap">
+        <HomepageTrustStrip />
+      </div>
+
       <div className="zy-foundation-container zy-foundation-shelf-stack">
         <StorefrontProductShelf
           id="homepage-flash-deals"
+          eyebrow="Live savings"
+          tone="deals"
           title="Flash Deals"
           subtitle="Genuine savings from products with a verified regular price and lower selling price."
           products={discountedProducts}
@@ -136,6 +144,8 @@ export default function MarketplaceHomePhase1({
 
         <StorefrontProductShelf
           id="homepage-featured-products"
+          eyebrow="Marketplace spotlight"
+          tone="featured"
           title="Featured Products"
           subtitle="Storefront highlights selected from the currently published marketplace catalog."
           products={featuredProducts}
@@ -154,6 +164,8 @@ export default function MarketplaceHomePhase1({
 
         <StorefrontProductShelf
           id="homepage-new-arrivals"
+          eyebrow="Recently added"
+          tone="new"
           title="New Arrivals"
           subtitle="Fresh additions available now from the live Zyro.lk catalog."
           products={newArrivalProducts}
@@ -172,6 +184,8 @@ export default function MarketplaceHomePhase1({
 
         <StorefrontProductShelf
           id="homepage-best-sellers"
+          eyebrow="Popular picks"
+          tone="best-seller"
           title="Best Sellers"
           subtitle="Popular marketplace picks identified from the live product catalog."
           products={bestSellerProducts}
@@ -190,6 +204,8 @@ export default function MarketplaceHomePhase1({
 
         <StorefrontProductShelf
           id="homepage-recommended-products"
+          eyebrow="Explore more"
+          tone="recommended"
           title="Recommended Products"
           subtitle="A convenient starting point selected from products currently available in the marketplace."
           products={recommendedProducts}

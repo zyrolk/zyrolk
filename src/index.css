@@ -2131,6 +2131,520 @@ textarea {
   .zy-storefront-product-skeleton b::after { animation: none; }
 }
 
+/* Sprint 75A — Premium Launch homepage presentation */
+.zy-launch-home {
+  --zy-launch-container: 86rem;
+  --zy-launch-ink: #0f172a;
+  --zy-launch-muted: #64748b;
+  --zy-launch-line: rgba(148, 163, 184, 0.2);
+  overflow: clip;
+  padding-bottom: clamp(4rem, 8vw, 7rem);
+  background:
+    radial-gradient(circle at 4% 8%, rgba(37, 99, 235, 0.08), transparent 26rem),
+    radial-gradient(circle at 96% 46%, rgba(14, 165, 233, 0.06), transparent 30rem),
+    linear-gradient(180deg, #f8fafc 0%, #f4f7fb 48%, #ffffff 100%);
+}
+
+.zy-launch-home .zy-foundation-container,
+.zy-launch-home .zy-foundation-category-dock {
+  width: min(100% - 2rem, var(--zy-launch-container));
+}
+
+.zy-launch-home .zy-foundation-hero-wrap {
+  position: relative;
+  padding-bottom: clamp(4.5rem, 7vw, 6.25rem);
+  background:
+    radial-gradient(circle at 50% 100%, rgba(37, 99, 235, 0.1), transparent 28rem),
+    linear-gradient(180deg, #ffffff 0%, #f1f5fb 100%);
+}
+
+.zy-launch-home .zy-foundation-hero-wrap::after {
+  position: absolute;
+  inset: auto 0 0;
+  height: 1px;
+  content: "";
+  background: linear-gradient(90deg, transparent, rgba(37, 99, 235, 0.24), transparent);
+}
+
+.zy-launch-home .zy-hero-v2 {
+  width: min(100% - 2rem, 92rem);
+  padding-top: 1rem;
+}
+
+.zy-launch-home .zy-hero-v2-stage {
+  isolation: isolate;
+  border-color: rgba(191, 219, 254, 0.36);
+  background:
+    radial-gradient(circle at 82% 6%, rgba(147, 197, 253, 0.34), transparent 25rem),
+    linear-gradient(135deg, #08152f 0%, #172554 48%, #1d4ed8 100%);
+  box-shadow:
+    0 42px 92px -48px rgba(15, 23, 42, 0.72),
+    0 24px 54px -40px rgba(37, 99, 235, 0.8),
+    inset 0 1px 0 rgba(255, 255, 255, 0.16);
+}
+
+.zy-launch-home .zy-hero-v2-stage::after {
+  position: absolute;
+  z-index: 4;
+  inset: 0;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: inherit;
+  content: "";
+  pointer-events: none;
+}
+
+.zy-launch-home .zy-hero-v2-ambient {
+  top: -12rem;
+  left: 41%;
+  width: 35rem;
+  height: 35rem;
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.zy-launch-home .zy-hero-v2-copy::before {
+  background: linear-gradient(90deg, rgba(2, 6, 23, 0.94) 0%, rgba(15, 23, 42, 0.82) 46%, rgba(15, 23, 42, 0.38) 72%, transparent 100%);
+}
+
+.zy-launch-home .zy-hero-v2-copy-inner {
+  width: min(100%, 34rem);
+}
+
+.zy-launch-home .zy-hero-v2-kicker {
+  border-color: rgba(191, 219, 254, 0.2);
+  background: rgba(239, 246, 255, 0.94);
+  box-shadow: 0 12px 28px -20px rgba(147, 197, 253, 0.7);
+}
+
+.zy-launch-home .zy-hero-v2 h1 {
+  text-wrap: balance;
+  text-shadow: 0 14px 36px rgba(2, 6, 23, 0.32);
+}
+
+.zy-launch-home .zy-hero-v2 h1 span {
+  color: #93c5fd;
+}
+
+.zy-launch-home .zy-hero-v2-campaign-title {
+  color: #ffffff;
+  letter-spacing: -0.015em;
+}
+
+.zy-launch-home .zy-hero-v2-primary,
+.zy-launch-home .zy-hero-v2-secondary {
+  border-radius: 1rem;
+}
+
+.zy-launch-home .zy-hero-v2-primary {
+  border-color: #3b82f6;
+  background: linear-gradient(135deg, #2563eb, #1d4ed8);
+  box-shadow: 0 22px 42px -22px rgba(59, 130, 246, 0.95);
+}
+
+.zy-launch-home .zy-hero-v2-secondary {
+  border-color: rgba(255, 255, 255, 0.42);
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 20px 38px -28px rgba(2, 6, 23, 0.82);
+}
+
+.zy-launch-home .zy-hero-v2-trust span {
+  border-color: rgba(255, 255, 255, 0.2);
+  background: rgba(248, 250, 252, 0.93);
+  box-shadow: 0 12px 28px -24px rgba(2, 6, 23, 0.7);
+}
+
+.zy-launch-home .zy-hero-v2-image {
+  filter: saturate(1.04) contrast(1.02);
+}
+
+.zy-launch-home .zy-hero-v2-image-shade {
+  background:
+    linear-gradient(180deg, rgba(2, 6, 23, 0.04) 60%, rgba(2, 6, 23, 0.32) 100%),
+    linear-gradient(90deg, rgba(2, 6, 23, 0.12), transparent 54%);
+}
+
+.zy-launch-home .zy-hero-v2-badge,
+.zy-launch-home .zy-hero-v2-visual-caption {
+  box-shadow: 0 20px 38px -24px rgba(2, 6, 23, 0.8);
+}
+
+.zy-launch-home .zy-foundation-category-dock {
+  margin-top: clamp(-5.75rem, -6vw, -4.5rem);
+  border-color: rgba(255, 255, 255, 0.96);
+  border-radius: 2rem;
+  padding: clamp(1rem, 2vw, 1.5rem);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 0.94));
+  box-shadow:
+    0 38px 86px -54px rgba(15, 23, 42, 0.68),
+    0 20px 46px -40px rgba(37, 99, 235, 0.72),
+    inset 0 1px 0 #ffffff;
+  backdrop-filter: blur(26px);
+  animation: zy-launch-section-in 520ms ease-out both;
+}
+
+.zy-launch-home .zy-foundation-dock-header {
+  margin-bottom: 1.15rem;
+  padding-inline: 0.25rem;
+}
+
+.zy-launch-home .zy-foundation-dock-copy p {
+  max-width: 34rem;
+  margin-top: 0.35rem;
+  color: var(--zy-launch-muted);
+  font-size: 0.75rem;
+  line-height: 1.55;
+}
+
+.zy-launch-home .zy-foundation-eyebrow {
+  color: #1d4ed8;
+  letter-spacing: 0.16em;
+}
+
+.zy-launch-home .zy-foundation-dock-header h2 {
+  color: var(--zy-launch-ink);
+  font-size: clamp(1.5rem, 2.8vw, 2.15rem);
+  font-weight: 800;
+}
+
+.zy-launch-home .zy-foundation-text-link {
+  border: 1px solid rgba(37, 99, 235, 0.12);
+  background: #eff6ff;
+  box-shadow: 0 14px 28px -24px rgba(37, 99, 235, 0.72);
+}
+
+.zy-launch-home .zy-foundation-category-rail {
+  grid-template-columns: repeat(auto-fit, minmax(7.25rem, 1fr));
+  gap: 0.75rem;
+}
+
+.zy-launch-home .zy-foundation-category-tile,
+.zy-launch-home .zy-foundation-category-skeleton {
+  position: relative;
+  min-height: 9.35rem;
+  overflow: hidden;
+  border-color: rgba(148, 163, 184, 0.18);
+  border-radius: 1.35rem;
+  background:
+    radial-gradient(circle at 50% 0%, rgba(219, 234, 254, 0.46), transparent 62%),
+    linear-gradient(155deg, #ffffff, #f8fafc);
+  box-shadow: 0 18px 38px -34px rgba(15, 23, 42, 0.5);
+}
+
+.zy-launch-home .zy-foundation-category-tile::before {
+  position: absolute;
+  inset: 0.4rem 18% auto;
+  height: 1px;
+  content: "";
+  background: linear-gradient(90deg, transparent, rgba(37, 99, 235, 0.28), transparent);
+}
+
+.zy-launch-home .zy-foundation-category-image,
+.zy-launch-home .zy-foundation-category-skeleton > span {
+  width: 4.5rem;
+  height: 4.5rem;
+  border: 1px solid rgba(191, 219, 254, 0.54);
+  border-radius: 1.25rem;
+  background: linear-gradient(145deg, #dbeafe, #f8fafc);
+  box-shadow: 0 18px 32px -26px rgba(37, 99, 235, 0.72);
+}
+
+.zy-launch-home .zy-foundation-category-tile strong {
+  margin-top: 0.75rem;
+  color: #172033;
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.zy-launch-home .zy-foundation-category-tile small {
+  color: #64748b;
+  font-weight: 750;
+}
+
+.zy-launch-home .zy-foundation-category-all {
+  border-color: rgba(37, 99, 235, 0.18);
+  background: linear-gradient(155deg, #eff6ff, #ffffff);
+}
+
+.zy-launch-home .zy-foundation-category-all .zy-foundation-category-image {
+  border-color: rgba(255, 255, 255, 0.3);
+  background: linear-gradient(145deg, #1e40af, #2563eb 58%, #60a5fa);
+  box-shadow: 0 20px 36px -22px rgba(37, 99, 235, 0.9);
+}
+
+.zy-launch-trust-wrap {
+  margin-top: clamp(1.25rem, 3vw, 2.25rem);
+}
+
+.zy-launch-trust {
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 1.5rem;
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: 0 26px 64px -50px rgba(15, 23, 42, 0.72);
+  backdrop-filter: blur(18px);
+  animation: zy-launch-section-in 580ms 80ms ease-out both;
+}
+
+.zy-launch-trust-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.zy-launch-trust-item {
+  display: flex;
+  min-width: 0;
+  min-height: 6.25rem;
+  align-items: center;
+  gap: 0.8rem;
+  padding: 1rem 1.15rem;
+}
+
+.zy-launch-trust-item + .zy-launch-trust-item {
+  border-left: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.zy-launch-trust-icon {
+  display: flex;
+  width: 2.75rem;
+  height: 2.75rem;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(191, 219, 254, 0.7);
+  border-radius: 0.9rem;
+  background: linear-gradient(145deg, #eff6ff, #ffffff);
+  color: #2563eb;
+  box-shadow: 0 16px 28px -24px rgba(37, 99, 235, 0.86);
+}
+
+.zy-launch-trust-item h2 {
+  overflow: hidden;
+  color: #172033;
+  font-size: 0.76rem;
+  font-weight: 900;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.zy-launch-trust-item p {
+  margin-top: 0.22rem;
+  color: #64748b;
+  font-size: 0.64rem;
+  font-weight: 650;
+  line-height: 1.45;
+}
+
+.zy-launch-home .zy-foundation-shelf-stack {
+  gap: clamp(4.25rem, 7vw, 6.5rem);
+  padding-top: clamp(4rem, 7vw, 6rem);
+}
+
+.zy-launch-home .zy-storefront-product-shelf {
+  position: relative;
+  min-width: 0;
+  animation: zy-launch-section-in 620ms ease-out both;
+}
+
+.zy-launch-home .zy-storefront-product-shelf::before {
+  position: absolute;
+  top: -1.15rem;
+  left: 0;
+  width: 4rem;
+  height: 0.18rem;
+  border-radius: 999px;
+  content: "";
+  background: linear-gradient(90deg, #2563eb, #93c5fd);
+}
+
+.zy-launch-home .zy-storefront-product-shelf.is-deals {
+  border: 1px solid rgba(251, 146, 60, 0.16);
+  border-radius: 2rem;
+  padding: clamp(1.1rem, 2.5vw, 1.75rem);
+  background:
+    radial-gradient(circle at 96% 0%, rgba(251, 146, 60, 0.14), transparent 22rem),
+    linear-gradient(150deg, #fffaf5, rgba(255, 255, 255, 0.96) 58%);
+  box-shadow: 0 28px 70px -54px rgba(124, 45, 18, 0.46);
+}
+
+.zy-launch-home .zy-storefront-product-shelf.is-deals::before {
+  top: -0.1rem;
+  left: 1.75rem;
+  background: linear-gradient(90deg, #f97316, #fdba74);
+}
+
+.zy-launch-home .zy-storefront-product-shelf.is-new::before {
+  background: linear-gradient(90deg, #0ea5e9, #7dd3fc);
+}
+
+.zy-launch-home .zy-storefront-product-shelf.is-best-seller::before {
+  background: linear-gradient(90deg, #7c3aed, #c4b5fd);
+}
+
+.zy-launch-home .zy-storefront-product-shelf.is-recommended::before {
+  background: linear-gradient(90deg, #0f766e, #5eead4);
+}
+
+.zy-launch-home .zy-storefront-product-shelf-header {
+  margin-bottom: clamp(1.25rem, 2.5vw, 1.75rem);
+}
+
+.zy-storefront-product-shelf-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: #1d4ed8;
+  font-size: 0.64rem;
+  font-weight: 900;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+}
+
+.zy-storefront-product-shelf-eyebrow > span {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 999px;
+  background: currentColor;
+  box-shadow: 0 0 0 0.25rem rgba(37, 99, 235, 0.1);
+}
+
+.zy-launch-home .is-deals .zy-storefront-product-shelf-eyebrow { color: #c2410c; }
+.zy-launch-home .is-new .zy-storefront-product-shelf-eyebrow { color: #0369a1; }
+.zy-launch-home .is-best-seller .zy-storefront-product-shelf-eyebrow { color: #6d28d9; }
+.zy-launch-home .is-recommended .zy-storefront-product-shelf-eyebrow { color: #0f766e; }
+
+.zy-launch-home .zy-storefront-product-shelf-heading h2 {
+  margin-top: 0.4rem;
+  color: var(--zy-launch-ink);
+  font-size: clamp(1.75rem, 3.1vw, 2.5rem);
+  font-weight: 800;
+  text-wrap: balance;
+}
+
+.zy-launch-home .zy-storefront-product-shelf-heading p {
+  max-width: 38rem;
+  color: var(--zy-launch-muted);
+  font-size: 0.82rem;
+}
+
+.zy-launch-home .zy-storefront-product-shelf-action {
+  border-color: rgba(37, 99, 235, 0.16);
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 18px 34px -27px rgba(30, 64, 175, 0.72);
+}
+
+.zy-launch-home .zy-storefront-product-shelf-grid {
+  gap: clamp(0.95rem, 1.6vw, 1.35rem);
+}
+
+.zy-launch-home .zy-storefront-product-shelf-item {
+  transition: transform 220ms ease;
+}
+
+.zy-launch-home .zy-storefront-product-shelf-empty {
+  border-color: rgba(148, 163, 184, 0.3);
+  background:
+    radial-gradient(circle at 0% 50%, rgba(219, 234, 254, 0.5), transparent 16rem),
+    rgba(255, 255, 255, 0.8);
+  box-shadow: 0 22px 48px -42px rgba(15, 23, 42, 0.54);
+}
+
+@keyframes zy-launch-section-in {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .zy-launch-home .zy-foundation-category-tile:hover {
+    border-color: rgba(37, 99, 235, 0.28);
+    box-shadow: 0 28px 48px -34px rgba(30, 64, 175, 0.58);
+    transform: translateY(-5px);
+  }
+
+  .zy-launch-home .zy-storefront-product-shelf-item:hover {
+    transform: translateY(-3px);
+  }
+
+  .zy-launch-trust-item:hover .zy-launch-trust-icon {
+    border-color: rgba(96, 165, 250, 0.72);
+    background: #eff6ff;
+  }
+}
+
+@media (max-width: 1023px) {
+  .zy-launch-trust-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .zy-launch-trust-item:nth-child(3) { border-left: 0; }
+  .zy-launch-trust-item:nth-child(n + 3) { border-top: 1px solid rgba(148, 163, 184, 0.18); }
+}
+
+@media (max-width: 767px) {
+  .zy-launch-home .zy-foundation-container { width: min(100% - 1rem, var(--zy-launch-container)); }
+  .zy-launch-home .zy-foundation-hero-wrap { padding-bottom: 3.75rem; }
+  .zy-launch-home .zy-hero-v2 { width: 100%; padding-top: 0; }
+  .zy-launch-home .zy-hero-v2-stage { height: 31rem; border-inline: 0; border-radius: 0; }
+  .zy-launch-home .zy-hero-v2-stage::after { border-inline: 0; }
+  .zy-launch-home .zy-hero-v2-copy-inner { justify-content: flex-end; padding: 1.15rem 1rem 3.4rem; }
+  .zy-launch-home .zy-hero-v2-copy::before { background: linear-gradient(180deg, rgba(2, 6, 23, 0.18) 0%, rgba(2, 6, 23, 0.6) 44%, rgba(2, 6, 23, 0.95) 100%); }
+  .zy-launch-home .zy-hero-v2 h1 { max-width: 22rem; font-size: clamp(1.75rem, 8.2vw, 2.2rem); line-height: 1; }
+  .zy-launch-home .zy-hero-v2-subtitle { max-width: 23rem; margin-top: 0.45rem; font-size: 0.68rem; line-height: 1.45; }
+  .zy-launch-home .zy-hero-v2-actions { margin-top: 0.7rem; }
+  .zy-launch-home .zy-hero-v2-trust { margin-top: 0.65rem; }
+  .zy-launch-home .zy-hero-v2-badge { top: 0.8rem; left: 0.8rem; }
+  .zy-launch-home .zy-hero-v2-visual-caption { display: none; }
+  .zy-launch-home .zy-hero-v2-pagination { right: 0.85rem; bottom: 0.85rem; }
+
+  .zy-launch-home .zy-foundation-category-dock {
+    width: calc(100% - 1rem);
+    margin-top: -3rem;
+    border-radius: 1.5rem;
+    padding: 0.9rem;
+  }
+
+  .zy-launch-home .zy-foundation-dock-header { align-items: flex-end; gap: 0.75rem; }
+  .zy-launch-home .zy-foundation-dock-copy p { display: none; }
+  .zy-launch-home .zy-foundation-dock-header h2 { font-size: 1.35rem; }
+  .zy-launch-home .zy-foundation-text-link { min-width: 4.8rem; min-height: 2.75rem; padding-inline: 0.75rem; }
+  .zy-launch-home .zy-foundation-category-rail { display: flex; gap: 0.65rem; }
+  .zy-launch-home .zy-foundation-category-tile,
+  .zy-launch-home .zy-foundation-category-skeleton { width: 6.75rem; min-width: 6.75rem; min-height: 8.15rem; border-radius: 1.1rem; }
+  .zy-launch-home .zy-foundation-category-image,
+  .zy-launch-home .zy-foundation-category-skeleton > span { width: 3.7rem; height: 3.7rem; border-radius: 1rem; }
+
+  .zy-launch-trust-wrap { margin-top: 1rem; }
+  .zy-launch-trust { border-radius: 1.25rem; }
+  .zy-launch-trust-item { min-height: 5.65rem; gap: 0.65rem; padding: 0.8rem 0.65rem; }
+  .zy-launch-trust-icon { width: 2.35rem; height: 2.35rem; border-radius: 0.75rem; }
+  .zy-launch-trust-item h2 { font-size: 0.67rem; }
+  .zy-launch-trust-item p { font-size: 0.57rem; line-height: 1.35; }
+
+  .zy-launch-home .zy-foundation-shelf-stack { gap: 4rem; padding-top: 4rem; }
+  .zy-launch-home .zy-storefront-product-shelf.is-deals { margin-inline: -0.1rem; border-radius: 1.5rem; padding: 1rem 0.7rem 0.8rem; }
+  .zy-launch-home .zy-storefront-product-shelf.is-deals::before { left: 1rem; }
+  .zy-launch-home .zy-storefront-product-shelf-header { align-items: flex-end; gap: 0.75rem; }
+  .zy-launch-home .zy-storefront-product-shelf-heading h2 { margin-top: 0.25rem; font-size: 1.55rem; }
+  .zy-launch-home .zy-storefront-product-shelf-heading p { display: -webkit-box; margin-top: 0.4rem; overflow: hidden; font-size: 0.72rem; line-height: 1.45; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+  .zy-launch-home .zy-storefront-product-shelf-action { min-width: 4.8rem; min-height: 2.75rem; padding-inline: 0.7rem; }
+  .zy-launch-home .zy-storefront-product-shelf-grid { gap: 0.85rem; }
+}
+
+@media (max-width: 389px) {
+  .zy-launch-home .zy-hero-v2-stage { height: 30rem; }
+  .zy-launch-home .zy-hero-v2-kicker { font-size: 0.52rem; }
+  .zy-launch-home .zy-hero-v2 h1 { font-size: 1.72rem; }
+  .zy-launch-home .zy-hero-v2-primary,
+  .zy-launch-home .zy-hero-v2-secondary { min-height: 2.8rem; font-size: 0.61rem; }
+  .zy-launch-trust-item { align-items: flex-start; flex-direction: column; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .zy-launch-home .zy-foundation-category-dock,
+  .zy-launch-trust,
+  .zy-launch-home .zy-storefront-product-shelf { animation: none; }
+  .zy-launch-home .zy-storefront-product-shelf-item,
+  .zy-launch-trust-icon { transition-duration: 0.01ms; }
+}
+
 .zy-market-search:hover {
   border-color: rgba(29, 78, 216, 0.4);
 }

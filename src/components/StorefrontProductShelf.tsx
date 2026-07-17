@@ -15,6 +15,8 @@ export interface StorefrontShelfAction {
 
 interface StorefrontProductShelfProps {
   id: string;
+  eyebrow: string;
+  tone: 'deals' | 'featured' | 'new' | 'best-seller' | 'recommended';
   title: string;
   subtitle: string;
   products: Product[];
@@ -32,6 +34,8 @@ const SHELF_SKELETONS = Array.from({ length: 4 }, (_, index) => index);
 
 export default function StorefrontProductShelf({
   id,
+  eyebrow,
+  tone,
   title,
   subtitle,
   products,
@@ -48,9 +52,13 @@ export default function StorefrontProductShelf({
   const showWishlist = settings?.enableWishlist !== false;
 
   return (
-    <section className="zy-storefront-product-shelf" aria-labelledby={titleId}>
+    <section className={`zy-storefront-product-shelf is-${tone}`} aria-labelledby={titleId}>
       <header className="zy-storefront-product-shelf-header">
         <div className="zy-storefront-product-shelf-heading">
+          <span className="zy-storefront-product-shelf-eyebrow">
+            <span aria-hidden="true" />
+            {eyebrow}
+          </span>
           <h2 id={titleId}>{title}</h2>
           <p>{subtitle}</p>
         </div>
