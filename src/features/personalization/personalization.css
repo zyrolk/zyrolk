@@ -1,0 +1,214 @@
+.zy-personalization-page, .zy-compare-page {
+  --ps-ink: #10233d;
+  --ps-muted: #65758b;
+  --ps-line: #dbe4ee;
+  --ps-blue: #0758c9;
+  width: min(1320px, calc(100% - 2rem));
+  margin: 0 auto;
+  padding: clamp(1.7rem, 5vw, 4rem) 0 clamp(5rem, 9vw, 8rem);
+  color: var(--ps-ink);
+}
+
+.zy-personalization-hero, .zy-compare-hero { display: flex; align-items: center; justify-content: space-between; gap: 1.5rem; overflow: hidden; padding: clamp(1.4rem, 4vw, 2.7rem); border-radius: 1.6rem; color: #fff; background: radial-gradient(circle at 88% 0, rgba(255,255,255,.2), transparent 34%), linear-gradient(135deg, #063d98, #0874e7); box-shadow: 0 24px 55px rgba(6, 61, 152, .2); }
+.zy-personalization-hero h1, .zy-compare-hero h1 { margin: .35rem 0 .45rem; font-size: clamp(2rem, 5vw, 3.7rem); line-height: 1; letter-spacing: -.05em; }
+.zy-personalization-hero > div:first-child > p:last-child, .zy-compare-hero > div:first-child > p:last-child { max-width: 700px; margin: 0; color: #d9edff; font-size: clamp(.85rem, 1.4vw, 1rem); line-height: 1.65; }
+.zy-personalization-hero .zy-section-eyebrow, .zy-compare-hero .zy-section-eyebrow { color: #b9dcff; }
+.zy-personalization-sync { display: flex; flex: 0 0 min(330px, 35%); align-items: center; gap: .75rem; padding: 1rem; border: 1px solid rgba(255,255,255,.24); border-radius: 1.1rem; background: rgba(255,255,255,.12); backdrop-filter: blur(12px); }
+.zy-personalization-sync > svg { width: 1.2rem; }
+.zy-personalization-sync > span { display: grid; min-width: 0; gap: .12rem; }
+.zy-personalization-sync strong { font-size: .78rem; }
+.zy-personalization-sync small { color: #d9edff; font-size: .65rem; line-height: 1.4; }
+.zy-personalization-sync button { margin-left: auto; padding: .48rem .65rem; border: 0; border-radius: .65rem; color: #0758c9; background: #fff; font: inherit; font-size: .66rem; font-weight: 820; cursor: pointer; }
+.zy-compare-hero > div:last-child { display: grid; min-width: 150px; justify-items: center; gap: .1rem; padding: 1rem; border: 1px solid rgba(255,255,255,.22); border-radius: 1.1rem; background: rgba(255,255,255,.12); }
+.zy-compare-hero > div:last-child svg { width: 1.45rem; }
+.zy-compare-hero > div:last-child strong { font-size: 1.7rem; }
+.zy-compare-hero > div:last-child span { color: #d9edff; font-size: .66rem; }
+
+.zy-personalization-tabs { display: flex; gap: .55rem; margin: 1rem 0 1.5rem; overflow-x: auto; padding: .25rem; border: 1px solid var(--ps-line); border-radius: 1rem; background: #fff; box-shadow: 0 12px 32px rgba(15,38,65,.05); }
+.zy-personalization-tabs button { display: inline-flex; flex: 0 0 auto; align-items: center; gap: .4rem; min-height: 2.75rem; padding: .65rem .85rem; border: 0; border-radius: .75rem; color: #566a80; background: transparent; font: inherit; font-size: .72rem; font-weight: 800; cursor: pointer; }
+.zy-personalization-tabs button.is-active { color: #fff; background: linear-gradient(135deg, #0870e4, #064baf); box-shadow: 0 8px 18px rgba(7,88,201,.18); }
+.zy-personalization-tabs svg { width: .95rem; }
+.zy-personalization-tabs span { min-width: 1.25rem; padding: .1rem .28rem; border-radius: 999px; color: var(--ps-blue); background: #eaf3ff; font-size: .61rem; text-align: center; }
+.zy-personalization-tabs button.is-active span { background: #fff; }
+
+.zy-personalization-section-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 1rem; margin-bottom: 1.1rem; }
+.zy-personalization-section-heading h2 { margin: .25rem 0 .18rem; font-size: clamp(1.35rem, 2.5vw, 2rem); letter-spacing: -.035em; }
+.zy-personalization-section-heading > div > p:last-child { margin: 0; color: var(--ps-muted); font-size: .75rem; }
+.zy-personalization-section-heading > button, .zy-clear-history button { display: inline-flex; align-items: center; gap: .38rem; padding: .62rem .75rem; border: 1px solid var(--ps-line); border-radius: .75rem; color: #4e647c; background: #fff; font: inherit; font-size: .68rem; font-weight: 800; cursor: pointer; }
+.zy-personalization-section-heading button svg, .zy-clear-history button svg { width: .85rem; }
+
+.zy-wishlist-two, .zy-recent-history { padding: clamp(1rem, 2.8vw, 1.6rem); border: 1px solid var(--ps-line); border-radius: 1.4rem; background: #f9fbfd; box-shadow: 0 16px 40px rgba(15,38,65,.055); }
+.zy-wishlist-two-grid, .zy-recent-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1rem; }
+.zy-wishlist-two-card, .zy-recent-grid > article, .zy-personalized-product { position: relative; min-width: 0; padding: .45rem; border: 1px solid transparent; border-radius: 1.25rem; background: #fff; transition: border-color .2s ease, box-shadow .2s ease; }
+.zy-wishlist-two-card.is-selected { border-color: #70a8e8; box-shadow: 0 0 0 3px rgba(7,88,201,.1); }
+.zy-wishlist-two-card.is-unavailable { border-color: #e2e7ec; background: #f4f6f8; }
+.zy-wishlist-select { position: absolute; z-index: 8; top: .75rem; left: .75rem; display: grid; width: 1.55rem; height: 1.55rem; place-items: center; border-radius: .45rem; background: rgba(255,255,255,.95); box-shadow: 0 3px 10px rgba(15,38,65,.15); cursor: pointer; }
+.zy-wishlist-select input { width: 1rem; height: 1rem; accent-color: var(--ps-blue); }
+.zy-price-change { position: absolute; z-index: 8; top: .75rem; left: 2.65rem; display: inline-flex; align-items: center; gap: .25rem; padding: .32rem .5rem; border-radius: 999px; font-size: .58rem; font-weight: 850; box-shadow: 0 3px 10px rgba(15,38,65,.1); }
+.zy-price-change svg { width: .72rem; }
+.zy-price-change.is-decreased { color: #17603e; background: #e1f7eb; }
+.zy-price-change.is-increased { color: #9b3038; background: #ffe8ea; }
+.zy-price-change-detail { margin: .45rem .45rem .2rem; color: var(--ps-muted); font-size: .62rem; text-align: center; }
+.zy-wishlist-card-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .4rem; padding: .45rem; }
+.zy-wishlist-card-actions button, .zy-recent-grid > article > button, .zy-personalized-product > button { display: inline-flex; align-items: center; justify-content: center; gap: .3rem; min-height: 2.35rem; padding: .48rem; border: 1px solid #dce5ee; border-radius: .68rem; color: #4e637a; background: #f7f9fb; font: inherit; font-size: .61rem; font-weight: 790; cursor: pointer; }
+.zy-wishlist-card-actions button.is-active, .zy-recent-grid > article > button.is-active, .zy-personalized-product > button.is-active { border-color: #8ab5e8; color: var(--ps-blue); background: #eaf3ff; }
+.zy-wishlist-card-actions button svg, .zy-recent-grid > article > button svg, .zy-personalized-product > button svg { width: .78rem; }
+.zy-wishlist-card-actions > span { display: inline-flex; grid-column: 1 / -1; align-items: center; justify-content: center; gap: .3rem; padding: .36rem; border-radius: .6rem; font-size: .59rem; font-weight: 760; }
+.zy-wishlist-card-actions > span svg { width: .72rem; }
+.zy-wishlist-card-actions > span.is-in { color: #17603e; background: #e8f8ef; }
+.zy-wishlist-card-actions > span.is-low { color: #825d12; background: #fff3d4; }
+.zy-wishlist-card-actions > span.is-out { color: #9c3038; background: #ffeaec; }
+.zy-wishlist-bulk { position: sticky; z-index: 20; top: 6.5rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; padding: .8rem 1rem; border: 1px solid #9dc3ed; border-radius: 1rem; background: rgba(239,247,255,.95); box-shadow: 0 12px 28px rgba(7,88,201,.12); backdrop-filter: blur(10px); }
+.zy-wishlist-bulk > div:first-child { display: grid; gap: .1rem; }
+.zy-wishlist-bulk strong { font-size: .78rem; }
+.zy-wishlist-bulk span { color: var(--ps-muted); font-size: .63rem; }
+.zy-wishlist-bulk > div:last-child { display: flex; gap: .45rem; }
+.zy-wishlist-bulk button { display: inline-flex; align-items: center; gap: .3rem; padding: .58rem .68rem; border: 0; border-radius: .68rem; color: #fff; background: var(--ps-blue); font: inherit; font-size: .66rem; font-weight: 800; cursor: pointer; }
+.zy-wishlist-bulk button:last-child { color: #9d3039; background: #ffe6e8; }
+.zy-wishlist-bulk button svg { width: .8rem; }
+.zy-wishlist-bulk button:disabled { opacity: .5; }
+
+.zy-wishlist-unavailable { display: grid; min-height: 390px; place-items: center; align-content: center; gap: .45rem; padding: 1rem; text-align: center; }
+.zy-wishlist-unavailable > span { width: 8rem; height: 8rem; overflow: hidden; border-radius: 1rem; background: #fff; filter: grayscale(1); opacity: .7; }
+.zy-wishlist-unavailable img { width: 100%; height: 100%; object-fit: contain; }
+.zy-wishlist-unavailable small { margin-top: .5rem; color: #a02d35; font-size: .62rem; font-weight: 850; text-transform: uppercase; }
+.zy-wishlist-unavailable strong { font-size: .8rem; }
+.zy-wishlist-unavailable p { margin: 0; color: var(--ps-muted); font-size: .68rem; line-height: 1.45; }
+.zy-wishlist-unavailable button { display: inline-flex; align-items: center; gap: .3rem; margin-top: .4rem; padding: .55rem .7rem; border: 0; border-radius: .65rem; color: #9e3039; background: #ffe6e8; font: inherit; font-size: .64rem; font-weight: 800; cursor: pointer; }
+.zy-wishlist-unavailable button svg { width: .75rem; }
+.zy-clear-history { display: flex; gap: .4rem; }
+.zy-clear-history button:first-child { color: #9e3039; border-color: #efc7ca; background: #fff5f6; }
+.zy-recent-grid > article > button, .zy-personalized-product > button { width: calc(100% - .9rem); margin: 0 .45rem .45rem; }
+
+.zy-personalization-empty { display: grid; min-height: 330px; place-items: center; align-content: center; gap: .55rem; padding: 2rem; border: 1px dashed #c8d5e1; border-radius: 1.2rem; color: var(--ps-muted); background: #fff; text-align: center; }
+.zy-personalization-empty > svg { width: 2.3rem; color: #8298af; }
+.zy-personalization-empty strong { color: var(--ps-ink); font-size: 1.05rem; }
+.zy-personalization-empty p { max-width: 470px; margin: 0; font-size: .78rem; line-height: 1.55; }
+.zy-personalization-empty button { margin-top: .4rem; padding: .68rem .85rem; border: 0; border-radius: .75rem; color: #fff; background: var(--ps-blue); font: inherit; font-size: .7rem; font-weight: 800; cursor: pointer; }
+.zy-personalization-skeleton { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1rem; margin-top: 1rem; }
+.zy-personalization-skeleton i { min-height: 390px; border-radius: 1.2rem; background: linear-gradient(100deg, #e9eef3 25%, #f8fafc 42%, #e9eef3 60%); background-size: 300% 100%; animation: zy-personalization-shimmer 1.4s infinite linear; }
+@keyframes zy-personalization-shimmer { to { background-position-x: -150%; } }
+
+.zy-personalized { margin-top: clamp(2rem, 5vw, 4rem); }
+.zy-personalized-heading { display: flex; align-items: center; gap: 1rem; max-width: 780px; margin-bottom: 1.3rem; }
+.zy-personalized-heading > span { display: grid; flex: 0 0 3.2rem; width: 3.2rem; height: 3.2rem; place-items: center; border-radius: 1rem; color: #fff; background: linear-gradient(135deg, #6941c6, #3c26a8); box-shadow: 0 12px 25px rgba(82,53,183,.22); }
+.zy-personalized-heading h2 { margin: .25rem 0 .2rem; font-size: clamp(1.55rem, 3vw, 2.4rem); letter-spacing: -.04em; }
+.zy-personalized-heading > div > p:last-child { margin: 0; color: var(--ps-muted); font-size: .77rem; line-height: 1.5; }
+.zy-personalized-sections { display: grid; gap: 1rem; }
+.zy-personalized-shelf { padding: clamp(1rem, 2.5vw, 1.5rem); border: 1px solid var(--ps-line); border-radius: 1.3rem; background: #f9fbfd; }
+.zy-personalized-shelf > header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: .9rem; }
+.zy-personalized-shelf > header > div { display: flex; align-items: center; gap: .7rem; }
+.zy-personalized-shelf > header > div > span { display: grid; width: 2.25rem; height: 2.25rem; flex: 0 0 auto; place-items: center; border-radius: .7rem; color: #6941c6; background: #eee9ff; }
+.zy-personalized-shelf > header svg { width: 1rem; }
+.zy-personalized-shelf h3 { margin: 0; font-size: 1.05rem; }
+.zy-personalized-shelf header p { margin: .1rem 0 0; color: var(--ps-muted); font-size: .66rem; }
+.zy-personalized-shelf header > small { color: var(--ps-muted); font-size: .62rem; white-space: nowrap; }
+.zy-personalized-product-rail { display: grid; grid-auto-columns: minmax(235px, 24%); grid-auto-flow: column; gap: .8rem; overflow-x: auto; padding: .15rem .1rem .7rem; scroll-snap-type: x proximity; }
+.zy-personalized-product { scroll-snap-align: start; }
+.zy-personalized-foundation { display: flex; align-items: center; gap: .8rem; min-height: 100px; padding: 1rem; border: 1px dashed #c8d5e1; border-radius: 1rem; color: var(--ps-muted); background: #fff; }
+.zy-personalized-foundation > svg { flex: 0 0 1.4rem; width: 1.4rem; color: #8298af; }
+.zy-personalized-foundation > div { display: grid; gap: .15rem; }
+.zy-personalized-foundation strong { color: var(--ps-ink); font-size: .76rem; }
+.zy-personalized-foundation p { margin: 0; font-size: .66rem; }
+.zy-personalized-foundation button { display: inline-flex; align-items: center; gap: .3rem; margin-left: auto; padding: .55rem .65rem; border: 0; border-radius: .65rem; color: var(--ps-blue); background: #eaf3ff; font: inherit; font-size: .64rem; font-weight: 800; cursor: pointer; white-space: nowrap; }
+.zy-personalized-foundation button svg { width: .75rem; }
+
+.zy-compare-picker { padding: clamp(1rem, 2.5vw, 1.5rem); border: 1px solid var(--ps-line); border-radius: 1.3rem; background: #fff; box-shadow: 0 14px 35px rgba(15,38,65,.055); }
+.zy-compare-picker > header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.zy-compare-picker h2 { margin: .25rem 0 .8rem; font-size: 1.35rem; }
+.zy-compare-picker header > span { color: var(--ps-muted); font-size: .66rem; }
+.zy-compare-picker > label { position: relative; display: block; max-width: 580px; }
+.zy-compare-picker > label svg { position: absolute; top: 50%; left: .9rem; width: .95rem; color: #778ba0; transform: translateY(-50%); }
+.zy-compare-picker input { width: 100%; min-height: 3rem; padding: .65rem .8rem .65rem 2.6rem; border: 1px solid #ccd8e3; border-radius: .8rem; color: var(--ps-ink); font: inherit; font-size: .78rem; outline: none; }
+.zy-compare-picker input:focus { border-color: #428de1; box-shadow: 0 0 0 3px rgba(7,88,201,.13); }
+.zy-compare-picker > div { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .55rem; margin-top: .85rem; }
+.zy-compare-picker > div > article { display: grid; grid-template-columns: 2.6rem minmax(0,1fr) 1.9rem; align-items: center; gap: .55rem; min-width: 0; padding: .55rem; border: 1px solid #dce5ee; border-radius: .8rem; color: var(--ps-ink); background: #f9fbfd; text-align: left; }
+.zy-compare-picker > div > article > span { width: 2.6rem; height: 2.6rem; overflow: hidden; border-radius: .55rem; background: #fff; }
+.zy-compare-picker > div > article img { width: 100%; height: 100%; object-fit: contain; }
+.zy-compare-picker > div > article > div { display: grid; min-width: 0; gap: .12rem; }
+.zy-compare-picker > div > article strong, .zy-compare-picker > div > article small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.zy-compare-picker > div > article strong { font-size: .66rem; }
+.zy-compare-picker > div > article small { color: var(--ps-muted); font-size: .56rem; }
+.zy-compare-picker > div > article > button { display: grid; width: 1.9rem; height: 1.9rem; place-items: center; border: 0; border-radius: .55rem; color: var(--ps-blue); background: #eaf3ff; cursor: pointer; }
+.zy-compare-picker > div > article > button svg { width: .8rem; }
+.zy-compare-no-results { margin: .8rem 0 0; color: var(--ps-muted); font-size: .72rem; }
+.zy-compare-empty { margin-top: 1rem; }
+.zy-compare-workspace { margin-top: 1rem; padding: clamp(1rem, 2.5vw, 1.5rem); border: 1px solid var(--ps-line); border-radius: 1.35rem; background: #fff; box-shadow: 0 16px 40px rgba(15,38,65,.06); }
+.zy-compare-table-wrap { overflow: auto; max-height: 72vh; border: 1px solid var(--ps-line); border-radius: 1rem; outline: none; }
+.zy-compare-table-wrap:focus-visible { box-shadow: 0 0 0 3px rgba(7,88,201,.18); }
+.zy-compare-table { border-collapse: collapse; }
+.zy-compare-table-wrap table { width: 100%; min-width: 760px; border-collapse: separate; border-spacing: 0; }
+.zy-compare-table th, .zy-compare-table td { min-width: 190px; padding: .75rem; border-right: 1px solid #e5ebf1; border-bottom: 1px solid #e5ebf1; font-size: .7rem; text-align: left; vertical-align: middle; }
+.zy-compare-table thead th { position: sticky; z-index: 3; top: 0; background: #fff; }
+.zy-compare-table thead th:first-child, .zy-compare-table tbody th { position: sticky; z-index: 4; left: 0; min-width: 150px; background: #f7f9fb; }
+.zy-compare-table thead th:not(:first-child) { text-align: center; }
+.zy-compare-table thead th > button { position: absolute; top: .5rem; right: .5rem; display: grid; width: 1.7rem; height: 1.7rem; place-items: center; border: 0; border-radius: .5rem; color: #9c3038; background: #ffe9eb; cursor: pointer; }
+.zy-compare-table thead th > button svg { width: .75rem; }
+.zy-compare-table thead th > span { display: block; width: 6rem; height: 6rem; margin: 0 auto .5rem; }
+.zy-compare-table thead img { width: 100%; height: 100%; object-fit: contain; }
+.zy-compare-table thead strong, .zy-compare-table thead small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.zy-compare-table thead strong { font-size: .72rem; }
+.zy-compare-table thead small { margin-top: .15rem; color: var(--ps-muted); font-size: .58rem; }
+.zy-compare-table thead th div button { margin-top: .45rem; padding: .35rem .5rem; border: 0; border-radius: .5rem; color: var(--ps-blue); background: #eaf3ff; font: inherit; font-size: .56rem; font-weight: 800; cursor: pointer; }
+.zy-compare-table tbody th { display: table-cell; color: #455a71; font-weight: 800; }
+.zy-compare-table tbody th svg { display: inline; width: .75rem; margin-right: .25rem; color: var(--ps-blue); }
+.zy-compare-table tr.is-different th, .zy-compare-table tr.is-different td { background: #eef6ff; }
+.zy-compare-table tr.is-different th { background: #e4f1ff; }
+.zy-compare-commerce { display: grid; grid-template-columns: 150px repeat(4, minmax(0, 1fr)); gap: .55rem; margin-top: .8rem; }
+.zy-compare-commerce > span { align-self: center; color: var(--ps-muted); font-size: .68rem; font-weight: 800; }
+.zy-compare-commerce article { display: grid; align-content: start; gap: .45rem; min-width: 0; padding: .65rem; border: 1px solid var(--ps-line); border-radius: .8rem; background: #f9fbfd; }
+.zy-compare-commerce article > strong { overflow: hidden; font-size: .65rem; text-overflow: ellipsis; white-space: nowrap; }
+.zy-compare-commerce article > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .3rem; }
+.zy-compare-commerce button { display: inline-flex; align-items: center; justify-content: center; gap: .25rem; min-height: 2.2rem; padding: .4rem; border: 0; border-radius: .58rem; color: #fff; background: var(--ps-blue); font: inherit; font-size: .55rem; font-weight: 800; cursor: pointer; }
+.zy-compare-commerce button:last-child { color: #9d3039; background: #ffe8ea; }
+.zy-compare-commerce button:last-child.is-active { color: #17603e; background: #e4f7ed; }
+.zy-compare-commerce button svg { width: .7rem; }
+.zy-compare-commerce button:disabled { opacity: .5; }
+.zy-compare-commerce article > small { display: inline-flex; align-items: center; gap: .25rem; color: var(--ps-muted); font-size: .56rem; }
+.zy-compare-commerce article > small svg { width: .7rem; }
+
+.zy-personalization-page button:focus-visible, .zy-personalization-page input:focus-visible, .zy-compare-page button:focus-visible, .zy-compare-page input:focus-visible { outline: 3px solid rgba(7,88,201,.35); outline-offset: 2px; }
+
+@media (max-width: 1050px) {
+  .zy-wishlist-two-grid, .zy-recent-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .zy-personalization-skeleton { grid-template-columns: repeat(3, minmax(0,1fr)); }
+  .zy-compare-picker > div { grid-template-columns: repeat(2, minmax(0,1fr)); }
+  .zy-compare-commerce { grid-template-columns: repeat(2, minmax(0,1fr)); }
+  .zy-compare-commerce > span { grid-column: 1 / -1; }
+}
+
+@media (max-width: 780px) {
+  .zy-personalization-hero, .zy-compare-hero { align-items: flex-start; flex-direction: column; }
+  .zy-personalization-sync { flex-basis: auto; width: 100%; }
+  .zy-compare-hero > div:last-child { width: 100%; }
+  .zy-wishlist-two-grid, .zy-recent-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .zy-personalization-skeleton { grid-template-columns: repeat(2, minmax(0,1fr)); }
+  .zy-personalized-product-rail { grid-auto-columns: 44%; }
+  .zy-personalized-foundation { align-items: flex-start; flex-wrap: wrap; }
+  .zy-personalized-foundation button { margin-left: 2.2rem; }
+}
+
+@media (max-width: 520px) {
+  .zy-personalization-page, .zy-compare-page { width: min(100% - 1rem, 1320px); padding-top: 1rem; }
+  .zy-personalization-hero, .zy-compare-hero { border-radius: 1.2rem; }
+  .zy-personalization-section-heading { align-items: flex-start; flex-direction: column; }
+  .zy-wishlist-two-grid, .zy-recent-grid { grid-template-columns: minmax(0, 1fr); }
+  .zy-wishlist-bulk { top: 5.2rem; align-items: stretch; flex-direction: column; }
+  .zy-wishlist-bulk > div:last-child { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .zy-personalization-skeleton { grid-template-columns: minmax(0,1fr); }
+  .zy-personalized-product-rail { grid-auto-columns: 78%; }
+  .zy-personalized-shelf > header { align-items: flex-start; }
+  .zy-personalized-shelf > header > small { display: none; }
+  .zy-clear-history { flex-direction: column; width: 100%; }
+  .zy-clear-history button { justify-content: center; width: 100%; }
+  .zy-compare-picker > div, .zy-compare-commerce { grid-template-columns: minmax(0,1fr); }
+  .zy-compare-table-wrap table { min-width: 690px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .zy-personalization-page *, .zy-compare-page * { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
+}
+
+@media (forced-colors: active) {
+  .zy-personalization-tabs button.is-active, .zy-wishlist-bulk button, .zy-personalization-empty button, .zy-compare-commerce button { border: 1px solid ButtonText; }
+}

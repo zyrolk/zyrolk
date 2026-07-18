@@ -20,6 +20,8 @@ const PAGE_COPY: Record<string, { title: string; description: string }> = {
     title: 'Your Wishlist',
     description: 'Review the marketplace products you have saved while comparing your options.',
   },
+  'recently-viewed': { title: 'Recently Viewed', description: 'Continue exploring products recently viewed on Zyro.lk.' },
+  compare: { title: 'Compare Products', description: 'Compare live Zyro.lk products across pricing, availability, and specifications.' },
   account: { title: 'My Account', description: 'Manage your Zyro.lk customer account.' },
   'account-orders': { title: 'My Orders', description: 'Review and track your private Zyro.lk order history.' },
   'account-order-details': { title: 'Order Details', description: 'Review private Zyro.lk order details and fulfilment progress.' },
@@ -115,7 +117,7 @@ export const buildStorefrontSeo = ({ currentPage, product, settings, origin, isA
     resolvedOrigin,
   );
   const keywords = cleanText(settings?.seoKeywords) || 'Zyro.lk, online marketplace Sri Lanka, online shopping Sri Lanka';
-  const isPrivateCustomerPage = currentPage === 'wishlist' || currentPage.startsWith('account');
+  const isPrivateCustomerPage = ['wishlist', 'recently-viewed', 'compare'].includes(currentPage) || currentPage.startsWith('account');
   const robots = isAdminMode || isMissingPage || isPrivateCustomerPage ? 'noindex, follow' : 'index, follow';
   const socialLinks = [settings?.facebookUrl, settings?.instagramUrl, settings?.tiktokUrl, settings?.youtubeUrl]
     .map(value => absoluteHttpUrl(value, resolvedOrigin))

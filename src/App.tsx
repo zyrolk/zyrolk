@@ -13,6 +13,10 @@ import { getBrowserStorage, readStoredArray, writeStoredJson } from './services/
 import { reportClientIssue } from './services/observability/clientDiagnostics';
 import { addRecentlyViewedProduct, buildRecentlyViewedProducts } from './features/account/accountData';
 import {
+  buildPersonalizedRecommendations, cleanRecentlyViewedIds, mergeRecentlyViewedIds,
+  reconcileWishlistProducts, resolveComparedProducts, toggleCompareProduct,
+} from './features/personalization/personalization';
+import {
   buildCategoryProductCounts,
   categoryMatches,
   getActiveCategories,
@@ -38,6 +42,8 @@ const CmsPage = lazy(() => import('./components/CmsPage'));
 const ContactPage = lazy(() => import('./components/ContactPage'));
 const ProductDetailModal = lazy(() => import('./components/ProductDetailModal'));
 const AccountCenter = lazy(() => import('./features/account/AccountCenter'));
+const WishlistExperience = lazy(() => import('./features/personalization/WishlistExperience'));
+const CompareProducts = lazy(() => import('./features/personalization/CompareProducts'));
 
 // Lucide Icons
 import { 
@@ -53,7 +59,7 @@ const formatPrice = (amount: number) => new Intl.NumberFormat('en-LK', {
 }).format(amount);
 
 const STOREFRONT_PAGE_IDS = new Set([
-  'home', 'legacy-home', 'products', 'categories', 'wishlist', 'contact',
+  'home', 'legacy-home', 'products', 'categories', 'wishlist', 'recently-viewed', 'compare', 'contact',
   'account', 'account-orders', 'account-order-details', 'account-profile', 'account-addresses', 'account-security', 'account-settings',
   'about-us', 'privacy-policy', 'terms-conditions', 'return-policy', 'faq',
 ]);
@@ -113,6 +119,9 @@ export default function App() {
   const [recentlyViewedProductIds, setRecentlyViewedProductIds] = useState<string[]>(
     () => readStoredArray<string>(getBrowserStorage('localStorage'), 'zyro_recently_viewed'),
   );
+  const [compareProductIds, setCompareProductIds] = useState<string[]>(
+    () => readStoredArray<string>(getBrowserStorage('localStorage'), 'zyro_compare_products').slice(0, 4),
+  );
 
   // Filtering / Sorting / Search States
   const [searchQuery, setSearchQuery] = useState<string>("");
@@ -129,6 +138,9 @@ export default function App() {
   const [isFilterDrawerOpen, setIsFilterDrawerOpen] = useState<boolean>(false);
   const [wishlistFeedback, setWishlistFeedback] = useState<{ productName: string; action: 'added' | 'removed' } | null>(null);
   const wishlistFeedbackTimerRef = useRef<number | null>(null);
+  const wishlistRef = useRef(wishlist);
+  const cartRef = useRef(cart);
+  const recentlyViewedIdsRef = useRef(recentlyViewedProductIds);
   const storefrontContentRef = useRef<HTMLElement | null>(null);
   const previousPageRef = useRef(currentPage);
 
@@ -136,6 +148,9 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [wishlistLoadedForUser, setWishlistLoadedForUser] = useState<string | null>(null);
   const [cartLoadedForUser, setCartLoadedForUser] = useState<string | null>(null);
+  const [recentlyViewedLoadedForUser, setRecentlyViewedLoadedForUser] = useState<string | null>(null);
+  const [personalizationSyncError, setPersonalizationSyncError] = useState('');
+  const [compareMessage, setCompareMessage] = useState('');
   const [isAdminUser, setIsAdminUser] = useState<boolean>(false);
   const [adminInitialTab, setAdminInitialTab] = useState<'stats' | 'products' | 'categories' | 'orders' | 'customers' | 'pages' | 'settings'>('stats');
   const [adminInitialCmsPageId, setAdminInitialCmsPageId] = useState<string>('about-us');
@@ -145,6 +160,10 @@ export default function App() {
       window.clearTimeout(wishlistFeedbackTimerRef.current);
     }
   }, []);
+
+  useEffect(() => { wishlistRef.current = wishlist; }, [wishlist]);
+  useEffect(() => { cartRef.current = cart; }, [cart]);
+  useEffect(() => { recentlyViewedIdsRef.current = recentlyViewedProductIds; }, [recentlyViewedProductIds]);
 
   useEffect(() => {
     const handleOnline = () => setIsOffline(false);
@@ -178,8 +197,9 @@ export default function App() {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (currentUser) {
         try {
-          let loadedWishlist = wishlist;
-          let loadedCart = cart;
+          let loadedWishlist = wishlistRef.current;
+          let loadedCart = cartRef.current;
+          let loadedRecentlyViewedIds = recentlyViewedIdsRef.current;
           if (isProductionAdminEmail(currentUser.email)) {
             setIsAdminMode(true);
             setIsAdminUser(true);
@@ -193,20 +213,20 @@ export default function App() {
               if (userData && userData.wishlist && Array.isArray(userData.wishlist)) {
                 const cloudWishlist = userData.wishlist as Product[];
                 const merged = [...cloudWishlist];
-                wishlist.forEach(localItem => {
+                wishlistRef.current.forEach(localItem => {
                   if (!merged.some(cloudItem => cloudItem.id === localItem.id)) {
                     merged.push(localItem);
                   }
                 });
                 loadedWishlist = merged;
               } else {
-                loadedWishlist = wishlist;
+                loadedWishlist = wishlistRef.current;
               }
               // Sync user's cart from firestore and merge with current guest cart
               if (userData && userData.cart && Array.isArray(userData.cart)) {
                 const cloudCart = userData.cart as CartItem[];
                 const merged = [...cloudCart];
-                cart.forEach(localItem => {
+                cartRef.current.forEach(localItem => {
                   const existing = merged.find(cloudItem => cloudItem.product.id === localItem.product.id);
                   if (existing) {
                     existing.quantity = Math.max(existing.quantity, localItem.quantity);
@@ -216,7 +236,13 @@ export default function App() {
                 });
                 loadedCart = merged;
               } else {
-                loadedCart = cart;
+                loadedCart = cartRef.current;
+              }
+              if (userData && Array.isArray(userData.recentlyViewedProductIds)) {
+                loadedRecentlyViewedIds = mergeRecentlyViewedIds(
+                  recentlyViewedIdsRef.current,
+                  userData.recentlyViewedProductIds as string[],
+                );
               }
             } else {
               setIsAdminMode(false);
@@ -225,8 +251,10 @@ export default function App() {
           }
           setWishlist(loadedWishlist);
           setCart(loadedCart);
+          setRecentlyViewedProductIds(loadedRecentlyViewedIds);
           setWishlistLoadedForUser(currentUser.uid);
           setCartLoadedForUser(currentUser.uid);
+          setRecentlyViewedLoadedForUser(currentUser.uid);
           setUser(currentUser);
         } catch (e: any) {
           reportClientIssue('auth-profile-load', e, 'warning');
@@ -234,6 +262,7 @@ export default function App() {
           setIsAdminUser(false);
           setWishlistLoadedForUser(currentUser.uid);
           setCartLoadedForUser(currentUser.uid);
+          setRecentlyViewedLoadedForUser(currentUser.uid);
           setUser(currentUser);
         }
       } else {
@@ -241,6 +270,8 @@ export default function App() {
         setIsAdminUser(false);
         setWishlistLoadedForUser(null);
         setCartLoadedForUser(null);
+        setRecentlyViewedLoadedForUser(null);
+        setPersonalizationSyncError('');
         setUser(null);
       }
     });
@@ -298,8 +329,10 @@ export default function App() {
               wishlist
             });
           }
+          setPersonalizationSyncError('');
         } catch (e: any) {
           reportClientIssue('wishlist-cloud-sync', e, 'warning');
+          setPersonalizationSyncError('Your saved products could not be synchronized. They remain available on this device.');
         }
       }
     };
@@ -309,7 +342,47 @@ export default function App() {
 
   useEffect(() => {
     writeStoredJson(getBrowserStorage('localStorage'), 'zyro_recently_viewed', recentlyViewedProductIds);
-  }, [recentlyViewedProductIds]);
+    const syncRecentlyViewed = async () => {
+      if (!user || recentlyViewedLoadedForUser !== user.uid) return;
+      try {
+        const userRef = doc(db, 'users', user.uid);
+        const userSnapshot = await getDoc(userRef);
+        if (userSnapshot.exists()) {
+          await updateDoc(userRef, { recentlyViewedProductIds });
+        } else {
+          await setDoc(userRef, {
+            uid: user.uid,
+            email: user.email || '',
+            displayName: user.displayName || user.email?.split('@')[0] || '',
+            role: 'customer',
+            createdAt: new Date().toISOString(),
+            recentlyViewedProductIds,
+          });
+        }
+        setPersonalizationSyncError('');
+      } catch (error) {
+        reportClientIssue('recently-viewed-cloud-sync', error, 'warning');
+        setPersonalizationSyncError('Your browsing history could not be synchronized. It remains available on this device.');
+      }
+    };
+    syncRecentlyViewed();
+  }, [recentlyViewedProductIds, recentlyViewedLoadedForUser, user]);
+
+  useEffect(() => {
+    writeStoredJson(getBrowserStorage('localStorage'), 'zyro_compare_products', compareProductIds);
+  }, [compareProductIds]);
+
+  useEffect(() => {
+    if (loading) return;
+    setRecentlyViewedProductIds(current => {
+      const cleaned = cleanRecentlyViewedIds(current, products);
+      return cleaned.length === current.length && cleaned.every((id, index) => id === current[index]) ? current : cleaned;
+    });
+    setCompareProductIds(current => {
+      const cleaned = resolveComparedProducts(current, products).map(product => product.id);
+      return cleaned.length === current.length && cleaned.every((id, index) => id === current[index]) ? current : cleaned;
+    });
+  }, [loading, products]);
 
   // Seeding & Firestore Live Sync
   useEffect(() => {
@@ -516,6 +589,25 @@ export default function App() {
     wishlistFeedbackTimerRef.current = window.setTimeout(() => setWishlistFeedback(null), 2400);
   }, [wishlist]);
 
+  const handleRemoveWishlistItems = useCallback((productIds: string[]) => {
+    const ids = new Set(productIds);
+    setWishlist(current => current.filter(product => !ids.has(product.id)));
+  }, []);
+
+  const handleToggleCompare = useCallback((product: Product) => {
+    setCompareProductIds(current => {
+      const result = toggleCompareProduct(current, product.id);
+      setCompareMessage(result.outcome === 'limit-reached'
+        ? 'You can compare up to four products. Remove one before adding another.'
+        : result.outcome === 'added'
+          ? `${product.name} added to comparison.`
+          : result.outcome === 'removed'
+            ? `${product.name} removed from comparison.`
+            : 'This product could not be added to comparison.');
+      return result.ids;
+    });
+  }, []);
+
   const handleViewProduct = useCallback((product: Product) => {
     setRecentlyViewedProductIds(previous => addRecentlyViewedProduct(previous, product.id));
     setSelectedProduct(product);
@@ -645,7 +737,20 @@ export default function App() {
   }, []);
 
   const liveSelectedProduct = selectedProduct ? (products.find(product => product.id === selectedProduct.id) || selectedProduct) : null;
-  const recentlyViewedProducts = buildRecentlyViewedProducts(recentlyViewedProductIds, products);
+  const recentlyViewedProducts = useMemo(
+    () => buildRecentlyViewedProducts(recentlyViewedProductIds, products, 24),
+    [recentlyViewedProductIds, products],
+  );
+  const wishlistViews = useMemo(() => reconcileWishlistProducts(wishlist, products), [wishlist, products]);
+  const liveWishlistProducts = useMemo(
+    () => wishlistViews.filter(item => item.isAvailable).map(item => item.product),
+    [wishlistViews],
+  );
+  const recommendationSections = useMemo(
+    () => buildPersonalizedRecommendations({ products, wishlist: liveWishlistProducts, recentlyViewed: recentlyViewedProducts }),
+    [liveWishlistProducts, products, recentlyViewedProducts],
+  );
+  const compareIdSet = useMemo(() => new Set(compareProductIds), [compareProductIds]);
   const isKnownStorefrontPage = STOREFRONT_PAGE_IDS.has(currentPage);
 
   return (
@@ -1485,60 +1590,47 @@ export default function App() {
             </section>
           )}
 
-          {/* PAGE 4: WISHLIST */}
-          {currentPage === 'wishlist' && (
-            <div className="zy-storefront-page zy-wishlist-page max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 sm:py-12 animate-fadeIn text-left space-y-8">
-              <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 border-b border-slate-200 pb-5">
-                <div>
-                  <span className="zy-section-eyebrow">Saved for later</span>
-                  <div className="mt-1.5 flex items-center gap-3">
-                    <h1 className="text-2xl sm:text-3xl font-black font-display text-slate-950">Your Wishlist</h1>
-                    <span className="inline-flex h-7 min-w-7 items-center justify-center rounded-full bg-red-50 px-2 text-xs font-black text-red-600">{wishlist.length}</span>
-                  </div>
-                  <p className="text-xs text-slate-500 font-medium mt-1.5">Compare saved products and revisit them whenever you are ready.</p>
-                </div>
-                {wishlist.length > 0 && (
-                  <button type="button" onClick={() => { setCurrentPage('products'); setSelectedCategory('all'); }} className="zy-button zy-button-outline min-h-11 px-4 text-xs focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20">
-                    Continue Shopping
-                    <ArrowRight className="ml-1.5 h-4 w-4" aria-hidden="true" />
-                  </button>
-                )}
-              </div>
+          {/* WISHLIST 2.0 & RECENTLY VIEWED */}
+          {(currentPage === 'wishlist' || currentPage === 'recently-viewed') && (
+            <Suspense fallback={<LazyBlockFallback className="mx-auto my-12 min-h-[36rem] max-w-7xl" label="Loading personalized shopping" />}>
+              <WishlistExperience
+                mode={currentPage === 'wishlist' ? 'wishlist' : 'recent'}
+                user={user}
+                loading={loading}
+                syncError={personalizationSyncError}
+                wishlistViews={wishlistViews}
+                recentlyViewed={recentlyViewedProducts}
+                compareIds={compareIdSet}
+                recommendationSections={recommendationSections}
+                settings={settings}
+                onNavigate={setCurrentPage}
+                onOpenAuth={() => setIsAuthModalOpen(true)}
+                onAddToCart={handleAddToCart}
+                onToggleWishlist={handleToggleWishlist}
+                onRemoveWishlistItems={handleRemoveWishlistItems}
+                onViewProduct={handleViewProduct}
+                onClearHistory={() => setRecentlyViewedProductIds([])}
+                onToggleCompare={handleToggleCompare}
+              />
+            </Suspense>
+          )}
 
-              {wishlist.length === 0 ? (
-                <div className="zy-surface zy-empty-state px-6 py-16 sm:py-20 text-center space-y-5">
-                  <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full bg-red-50 text-red-500">
-                    <Heart className="h-9 w-9" aria-hidden="true" />
-                  </div>
-                  <div>
-                    <p className="text-lg font-black text-slate-950 font-display">Your wishlist is ready for favourites</p>
-                    <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-slate-500">Tap the heart on any product to keep it here while you compare options.</p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => { setCurrentPage('products'); setSelectedCategory('all'); }}
-                    className="zy-button zy-button-primary mx-auto min-h-11 px-5 text-xs focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/25"
-                  >
-                    Explore Products
-                    <ArrowRight className="ml-1.5 h-4 w-4" aria-hidden="true" />
-                  </button>
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 min-[480px]:grid-cols-2 lg:grid-cols-4 gap-5 sm:gap-6">
-                  {wishlist.map((prod) => (
-                    <ProductCard 
-                      key={prod.id}
-                      product={prod}
-                      isWishlisted={true}
-                      onAddToCart={handleAddToCart}
-                      onToggleWishlist={handleToggleWishlist}
-                      onViewDetail={handleViewProduct}
-                      settings={settings}
-                    />
-                  ))}
-                </div>
-              )}
-            </div>
+          {currentPage === 'compare' && (
+            <Suspense fallback={<LazyBlockFallback className="mx-auto my-12 min-h-[36rem] max-w-7xl" label="Loading product comparison" />}>
+              <CompareProducts
+                products={products}
+                compareIds={compareProductIds}
+                wishlistIds={wishlistProductIds}
+                loading={loading}
+                message={compareMessage}
+                onToggleCompare={handleToggleCompare}
+                onClearCompare={() => { setCompareProductIds([]); setCompareMessage(''); }}
+                onAddToCart={handleAddToCart}
+                onToggleWishlist={handleToggleWishlist}
+                onViewProduct={handleViewProduct}
+                onNavigate={setCurrentPage}
+              />
+            </Suspense>
           )}
 
           {/* CUSTOMER ACCOUNT CENTER */}

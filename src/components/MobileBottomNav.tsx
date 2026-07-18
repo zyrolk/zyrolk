@@ -3,7 +3,7 @@ import {
   Home, ShoppingBag, Heart, ShoppingCart, Menu, X, 
   LayoutDashboard, LogIn, LogOut, Phone, MapPin, 
   ChevronRight, SlidersHorizontal, UserRound, ShieldCheck, MessageCircle,
-  Mail, HelpCircle, LockKeyhole, Info, Settings, ReceiptText
+  Mail, HelpCircle, LockKeyhole, Info, Settings, ReceiptText, Clock3, BarChart3
 } from 'lucide-react';
 import { auth } from '../firebase';
 import { signOut } from 'firebase/auth';
@@ -249,6 +249,8 @@ export default function MobileBottomNav({
                 <div className="grid grid-cols-2 gap-2.5">
                   <button onClick={() => handleTabClick('products')} className="zy-account-action"><ShoppingBag className="h-4.5 w-4.5 text-brand-blue" /><span>Shop products</span></button>
                   <button onClick={() => handleTabClick('wishlist')} className="zy-account-action"><Heart className="h-4.5 w-4.5 text-red-500" /><span>Wishlist</span></button>
+                  <button onClick={() => handleTabClick('recently-viewed')} className="zy-account-action"><Clock3 className="h-4.5 w-4.5 text-brand-blue" /><span>Recently viewed</span></button>
+                  <button onClick={() => handleTabClick('compare')} className="zy-account-action"><BarChart3 className="h-4.5 w-4.5 text-brand-blue" /><span>Compare</span></button>
                   <button onClick={() => { setIsMoreMenuOpen(false); onOpenCart(); }} className="zy-account-action"><ShoppingCart className="h-4.5 w-4.5 text-brand-blue" /><span>Cart</span></button>
                   <button onClick={() => handleTabClick('categories')} className="zy-account-action"><SlidersHorizontal className="h-4.5 w-4.5 text-brand-blue" /><span>Categories</span></button>
                 </div>

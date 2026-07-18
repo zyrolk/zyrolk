@@ -4,7 +4,7 @@ import {
   LayoutDashboard, LogIn, LogOut, ChevronDown,
   ArrowUpRight, Clock3, LoaderCircle, PackageSearch, Tag,
   ShieldCheck, Grid3X3, MessageCircle, MapPin, Bell,
-  Ticket, Settings, Headphones, ReceiptText, Home, Sparkles
+  Ticket, Settings, Headphones, ReceiptText, Home, Sparkles, BarChart3
 } from 'lucide-react';
 import { auth } from '../firebase';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
@@ -260,6 +260,8 @@ export default function Navbar({
     { label: 'My Account', icon: User, action: user ? () => navigateToPage('account') : () => { onOpenAuthModal(); setIsProfileOpen(false); }, pending: false },
     { label: 'Orders', icon: ReceiptText, action: user ? () => navigateToPage('account-orders') : () => { onOpenAuthModal(); setIsProfileOpen(false); }, pending: false },
     ...(isWishlistEnabled ? [{ label: 'Wishlist', icon: Heart, action: () => navigateToPage('wishlist'), pending: false }] : []),
+    { label: 'Recently Viewed', icon: Clock3, action: () => navigateToPage('recently-viewed'), pending: false },
+    { label: 'Compare Products', icon: BarChart3, action: () => navigateToPage('compare'), pending: false },
     { label: 'Addresses', icon: MapPin, action: user ? () => navigateToPage('account-addresses') : () => { onOpenAuthModal(); setIsProfileOpen(false); }, pending: false },
     { label: 'Notifications', icon: Bell, action: user ? () => navigateToPage('account-settings') : () => { onOpenAuthModal(); setIsProfileOpen(false); }, pending: false },
     { label: 'Coupons', icon: Ticket, action: undefined, pending: true },
@@ -678,6 +680,8 @@ export default function Navbar({
                 {isWishlistEnabled && (
                   <button type="button" onClick={() => navigateToPage('wishlist')} className="zy-mobile-account-card"><Heart className="h-5 w-5" aria-hidden="true" /><span>Wishlist</span>{wishlistCount > 0 && <b>{wishlistCount}</b>}</button>
                 )}
+                <button type="button" onClick={() => navigateToPage('recently-viewed')} className="zy-mobile-account-card"><Clock3 className="h-5 w-5" aria-hidden="true" /><span>Recently Viewed</span></button>
+                <button type="button" onClick={() => navigateToPage('compare')} className="zy-mobile-account-card"><BarChart3 className="h-5 w-5" aria-hidden="true" /><span>Compare</span></button>
                 {user && (
                   <button type="button" onClick={() => navigateToPage('account-settings')} className="zy-mobile-account-card"><Settings className="h-5 w-5" aria-hidden="true" /><span>Settings</span></button>
                 )}
