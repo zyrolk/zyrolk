@@ -131,9 +131,10 @@ test('customer workflows use safe diagnostics and resilient checkout networking'
   assert.match(viteConfig, /pure: \['console\.log', 'console\.info', 'console\.debug'\]/);
 });
 
-test('Firestore and Storage rules tighten existing production boundaries without schema changes', () => {
-  assert.match(firestoreRules, /data\.keys\(\)\.hasOnly\(\[[\s\S]*'createdAt'/);
-  assert.match(firestoreRules, /data\.comment\.size\(\) >= 1 && data\.comment\.size\(\) <= 2000/);
+test('Firestore and Storage rules tighten existing production boundaries', () => {
+  const reviewRules = firestoreRules.slice(firestoreRules.indexOf('match /reviews/{reviewId}'), firestoreRules.indexOf('// Product Q&A'));
+  assert.match(reviewRules, /allow create, update, delete: if false/);
+  assert.match(reviewRules, /match \/votes\/\{userId\}[\s\S]*allow read, write: if false/);
   const testCollectionRules = firestoreRules.slice(firestoreRules.indexOf('match /test/{docId}'));
   assert.match(testCollectionRules, /allow read, write: if false/);
 

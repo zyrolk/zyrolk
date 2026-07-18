@@ -1,6 +1,7 @@
 export interface ReviewAggregateInput {
   approved?: unknown;
   rating?: unknown;
+  verifiedPurchase?: unknown;
 }
 
 export interface ReviewAggregateResult {
@@ -10,7 +11,7 @@ export interface ReviewAggregateResult {
 
 export function calculateReviewAggregate(reviews: ReviewAggregateInput[]): ReviewAggregateResult {
   const validRatings = reviews
-    .filter((review) => review.approved !== false)
+    .filter((review) => review.approved !== false && review.verifiedPurchase === true)
     .map((review) => review.rating)
     .filter((rating): rating is number => (
       typeof rating === "number" &&

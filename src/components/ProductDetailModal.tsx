@@ -1,23 +1,21 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
-  X, Star, Heart, ShoppingCart, Check, Phone, 
-  Truck, MessageSquare, ArrowRight, Plus, Minus, ShoppingBag,
-  ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Maximize2, Sparkles, CheckCircle2, HelpCircle,
+  X, Heart, ShoppingCart, Check, Phone,
+  Truck, ArrowRight, Plus, Minus, ShoppingBag,
+  ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Maximize2, Sparkles, CheckCircle2,
   Banknote, Headphones, LockKeyhole
 } from 'lucide-react';
-import { collection, query, where, getDocs, addDoc } from 'firebase/firestore';
-import { onAuthStateChanged } from 'firebase/auth';
-import { db, auth } from '../firebase';
+import { onAuthStateChanged, User } from 'firebase/auth';
+import { auth } from '../firebase';
 import { Product, WebsiteSettings } from '../types';
 import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
 import {
-  LatestRequestGate, PRODUCT_IMAGE_FALLBACK, ProductReviewView, SubmissionGuard, buildProductGallery,
-  calculateReviewSummary, clampGalleryIndex, getDialogEscapeAction, getFocusWrapIndex, groupProductSpecifications,
-  nextGalleryIndexForKey, projectProductReview, selectRelatedProducts,
+  PRODUCT_IMAGE_FALLBACK, buildProductGallery, clampGalleryIndex, getDialogEscapeAction, getFocusWrapIndex,
+  groupProductSpecifications, nextGalleryIndexForKey, selectRelatedProducts,
 } from '../features/product-experience/productExperience';
 import ProductSpecificationsPanel from '../features/product-experience/ProductSpecificationsPanel';
 import RelatedProductsRail from '../features/product-experience/RelatedProductsRail';
-import { reportClientIssue } from '../services/observability/clientDiagnostics';
+import ProductReviewsAndQuestions from '../features/reviews/ProductReviewsAndQuestions';
 
 interface ProductDetailModalProps {
   product: Product | null;
@@ -70,17 +68,7 @@ export default function ProductDetailModal({
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
 
-  // Reviews & settings states
-  const [reviews, setReviews] = useState<ProductReviewView[]>([]);
-  const [loadingReviews, setLoadingReviews] = useState(false);
-  const [reviewError, setReviewError] = useState('');
-  const [visibleReviewCount, setVisibleReviewCount] = useState(4);
-  const [newRating, setNewRating] = useState(5);
-  const [newComment, setNewComment] = useState("");
-  const [newCustomerName, setNewCustomerName] = useState("");
-  const [reviewSuccess, setReviewSuccess] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [currentUser, setCurrentUser] = useState<any>(null);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [announcement, setAnnouncement] = useState('');
   const prefersReducedMotion = useReducedMotion();
 
@@ -96,8 +84,6 @@ export default function ProductDetailModal({
   const previouslyFocusedElementRef = useRef<HTMLElement | null>(null);
   const onCloseRef = useRef(onClose);
   const isLightboxOpenRef = useRef(isLightboxOpen);
-  const requestGateRef = useRef(new LatestRequestGate());
-  const submissionGuardRef = useRef(new SubmissionGuard());
   const feedbackTimerRef = useRef<number | null>(null);
   const galleryImages = useMemo(() => product ? buildProductGallery(product) : [], [product]);
   const galleryImageCountRef = useRef(galleryImages.length);
@@ -186,46 +172,9 @@ export default function ProductDetailModal({
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       setCurrentUser(user);
-      if (user) {
-        setNewCustomerName(user.displayName || user.email?.split('@')[0] || "");
-      } else {
-        setNewCustomerName("");
-      }
     });
     return () => unsubscribe();
   }, []);
-
-  // Fetch product reviews from Firestore
-  const fetchReviews = async () => {
-    if (!product) return;
-    const requestId = requestGateRef.current.begin();
-    setLoadingReviews(true);
-    setReviewError('');
-    try {
-      const q = query(collection(db, "reviews"), where("productId", "==", product.id));
-      const snap = await getDocs(q);
-      const list: ProductReviewView[] = [];
-      snap.forEach(d => {
-        const data = d.data();
-        if (data.approved !== false) {
-          const review = projectProductReview(d.id, data);
-          if (review) list.push(review);
-        }
-      });
-      list.sort((a, b) => {
-        const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-        const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-        return timeB - timeA;
-      });
-      if (requestGateRef.current.isLatest(requestId)) setReviews(list);
-      
-    } catch (err) {
-      reportClientIssue('product-reviews-load', err, 'warning');
-      if (requestGateRef.current.isLatest(requestId)) setReviewError('Reviews could not be loaded. Please try again.');
-    } finally {
-      if (requestGateRef.current.isLatest(requestId)) setLoadingReviews(false);
-    }
-  };
 
   // Reset page states when switching active products
   useEffect(() => {
@@ -233,17 +182,11 @@ export default function ProductDetailModal({
       setActiveImageIndex(0);
       setQuantity(1);
       setAddedMessage(false);
-      setNewComment("");
-      setNewRating(5);
       setShowStickyBar(false);
-      setVisibleReviewCount(4);
-      setReviewError('');
       
       setIsTransitioning(!prefersReducedMotion);
       const timer = window.setTimeout(() => setIsTransitioning(false), prefersReducedMotion ? 0 : 220);
       
-      if (isReviewsEnabled) fetchReviews();
-      else setReviews([]);
       return () => clearTimeout(timer);
     }
   }, [product, prefersReducedMotion, isReviewsEnabled]);
@@ -282,7 +225,6 @@ export default function ProductDetailModal({
     setQuantity((current) => Math.min(Math.max(1, current), maxQuantity));
   }, [product?.id, product?.stock]);
 
-  const reviewSummary = useMemo(() => calculateReviewSummary(reviews, product?.rating || 0), [reviews, product?.rating]);
   const relatedItems = useMemo(() => product ? selectRelatedProducts(product, allProducts) : [], [product, allProducts]);
   const specificationGroups = useMemo(() => groupProductSpecifications(product?.specs), [product?.specs]);
 
@@ -361,87 +303,6 @@ export default function ProductDetailModal({
     window.open(`https://wa.me/${whatsappNum.replace("+", "")}?text=${message}`, '_blank', 'noopener,noreferrer');
   };
 
-  const handleSubmitReview = async (e: React.FormEvent) => {
-    // TODO(security): review moderation belongs in a trusted backend workflow.
-    // TODO(security): purchase verification must be implemented server-side before reviews are labelled as verified purchases.
-    e.preventDefault();
-    if (!product) return;
-    if (!submissionGuardRef.current.begin()) return;
-
-    const trimmedComment = newComment.trim();
-    const trimmedName = newCustomerName.trim() || currentUser?.displayName || currentUser?.email?.split('@')[0] || "Authenticated Customer";
-
-    if (!currentUser) {
-      alert("Please log in before submitting a review.");
-      submissionGuardRef.current.end();
-      return;
-    }
-
-    if (!trimmedComment) {
-      alert("Please write a comment for your review.");
-      submissionGuardRef.current.end();
-      return;
-    }
-
-    if (!trimmedName) {
-      alert("Please provide your name.");
-      submissionGuardRef.current.end();
-      return;
-    }
-
-    setIsSubmitting(true);
-    setReviewSuccess(false);
-    setReviewError('');
-    try {
-      const payload = {
-        productId: product.id,
-        userId: currentUser.uid,
-        customerName: trimmedName,
-        userName: trimmedName, // backwards compatibility
-        rating: newRating,
-        comment: trimmedComment,
-        createdAt: new Date().toISOString()
-      };
-
-      // 1. Save review to Firestore in collection "reviews"
-      await addDoc(collection(db, "reviews"), payload);
-
-      // 2. Fetch all reviews for this product to compute updated stats
-      const q = query(collection(db, "reviews"), where("productId", "==", product.id));
-      const snap = await getDocs(q);
-      const list: ProductReviewView[] = [];
-      snap.forEach(d => {
-        const data = d.data();
-        if (data.approved !== false) {
-          const review = projectProductReview(d.id, data);
-          if (review) list.push(review);
-        }
-      });
-
-      // Clear the form
-      setNewComment("");
-      setNewRating(5);
-      setReviewSuccess(true);
-      setAnnouncement('Review submitted successfully.');
-
-      // Fetch reviews again locally
-      setReviews(list.sort((a, b) => {
-        const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-        const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-        return timeB - timeA;
-      }));
-
-      // Hide success message after 4 seconds
-      setTimeout(() => setReviewSuccess(false), 4000);
-    } catch (err) {
-      reportClientIssue('product-review-save', err, 'warning');
-      setReviewError('Your review could not be submitted. Please try again.');
-    } finally {
-      setIsSubmitting(false);
-      submissionGuardRef.current.end();
-    }
-  };
-
   // Hover zoom handler (Desktop)
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
     const { left, top, width, height } = e.currentTarget.getBoundingClientRect();
@@ -517,11 +378,6 @@ export default function ProductDetailModal({
     }
   };
 
-  // Reviews visual statistics helper
-  const totalReviews = reviewSummary.count;
-  const averageRating = reviewSummary.average.toFixed(1);
-  const ratingDistribution = reviewSummary.distribution;
-
   // Specifications list construction
   const brandName = product.specs?.Brand || product.specs?.brand || "Brand not specified";
   const activeImageUrl = galleryImages[activeImageIndex] || product.imageUrl;
@@ -531,14 +387,6 @@ export default function ProductDetailModal({
   // Delivery Threshold values
   const freeDeliveryThreshold = settings?.freeDeliveryMin || 5000;
   const isEligibleForFreeDelivery = product.price >= freeDeliveryThreshold;
-
-  // Smooth scroll to reviews panel
-  const scrollToReviews = () => {
-    const reviewsElement = document.getElementById('customer-reviews-section');
-    if (reviewsElement && scrollContainerRef.current) {
-      reviewsElement.scrollIntoView({ behavior: prefersReducedMotion ? 'auto' : 'smooth', block: 'start' });
-    }
-  };
 
   return (
     <div
@@ -820,30 +668,14 @@ export default function ProductDetailModal({
                       {product.name}
                     </h1>
 
-                    {/* Star Rating summary click list */}
-                    {totalReviews > 0 && (
-                      <button 
-                        onClick={scrollToReviews}
-                        className="flex items-center space-x-3 mt-1.5 group cursor-pointer text-left rounded-lg focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20"
-                        aria-label={`Read ${totalReviews} customer reviews for ${product.name}`}
-                      >
-                        <div className="flex text-amber-400">
-                          {[...Array(5)].map((_, i) => (
-                            <Star 
-                              key={i} 
-                              className={`h-4 w-4 ${i < Math.round(Number(averageRating)) ? 'fill-amber-400 text-amber-400' : 'text-slate-200'}`}
-                            />
-                          ))}
-                        </div>
-                        <span className="text-sm font-black text-slate-800">{averageRating}</span>
-                        <span className="text-slate-300">|</span>
-                        <span className="text-xs font-bold text-slate-500 underline group-hover:text-brand-blue transition-colors">
-                          {totalReviews} Customer Review{totalReviews > 1 ? 's' : ''}
-                        </span>
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      onClick={() => document.getElementById('customer-reviews-section')?.scrollIntoView({ behavior: prefersReducedMotion ? 'auto' : 'smooth', block: 'start' })}
+                      className="mt-1.5 inline-flex items-center gap-2 rounded-lg text-xs font-bold text-brand-blue underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20"
+                    >
+                      Read genuine customer reviews and product Q&amp;A
+                    </button>
                   </div>
-
                   {/* Price Conversions Box (Strikethrough, absolute savings, free delivery) */}
                   <div className="zy-product-experience-price bg-slate-50 p-6 rounded-3xl border border-slate-100/80 text-left space-y-4">
                     <div className="space-y-1">
@@ -1027,236 +859,13 @@ export default function ProductDetailModal({
 
               </div>
 
-              {/* SECTION: PREMIUM CUSTOMER REVIEWS & FEEDBACK ENGINE */}
               {isReviewsEnabled && (
-                <div id="customer-reviews-section" className="zy-product-experience-reviews border-t border-slate-100 pt-14 text-left space-y-8">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                  <div>
-                    <h3 className="text-xl font-black text-slate-900 font-display flex items-center gap-2.5">
-                      <MessageSquare className="h-5 w-5 text-brand-blue" />
-                      Customer Feedback ({reviews.length})
-                    </h3>
-                    <p className="text-xs text-slate-500 mt-1">Customer comments and ratings posted from authenticated accounts.</p>
-                  </div>
-                </div>
-
-                {/* Review Overview Rating Bento Panel */}
-                <div className="grid grid-cols-1 md:grid-cols-12 gap-8 items-start">
-                  
-                  {/* Rating stats visual breakdown */}
-                  <div className="md:col-span-4 bg-slate-50/70 border border-slate-100 p-6 rounded-3xl space-y-5 text-left">
-                    <span className="block text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                      Feedback Summary
-                    </span>
-                    <div className="flex items-center gap-4">
-                      <span className="text-5xl font-black text-slate-900 font-display">
-                        {averageRating}
-                      </span>
-                      <div>
-                        <div className="flex text-amber-400">
-                          {[...Array(5)].map((_, i) => (
-                            <Star 
-                              key={i} 
-                              className={`h-4 w-4 ${i < Math.round(Number(averageRating)) ? 'fill-amber-400 text-amber-400' : 'text-slate-200'}`} 
-                            />
-                          ))}
-                        </div>
-                        <span className="text-[10px] text-slate-400 font-bold block mt-1 uppercase tracking-wider">
-                          {totalReviews} Customer reviews
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Progress rating ratio distribution lines */}
-                    <div className="space-y-2 pt-2">
-                      {[5, 4, 3, 2, 1].map((stars) => {
-                        const count = ratingDistribution[stars - 1] || 0;
-                        const percentage = totalReviews > 0 ? (count / totalReviews) * 100 : 0;
-                        return (
-                          <div key={stars} className="flex items-center text-xs text-slate-500 gap-3">
-                            <span className="w-3 text-right font-bold text-slate-700">{stars}</span>
-                            <Star className="h-3 w-3 fill-amber-400 text-amber-400 flex-shrink-0" />
-                            <div className="flex-1 h-2 bg-slate-200/60 rounded-full overflow-hidden">
-                              <div 
-                                className="h-full bg-brand-blue/90 rounded-full" 
-                                style={{ width: `${percentage}%` }} 
-                              />
-                            </div>
-                            <span className="w-8 text-right text-[10px] font-bold text-slate-400">
-                              {percentage.toFixed(0)}%
-                            </span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  {/* Submission review Form input panel */}
-                  <div className="md:col-span-8 bg-slate-50/50 border border-slate-100 p-6 rounded-3xl space-y-5">
-                    {currentUser ? (
-                      <form onSubmit={handleSubmitReview} className="space-y-4">
-                        <span className="block text-xs font-black text-slate-800 uppercase tracking-widest">
-                          Leave Your Store Review
-                        </span>
-                        
-                        {reviewSuccess && (
-                          <div role="status" aria-live="polite" className="p-4 bg-emerald-50 border border-emerald-100 rounded-2xl flex items-center gap-3 text-emerald-800 text-xs font-medium animate-fadeIn">
-                            <CheckCircle2 className="h-5 w-5 text-emerald-500 flex-shrink-0" />
-                            <div>
-                              <p className="font-bold">Review Published Successfully!</p>
-                              <p className="text-[11px] text-emerald-600/90 font-normal">Your ratings have been synchronized and updated on the product detail showcase.</p>
-                            </div>
-                          </div>
-                        )}
-
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                          <div className="space-y-1.5">
-                            <label htmlFor="product-review-name" className="block text-[10px] font-black text-slate-500 uppercase tracking-wider">Your Name</label>
-                            <input
-                              id="product-review-name"
-                              type="text"
-                              required
-                              placeholder="e.g. John Doe"
-                              value={newCustomerName}
-                              maxLength={80}
-                              onChange={(e) => setNewCustomerName(e.target.value)}
-                              className="w-full text-xs px-4 py-3 bg-white border border-slate-300 rounded-2xl focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/15 focus-visible:border-brand-blue transition-all text-slate-800"
-                            />
-                          </div>
-
-                          <div className="space-y-1.5">
-                            <span className="block text-[10px] font-black text-slate-500 uppercase tracking-wider" id="product-review-rating-label">Select Star Rating</span>
-                            <div className="flex space-x-1 py-1">
-                              {[1, 2, 3, 4, 5].map((val) => (
-                                <button
-                                  key={val}
-                                  type="button"
-                                  onClick={() => setNewRating(val)}
-                                  className="p-2 hover:scale-110 transition-transform cursor-pointer rounded-lg focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-amber-400/25"
-                                  aria-label={`${val} star rating`}
-                                  aria-pressed={newRating === val}
-                                >
-                                  <Star className={`h-6 w-6 ${val <= newRating ? 'fill-amber-400 text-amber-400' : 'text-slate-200'}`} />
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="space-y-1.5">
-                          <label htmlFor="product-review-comment" className="block text-[10px] font-black text-slate-500 uppercase tracking-wider">Write Review Comments</label>
-                          <textarea
-                            id="product-review-comment"
-                            required
-                            rows={3}
-                            placeholder="Share details regarding product quality, performance, packaging, after-sales support, or delivery dispatch time..."
-                            value={newComment}
-                            maxLength={1500}
-                            onChange={(e) => setNewComment(e.target.value)}
-                            className="w-full text-xs px-4 py-3 bg-white border border-slate-300 rounded-2xl focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/15 focus-visible:border-brand-blue transition-all text-slate-800"
-                          />
-                        </div>
-
-                        <button
-                          type="submit"
-                          disabled={isSubmitting}
-                          className="w-full sm:w-fit px-8 py-3 bg-slate-950 hover:bg-slate-800 text-white font-black rounded-xl text-[10px] uppercase tracking-widest transition-all cursor-pointer disabled:opacity-50 shadow-md shadow-slate-950/10 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/25"
-                        >
-                          {isSubmitting ? 'Submitting Details...' : 'Submit Review'}
-                        </button>
-                      </form>
-                    ) : (
-                      <div className="text-center py-8 px-4 border border-dashed border-slate-200 rounded-3xl bg-white/70 space-y-3">
-                        <div className="p-3 bg-slate-100 text-slate-400 rounded-2xl w-fit mx-auto">
-                          <HelpCircle className="h-6 w-6" />
-                        </div>
-                        <p className="text-xs text-slate-500 font-bold">Authorized Account Required</p>
-                        <p className="text-[11px] text-slate-400 font-light max-w-sm mx-auto">
-                          Please log in or register with your email in the store navbar to write and publish customer reviews for products.
-                        </p>
-                      </div>
-                    )}
-                  </div>
-
-                </div>
-
-                {/* Submited Reviews list cards container */}
-                <div className="space-y-4 pt-4">
-                  {reviewError && <div role="alert" className="rounded-2xl border border-red-200 bg-red-50 p-4 text-xs font-semibold text-red-700">{reviewError}</div>}
-                  {loadingReviews ? (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {[...Array(2)].map((_, idx) => (
-                        <div key={idx} className="bg-white border border-slate-100/60 p-5 rounded-2xl flex items-start gap-4 animate-pulse">
-                          <div className="w-10 h-10 rounded-full bg-slate-100 flex-shrink-0" />
-                          <div className="flex-1 space-y-3">
-                            <div className="flex justify-between items-center">
-                              <div className="space-y-1.5 flex-1">
-                                <div className="h-3 bg-slate-100 rounded-md w-1/3" />
-                                <div className="h-2 bg-slate-100 rounded-md w-1/4" />
-                              </div>
-                              <div className="h-2 bg-slate-100 rounded-md w-1/5" />
-                            </div>
-                            <div className="flex space-x-1">
-                              {[...Array(5)].map((_, s) => (
-                                <div key={s} className="h-3 w-3 bg-slate-100 rounded-full" />
-                              ))}
-                            </div>
-                            <div className="space-y-1.5">
-                              <div className="h-3 bg-slate-100 rounded-md w-full" />
-                              <div className="h-3 bg-slate-100 rounded-md w-5/6" />
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  ) : reviews.length > 0 ? (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {reviews.slice(0, visibleReviewCount).map((rev, idx) => {
-                        const nameToUse = rev.customerName || 'Authenticated Customer';
-                        const initials = nameToUse.substring(0, 2).toUpperCase() || 'VB';
-                        return (
-                          <div key={rev.id || idx} className="bg-white border border-slate-100/80 p-5 rounded-2xl flex items-start gap-4 shadow-3xs transition-all hover:border-slate-200 hover:shadow-2xs">
-                            <div className="w-10 h-10 rounded-full bg-blue-50 text-brand-blue font-black text-xs flex items-center justify-center flex-shrink-0 border border-blue-100/50">
-                              {initials}
-                            </div>
-                            <div className="flex-1 space-y-2 text-left">
-                              <div className="flex items-center justify-between">
-                                <div>
-                                  <span className="text-xs font-black text-slate-800 block">{nameToUse}</span>
-                                  <span className="text-[9px] text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded-sm font-bold uppercase tracking-wider inline-block mt-0.5">Authenticated Customer</span>
-                                </div>
-                                <span className="text-[10px] text-slate-400 font-light">
-                                  {rev.createdAt && !isNaN(new Date(rev.createdAt).getTime()) 
-                                    ? new Date(rev.createdAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) 
-                                    : 'Just now'}
-                                </span>
-                              </div>
-                              <div className="flex text-amber-400">
-                                {[...Array(5)].map((_, s) => (
-                                  <Star key={s} className={`h-3 w-3 ${s < rev.rating ? 'fill-amber-400 text-amber-400' : 'text-slate-200'}`} />
-                                ))}
-                              </div>
-                              <p className="text-xs text-slate-500 font-light leading-relaxed whitespace-pre-line">{rev.comment}</p>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <div className="text-center py-12 text-xs text-slate-400 font-light bg-slate-50/50 rounded-3xl border border-dashed border-slate-200 flex flex-col items-center justify-center gap-1">
-                      <span className="font-bold text-slate-700">No active reviews published</span>
-                      <span>Customers haven't posted a review for this product yet. Be the first!</span>
-                    </div>
-                  )}
-                  {reviews.length > visibleReviewCount && (
-                    <button type="button" onClick={() => setVisibleReviewCount((count) => count + 4)} className="mx-auto block min-h-11 rounded-xl border border-slate-300 bg-white px-5 py-2.5 text-xs font-black text-slate-800 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20">
-                      Show more reviews
-                    </button>
-                  )}
-                </div>
-              </div>
+                <ProductReviewsAndQuestions
+                  productId={product.id}
+                  productName={product.name}
+                  currentUser={currentUser}
+                />
               )}
-
               {/* SECTION: CAROUSEL SLIDER OF RELATED PRODUCTS */}
               <RelatedProductsRail
                 products={relatedItems}

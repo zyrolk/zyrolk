@@ -10,6 +10,7 @@ import { A2ZConnectorService } from "./src/services/connectors/a2z-website/A2ZCo
 import { getApprovedSupplierHosts, validateSupplierRequestTarget } from "./src/server/security/supplierUrlProtection";
 import { getSupplierProductLimit } from "./src/services/supplierSyncSettings";
 import { assertCustomerCanCancelOrder, buildOrderStatusPlan } from "./functions/src/api/orders/orderStatusLogic";
+import { registerReviewSystemRoutes } from "./functions/src/api/routes/reviewSystem";
 
 const app = express();
 const PORT = 3000;
@@ -50,6 +51,12 @@ const CHECKOUT_RATE_LIMIT_MAX_REQUESTS = 10;
 const CHECKOUT_IDEMPOTENCY_COLLECTION = "checkout_idempotency";
 const ALLOWED_PAYMENT_METHODS = new Set(["cod", "whatsapp_confirm"]);
 const ADMIN_EMAIL = "zyrolkofficial@gmail.com";
+
+registerReviewSystemRoutes(app, {
+  db: adminDb,
+  verifyIdToken: (token) => adminAuth.verifyIdToken(token),
+  isAdminEmail: (email) => (email || "").toLowerCase() === ADMIN_EMAIL,
+});
 
 const checkoutRateLimitBuckets = new Map<string, { count: number; resetAt: number }>();
 

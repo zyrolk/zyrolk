@@ -12,27 +12,6 @@ service cloud.firestore {
       return request.auth != null && request.auth.uid == userId;
     }
 
-    function isValidReviewData(data) {
-      return data.keys().hasOnly([
-               'userId', 'userName', 'customerName', 'productId', 'comment', 'rating', 'createdAt'
-             ]) &&
-             data.userId is string &&
-             data.userId.size() >= 1 && data.userId.size() <= 128 &&
-             data.userName is string &&
-             data.userName.size() >= 1 && data.userName.size() <= 120 &&
-             data.customerName is string &&
-             data.customerName.size() >= 1 && data.customerName.size() <= 120 &&
-             data.productId is string &&
-             data.productId.size() >= 1 && data.productId.size() <= 128 &&
-             data.comment is string &&
-             data.comment.size() >= 1 && data.comment.size() <= 2000 &&
-             data.rating is number &&
-             data.rating >= 1 &&
-             data.rating <= 5 &&
-             data.createdAt is string &&
-             data.createdAt.size() <= 64;
-    }
-
     function isValidCustomerAddress(data) {
       return data.keys().hasOnly([
                'label', 'fullName', 'phone', 'addressLine1', 'addressLine2',
@@ -91,21 +70,26 @@ service cloud.firestore {
     // Reviews Rules
     match /reviews/{reviewId} {
       allow read: if true;
-      // Authenticated customers can create and manage only their own review documents.
-      allow create: if request.auth != null && 
-                    request.resource.data.userId == request.auth.uid &&
-                    isValidReviewData(request.resource.data);
-      allow update: if isAdmin() || (
-                    request.auth != null &&
-                    resource.data.userId == request.auth.uid &&
-                    request.resource.data.userId == resource.data.userId &&
-                    request.resource.data.productId == resource.data.productId &&
-                    isValidReviewData(request.resource.data)
-                  );
-      allow delete: if isAdmin() || (
-                    request.auth != null &&
-                    resource.data.userId == request.auth.uid
-                  );
+      // Review mutations require trusted verification of purchase, ownership and duplicate prevention.
+      allow create, update, delete: if false;
+
+      match /votes/{userId} {
+        allow read, write: if false;
+      }
+
+      match /reports/{userId} {
+        allow read, write: if false;
+      }
+    }
+
+    // Product Q&A is public to read and is mutated only through the authenticated review API.
+    match /productQuestions/{questionId} {
+      allow read: if true;
+      allow create, update, delete: if false;
+
+      match /votes/{userId} {
+        allow read, write: if false;
+      }
     }
 
     // Settings Rules - Only authenticated admins can edit website settings

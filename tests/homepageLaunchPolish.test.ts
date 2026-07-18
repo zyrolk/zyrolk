@@ -19,10 +19,10 @@ test('Sprint 75B composes Why Choose below trust and reviews after live product 
   assert.match(homepage, /enabled=\{settings\?\.enableReviews !== false\}/);
 });
 
-test('homepage reviews reuse the existing live approved-review snapshot', () => {
+test('homepage reviews reuse the existing live verified-review snapshot', () => {
   assert.match(app, /const \[homepageReviews, setHomepageReviews\] = useState/);
   assert.match(app, /onSnapshot\(collection\(db, "reviews"\)/);
-  assert.match(app, /if \(d\.approved !== false\)/);
+  assert.match(app, /projectProductionReview\(doc\.id, doc\.data\(\)\)/);
   assert.match(app, /setHomepageReviews\(revList\)/);
   assert.match(app, /reviews=\{homepageReviews\}/);
   assert.match(homepage, /reviews=\{reviews\}/);
@@ -31,13 +31,14 @@ test('homepage reviews reuse the existing live approved-review snapshot', () => 
 
 test('customer review presentation validates live content and provides honest empty states', () => {
   assert.match(reviews, /review\.approved !== false/);
+  assert.match(reviews, /review\.verifiedPurchase === true/);
   assert.match(reviews, /Number\.isFinite\(Number\(review\.rating\)\)/);
   assert.match(reviews, /\.slice\(0, 6\)/);
   assert.match(reviews, /productNames\.get\(review\.productId\)/);
-  assert.match(reviews, /Customer stories will appear here/);
+  assert.match(reviews, /⭐ No ratings yet/);
   assert.match(reviews, /Customer reviews are currently unavailable/);
-  assert.match(reviews, /Published marketplace reviews will be shown automatically/);
-  assert.doesNotMatch(reviews, /mock|sample review|verified purchase|verified buyer/iu);
+  assert.match(reviews, /Genuine verified-purchase reviews will appear here/);
+  assert.doesNotMatch(reviews, /mock|sample review|verified buyer/iu);
 });
 
 test('Why Choose messaging reflects existing storefront capabilities without invented data', () => {

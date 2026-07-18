@@ -99,25 +99,25 @@ export const projectProductReview = (id: string, data: Record<string, unknown>):
   const productId = cleanString(data.productId);
   const comment = cleanString(data.comment);
   const numericRating = Number(data.rating);
-  if (!productId || !comment || !Number.isFinite(numericRating) || numericRating < 1 || numericRating > 5) return null;
+  if (data.verifiedPurchase !== true || !productId || !comment || !Number.isFinite(numericRating) || numericRating < 1 || numericRating > 5) return null;
   return {
     id,
     productId,
-    customerName: cleanString(data.customerName) || cleanString(data.userName) || 'Authenticated Customer',
+    customerName: cleanString(data.customerName),
     rating: numericRating,
     comment,
     createdAt: cleanString(data.createdAt),
   };
 };
 
-export const calculateReviewSummary = (reviews: readonly ProductReviewView[], fallbackRating = 0) => {
+export const calculateReviewSummary = (reviews: readonly ProductReviewView[]) => {
   const distribution = [0, 0, 0, 0, 0];
   let total = 0;
   reviews.forEach((review) => {
     distribution[review.rating - 1] += 1;
     total += review.rating;
   });
-  return { average: reviews.length ? total / reviews.length : fallbackRating, distribution, count: reviews.length };
+  return { average: reviews.length ? total / reviews.length : 0, distribution, count: reviews.length };
 };
 
 export class LatestRequestGate {

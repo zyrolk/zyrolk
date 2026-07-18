@@ -198,7 +198,7 @@ function ProductCard({
           </h3>
 
           {/* Rating Stars */}
-          <div className="zy-product-card-rating" aria-label={product.reviewsCount > 0 ? `${product.rating} out of 5 stars from ${product.reviewsCount} reviews` : 'No reviews yet'}>
+          <div className="zy-product-card-rating" aria-label={product.reviewsCount > 0 ? `${product.rating} out of 5 stars from ${product.reviewsCount} reviews` : 'No ratings yet'}>
             {product.reviewsCount > 0 ? (
               <>
                 <span className="zy-product-card-rating-value">{product.rating.toFixed(1)}</span>
@@ -213,7 +213,7 @@ function ProductCard({
                 <span className="zy-product-card-review-count">({product.reviewsCount})</span>
               </>
             ) : (
-              <span className="zy-product-card-review-count">No reviews yet</span>
+              <span className="zy-product-card-review-count">⭐ No ratings yet</span>
             )}
           </div>
         </div>

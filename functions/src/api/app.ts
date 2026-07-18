@@ -3,6 +3,8 @@ import { getRuntimeConfig } from "./config";
 import { registerCheckoutRoutes } from "./routes/checkout";
 import { registerSupplierRoutes } from "./routes/supplier";
 import { registerOrderRoutes } from "./routes/orders";
+import { registerReviewSystemRoutes } from "./routes/reviewSystem";
+import { adminAuth, adminDb } from "./firebase";
 
 export function createApiApp(): express.Express {
   const app = express();
@@ -42,6 +44,11 @@ export function createApiApp(): express.Express {
 
   registerCheckoutRoutes(app);
   registerOrderRoutes(app);
+  registerReviewSystemRoutes(app, {
+    db: adminDb,
+    verifyIdToken: (token) => adminAuth.verifyIdToken(token),
+    isAdminEmail: (email) => (email || "").toLowerCase() === runtimeConfig.adminEmail,
+  });
   registerSupplierRoutes(app);
 
   return app;

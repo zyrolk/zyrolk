@@ -22,6 +22,7 @@ import {
   getActiveCategories,
   sortCategoriesAlphabetically,
 } from './services/categories/categoryUtils';
+import { ProductionReview, calculateProductionRatingSummary, projectProductionReview } from './features/reviews/reviewModel';
 
 // Components
 import Navbar from './components/Navbar';
@@ -110,7 +111,7 @@ export default function App() {
   // Firestore Data States
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
-  const [homepageReviews, setHomepageReviews] = useState<any[]>([]);
+  const [homepageReviews, setHomepageReviews] = useState<ProductionReview[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
 
   // Shopping Cart & Wishlist States (Backed by LocalStorage)
@@ -473,17 +474,15 @@ export default function App() {
       // Live listener on reviews
       const rUnsub = onSnapshot(collection(db, "reviews"), (snap) => {
         if (!isMounted) return;
-        const revList: any[] = [];
+        const revList: ProductionReview[] = [];
         snap.forEach(doc => {
-          const d = doc.data();
-          if (d.approved !== false) {
-            revList.push({ id: doc.id, ...d });
-          }
+          const review = projectProductionReview(doc.id, doc.data());
+          if (review) revList.push(review);
         });
         // sort by createdAt desc
         revList.sort((a, b) => {
-          const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-          const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+          const timeA = a.createdAt?.getTime() || 0;
+          const timeB = b.createdAt?.getTime() || 0;
           return timeB - timeA;
         });
         setHomepageReviews(revList);
@@ -613,15 +612,28 @@ export default function App() {
     setSelectedProduct(product);
   }, []);
 
+  const storefrontProducts = useMemo(() => {
+    const reviewsByProduct = new Map<string, ProductionReview[]>();
+    homepageReviews.forEach((review) => {
+      const group = reviewsByProduct.get(review.productId) || [];
+      group.push(review);
+      reviewsByProduct.set(review.productId, group);
+    });
+    return products.map((product) => {
+      const summary = calculateProductionRatingSummary(reviewsByProduct.get(product.id) || []);
+      return { ...product, rating: summary.average, reviewsCount: summary.total };
+    });
+  }, [homepageReviews, products]);
+
   const customerProducts = useMemo(
-    () => projectCustomerProducts(products.filter((product) => product.isActive !== false)),
-    [products],
+    () => projectCustomerProducts(storefrontProducts.filter((product) => product.isActive !== false)),
+    [storefrontProducts],
   );
 
   const handleCustomerSearchSelection = useCallback((product: CustomerProduct) => {
-    const sourceProduct = products.find((candidate) => candidate.id === product.id);
+    const sourceProduct = storefrontProducts.find((candidate) => candidate.id === product.id);
     if (sourceProduct) handleViewProduct(sourceProduct);
-  }, [handleViewProduct, products]);
+  }, [handleViewProduct, storefrontProducts]);
 
   const wishlistProductIds = useMemo(
     () => new Set(wishlist.map(product => product.id)),
@@ -633,7 +645,7 @@ export default function App() {
     const matchingCustomerIds = new Set(
       searchCustomerProducts(customerProducts, searchQuery).map((product) => product.id),
     );
-    return products.filter(prod => {
+    return storefrontProducts.filter(prod => {
       const matchesActive = prod.isActive !== false;
       const matchesSearch = matchingCustomerIds.has(prod.id);
       const matchesCategory = selectedCategory === "all" || categoryMatches(prod.category, selectedCategory);
@@ -645,11 +657,11 @@ export default function App() {
       if (sortBy === "rating") return b.rating - a.rating;
       return (b.isFeatured ? 1 : 0) - (a.isFeatured ? 1 : 0); // Featured defaults
     });
-  }, [customerProducts, priceRange, products, searchQuery, selectedCategory, sortBy]);
+  }, [customerProducts, priceRange, searchQuery, selectedCategory, sortBy, storefrontProducts]);
 
   const activeProducts = useMemo(
-    () => products.filter(product => product.isActive !== false),
-    [products]
+    () => storefrontProducts.filter(product => product.isActive !== false),
+    [storefrontProducts]
   );
   const activeProductCount = activeProducts.length;
 
@@ -736,19 +748,19 @@ export default function App() {
     setSortBy('featured');
   }, []);
 
-  const liveSelectedProduct = selectedProduct ? (products.find(product => product.id === selectedProduct.id) || selectedProduct) : null;
+  const liveSelectedProduct = selectedProduct ? (storefrontProducts.find(product => product.id === selectedProduct.id) || selectedProduct) : null;
   const recentlyViewedProducts = useMemo(
-    () => buildRecentlyViewedProducts(recentlyViewedProductIds, products, 24),
-    [recentlyViewedProductIds, products],
+    () => buildRecentlyViewedProducts(recentlyViewedProductIds, storefrontProducts, 24),
+    [recentlyViewedProductIds, storefrontProducts],
   );
-  const wishlistViews = useMemo(() => reconcileWishlistProducts(wishlist, products), [wishlist, products]);
+  const wishlistViews = useMemo(() => reconcileWishlistProducts(wishlist, storefrontProducts), [storefrontProducts, wishlist]);
   const liveWishlistProducts = useMemo(
     () => wishlistViews.filter(item => item.isAvailable).map(item => item.product),
     [wishlistViews],
   );
   const recommendationSections = useMemo(
-    () => buildPersonalizedRecommendations({ products, wishlist: liveWishlistProducts, recentlyViewed: recentlyViewedProducts }),
-    [liveWishlistProducts, products, recentlyViewedProducts],
+    () => buildPersonalizedRecommendations({ products: storefrontProducts, wishlist: liveWishlistProducts, recentlyViewed: recentlyViewedProducts }),
+    [liveWishlistProducts, recentlyViewedProducts, storefrontProducts],
   );
   const compareIdSet = useMemo(() => new Set(compareProductIds), [compareProductIds]);
   const isKnownStorefrontPage = STOREFRONT_PAGE_IDS.has(currentPage);
@@ -1235,9 +1247,9 @@ export default function App() {
 
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-5 lg:gap-7">
                       {homepageReviews.slice(0, 6).map((rev, idx) => {
-                        const nameToUse = rev.customerName || rev.userName || "Verified Buyer";
+                        const nameToUse = rev.customerName || "Verified Customer";
                         const initials = nameToUse.substring(0, 2).toUpperCase() || "VB";
-                        const productName = products.find(p => p.id === rev.productId)?.name || "Verified Purchase";
+                        const productName = storefrontProducts.find(p => p.id === rev.productId)?.name || "Verified Purchase";
 
                         return (
                           <div key={rev.id || idx} className="zy-card zy-card-hover p-6 space-y-4 flex flex-col justify-between">
@@ -1251,7 +1263,7 @@ export default function App() {
                                 ))}
                               </div>
                               <p className="text-sm text-slate-600 font-light leading-relaxed">
-                                "{rev.comment}"
+                                "{rev.body}"
                               </p>
                             </div>
                             <div className="flex items-center space-x-3 pt-4 border-t border-slate-50">
@@ -1618,7 +1630,7 @@ export default function App() {
           {currentPage === 'compare' && (
             <Suspense fallback={<LazyBlockFallback className="mx-auto my-12 min-h-[36rem] max-w-7xl" label="Loading product comparison" />}>
               <CompareProducts
-                products={products}
+                products={storefrontProducts}
                 compareIds={compareProductIds}
                 wishlistIds={wishlistProductIds}
                 loading={loading}
@@ -1639,7 +1651,7 @@ export default function App() {
               <AccountCenter
                 currentPage={currentPage}
                 user={user}
-                products={products}
+                products={storefrontProducts}
                 wishlist={wishlist}
                 recentlyViewed={recentlyViewedProducts}
                 settings={settings}
@@ -1746,7 +1758,7 @@ export default function App() {
               isWishlisted={wishlistProductIds.has(liveSelectedProduct.id)}
               onAddToCart={handleAddToCart}
               onToggleWishlist={handleToggleWishlist}
-              allProducts={products}
+              allProducts={activeProducts}
               onSelectProduct={handleViewProduct}
               onBuyNow={handleBuyNow}
               settings={settings}

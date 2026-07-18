@@ -8,8 +8,10 @@ export interface HomepageReview {
   userName?: string;
   rating?: number;
   comment?: string;
-  createdAt?: string;
+  body?: string;
+  createdAt?: string | Date | null;
   approved?: boolean;
+  verifiedPurchase?: boolean;
 }
 
 interface HomepageCustomerReviewsProps {
@@ -30,8 +32,9 @@ export default function HomepageCustomerReviews({ reviews, products, enabled }: 
     ? reviews
       .filter(review => (
         review.approved !== false &&
-        typeof review.comment === 'string' &&
-        review.comment.trim().length > 0 &&
+        review.verifiedPurchase === true &&
+        typeof (review.body || review.comment) === 'string' &&
+        (review.body || review.comment || '').trim().length > 0 &&
         Number.isFinite(Number(review.rating)) &&
         Number(review.rating) >= 1 &&
         Number(review.rating) <= 5
@@ -68,9 +71,10 @@ export default function HomepageCustomerReviews({ reviews, products, enabled }: 
         {visibleReviews.length > 0 ? (
           <div className="zy-launch-reviews-grid" role="list">
             {visibleReviews.map((review, index) => {
-              const customerName = review.customerName?.trim() || review.userName?.trim() || 'Customer';
+              const customerName = review.customerName?.trim() || 'Verified Customer';
               const rating = Math.round(Number(review.rating));
               const productName = review.productId ? productNames.get(review.productId) : undefined;
+              const reviewBody = (review.body || review.comment || '').trim();
 
               return (
                 <article key={review.id || `${review.productId || 'review'}-${index}`} className="zy-launch-review-card" role="listitem">
@@ -82,12 +86,12 @@ export default function HomepageCustomerReviews({ reviews, products, enabled }: 
                       ))}
                     </span>
                   </div>
-                  <blockquote>“{review.comment?.trim()}”</blockquote>
+                  <blockquote>“{reviewBody}”</blockquote>
                   <footer>
                     <span className="zy-launch-review-avatar" aria-hidden="true">{getInitials(customerName)}</span>
                     <div>
                       <strong>{customerName}</strong>
-                      <small>{productName || 'Marketplace product'}</small>
+                      <small>{productName || 'Verified purchase'}</small>
                     </div>
                   </footer>
                 </article>
@@ -98,9 +102,9 @@ export default function HomepageCustomerReviews({ reviews, products, enabled }: 
           <div className="zy-launch-reviews-empty" role="status">
             <span aria-hidden="true"><MessageSquareQuote className="h-7 w-7" /></span>
             <div>
-              <h3>{enabled ? 'Customer stories will appear here' : 'Customer reviews are currently unavailable'}</h3>
+              <h3>{enabled ? '⭐ No ratings yet' : 'Customer reviews are currently unavailable'}</h3>
               <p>{enabled
-                ? 'Published marketplace reviews will be shown automatically when customers share their feedback.'
+                ? 'Genuine verified-purchase reviews will appear here when customers share them.'
                 : 'Review display is currently disabled in the store settings.'}</p>
             </div>
           </div>

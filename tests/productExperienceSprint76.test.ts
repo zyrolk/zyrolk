@@ -11,9 +11,9 @@ const productCard = readFileSync('src/components/ProductCard.tsx', 'utf8');
 const styles = readFileSync('src/index.css', 'utf8');
 
 test('Sprint 76 preserves the App-level product and commerce contracts', () => {
-  assert.match(app, /const liveSelectedProduct = selectedProduct \? \(products\.find/);
+  assert.match(app, /const liveSelectedProduct = selectedProduct \? \(storefrontProducts\.find/);
   assert.match(app, /product=\{liveSelectedProduct\}/);
-  assert.match(app, /allProducts=\{products\}/);
+  assert.match(app, /allProducts=\{activeProducts\}/);
   assert.match(app, /onAddToCart=\{handleAddToCart\}/);
   assert.match(app, /onToggleWishlist=\{handleToggleWishlist\}/);
   assert.match(app, /onBuyNow=\{handleBuyNow\}/);

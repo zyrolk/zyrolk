@@ -37,10 +37,11 @@ test('related products exclude current and inactive products with deterministic 
 });
 
 test('reviews project safely and calculate ratings', () => {
-  const review = projectProductReview('r1', { productId: 'p', customerName: ' Sam ', rating: 4, comment: ' Great ', createdAt: '2026-01-01' });
+  const review = projectProductReview('r1', { productId: 'p', customerName: ' Sam ', rating: 4, comment: ' Great ', createdAt: '2026-01-01', verifiedPurchase: true });
   assert.ok(review);
   assert.equal(projectProductReview('bad', { productId: 'p', rating: 8, comment: 'bad' }), null);
-  assert.deepEqual(calculateReviewSummary([review!], 2), { average: 4, distribution: [0, 0, 0, 1, 0], count: 1 });
+  assert.deepEqual(calculateReviewSummary([review!]), { average: 4, distribution: [0, 0, 0, 1, 0], count: 1 });
+  assert.deepEqual(calculateReviewSummary([]), { average: 0, distribution: [0, 0, 0, 0, 0], count: 0 });
 });
 
 test('request and submission guards prevent stale results and duplicate submits', () => {

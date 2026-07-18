@@ -8,7 +8,7 @@ export interface Product {
   imageUrl: string;
   imageUrls?: string[];
   category: string; // e.g. 'electronics'
-  rating: number; // 1-5
+  rating: number; // 0 when unrated; otherwise 1-5
   reviewsCount: number;
   isNew?: boolean;
   isFeatured?: boolean;
