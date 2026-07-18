@@ -8,6 +8,7 @@ import {
   Sparkles, AlertCircle, Sliders, Phone
 } from 'lucide-react';
 import { motion } from 'motion/react';
+import { reportClientIssue } from '../services/observability/clientDiagnostics';
 
 interface CmsPageProps {
   pageId: string;
@@ -322,7 +323,7 @@ export default function CmsPage({ pageId, onBackToHome, isAdmin, onEdit }: CmsPa
           }
         }
       } catch (err) {
-        console.error("Error fetching static page:", err);
+        reportClientIssue('cms-page-load', err, 'warning');
         const fallback = DEFAULT_PAGES.find(p => p.id === pageId);
         if (fallback) {
           setPage({

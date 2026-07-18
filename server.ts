@@ -13,8 +13,18 @@ import { getSupplierProductLimit } from "./src/services/supplierSyncSettings";
 const app = express();
 const PORT = 3000;
 
-// Parse JSON request bodies
-app.use(express.json());
+app.disable("x-powered-by");
+app.use((req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  if (req.path.startsWith("/api/")) res.setHeader("Cache-Control", "no-store");
+  next();
+});
+
+// Keep the established request shape while rejecting unexpectedly large bodies early.
+app.use(express.json({ limit: "100kb" }));
 
 // Load Firebase configuration
 const firebaseConfigPath = path.join(process.cwd(), "firebase-applet-config.json");
@@ -729,7 +739,14 @@ async function initServer() {
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), "dist");
-    app.use(express.static(distPath));
+    app.use(express.static(distPath, {
+      setHeaders(res, filePath) {
+        const isHashedAsset = filePath.includes(`${path.sep}assets${path.sep}`);
+        res.setHeader("Cache-Control", isHashedAsset
+          ? "public, max-age=31536000, immutable"
+          : "no-cache");
+      },
+    }));
     app.get("*", (req, res) => {
       res.sendFile(path.join(distPath, "index.html"));
     });

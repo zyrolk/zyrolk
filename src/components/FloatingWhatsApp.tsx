@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { WebsiteSettings } from '../types';
+import { getBrowserStorage, readStoredJson, writeStoredJson } from '../services/browser/persistentStorage';
 
 interface FloatingWhatsAppProps {
   settings: WebsiteSettings | null;
@@ -18,19 +19,19 @@ export default function FloatingWhatsApp({ settings, isAdminMode }: FloatingWhat
 
   // Initialize position from localStorage or default
   useEffect(() => {
-    const saved = localStorage.getItem('zyro_whatsapp_position');
+    const saved = readStoredJson(
+      getBrowserStorage('localStorage'),
+      'zyro_whatsapp_position',
+      null as { x: number; y: number } | null,
+      (value): value is { x: number; y: number } => Boolean(
+        value && typeof value === 'object' &&
+        Number.isFinite((value as { x?: unknown }).x) && Number.isFinite((value as { y?: unknown }).y),
+      ),
+    );
     if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        const clampedX = Math.max(16, Math.min(window.innerWidth - 80, parsed.x));
-        const clampedY = Math.max(16, Math.min(window.innerHeight - 160, parsed.y));
-        setPosition({ x: clampedX, y: clampedY });
-      } catch (e) {
-        // Fallback
-        const defaultX = window.innerWidth - 80; // 64px width + 16px padding
-        const defaultY = window.innerHeight - 180; // 64px height + 116px padding
-        setPosition({ x: defaultX, y: defaultY });
-      }
+      const clampedX = Math.max(16, Math.min(window.innerWidth - 80, saved.x));
+      const clampedY = Math.max(16, Math.min(window.innerHeight - 160, saved.y));
+      setPosition({ x: clampedX, y: clampedY });
     } else {
       const defaultX = window.innerWidth - 80;
       const defaultY = window.innerHeight - 180;
@@ -96,7 +97,7 @@ export default function FloatingWhatsApp({ settings, isAdminMode }: FloatingWhat
 
     const finalPos = { x: snapX, y: snapY };
     setPosition(finalPos);
-    localStorage.setItem('zyro_whatsapp_position', JSON.stringify(finalPos));
+    writeStoredJson(getBrowserStorage('localStorage'), 'zyro_whatsapp_position', finalPos);
   };
 
   useEffect(() => {

@@ -2,6 +2,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import { X, ShoppingBag, Trash2, ShieldCheck, Phone, CheckCircle, Truck, Lock, Eye } from 'lucide-react';
 import { CartItem, Order, WebsiteSettings } from '../types';
 import { auth } from '../firebase';
+import { fetchJson } from '../services/network/fetchJson';
+import { reportClientIssue } from '../services/observability/clientDiagnostics';
 
 interface CartDrawerProps {
   isOpen: boolean;
@@ -189,7 +191,7 @@ export default function CartDrawer({
         }))
       };
       const idempotencyKey = getCheckoutIdempotencyKey(JSON.stringify(checkoutPayload));
-      const response = await fetch("/api/checkout", {
+      const resData = await fetchJson<{ success: boolean; order: Order; error?: string }>("/api/checkout", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -199,14 +201,8 @@ export default function CartDrawer({
           ...checkoutPayload,
           idempotencyKey,
         })
-      });
+      }, { fallbackMessage: 'Checkout is temporarily unavailable. Please try again.' });
 
-      if (!response.ok) {
-        const errData = await response.json();
-        throw new Error(errData.error || "Failed to process checkout on the server.");
-      }
-
-      const resData = await response.json();
       if (!resData.success) {
         throw new Error(resData.error || "Failed to process checkout on the server.");
       }
@@ -216,9 +212,9 @@ export default function CartDrawer({
 
       // Reset & Clear
       onClearCart();
-    } catch (err: any) {
-      console.error("Checkout failed:", err);
-      setCheckoutError(err.message || "An unexpected error occurred during checkout.");
+    } catch (err: unknown) {
+      reportClientIssue('checkout-request', err, 'warning');
+      setCheckoutError(err instanceof Error ? err.message : "An unexpected error occurred during checkout.");
     } finally {
       setIsSubmitting(false);
     }

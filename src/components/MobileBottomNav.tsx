@@ -3,7 +3,7 @@ import {
   Home, ShoppingBag, Heart, ShoppingCart, Menu, X, 
   LayoutDashboard, LogIn, LogOut, Phone, MapPin, 
   ChevronRight, SlidersHorizontal, UserRound, ShieldCheck, MessageCircle,
-  Mail, HelpCircle, LockKeyhole, Info
+  Mail, HelpCircle, LockKeyhole, Info, Settings
 } from 'lucide-react';
 import { auth } from '../firebase';
 import { signOut } from 'firebase/auth';
@@ -253,6 +253,18 @@ export default function MobileBottomNav({
                   <button onClick={() => handleTabClick('categories')} className="zy-account-action"><SlidersHorizontal className="h-4.5 w-4.5 text-brand-blue" /><span>Categories</span></button>
                 </div>
               </div>
+
+              {user && (
+                <div className="space-y-2.5">
+                  <span className="block text-[10px] font-extrabold uppercase tracking-widest text-slate-400">Account Center</span>
+                  <div className="grid grid-cols-2 gap-2.5">
+                    <button onClick={() => handleTabClick('account')} className="zy-account-action"><UserRound className="h-4.5 w-4.5 text-brand-blue" /><span>My Account</span></button>
+                    <button onClick={() => handleTabClick('account-addresses')} className="zy-account-action"><MapPin className="h-4.5 w-4.5 text-brand-blue" /><span>Addresses</span></button>
+                    <button onClick={() => handleTabClick('account-security')} className="zy-account-action"><LockKeyhole className="h-4.5 w-4.5 text-brand-blue" /><span>Security</span></button>
+                    <button onClick={() => handleTabClick('account-settings')} className="zy-account-action"><Settings className="h-4.5 w-4.5 text-brand-blue" /><span>Settings</span></button>
+                  </div>
+                </div>
+              )}
 
               {/* Admin Dashboard shortcut */}
               {isAdminUser && (

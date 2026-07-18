@@ -3,12 +3,15 @@ import {
   collection, onSnapshot, doc, getDoc, updateDoc, setDoc 
 } from 'firebase/firestore';
 import { onAuthStateChanged, User } from 'firebase/auth';
-import { db, auth, handleFirestoreError, OperationType } from './firebase';
+import { db, auth } from './firebase';
 import { Product, Category, CartItem, CustomerProduct, WebsiteSettings } from './types';
 import { isProductionAdminEmail } from './config/admin';
 import { motion } from 'motion/react';
 import { projectCustomerProducts } from './services/product-search/customerProjection';
 import { searchCustomerProducts } from './services/product-search/customerProductSearch';
+import { getBrowserStorage, readStoredArray, writeStoredJson } from './services/browser/persistentStorage';
+import { reportClientIssue } from './services/observability/clientDiagnostics';
+import { addRecentlyViewedProduct, buildRecentlyViewedProducts } from './features/account/accountData';
 import {
   buildCategoryProductCounts,
   categoryMatches,
@@ -24,19 +27,22 @@ import ProductCard from './components/ProductCard';
 import ProductFilters from './components/ProductFilters';
 import Footer from './components/Footer';
 import FloatingWhatsApp from './components/FloatingWhatsApp';
-import ProductDetailModal from './components/ProductDetailModal';
-import ContactPage from './components/ContactPage';
 import MarketplaceHomePhase1 from './components/MarketplaceHomePhase1';
+import StorefrontNotFound from './components/StorefrontNotFound';
+import StorefrontSeo from './components/StorefrontSeo';
 
 const AdminDashboard = lazy(() => import('./components/AdminDashboard'));
 const CartDrawer = lazy(() => import('./components/CartDrawer'));
 const AuthModal = lazy(() => import('./components/AuthModal'));
 const CmsPage = lazy(() => import('./components/CmsPage'));
+const ContactPage = lazy(() => import('./components/ContactPage'));
+const ProductDetailModal = lazy(() => import('./components/ProductDetailModal'));
+const AccountCenter = lazy(() => import('./features/account/AccountCenter'));
 
 // Lucide Icons
 import { 
   ShieldCheck, Truck, RefreshCw, Star, ArrowRight,
-  SlidersHorizontal, ShoppingBag, Phone, Heart, X, Grid3X3
+  SlidersHorizontal, ShoppingBag, Phone, Heart, X, Grid3X3, WifiOff
 } from 'lucide-react';
 
 const formatPrice = (amount: number) => new Intl.NumberFormat('en-LK', {
@@ -46,9 +52,29 @@ const formatPrice = (amount: number) => new Intl.NumberFormat('en-LK', {
   maximumFractionDigits: 0
 }).format(amount);
 
-const LazyBlockFallback = ({ className = "" }: { className?: string }) => (
-  <div className={`animate-pulse rounded-2xl border border-slate-100 bg-white/80 ${className}`}>
+const STOREFRONT_PAGE_IDS = new Set([
+  'home', 'legacy-home', 'products', 'categories', 'wishlist', 'contact',
+  'account', 'account-profile', 'account-addresses', 'account-security', 'account-settings',
+  'about-us', 'privacy-policy', 'terms-conditions', 'return-policy', 'faq',
+]);
+
+const LazyBlockFallback = ({ className = "", label = 'Loading content' }: { className?: string; label?: string }) => (
+  <div className={`animate-pulse rounded-2xl border border-slate-100 bg-white/80 ${className}`} role="status" aria-live="polite" aria-label={label}>
+    <span className="sr-only">{label}</span>
     <div className="h-full min-h-32 w-full rounded-2xl bg-slate-100/70" />
+  </div>
+);
+
+const ProductGridLoading = () => (
+  <div className="zy-storefront-grid-loading" role="status" aria-live="polite" aria-label="Loading products">
+    <span className="sr-only">Loading products</span>
+    {Array.from({ length: 6 }, (_, index) => <div key={index} aria-hidden="true"><span /><i /><small /><b /></div>)}
+  </div>
+);
+
+const OverlayLoadingFallback = ({ label }: { label: string }) => (
+  <div className="zy-storefront-overlay-loading" role="status" aria-live="polite" aria-label={label}>
+    <p>{label}</p>
   </div>
 );
 
@@ -59,9 +85,10 @@ export default function App() {
 
   // Website Settings
   const [settings, setSettings] = useState<WebsiteSettings | null>(null);
+  const [isOffline, setIsOffline] = useState(() => typeof navigator !== 'undefined' && !navigator.onLine);
+  const [storefrontDataError, setStorefrontDataError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (settings?.storeName?.trim()) document.title = settings.storeName.trim();
     const faviconUrl = settings?.faviconUrl?.trim() || '/favicon.png';
     let favicon = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
     if (!favicon) {
@@ -72,7 +99,7 @@ export default function App() {
     favicon.href = faviconUrl;
     const appleTouchIcon = document.querySelector<HTMLLinkElement>('link[rel="apple-touch-icon"]');
     if (appleTouchIcon) appleTouchIcon.href = faviconUrl;
-  }, [settings?.faviconUrl, settings?.storeName]);
+  }, [settings?.faviconUrl]);
 
   // Firestore Data States
   const [products, setProducts] = useState<Product[]>([]);
@@ -81,14 +108,11 @@ export default function App() {
   const [loading, setLoading] = useState<boolean>(true);
 
   // Shopping Cart & Wishlist States (Backed by LocalStorage)
-  const [cart, setCart] = useState<CartItem[]>(() => {
-    const saved = localStorage.getItem('zyro_cart');
-    return saved ? JSON.parse(saved) : [];
-  });
-  const [wishlist, setWishlist] = useState<Product[]>(() => {
-    const saved = localStorage.getItem('zyro_wishlist');
-    return saved ? JSON.parse(saved) : [];
-  });
+  const [cart, setCart] = useState<CartItem[]>(() => readStoredArray<CartItem>(getBrowserStorage('localStorage'), 'zyro_cart'));
+  const [wishlist, setWishlist] = useState<Product[]>(() => readStoredArray<Product>(getBrowserStorage('localStorage'), 'zyro_wishlist'));
+  const [recentlyViewedProductIds, setRecentlyViewedProductIds] = useState<string[]>(
+    () => readStoredArray<string>(getBrowserStorage('localStorage'), 'zyro_recently_viewed'),
+  );
 
   // Filtering / Sorting / Search States
   const [searchQuery, setSearchQuery] = useState<string>("");
@@ -105,6 +129,8 @@ export default function App() {
   const [isFilterDrawerOpen, setIsFilterDrawerOpen] = useState<boolean>(false);
   const [wishlistFeedback, setWishlistFeedback] = useState<{ productName: string; action: 'added' | 'removed' } | null>(null);
   const wishlistFeedbackTimerRef = useRef<number | null>(null);
+  const storefrontContentRef = useRef<HTMLElement | null>(null);
+  const previousPageRef = useRef(currentPage);
 
   // Auth User State
   const [user, setUser] = useState<User | null>(null);
@@ -119,6 +145,25 @@ export default function App() {
       window.clearTimeout(wishlistFeedbackTimerRef.current);
     }
   }, []);
+
+  useEffect(() => {
+    const handleOnline = () => setIsOffline(false);
+    const handleOffline = () => setIsOffline(true);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (previousPageRef.current === currentPage) return;
+    previousPageRef.current = currentPage;
+    if (isAdminMode) return;
+    const frame = window.requestAnimationFrame(() => storefrontContentRef.current?.focus({ preventScroll: true }));
+    return () => window.cancelAnimationFrame(frame);
+  }, [currentPage, isAdminMode]);
 
   useEffect(() => {
     if (!isFilterDrawerOpen) return;
@@ -184,11 +229,7 @@ export default function App() {
           setCartLoadedForUser(currentUser.uid);
           setUser(currentUser);
         } catch (e: any) {
-          if (e && (e.message?.includes('offline') || e.message?.includes('network') || e.code === 'unavailable')) {
-            console.warn("Information checking admin role offline:", e.message || e);
-          } else {
-            console.error("Error fetching admin role:", e);
-          }
+          reportClientIssue('auth-profile-load', e, 'warning');
           setIsAdminMode(false);
           setIsAdminUser(false);
           setWishlistLoadedForUser(currentUser.uid);
@@ -209,7 +250,7 @@ export default function App() {
   // Sync state changes with localStorage and Firestore
   useEffect(() => {
     // TODO(security): persist minimal cart references after a dedicated checkout compatibility review.
-    localStorage.setItem('zyro_cart', JSON.stringify(cart));
+    writeStoredJson(getBrowserStorage('localStorage'), 'zyro_cart', cart);
     
     const syncCartToFirestore = async () => {
       if (user && cartLoadedForUser === user.uid) {
@@ -229,7 +270,7 @@ export default function App() {
             });
           }
         } catch (e: any) {
-          console.warn("Failed to persist cart online:", e.message || e);
+          reportClientIssue('cart-cloud-sync', e, 'warning');
         }
       }
     };
@@ -237,7 +278,7 @@ export default function App() {
   }, [cart, user, cartLoadedForUser]);
 
   useEffect(() => {
-    localStorage.setItem('zyro_wishlist', JSON.stringify(wishlist));
+    writeStoredJson(getBrowserStorage('localStorage'), 'zyro_wishlist', wishlist);
     
     // Sync to Firestore for authenticated users
     const syncWishlistToFirestore = async () => {
@@ -258,13 +299,17 @@ export default function App() {
             });
           }
         } catch (e: any) {
-          console.warn("Failed to persist wishlist online:", e.message || e);
+          reportClientIssue('wishlist-cloud-sync', e, 'warning');
         }
       }
     };
     
     syncWishlistToFirestore();
   }, [wishlist, user, wishlistLoadedForUser]);
+
+  useEffect(() => {
+    writeStoredJson(getBrowserStorage('localStorage'), 'zyro_recently_viewed', recentlyViewedProductIds);
+  }, [recentlyViewedProductIds]);
 
   // Seeding & Firestore Live Sync
   useEffect(() => {
@@ -278,6 +323,13 @@ export default function App() {
       if (!isMounted) return;
       
       // Live listener on website settings
+      const handleDataFailure = (area: string, error: unknown, blocksProducts = false) => {
+        if (!isMounted) return;
+        reportClientIssue(`storefront-${area}-listener`, error, 'warning');
+        setStorefrontDataError('Some live marketplace information could not be refreshed. You can retry without losing your cart.');
+        if (blocksProducts) setLoading(false);
+      };
+
       const sUnsub = onSnapshot(doc(db, "settings", "website"), (snap) => {
         if (!isMounted) return;
         if (snap.exists()) {
@@ -305,7 +357,7 @@ export default function App() {
           }
           setSettings(cleanData);
         }
-      });
+      }, error => handleDataFailure('settings', error));
       if (!isMounted) {
         sUnsub();
       } else {
@@ -321,8 +373,9 @@ export default function App() {
           prodList.push({ id: doc.id, ...doc.data() } as Product);
         });
         setProducts(prodList);
+        setStorefrontDataError(null);
         setLoading(false);
-      });
+      }, error => handleDataFailure('products', error, true));
       if (!isMounted) {
         pUnsub();
       } else {
@@ -337,7 +390,7 @@ export default function App() {
           catList.push({ id: doc.id, ...doc.data() } as Category);
         });
         setCategories(getActiveCategories(sortCategoriesAlphabetically(catList)));
-      });
+      }, error => handleDataFailure('categories', error));
       if (!isMounted) {
         cUnsub();
       } else {
@@ -361,7 +414,7 @@ export default function App() {
           return timeB - timeA;
         });
         setHomepageReviews(revList);
-      });
+      }, error => handleDataFailure('reviews', error));
       if (!isMounted) {
         rUnsub();
       } else {
@@ -464,6 +517,7 @@ export default function App() {
   }, [wishlist]);
 
   const handleViewProduct = useCallback((product: Product) => {
+    setRecentlyViewedProductIds(previous => addRecentlyViewedProduct(previous, product.id));
     setSelectedProduct(product);
   }, []);
 
@@ -590,8 +644,19 @@ export default function App() {
     setSortBy('featured');
   }, []);
 
+  const liveSelectedProduct = selectedProduct ? (products.find(product => product.id === selectedProduct.id) || selectedProduct) : null;
+  const recentlyViewedProducts = buildRecentlyViewedProducts(recentlyViewedProductIds, products);
+  const isKnownStorefrontPage = STOREFRONT_PAGE_IDS.has(currentPage);
+
   return (
     <div className="flex flex-col min-h-screen bg-slate-50 text-slate-800">
+      <StorefrontSeo
+        currentPage={currentPage}
+        product={liveSelectedProduct}
+        settings={settings}
+        isAdminMode={isAdminMode}
+      />
+      {!isAdminMode && <a href="#storefront-content" className="zy-skip-link">Skip to main content</a>}
       
       {/* Dynamic Header / Navbar */}
       <Navbar 
@@ -624,7 +689,26 @@ export default function App() {
           />
         </Suspense>
       ) : (
-        <div className="flex-1 pb-[calc(7rem+env(safe-area-inset-bottom))] md:pb-0">
+        <>
+        <main
+          id="storefront-content"
+          ref={storefrontContentRef}
+          tabIndex={-1}
+          className="flex-1 pb-[calc(7rem+env(safe-area-inset-bottom))] outline-none md:pb-0"
+          aria-busy={loading}
+        >
+          {(isOffline || storefrontDataError) && (
+            <aside className="zy-storefront-connection-state" role={storefrontDataError ? 'alert' : 'status'} aria-live="polite">
+              <WifiOff className="h-5 w-5" aria-hidden="true" />
+              <div>
+                <strong>{isOffline ? 'You are currently offline' : 'Live catalogue refresh paused'}</strong>
+                <p>{isOffline ? 'Previously loaded products remain available while Zyro.lk reconnects.' : storefrontDataError}</p>
+              </div>
+              {!isOffline && storefrontDataError && (
+                <button type="button" onClick={() => window.location.reload()}>Retry connection</button>
+              )}
+            </aside>
+          )}
           {/* Main Content Pages */}
 
           {/* PAGE 1: STOREFRONT V2 PHASE 1 */}
@@ -731,9 +815,10 @@ export default function App() {
                             className="h-full w-full object-contain p-3 mix-blend-multiply transition-transform duration-500 ease-out group-hover:scale-[1.06] sm:p-4"
                             referrerPolicy="no-referrer"
                             loading="lazy"
+                            fetchPriority="low"
                             decoding="async"
                             width="600"
-                            height="450"
+                            height="600"
                           />
                           {/* Soft bottom vignette for image blending */}
                           <div className="absolute inset-0 bg-gradient-to-t from-slate-950/18 via-transparent to-white/20" />
@@ -1173,7 +1258,9 @@ export default function App() {
                   </div>
 
                   {/* Products list or empty state */}
-                  {filteredProducts.length === 0 ? (
+                  {loading ? (
+                    <ProductGridLoading />
+                  ) : filteredProducts.length === 0 ? (
                     <div className="zy-surface zy-empty-state px-6 py-16 text-center space-y-4">
                       <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-50">
                         <SlidersHorizontal className="h-8 w-8 text-slate-400" aria-hidden="true" />
@@ -1358,6 +1445,7 @@ export default function App() {
                                   className="zy-category-collection-image"
                                   referrerPolicy="no-referrer"
                                   loading="lazy"
+                                  fetchPriority="low"
                                   decoding="async"
                                   width="720"
                                   height="540"
@@ -1453,23 +1541,40 @@ export default function App() {
             </div>
           )}
 
+          {/* CUSTOMER ACCOUNT CENTER */}
+          {['account', 'account-profile', 'account-addresses', 'account-security', 'account-settings'].includes(currentPage) && (
+            <Suspense fallback={<LazyBlockFallback className="mx-auto my-12 min-h-[32rem] max-w-6xl" label="Loading your Account Center" />}>
+              <AccountCenter
+                currentPage={currentPage}
+                user={user}
+                wishlist={wishlist}
+                recentlyViewed={recentlyViewedProducts}
+                onNavigate={(page) => { setIsAdminMode(false); setCurrentPage(page); }}
+                onOpenAuth={() => setIsAuthModalOpen(true)}
+                onViewProduct={handleViewProduct}
+              />
+            </Suspense>
+          )}
+
           {/* PAGE 5: CONTACT PAGE */}
           {currentPage === 'contact' && (
-            <ContactPage
-              settings={settings}
-              isAdmin={isAdminUser}
-              onEdit={(pageId) => {
-                setAdminInitialTab('pages');
-                setAdminInitialCmsPageId(pageId);
-                setIsAdminMode(true);
-                setCurrentPage('admin');
-              }}
-            />
+            <Suspense fallback={<LazyBlockFallback className="mx-auto my-12 min-h-96 max-w-5xl" label="Loading contact and support" />}>
+              <ContactPage
+                settings={settings}
+                isAdmin={isAdminUser}
+                onEdit={(pageId) => {
+                  setAdminInitialTab('pages');
+                  setAdminInitialCmsPageId(pageId);
+                  setIsAdminMode(true);
+                  setCurrentPage('admin');
+                }}
+              />
+            </Suspense>
           )}
 
           {/* PAGE 6: CMS DYNAMIC PAGES */}
           {['about-us', 'privacy-policy', 'terms-conditions', 'return-policy', 'faq'].includes(currentPage) && (
-            <Suspense fallback={<LazyBlockFallback className="mx-auto my-12 min-h-96 max-w-5xl" />}>
+            <Suspense fallback={<LazyBlockFallback className="mx-auto my-12 min-h-96 max-w-5xl" label="Loading page content" />}>
               <CmsPage
                 pageId={currentPage}
                 onBackToHome={() => setCurrentPage('home')}
@@ -1484,10 +1589,17 @@ export default function App() {
             </Suspense>
           )}
 
-          {/* Dynamic Footer Block */}
-          <Footer settings={settings} setCurrentPage={setCurrentPage} onSelectCategory={setSelectedCategory} categories={storefrontCategories} categoryCounts={categoryCounts} />
+          {!isKnownStorefrontPage && (
+            <StorefrontNotFound
+              onGoHome={() => setCurrentPage('home')}
+              onBrowseProducts={() => { setCurrentPage('products'); setSelectedCategory('all'); }}
+            />
+          )}
+        </main>
 
-        </div>
+        {/* Dynamic Footer Block */}
+        <Footer settings={settings} setCurrentPage={setCurrentPage} onSelectCategory={setSelectedCategory} categories={storefrontCategories} categoryCounts={categoryCounts} />
+        </>
       )}
 
       {/* --- FLOATING OVERLAYS & MODALS --- */}
@@ -1529,27 +1641,26 @@ export default function App() {
       )}
 
       {/* Detail Showcase Modal */}
-      {(() => {
-        const liveSelectedProduct = selectedProduct ? (products.find(p => p.id === selectedProduct.id) || selectedProduct) : null;
-        return liveSelectedProduct ? (
-          <ProductDetailModal 
-            product={liveSelectedProduct}
-            isOpen={!!selectedProduct}
-            onClose={() => setSelectedProduct(null)}
-            isWishlisted={liveSelectedProduct ? wishlistProductIds.has(liveSelectedProduct.id) : false}
-            onAddToCart={handleAddToCart}
-            onToggleWishlist={handleToggleWishlist}
-            allProducts={products}
-            onSelectProduct={setSelectedProduct}
-            onBuyNow={handleBuyNow}
-            settings={settings}
-          />
-        ) : null;
-      })()}
+      {liveSelectedProduct && (
+        <Suspense fallback={<OverlayLoadingFallback label="Loading product details" />}>
+          <ProductDetailModal
+              product={liveSelectedProduct}
+              isOpen={!!selectedProduct}
+              onClose={() => setSelectedProduct(null)}
+              isWishlisted={wishlistProductIds.has(liveSelectedProduct.id)}
+              onAddToCart={handleAddToCart}
+              onToggleWishlist={handleToggleWishlist}
+              allProducts={products}
+              onSelectProduct={handleViewProduct}
+              onBuyNow={handleBuyNow}
+              settings={settings}
+            />
+        </Suspense>
+      )}
 
       {/* Cart Drawer Sliding panel */}
       {hasOpenedCart && (
-        <Suspense fallback={null}>
+        <Suspense fallback={<OverlayLoadingFallback label="Loading your cart" />}>
           <CartDrawer
             isOpen={isCartOpen}
             onClose={() => setIsCartOpen(false)}
@@ -1565,7 +1676,7 @@ export default function App() {
 
       {/* Authentication Gateway */}
       {hasOpenedAuth && (
-        <Suspense fallback={null}>
+        <Suspense fallback={<OverlayLoadingFallback label="Loading account access" />}>
           <AuthModal
             isOpen={isAuthModalOpen}
             onClose={() => setIsAuthModalOpen(false)}

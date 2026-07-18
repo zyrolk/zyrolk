@@ -64,7 +64,10 @@ export default function Footer({ setCurrentPage, onSelectCategory, settings, cat
                 className="zy-launch-footer-logo"
                 referrerPolicy="no-referrer"
                 loading="lazy"
+                fetchPriority="low"
                 decoding="async"
+                width="220"
+                height="64"
               />
             ) : (
               <span className="zy-launch-footer-wordmark">{storeName}</span>

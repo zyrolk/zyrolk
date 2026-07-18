@@ -6,6 +6,9 @@ import {defineConfig} from 'vite';
 export default defineConfig(() => {
   return {
     plugins: [react(), tailwindcss()],
+    esbuild: {
+      pure: ['console.log', 'console.info', 'console.debug'],
+    },
     build: {
       modulePreload: {
         resolveDependencies(_filename, deps) {
@@ -17,12 +20,24 @@ export default defineConfig(() => {
         },
       },
       rollupOptions: {
-        // TODO: Evaluate Firebase and chart bundle splitting in a dedicated performance sprint.
+        // Keep long-lived platform dependencies cacheable and administrative bundles out of storefront preloads.
         output: {
           manualChunks(id) {
             if (id.includes('node_modules')) {
+              if (id.includes('@firebase/storage') || id.includes('/firebase/storage/')) {
+                return 'firebase-storage';
+              }
+              if (id.includes('@firebase/firestore') || id.includes('/firebase/firestore/')) {
+                return 'firebase-firestore';
+              }
+              if (id.includes('@firebase/auth') || id.includes('/firebase/auth/')) {
+                return 'firebase-auth';
+              }
               if (id.includes('firebase')) {
-                return 'firebase';
+                return 'firebase-core';
+              }
+              if (id.includes('lucide-react')) {
+                return 'icons';
               }
               if (id.includes('react') || id.includes('react-dom') || id.includes('motion')) {
                 return 'react-vendor';

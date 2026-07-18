@@ -35,7 +35,7 @@ export default function RelatedProductsRail({ products, scrollRef, onScroll, onS
           aria-label={`View related product ${item.name}`}
         >
           <div className="zy-related-product-image relative mb-4 flex aspect-square w-full items-center justify-center overflow-hidden rounded-xl bg-slate-50 p-3">
-            <img src={item.imageUrl || PRODUCT_IMAGE_FALLBACK} alt={item.name} loading="lazy" decoding="async" onError={(event) => { event.currentTarget.onerror = null; event.currentTarget.src = PRODUCT_IMAGE_FALLBACK; }} className="max-h-full max-w-full object-contain transition-transform duration-500 group-hover:scale-105" referrerPolicy="no-referrer" />
+            <img src={item.imageUrl || PRODUCT_IMAGE_FALLBACK} alt={item.name} loading="lazy" fetchPriority="low" decoding="async" width="600" height="600" onError={(event) => { event.currentTarget.onerror = null; event.currentTarget.src = PRODUCT_IMAGE_FALLBACK; }} className="max-h-full max-w-full object-contain transition-transform duration-500 group-hover:scale-105" referrerPolicy="no-referrer" />
             {Boolean(item.discount && item.discount > 0) && <span className="absolute left-2.5 top-2.5 rounded-lg bg-brand-blue px-2.5 py-1 text-[9px] font-black text-white">-{item.discount}%</span>}
             <span className={`zy-related-product-stock ${item.stock > 0 ? 'is-available' : 'is-unavailable'}`}>{item.stock > 0 ? 'In stock' : 'Out of stock'}</span>
           </div>

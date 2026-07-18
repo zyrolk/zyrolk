@@ -1,12 +1,8 @@
-import { initializeApp, getApps, deleteApp } from 'firebase/app';
+import { initializeApp, getApps } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { 
-  initializeFirestore, 
-  doc, 
-  getDocFromServer
-} from 'firebase/firestore';
-import { getStorage } from 'firebase/storage';
+import { getFirestore } from 'firebase/firestore';
 import appletConfig from '../firebase-applet-config.json';
+import { reportClientIssue } from './services/observability/clientDiagnostics';
 
 // Construct config directly from the imported JSON, with absolutely no hardcoded values
 const firebaseConfig = {
@@ -18,42 +14,12 @@ const firebaseConfig = {
   appId: appletConfig.appId
 };
 
-// Clean up any existing/cached Firebase apps to ensure a completely clean state
-const existingApps = getApps();
-if (existingApps.length > 0) {
-  existingApps.forEach(existingApp => {
-    deleteApp(existingApp).catch(err => {
-      console.warn("Failed to delete cached app instance:", err);
-    });
-  });
-}
-
-// Initialize Firebase only once
-const app = initializeApp(firebaseConfig);
+// Reuse the initialized app during development refreshes and production module reuse.
+const app = getApps()[0] || initializeApp(firebaseConfig);
 const auth = getAuth(app);
+const db = getFirestore(app);
 
-// Initialize Firestore with the default database
-const db = initializeFirestore(app, {});
-
-// Initialize Firebase Storage
-const storage = getStorage(app);
-
-// Liveness Connection test
-async function testConnection() {
-  try {
-    await getDocFromServer(doc(db, 'test', 'connection'));
-    console.log("Firebase Connection verified.");
-  } catch (error) {
-    if (error instanceof Error && error.message.includes('offline')) {
-      console.warn("Firebase client appears to be offline. Local persistence will buffer updates.");
-    } else {
-      console.log("Firebase initialization status checked.");
-    }
-  }
-}
-testConnection();
-
-export { db, auth, storage, firebaseConfig };
+export { db, auth, firebaseConfig };
 
 export enum OperationType {
   CREATE = 'create',
@@ -64,42 +30,20 @@ export enum OperationType {
   WRITE = 'write',
 }
 
-export interface FirestoreErrorInfo {
-  error: string;
-  operationType: OperationType;
-  path: string | null;
-  authInfo: {
-    userId?: string | null;
-    email?: string | null;
-    emailVerified?: boolean | null;
-    isAnonymous?: boolean | null;
-    tenantId?: string | null;
-    providerInfo?: {
-      providerId?: string | null;
-      email?: string | null;
-    }[];
-  }
-}
-
 export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
-  const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
-    authInfo: {
-      userId: auth.currentUser?.uid,
-      email: auth.currentUser?.email,
-      emailVerified: auth.currentUser?.emailVerified,
-      isAnonymous: auth.currentUser?.isAnonymous,
-      tenantId: auth.currentUser?.tenantId,
-      providerInfo: auth.currentUser?.providerData?.map(provider => ({
-        providerId: provider.providerId,
-        email: provider.email,
-      })) || []
-    },
-    operationType,
-    path
-  }
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
-  throw new Error(JSON.stringify(errInfo));
+  const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
+    ? error.code
+    : 'unknown';
+  reportClientIssue('firestore-operation-failed', { code, operationType, path });
+
+  const message = code === 'permission-denied'
+    ? 'You do not have permission to complete this action.'
+    : code === 'unavailable' || code === 'failed-precondition'
+      ? 'This service is temporarily unavailable. Please try again.'
+      : 'The requested data operation could not be completed.';
+  const safeError = new Error(message);
+  safeError.name = 'FirestoreOperationError';
+  throw safeError;
 }
 
 export default app;

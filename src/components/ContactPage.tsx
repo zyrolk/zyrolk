@@ -3,6 +3,7 @@ import { Mail, Phone, MapPin, Send, CheckCircle, Clock, MessageSquare, Edit3 } f
 import { WebsiteSettings } from '../types';
 import { db } from '../firebase';
 import { addDoc, collection, doc, getDoc, serverTimestamp } from 'firebase/firestore';
+import { reportClientIssue } from '../services/observability/clientDiagnostics';
 
 interface ContactPageProps {
   settings?: WebsiteSettings | null;
@@ -163,7 +164,7 @@ export default function ContactPage({ settings, isAdmin, onEdit }: ContactPagePr
           });
         }
       } catch (err) {
-        console.error("Error fetching Contact Us CMS page:", err);
+        reportClientIssue('contact-content-load', err, 'warning');
       } finally {
         setLoading(false);
       }
@@ -191,7 +192,7 @@ export default function ContactPage({ settings, isAdmin, onEdit }: ContactPagePr
         setMessage("");
       }, 4000);
     } catch (error) {
-      console.error("Contact inquiry persistence failed:", error);
+      reportClientIssue('contact-inquiry-save', error, 'warning');
       setSubmitError("Your inquiry could not be sent. Please try again or contact us through WhatsApp.");
     } finally {
       setSubmitting(false);

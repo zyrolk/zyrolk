@@ -17,6 +17,7 @@ import {
 } from '../features/product-experience/productExperience';
 import ProductSpecificationsPanel from '../features/product-experience/ProductSpecificationsPanel';
 import RelatedProductsRail from '../features/product-experience/RelatedProductsRail';
+import { reportClientIssue } from '../services/observability/clientDiagnostics';
 
 interface ProductDetailModalProps {
   product: Product | null;
@@ -219,7 +220,7 @@ export default function ProductDetailModal({
       if (requestGateRef.current.isLatest(requestId)) setReviews(list);
       
     } catch (err) {
-      console.error("Error loading reviews:", err);
+      reportClientIssue('product-reviews-load', err, 'warning');
       if (requestGateRef.current.isLatest(requestId)) setReviewError('Reviews could not be loaded. Please try again.');
     } finally {
       if (requestGateRef.current.isLatest(requestId)) setLoadingReviews(false);
@@ -433,7 +434,7 @@ export default function ProductDetailModal({
       // Hide success message after 4 seconds
       setTimeout(() => setReviewSuccess(false), 4000);
     } catch (err) {
-      console.error("Error saving review:", err);
+      reportClientIssue('product-review-save', err, 'warning');
       setReviewError('Your review could not be submitted. Please try again.');
     } finally {
       setIsSubmitting(false);
@@ -733,7 +734,7 @@ export default function ProductDetailModal({
                             aria-label={`Show product image ${idx + 1} of ${galleryImages.length}`}
                             aria-pressed={activeImageIndex === idx}
                           >
-                            <img src={url} alt={`${product.name} thumbnail ${idx + 1}`} loading="lazy" decoding="async" onError={(event) => { event.currentTarget.onerror = null; event.currentTarget.src = PRODUCT_IMAGE_FALLBACK; }} className="w-full h-full object-contain rounded-xl" referrerPolicy="no-referrer" />
+                            <img src={url} alt={`${product.name} thumbnail ${idx + 1}`} loading="lazy" fetchPriority="low" decoding="async" width="160" height="160" onError={(event) => { event.currentTarget.onerror = null; event.currentTarget.src = PRODUCT_IMAGE_FALLBACK; }} className="w-full h-full object-contain rounded-xl" referrerPolicy="no-referrer" />
                           </button>
                         ))}
                       </div>

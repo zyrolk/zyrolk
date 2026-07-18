@@ -11,6 +11,7 @@ import {
 } from 'firebase/auth';
 import { doc, setDoc } from 'firebase/firestore';
 import { getAuthErrorMessage } from '../features/auth/authErrorMessage';
+import { reportClientIssue } from '../services/observability/clientDiagnostics';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -66,7 +67,7 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
       }
       onClose();
     } catch (err: unknown) {
-      console.error(err);
+      reportClientIssue('email-authentication', err, 'warning');
       setError(getAuthErrorMessage(err));
     } finally {
       setLoading(false);
@@ -93,7 +94,7 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
 
       onClose();
     } catch (err: unknown) {
-      console.warn("Google popup sign-in failed:", err);
+      reportClientIssue('google-authentication', err, 'warning');
       setError(getAuthErrorMessage(err));
 
     } finally {
@@ -118,7 +119,7 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
       await sendPasswordResetEmail(auth, normalizedEmail);
       setResetMessage("If an account exists for this email, a password reset link has been sent.");
     } catch (err: unknown) {
-      console.warn("Password reset failed:", err);
+      reportClientIssue('password-reset', err, 'warning');
       setError(getAuthErrorMessage(err));
     } finally {
       setLoading(false);

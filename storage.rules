@@ -1,14 +1,26 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
-    // Publicly readable, writeable only by authenticated admin users
+    function isAdmin() {
+      return request.auth != null && request.auth.token.email == 'zyrolkofficial@gmail.com';
+    }
+
+    function isValidImageUpload() {
+      return request.resource != null &&
+             request.resource.size < 10 * 1024 * 1024 &&
+             request.resource.contentType.matches('image/.*');
+    }
+
+    // Publicly readable media; only authenticated admins may upload validated images.
     match /banners/{fileName} {
       allow read: if true;
-      allow write: if request.auth != null && request.auth.token.email == 'zyrolkofficial@gmail.com';
+      allow create, update: if isAdmin() && isValidImageUpload();
+      allow delete: if isAdmin();
     }
     match /logos/{fileName} {
       allow read: if true;
-      allow write: if request.auth != null && request.auth.token.email == 'zyrolkofficial@gmail.com';
+      allow create, update: if isAdmin() && isValidImageUpload();
+      allow delete: if isAdmin();
     }
   }
 }

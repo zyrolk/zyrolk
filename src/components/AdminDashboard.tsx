@@ -13,7 +13,8 @@ import {
 } from 'firebase/firestore';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { onAuthStateChanged } from 'firebase/auth';
-import { db, storage, auth } from '../firebase';
+import { db, auth } from '../firebase';
+import { storage } from '../firebaseStorage';
 import { searchAdminProducts } from '../services/product-search/adminProductSearch';
 import {
   buildCategoryProductCounts,

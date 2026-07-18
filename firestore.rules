@@ -13,14 +13,42 @@ service cloud.firestore {
     }
 
     function isValidReviewData(data) {
-      return data.userId is string &&
+      return data.keys().hasOnly([
+               'userId', 'userName', 'customerName', 'productId', 'comment', 'rating', 'createdAt'
+             ]) &&
+             data.userId is string &&
+             data.userId.size() >= 1 && data.userId.size() <= 128 &&
              data.userName is string &&
+             data.userName.size() >= 1 && data.userName.size() <= 120 &&
              data.customerName is string &&
+             data.customerName.size() >= 1 && data.customerName.size() <= 120 &&
              data.productId is string &&
+             data.productId.size() >= 1 && data.productId.size() <= 128 &&
              data.comment is string &&
+             data.comment.size() >= 1 && data.comment.size() <= 2000 &&
              data.rating is number &&
              data.rating >= 1 &&
-             data.rating <= 5;
+             data.rating <= 5 &&
+             data.createdAt is string &&
+             data.createdAt.size() <= 64;
+    }
+
+    function isValidCustomerAddress(data) {
+      return data.keys().hasOnly([
+               'label', 'fullName', 'phone', 'addressLine1', 'addressLine2',
+               'city', 'district', 'postalCode', 'isDefault', 'createdAt', 'updatedAt'
+             ]) &&
+             data.label is string && data.label.size() >= 1 && data.label.size() <= 40 &&
+             data.fullName is string && data.fullName.size() >= 1 && data.fullName.size() <= 120 &&
+             data.phone is string && data.phone.size() >= 9 && data.phone.size() <= 30 &&
+             data.addressLine1 is string && data.addressLine1.size() >= 1 && data.addressLine1.size() <= 240 &&
+             data.addressLine2 is string && data.addressLine2.size() <= 240 &&
+             data.city is string && data.city.size() >= 1 && data.city.size() <= 80 &&
+             data.district is string && data.district.size() >= 1 && data.district.size() <= 80 &&
+             data.postalCode is string && data.postalCode.size() <= 20 &&
+             data.isDefault is bool &&
+             data.createdAt is timestamp &&
+             data.updatedAt is timestamp;
     }
 
     // Products Rules
@@ -48,6 +76,16 @@ service cloud.firestore {
                       (!('role' in request.resource.data) || request.resource.data.role == resource.data.role)
                     );
       allow delete: if isAdmin();
+    }
+
+    // Customer Account Center address book. Addresses remain private to their owner.
+    match /users/{userId}/addresses/{addressId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create, update: if isAdmin() || (
+                              isOwner(userId) &&
+                              isValidCustomerAddress(request.resource.data)
+                            );
+      allow delete: if isOwner(userId) || isAdmin();
     }
 
     // Reviews Rules
@@ -157,9 +195,9 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-    // Connection testing
+    // Production clients do not use a public connection-test collection.
     match /test/{docId} {
-      allow read: if true;
+      allow read, write: if false;
     }
   }
 }

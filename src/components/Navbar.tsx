@@ -257,14 +257,14 @@ export default function Navbar({
   ];
 
   const accountItems = [
-    { label: 'My Account', icon: User, action: user ? undefined : () => { onOpenAuthModal(); setIsProfileOpen(false); }, pending: Boolean(user) },
-    { label: 'Orders', icon: ReceiptText, action: undefined, pending: true },
+    { label: 'My Account', icon: User, action: user ? () => navigateToPage('account') : () => { onOpenAuthModal(); setIsProfileOpen(false); }, pending: false },
+    { label: 'Orders', icon: ReceiptText, action: user ? () => navigateToPage('account') : () => { onOpenAuthModal(); setIsProfileOpen(false); }, pending: false },
     ...(isWishlistEnabled ? [{ label: 'Wishlist', icon: Heart, action: () => navigateToPage('wishlist'), pending: false }] : []),
-    { label: 'Addresses', icon: MapPin, action: undefined, pending: true },
-    { label: 'Notifications', icon: Bell, action: undefined, pending: true },
+    { label: 'Addresses', icon: MapPin, action: user ? () => navigateToPage('account-addresses') : () => { onOpenAuthModal(); setIsProfileOpen(false); }, pending: false },
+    { label: 'Notifications', icon: Bell, action: user ? () => navigateToPage('account-settings') : () => { onOpenAuthModal(); setIsProfileOpen(false); }, pending: false },
     { label: 'Coupons', icon: Ticket, action: undefined, pending: true },
     { label: 'Support', icon: Headphones, action: () => navigateToPage('contact'), pending: false },
-    { label: 'Settings', icon: Settings, action: undefined, pending: true }
+    { label: 'Settings', icon: Settings, action: user ? () => navigateToPage('account-settings') : () => { onOpenAuthModal(); setIsProfileOpen(false); }, pending: false }
   ];
 
   const renderSearchBox = (idPrefix: string) => {
@@ -666,8 +666,17 @@ export default function Navbar({
             <div className="border-t border-slate-100 p-3">
               <span className="mb-2 block px-1 text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Shopping account</span>
               <div className="grid grid-cols-2 gap-2">
+                {user && (
+                  <button type="button" onClick={() => navigateToPage('account')} className="zy-mobile-account-card"><User className="h-5 w-5" aria-hidden="true" /><span>My Account</span></button>
+                )}
+                {user && (
+                  <button type="button" onClick={() => navigateToPage('account-addresses')} className="zy-mobile-account-card"><MapPin className="h-5 w-5" aria-hidden="true" /><span>Addresses</span></button>
+                )}
                 {isWishlistEnabled && (
                   <button type="button" onClick={() => navigateToPage('wishlist')} className="zy-mobile-account-card"><Heart className="h-5 w-5" aria-hidden="true" /><span>Wishlist</span>{wishlistCount > 0 && <b>{wishlistCount}</b>}</button>
+                )}
+                {user && (
+                  <button type="button" onClick={() => navigateToPage('account-settings')} className="zy-mobile-account-card"><Settings className="h-5 w-5" aria-hidden="true" /><span>Settings</span></button>
                 )}
                 <button type="button" onClick={() => navigateToPage('contact')} className="zy-mobile-account-card"><Headphones className="h-5 w-5" aria-hidden="true" /><span>Support</span></button>
               </div>

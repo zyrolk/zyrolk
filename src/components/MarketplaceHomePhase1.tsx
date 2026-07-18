@@ -58,7 +58,7 @@ export default function MarketplaceHomePhase1({
   const hasCategories = categoryVisuals.length > 0;
 
   return (
-    <main className="zy-foundation-home zy-launch-home animate-fadeIn">
+    <div className="zy-foundation-home zy-launch-home animate-fadeIn">
       <div className="zy-foundation-hero-wrap">
         <HeroBanner
           settings={settings}
@@ -97,7 +97,7 @@ export default function MarketplaceHomePhase1({
                 aria-label={`Browse ${category.name}, ${itemsCount} ${itemsCount === 1 ? 'product' : 'products'}`}
                 role="listitem"
               >
-                <span className="zy-foundation-category-image"><img src={image} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" /></span>
+                <span className="zy-foundation-category-image"><img src={image} alt="" loading="lazy" fetchPriority="low" decoding="async" width="160" height="160" referrerPolicy="no-referrer" /></span>
                 <strong>{category.name}</strong>
                 <small>{itemsCount} {itemsCount === 1 ? 'product' : 'products'}</small>
               </button>
@@ -238,6 +238,6 @@ export default function MarketplaceHomePhase1({
           enabled={settings?.enableReviews !== false}
         />
       </div>
-    </main>
+    </div>
   );
 }

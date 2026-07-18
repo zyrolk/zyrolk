@@ -145,6 +145,7 @@ function ProductCard({
           alt={product.name}
           referrerPolicy="no-referrer"
           loading="lazy"
+          fetchPriority="low"
           decoding="async"
           width="600"
           height="600"

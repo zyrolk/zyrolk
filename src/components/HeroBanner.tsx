@@ -208,6 +208,7 @@ export default function HeroBanner({
                     alt=""
                     className="zy-hero-v2-image"
                     loading={currentSlide === 0 ? 'eager' : 'lazy'}
+                    fetchPriority={currentSlide === 0 ? 'high' : 'low'}
                     decoding="async"
                     referrerPolicy="no-referrer"
                     aria-hidden="true"
