@@ -5,7 +5,10 @@ import {
   calculateCheckoutTotals,
   createCheckoutRateLimiter,
   createCheckoutRequestHash,
+  getCouponDocumentId,
   getIdempotencyKeyFromValues,
+  normalizeCouponCode,
+  resolveCouponDiscount,
   resolveCheckoutIdempotency,
   validateCheckoutCartItems,
   validateCheckoutDetails,
@@ -43,6 +46,7 @@ test("checkout consolidates duplicate product IDs before stock calculation", () 
 test("checkout totals calculation preserves delivery and free delivery behavior", () => {
   assert.deepEqual(calculateCheckoutTotals(4000, "Colombo", null), {
     itemsSubtotal: 4000,
+    discountAmount: 0,
     deliveryFee: 350,
     grandTotalPrice: 4350,
     freeDeliveryThreshold: 5000,
@@ -51,6 +55,23 @@ test("checkout totals calculation preserves delivery and free delivery behavior"
 
   assert.equal(calculateCheckoutTotals(5000, "Colombo", null).deliveryFee, 0);
   assert.equal(calculateCheckoutTotals(2500, "Unknown", { deliveryCharge: 700, freeDeliveryMin: 3000 }).grandTotalPrice, 3200);
+});
+
+test("checkout coupons are normalized, privately addressed, and calculated from trusted totals", () => {
+  assert.equal(normalizeCouponCode(" save-10 "), "SAVE-10");
+  assert.equal(getCouponDocumentId("save-10"), getCouponDocumentId(" SAVE-10 "));
+  assert.match(getCouponDocumentId("SAVE-10"), /^[a-f0-9]{64}$/);
+  assert.equal(resolveCouponDiscount({ active: true, type: "percentage", value: 10 }, 4000), 400);
+  assert.equal(resolveCouponDiscount({ active: true, type: "fixed", value: 750 }, 4000), 750);
+  assert.equal(resolveCouponDiscount({ active: true, type: "percentage", value: 25, maxDiscount: 500 }, 4000), 500);
+  assert.equal(calculateCheckoutTotals(4000, "Colombo", null, 400).grandTotalPrice, 3950);
+});
+
+test("checkout coupons reject invalid, unavailable, expired, and ineligible offers", () => {
+  assert.throws(() => normalizeCouponCode("bad code"), /valid coupon code/);
+  assert.throws(() => resolveCouponDiscount(null, 4000), /not valid/);
+  assert.throws(() => resolveCouponDiscount({ active: true, type: "fixed", value: 500, expiresAt: "2020-01-01" }, 4000), /expired/);
+  assert.throws(() => resolveCouponDiscount({ active: true, type: "fixed", value: 500, minSubtotal: 5000 }, 4000), /minimum subtotal/);
 });
 
 test("checkout idempotency returns original successful order for repeated matching requests", () => {

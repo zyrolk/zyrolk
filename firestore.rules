@@ -179,6 +179,11 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Coupon definitions are private operational data. Customers validate codes through the trusted checkout API.
+    match /checkout_coupons/{couponId} {
+      allow read, write: if isAdmin();
+    }
+
     // Production clients do not use a public connection-test collection.
     match /test/{docId} {
       allow read, write: if false;

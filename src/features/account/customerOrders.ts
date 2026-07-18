@@ -28,6 +28,10 @@ export interface CustomerOrder {
   city?: string;
   items: CustomerOrderItem[];
   totalPrice: number;
+  itemsSubtotal?: number;
+  deliveryFee?: number;
+  discountAmount?: number;
+  couponCode?: string;
   status: CustomerOrderStatus;
   paymentMethod: string;
   createdAt?: string;
@@ -95,6 +99,10 @@ export function normalizeCustomerOrder(id: string, value: Record<string, unknown
     city: cleanText(value.city, 80) || undefined,
     items,
     totalPrice: safeNumber(value.totalPrice),
+    itemsSubtotal: value.itemsSubtotal === undefined ? undefined : safeNumber(value.itemsSubtotal),
+    deliveryFee: value.deliveryFee === undefined ? undefined : safeNumber(value.deliveryFee),
+    discountAmount: value.discountAmount === undefined ? undefined : safeNumber(value.discountAmount),
+    couponCode: cleanText(value.couponCode, 40) || undefined,
     status: normalizeStatus(value.status),
     paymentMethod: cleanText(value.paymentMethod, 80) || 'cod',
     createdAt: cleanText(value.createdAt, 80) || undefined,
@@ -133,16 +141,22 @@ export function buildCustomerOrderTimeline(status: CustomerOrderStatus): Custome
   }));
 }
 
-export function calculateCustomerOrderTotals(order: Pick<CustomerOrder, 'items' | 'totalPrice'>): {
+export function calculateCustomerOrderTotals(order: Pick<CustomerOrder, 'items' | 'totalPrice' | 'itemsSubtotal' | 'deliveryFee' | 'discountAmount'>): {
   itemsSubtotal: number;
   deliveryFee: number;
+  discountAmount: number;
   grandTotal: number;
 } {
-  const itemsSubtotal = order.items.reduce((total, item) => total + (item.price * item.quantity), 0);
+  const calculatedItemsSubtotal = order.items.reduce((total, item) => total + (item.price * item.quantity), 0);
+  const itemsSubtotal = order.itemsSubtotal === undefined ? calculatedItemsSubtotal : safeNumber(order.itemsSubtotal);
   const grandTotal = safeNumber(order.totalPrice);
+  const discountAmount = safeNumber(order.discountAmount);
   return {
     itemsSubtotal,
-    deliveryFee: Math.max(0, grandTotal - itemsSubtotal),
+    deliveryFee: order.deliveryFee === undefined
+      ? Math.max(0, grandTotal - itemsSubtotal + discountAmount)
+      : safeNumber(order.deliveryFee),
+    discountAmount,
     grandTotal,
   };
 }

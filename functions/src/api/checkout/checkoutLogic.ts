@@ -20,10 +20,21 @@ export interface CheckoutSettings {
 
 export interface CheckoutTotals {
   itemsSubtotal: number;
+  discountAmount: number;
   deliveryFee: number;
   grandTotalPrice: number;
   freeDeliveryThreshold: number;
   baseDeliveryCharge: number;
+}
+
+export interface CheckoutCouponRecord {
+  active?: unknown;
+  type?: unknown;
+  value?: unknown;
+  minSubtotal?: unknown;
+  maxDiscount?: unknown;
+  startsAt?: unknown;
+  expiresAt?: unknown;
 }
 
 export interface CheckoutRateLimitBucket {
@@ -114,6 +125,14 @@ export function validateCheckoutDetails(body: Record<string, unknown>): void {
   requireNonEmptyString(body.district, "District", 80);
   validatePaymentMethod(body.paymentMethod);
 
+  if (body.city !== undefined && body.city !== null && String(body.city).trim().length > 80) {
+    throw new CheckoutError("City cannot exceed 80 characters");
+  }
+
+  if (body.couponCode !== undefined && body.couponCode !== null && body.couponCode !== "") {
+    normalizeCouponCode(body.couponCode);
+  }
+
   const phoneDigits = customerPhone.replace(/\D/g, "");
   if (phoneDigits.length < 9 || phoneDigits.length > 15) {
     throw new CheckoutError("Phone must contain a valid contact number");
@@ -166,10 +185,65 @@ export function createCheckoutRequestHash(body: Record<string, unknown>, cartIte
     district: String(body.district || "").trim(),
     city: String(body.city || "").trim(),
     paymentMethod: validatePaymentMethod(body.paymentMethod),
+    couponCode: body.couponCode ? normalizeCouponCode(body.couponCode) : "",
     cartItems,
   };
 
   return hashValue(JSON.stringify(requestShape));
+}
+
+export function normalizeCouponCode(value: unknown): string {
+  if (typeof value !== "string") throw new CheckoutError("Coupon code must be text");
+  const code = value.trim().toUpperCase();
+  if (!/^[A-Z0-9_-]{3,40}$/.test(code)) {
+    throw new CheckoutError("Enter a valid coupon code");
+  }
+  return code;
+}
+
+export function getCouponDocumentId(code: string): string {
+  return hashValue(`checkout-coupon:${normalizeCouponCode(code)}`);
+}
+
+function couponTime(value: unknown): number | null {
+  if (value && typeof value === "object" && "toDate" in value && typeof (value as { toDate?: unknown }).toDate === "function") {
+    const date = (value as { toDate: () => Date }).toDate();
+    return Number.isFinite(date.getTime()) ? date.getTime() : null;
+  }
+  if (typeof value === "string" || typeof value === "number") {
+    const time = new Date(value).getTime();
+    return Number.isFinite(time) ? time : null;
+  }
+  return null;
+}
+
+export function resolveCouponDiscount(coupon: CheckoutCouponRecord | null, itemsSubtotal: number, now = Date.now()): number {
+  if (!coupon || coupon.active !== true) throw new CheckoutError("This coupon is not valid or is no longer active", 409);
+  const startsAt = couponTime(coupon.startsAt);
+  const expiresAt = couponTime(coupon.expiresAt);
+  if (startsAt !== null && now < startsAt) throw new CheckoutError("This coupon is not active yet", 409);
+  if (expiresAt !== null && now > expiresAt) throw new CheckoutError("This coupon has expired", 409);
+
+  const minSubtotal = Math.max(0, Number(coupon.minSubtotal) || 0);
+  if (itemsSubtotal < minSubtotal) {
+    throw new CheckoutError(`This coupon requires a minimum subtotal of LKR ${Math.round(minSubtotal)}`, 409);
+  }
+
+  const value = Number(coupon.value);
+  if (!Number.isFinite(value) || value <= 0) throw new CheckoutError("This coupon is not configured correctly", 409);
+  let discount: number;
+  if (coupon.type === "percentage") {
+    if (value > 100) throw new CheckoutError("This coupon is not configured correctly", 409);
+    discount = itemsSubtotal * (value / 100);
+  } else if (coupon.type === "fixed") {
+    discount = value;
+  } else {
+    throw new CheckoutError("This coupon is not configured correctly", 409);
+  }
+
+  const maxDiscount = Number(coupon.maxDiscount);
+  if (Number.isFinite(maxDiscount) && maxDiscount > 0) discount = Math.min(discount, maxDiscount);
+  return Math.min(itemsSubtotal, Math.max(0, Math.round(discount)));
 }
 
 export function validateCheckoutCartItems(cartItems: unknown): CheckoutCartItem[] {
@@ -230,6 +304,7 @@ export function calculateCheckoutTotals(
   itemsSubtotal: number,
   district: string,
   settings: CheckoutSettings | null,
+  discountAmount = 0,
 ): CheckoutTotals {
   const baseDeliveryCharge = (settings && settings.deliveryCharge !== undefined)
     ? Number(settings.deliveryCharge)
@@ -244,10 +319,13 @@ export function calculateCheckoutTotals(
     ? (isEligibleForFreeDelivery ? 0 : baseDeliveryCharge)
     : 0;
 
+  const safeDiscount = Math.min(itemsSubtotal, Math.max(0, Number(discountAmount) || 0));
+
   return {
     itemsSubtotal,
+    discountAmount: safeDiscount,
     deliveryFee,
-    grandTotalPrice: itemsSubtotal + deliveryFee,
+    grandTotalPrice: itemsSubtotal - safeDiscount + deliveryFee,
     freeDeliveryThreshold,
     baseDeliveryCharge,
   };

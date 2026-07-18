@@ -8,16 +8,20 @@ import {
   createCheckoutRequestHash,
   getClientRateLimitKey,
   getIdempotencyKeyFromValues,
+  getCouponDocumentId,
   hashValue,
+  normalizeCouponCode,
+  resolveCouponDiscount,
   resolveCheckoutIdempotency,
   validateCheckoutCartItems,
   validateCheckoutDetails,
 } from "../checkout/checkoutLogic";
 import { sendApiError } from "../errors";
-import { adminDb } from "../firebase";
+import { adminAuth, adminDb } from "../firebase";
 import { appLogger } from "../logging";
 
 const enforceCheckoutRateLimit = createCheckoutRateLimiter();
+const enforceCouponRateLimit = createCheckoutRateLimiter();
 
 interface CheckoutOrderResponse {
   id: string;
@@ -25,7 +29,52 @@ interface CheckoutOrderResponse {
   [key: string]: unknown;
 }
 
+async function resolveCheckoutCustomerUid(authorization: string | undefined): Promise<string> {
+  const match = (authorization || "").match(/^Bearer\s+(.+)$/i);
+  if (!match) return "guest";
+  try {
+    return (await adminAuth.verifyIdToken(match[1])).uid;
+  } catch {
+    throw new CheckoutError("Invalid or expired authentication token", 401);
+  }
+}
+
+async function calculateTrustedCouponSubtotal(cartItems: CheckoutCartItem[]): Promise<number> {
+  let subtotal = 0;
+  for (const item of cartItems) {
+    const snapshot = await adminDb.collection("products").doc(item.productId).get();
+    if (!snapshot.exists || snapshot.data()?.isActive === false) throw new CheckoutError("A cart item is no longer available", 409);
+    const data = snapshot.data()!;
+    const price = Number(data.price);
+    const stock = Number(data.stock);
+    if (!Number.isFinite(price) || price <= 0 || !Number.isFinite(stock) || stock < item.quantity) {
+      throw new CheckoutError("A cart item has changed. Review your cart and try again.", 409);
+    }
+    subtotal += price * item.quantity;
+  }
+  return subtotal;
+}
+
 export function registerCheckoutRoutes(app: express.Express): void {
+  app.post("/api/checkout/coupon", async (req, res) => {
+    try {
+      enforceCouponRateLimit(getClientRateLimitKey(req.header("x-forwarded-for"), req.ip));
+      const code = normalizeCouponCode(req.body?.couponCode);
+      const cartItems = validateCheckoutCartItems(req.body?.cartItems);
+      const itemsSubtotal = await calculateTrustedCouponSubtotal(cartItems);
+      const couponSnapshot = await adminDb.collection("checkout_coupons").doc(getCouponDocumentId(code)).get();
+      const discountAmount = resolveCouponDiscount(couponSnapshot.exists ? couponSnapshot.data() || null : null, itemsSubtotal);
+      res.json({ success: true, code, discountAmount, itemsSubtotal });
+    } catch (error: any) {
+      sendApiError(res, error, {
+        logMessage: "Checkout coupon validation failed.",
+        fallbackMessage: "Coupon could not be applied",
+        fallbackStatusCode: 400,
+        context: { route: "/api/checkout/coupon" },
+      });
+    }
+  });
+
   app.all("/api/checkout", async (req, res) => {
     if (req.method !== "POST") {
       res.status(405).json({ error: "Only POST requests are allowed" });
@@ -48,7 +97,7 @@ export function registerCheckoutRoutes(app: express.Express): void {
     }
 
     const {
-      customerUid,
+      customerUid: requestedCustomerUid,
       customerName,
       customerPhone,
       customerPhone2,
@@ -58,12 +107,18 @@ export function registerCheckoutRoutes(app: express.Express): void {
       city,
       paymentMethod,
       cartItems,
+      couponCode: requestedCouponCode,
     } = req.body;
 
+    let customerUid: string;
     let validatedCartItems: CheckoutCartItem[];
     let idempotencyKey: string | null;
     let requestHash: string;
     try {
+      customerUid = await resolveCheckoutCustomerUid(req.header("Authorization"));
+      if (requestedCustomerUid && requestedCustomerUid !== "guest" && requestedCustomerUid !== customerUid) {
+        throw new CheckoutError("Checkout customer identity does not match the signed-in account", 403);
+      }
       validateCheckoutDetails(req.body);
       validatedCartItems = validateCheckoutCartItems(cartItems);
       idempotencyKey = getIdempotencyKeyFromValues(req.header("Idempotency-Key"), req.body?.idempotencyKey);
@@ -152,7 +207,15 @@ export function registerCheckoutRoutes(app: express.Express): void {
         const settingsSnap = await transaction.get(settingsRef);
         const settings = settingsSnap.exists ? settingsSnap.data() : null;
 
-        const { grandTotalPrice } = calculateCheckoutTotals(itemsSubtotal, district, settings || null);
+        const couponCode = requestedCouponCode ? normalizeCouponCode(requestedCouponCode) : "";
+        let discountAmount = 0;
+        if (couponCode) {
+          const couponRef = adminDb.collection("checkout_coupons").doc(getCouponDocumentId(couponCode));
+          const couponSnapshot = await transaction.get(couponRef);
+          discountAmount = resolveCouponDiscount(couponSnapshot.exists ? couponSnapshot.data() || null : null, itemsSubtotal);
+        }
+
+        const totals = calculateCheckoutTotals(itemsSubtotal, district, settings || null, discountAmount);
 
         const counterRef = adminDb.collection("counters").doc("orders");
         const counterSnap = await transaction.get(counterRef);
@@ -187,7 +250,11 @@ export function registerCheckoutRoutes(app: express.Express): void {
           district,
           city: city || "",
           items: verifiedItems,
-          totalPrice: grandTotalPrice,
+          itemsSubtotal: totals.itemsSubtotal,
+          discountAmount: totals.discountAmount,
+          deliveryFee: totals.deliveryFee,
+          totalPrice: totals.grandTotalPrice,
+          ...(couponCode ? { couponCode } : {}),
           status: "pending",
           stockDeducted: true,
           paymentMethod: paymentMethod || "cod",

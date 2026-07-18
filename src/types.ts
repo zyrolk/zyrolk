@@ -74,6 +74,10 @@ export interface Order {
     imageUrl: string;
   }[];
   totalPrice: number;
+  itemsSubtotal?: number;
+  deliveryFee?: number;
+  discountAmount?: number;
+  couponCode?: string;
   status: 'pending' | 'confirmed' | 'processing' | 'packed' | 'shipped' | 'delivered' | 'cancelled';
   paymentMethod: 'cod' | 'whatsapp_confirm';
   createdAt: string;

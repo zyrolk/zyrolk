@@ -45,6 +45,12 @@ export const EMPTY_ADDRESS_DRAFT: CustomerAddressDraft = {
   isDefault: false,
 };
 
+export const SRI_LANKA_DISTRICTS = [
+  'Ampara', 'Anuradhapura', 'Badulla', 'Batticaloa', 'Colombo', 'Galle', 'Gampaha', 'Hambantota',
+  'Jaffna', 'Kalutara', 'Kandy', 'Kegalle', 'Kilinochchi', 'Kurunegala', 'Mannar', 'Matale', 'Matara',
+  'Monaragala', 'Mullaitivu', 'Nuwara Eliya', 'Polonnaruwa', 'Puttalam', 'Ratnapura', 'Trincomalee', 'Vavuniya',
+] as const;
+
 export const ACCOUNT_PAGE_TO_SECTION: Record<string, AccountSection> = {
   account: 'overview',
   'account-orders': 'orders',

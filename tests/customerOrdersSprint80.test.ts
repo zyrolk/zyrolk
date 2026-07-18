@@ -97,11 +97,13 @@ test('invoice totals derive delivery honestly from the existing total contract',
   assert.deepEqual(calculateCustomerOrderTotals(normalizeCustomerOrder('order', sourceOrder)), {
     itemsSubtotal: 3500,
     deliveryFee: 350,
+    discountAmount: 0,
     grandTotal: 3850,
   });
   assert.deepEqual(calculateCustomerOrderTotals(normalizeCustomerOrder('order', { ...sourceOrder, totalPrice: 3500 })), {
     itemsSubtotal: 3500,
     deliveryFee: 0,
+    discountAmount: 0,
     grandTotal: 3500,
   });
 });

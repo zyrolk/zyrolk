@@ -17,7 +17,7 @@ import { reportClientIssue } from '../../services/observability/clientDiagnostic
 import {
   ACCOUNT_PAGE_TO_SECTION, ACCOUNT_SECTION_TO_PAGE, AccountSection, CustomerAddress, CustomerAddressDraft,
   CustomerNotificationSettings, DEFAULT_NOTIFICATION_SETTINGS, EMPTY_ADDRESS_DRAFT,
-  formatAccountDate, normalizeAddressDraft, normalizeNotificationSettings, sortCustomerAddresses,
+  SRI_LANKA_DISTRICTS, formatAccountDate, normalizeAddressDraft, normalizeNotificationSettings, sortCustomerAddresses,
   validateAddressDraft,
 } from './accountData';
 import CustomerOrdersView from './CustomerOrdersView';
@@ -43,12 +43,6 @@ interface CustomerProfileDocument {
   phoneNumber?: string;
   customerSettings?: Partial<CustomerNotificationSettings>;
 }
-
-const DISTRICTS = [
-  'Ampara', 'Anuradhapura', 'Badulla', 'Batticaloa', 'Colombo', 'Galle', 'Gampaha', 'Hambantota',
-  'Jaffna', 'Kalutara', 'Kandy', 'Kegalle', 'Kilinochchi', 'Kurunegala', 'Mannar', 'Matale', 'Matara',
-  'Monaragala', 'Mullaitivu', 'Nuwara Eliya', 'Polonnaruwa', 'Puttalam', 'Ratnapura', 'Trincomalee', 'Vavuniya',
-];
 
 const SECTION_COPY: Record<AccountSection, { eyebrow: string; title: string; description: string }> = {
   overview: { eyebrow: 'Account overview', title: 'Your Zyro.lk dashboard', description: 'Manage the details that make shopping faster and keep an eye on your marketplace activity.' },
@@ -521,9 +515,9 @@ export default function AccountCenter({
                   <Field label="Address line 1"><input value={addressDraft.addressLine1} onChange={event => setAddressDraft(current => ({ ...current, addressLine1: event.target.value }))} maxLength={240} autoComplete="address-line1" required /></Field>
                   <Field label="Address line 2"><input value={addressDraft.addressLine2} onChange={event => setAddressDraft(current => ({ ...current, addressLine2: event.target.value }))} maxLength={240} autoComplete="address-line2" /></Field>
                   <Field label="City"><input value={addressDraft.city} onChange={event => setAddressDraft(current => ({ ...current, city: event.target.value }))} maxLength={80} autoComplete="address-level2" required /></Field>
-                  <Field label="District"><select value={addressDraft.district} onChange={event => setAddressDraft(current => ({ ...current, district: event.target.value }))} autoComplete="address-level1" required>{DISTRICTS.map(district => <option key={district}>{district}</option>)}</select></Field>
+                  <Field label="District"><select value={addressDraft.district} onChange={event => setAddressDraft(current => ({ ...current, district: event.target.value }))} autoComplete="address-level1" required>{SRI_LANKA_DISTRICTS.map(district => <option key={district}>{district}</option>)}</select></Field>
                   <Field label="Postal code"><input value={addressDraft.postalCode} onChange={event => setAddressDraft(current => ({ ...current, postalCode: event.target.value }))} maxLength={20} inputMode="numeric" autoComplete="postal-code" /></Field>
-                  <label className="zy-account-check"><input type="checkbox" checked={addressDraft.isDefault} onChange={event => setAddressDraft(current => ({ ...current, isDefault: event.target.checked }))} /><span><strong>Set as default shipping address</strong><small>This is a preference only; checkout continues to use its existing delivery form.</small></span></label>
+                  <label className="zy-account-check"><input type="checkbox" checked={addressDraft.isDefault} onChange={event => setAddressDraft(current => ({ ...current, isDefault: event.target.checked }))} /><span><strong>Set as default shipping address</strong><small>Your default address is offered first during checkout.</small></span></label>
                   <div className="zy-account-form-actions"><button type="button" className="is-secondary" onClick={closeAddressForm}>Cancel</button><button type="submit" disabled={addressSaving}>{addressSaving ? <LoaderCircle className="animate-spin" /> : <Save />} {addressSaving ? 'Saving address' : 'Save address'}</button></div>
                 </div>
               </form>

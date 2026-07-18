@@ -11,6 +11,12 @@ import { getApprovedSupplierHosts, validateSupplierRequestTarget } from "./src/s
 import { getSupplierProductLimit } from "./src/services/supplierSyncSettings";
 import { assertCustomerCanCancelOrder, buildOrderStatusPlan } from "./functions/src/api/orders/orderStatusLogic";
 import { registerReviewSystemRoutes } from "./functions/src/api/routes/reviewSystem";
+import {
+  calculateCheckoutTotals as calculateTrustedCheckoutTotals,
+  getCouponDocumentId,
+  normalizeCouponCode,
+  resolveCouponDiscount,
+} from "./functions/src/api/checkout/checkoutLogic";
 
 const app = express();
 const PORT = 3000;
@@ -135,6 +141,14 @@ function validateCheckoutDetails(body: Record<string, unknown>): void {
   requireNonEmptyString(body.district, "District", 80);
   validatePaymentMethod(body.paymentMethod);
 
+  if (body.city !== undefined && body.city !== null && String(body.city).trim().length > 80) {
+    throw new CheckoutError("City cannot exceed 80 characters");
+  }
+
+  if (body.couponCode !== undefined && body.couponCode !== null && body.couponCode !== "") {
+    normalizeCouponCode(body.couponCode);
+  }
+
   const phoneDigits = customerPhone.replace(/\D/g, "");
   if (phoneDigits.length < 9 || phoneDigits.length > 15) {
     throw new CheckoutError("Phone must contain a valid contact number");
@@ -189,10 +203,37 @@ function createCheckoutRequestHash(body: Record<string, unknown>, cartItems: Che
     district: String(body.district || "").trim(),
     city: String(body.city || "").trim(),
     paymentMethod: validatePaymentMethod(body.paymentMethod),
+    couponCode: body.couponCode ? normalizeCouponCode(body.couponCode) : "",
     cartItems,
   };
 
   return hashValue(JSON.stringify(requestShape));
+}
+
+async function resolveCheckoutCustomerUid(req: express.Request): Promise<string> {
+  const match = (req.header("Authorization") || "").match(/^Bearer\s+(.+)$/i);
+  if (!match) return "guest";
+  try {
+    return (await adminAuth.verifyIdToken(match[1])).uid;
+  } catch {
+    throw new CheckoutError("Invalid or expired authentication token", 401);
+  }
+}
+
+async function calculateTrustedCouponSubtotal(cartItems: CheckoutCartItem[]): Promise<number> {
+  let subtotal = 0;
+  for (const item of cartItems) {
+    const snapshot = await adminDb.collection("products").doc(item.productId).get();
+    if (!snapshot.exists || snapshot.data()?.isActive === false) throw new CheckoutError("A cart item is no longer available", 409);
+    const data = snapshot.data()!;
+    const price = Number(data.price);
+    const stock = Number(data.stock);
+    if (!Number.isFinite(price) || price <= 0 || !Number.isFinite(stock) || stock < item.quantity) {
+      throw new CheckoutError("A cart item has changed. Review your cart and try again.", 409);
+    }
+    subtotal += price * item.quantity;
+  }
+  return subtotal;
 }
 
 function validateCheckoutCartItems(cartItems: unknown): CheckoutCartItem[] {
@@ -232,6 +273,20 @@ function validateCheckoutCartItems(cartItems: unknown): CheckoutCartItem[] {
   return Array.from(consolidated, ([productId, quantity]) => ({ productId, quantity }));
 }
 
+app.post("/api/checkout/coupon", async (req, res) => {
+  try {
+    enforceCheckoutRateLimit(req);
+    const code = normalizeCouponCode(req.body?.couponCode);
+    const cartItems = validateCheckoutCartItems(req.body?.cartItems);
+    const itemsSubtotal = await calculateTrustedCouponSubtotal(cartItems);
+    const snapshot = await adminDb.collection("checkout_coupons").doc(getCouponDocumentId(code)).get();
+    const discountAmount = resolveCouponDiscount(snapshot.exists ? snapshot.data() || null : null, itemsSubtotal);
+    res.json({ success: true, code, discountAmount, itemsSubtotal });
+  } catch (error: any) {
+    res.status(error.statusCode || 400).json({ error: error.message || "Coupon could not be applied" });
+  }
+});
+
 // Secure transaction-based checkout endpoint
 app.post("/api/checkout", async (req, res) => {
   try {
@@ -241,7 +296,7 @@ app.post("/api/checkout", async (req, res) => {
   }
 
   const {
-    customerUid,
+    customerUid: requestedCustomerUid,
     customerName,
     customerPhone,
     customerPhone2,
@@ -251,12 +306,18 @@ app.post("/api/checkout", async (req, res) => {
     city,
     paymentMethod,
     cartItems, // Array of { productId, quantity }
+    couponCode: requestedCouponCode,
   } = req.body;
 
+  let customerUid: string;
   let validatedCartItems: CheckoutCartItem[];
   let idempotencyKey: string | null;
   let requestHash: string;
   try {
+    customerUid = await resolveCheckoutCustomerUid(req);
+    if (requestedCustomerUid && requestedCustomerUid !== "guest" && requestedCustomerUid !== customerUid) {
+      throw new CheckoutError("Checkout customer identity does not match the signed-in account", 403);
+    }
     validateCheckoutDetails(req.body);
     validatedCartItems = validateCheckoutCartItems(cartItems);
     idempotencyKey = getIdempotencyKey(req);
@@ -288,6 +349,7 @@ app.post("/api/checkout", async (req, res) => {
 
       let itemsSubtotal = 0;
       const verifiedItems = [];
+      const productUpdates: Array<{ ref: FirebaseFirestore.DocumentReference; newStock: number }> = [];
 
       // 1. Fetch, validate, and price each product inside the transaction
       for (const item of validatedCartItems) {
@@ -322,6 +384,7 @@ app.post("/api/checkout", async (req, res) => {
           quantity: item.quantity,
           imageUrl: pData.imageUrl || ""
         });
+        productUpdates.push({ ref: productRef, newStock: currentStock - item.quantity });
       }
 
       // 2. Fetch shipping options from website settings securely
@@ -329,37 +392,14 @@ app.post("/api/checkout", async (req, res) => {
       const settingsSnap = await transaction.get(settingsRef);
       const settings = settingsSnap.exists ? settingsSnap.data() : null;
 
-      const DISTRICT_DELIVERY: Record<string, number> = {
-        "Colombo": 350,
-        "Gampaha": 450,
-        "Kalutara": 450,
-        "Kandy": 550,
-        "Galle": 550,
-        "Matara": 550,
-        "Jaffna": 650,
-        "Kurunegala": 500,
-        "Anuradhapura": 600,
-        "Badulla": 600,
-        "Ratnapura": 500,
-        "Batticaloa": 650,
-        "Trincomalee": 650,
-        "Other": 600
-      };
-
-      const baseDeliveryCharge = (settings && settings.deliveryCharge !== undefined)
-        ? Number(settings.deliveryCharge)
-        : (DISTRICT_DELIVERY[district] || 500);
-
-      const freeDeliveryThreshold = (settings && settings.freeDeliveryMin !== undefined)
-        ? Number(settings.freeDeliveryMin)
-        : 5000;
-
-      const isEligibleForFreeDelivery = itemsSubtotal >= freeDeliveryThreshold;
-      const deliveryFee = itemsSubtotal > 0
-        ? (isEligibleForFreeDelivery ? 0 : baseDeliveryCharge)
-        : 0;
-
-      const grandTotalPrice = itemsSubtotal + deliveryFee;
+      const couponCode = requestedCouponCode ? normalizeCouponCode(requestedCouponCode) : "";
+      let discountAmount = 0;
+      if (couponCode) {
+        const couponRef = adminDb.collection("checkout_coupons").doc(getCouponDocumentId(couponCode));
+        const couponSnapshot = await transaction.get(couponRef);
+        discountAmount = resolveCouponDiscount(couponSnapshot.exists ? couponSnapshot.data() || null : null, itemsSubtotal);
+      }
+      const totals = calculateTrustedCheckoutTotals(itemsSubtotal, district, settings || null, discountAmount);
 
       // 3. Generate a sequential order number using a central counter document
       const counterRef = adminDb.collection("counters").doc("orders");
@@ -378,14 +418,7 @@ app.post("/api/checkout", async (req, res) => {
       const orderNumber = `ZY${nextSeq}`;
 
       // 4. Atomically decrease product stock
-      for (const item of validatedCartItems) {
-        const productRef = adminDb.collection("products").doc(item.productId);
-        const productSnap = await transaction.get(productRef); // read inside transaction
-        const currentStock = productSnap.data()!.stock || 0;
-        transaction.update(productRef, {
-          stock: Math.max(0, currentStock - item.quantity)
-        });
-      }
+      productUpdates.forEach((update) => transaction.update(update.ref, { stock: Math.max(0, update.newStock) }));
 
       // 5. Store the finalized order document
       const orderRef = adminDb.collection("orders").doc();
@@ -400,7 +433,11 @@ app.post("/api/checkout", async (req, res) => {
         district,
         city: city || "",
         items: verifiedItems,
-        totalPrice: grandTotalPrice,
+        itemsSubtotal: totals.itemsSubtotal,
+        discountAmount: totals.discountAmount,
+        deliveryFee: totals.deliveryFee,
+        totalPrice: totals.grandTotalPrice,
+        ...(couponCode ? { couponCode } : {}),
         status: "pending",
         stockDeducted: true,
         paymentMethod: paymentMethod || "cod",

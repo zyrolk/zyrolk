@@ -1771,6 +1771,7 @@ export default function App() {
         <Suspense fallback={<OverlayLoadingFallback label="Loading your cart" />}>
           <CartDrawer
             isOpen={isCartOpen}
+            user={user}
             onClose={() => setIsCartOpen(false)}
             cartItems={cart}
             onUpdateQuantity={handleUpdateCartQuantity}

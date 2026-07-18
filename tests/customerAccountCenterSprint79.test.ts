@@ -107,7 +107,7 @@ test('address book supports owner-scoped live reads and atomic add, edit, defaul
   assert.match(account, /batch\.update\(existing\.ref, \{ isDefault: false/);
   assert.match(account, /batch\.delete\(doc\(db, 'users', user\.uid, 'addresses', address\.id\)\)/);
   assert.match(account, /Confirm delete/);
-  assert.match(account, /checkout continues to use its existing delivery form/);
+  assert.match(account, /default address is offered first during checkout/);
 });
 
 test('Firestore address rules are private and validate the exact Phase 1 contract', () => {

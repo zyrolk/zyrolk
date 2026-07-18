@@ -256,7 +256,7 @@ export default function CustomerOrdersView({
         <div className="zy-order-item-list">
           {selectedOrder.items.map((item, index) => <article key={`${item.productId}-${index}`}><span><img src={item.imageUrl || '/logo.png'} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" /></span><div><strong>{item.name}</strong><small>Quantity {item.quantity}</small></div><div><small>{formatPrice(item.price)} each</small><strong>{formatPrice(item.price * item.quantity)}</strong></div></article>)}
         </div>
-        <dl className="zy-order-totals"><div><dt>Items subtotal</dt><dd>{formatPrice(totals.itemsSubtotal)}</dd></div><div><dt>Delivery</dt><dd>{totals.deliveryFee === 0 ? 'Free' : formatPrice(totals.deliveryFee)}</dd></div><div><dt>Order total</dt><dd>{formatPrice(totals.grandTotal)}</dd></div></dl>
+        <dl className="zy-order-totals"><div><dt>Items subtotal</dt><dd>{formatPrice(totals.itemsSubtotal)}</dd></div>{totals.discountAmount > 0 && <div><dt>Coupon discount{selectedOrder.couponCode ? ` (${selectedOrder.couponCode})` : ''}</dt><dd>-{formatPrice(totals.discountAmount)}</dd></div>}<div><dt>Delivery</dt><dd>{totals.deliveryFee === 0 ? 'Free' : formatPrice(totals.deliveryFee)}</dd></div><div><dt>Order total</dt><dd>{formatPrice(totals.grandTotal)}</dd></div></dl>
       </section>
 
       <section className="zy-order-actions zy-no-print" aria-labelledby="order-actions-title">

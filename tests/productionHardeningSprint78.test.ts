@@ -26,7 +26,10 @@ const firebaseStorage = readFileSync('src/firebaseStorage.ts', 'utf8');
 const admin = readFileSync('src/components/AdminDashboard.tsx', 'utf8');
 const errorBoundary = readFileSync('src/components/AppErrorBoundary.tsx', 'utf8');
 const main = readFileSync('src/main.tsx', 'utf8');
-const cart = readFileSync('src/components/CartDrawer.tsx', 'utf8');
+const cart = [
+  readFileSync('src/components/CartDrawer.tsx', 'utf8'),
+  readFileSync('src/features/checkout/PremiumCheckoutDrawer.tsx', 'utf8'),
+].join('\n');
 const authModal = readFileSync('src/components/AuthModal.tsx', 'utf8');
 const productDetail = readFileSync('src/components/ProductDetailModal.tsx', 'utf8');
 const contact = readFileSync('src/components/ContactPage.tsx', 'utf8');
