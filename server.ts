@@ -9,6 +9,7 @@ import { FieldValue, getFirestore } from "firebase-admin/firestore";
 import { A2ZConnectorService } from "./src/services/connectors/a2z-website/A2ZConnectorService";
 import { getApprovedSupplierHosts, validateSupplierRequestTarget } from "./src/server/security/supplierUrlProtection";
 import { getSupplierProductLimit } from "./src/services/supplierSyncSettings";
+import { assertCustomerCanCancelOrder, buildOrderStatusPlan } from "./functions/src/api/orders/orderStatusLogic";
 
 const app = express();
 const PORT = 3000;
@@ -493,6 +494,60 @@ const requireSupplierAdminAuth: express.RequestHandler = async (req, res, next) 
     res.status(401).json({ error: "Invalid or expired authentication token" });
   }
 };
+
+const requireCustomerAuth: express.RequestHandler = async (req, res, next) => {
+  const match = (req.header("Authorization") || "").match(/^Bearer\s+(.+)$/i);
+  if (!match) {
+    res.status(401).json({ error: "Authentication required" });
+    return;
+  }
+  try {
+    const decodedToken = await adminAuth.verifyIdToken(match[1]);
+    res.locals.customerUid = decodedToken.uid;
+    next();
+  } catch {
+    res.status(401).json({ error: "Invalid or expired authentication token" });
+  }
+};
+
+app.post("/api/orders/:orderId/cancel", requireCustomerAuth, async (req, res) => {
+  const orderId = String(req.params.orderId || "").trim();
+  if (!orderId) return res.status(400).json({ error: "A valid order ID is required" });
+
+  try {
+    const result = await adminDb.runTransaction(async (transaction) => {
+      const orderRef = adminDb.collection("orders").doc(orderId);
+      const orderSnap = await transaction.get(orderRef);
+      if (!orderSnap.exists) throw new CheckoutError("Order not found", 404);
+
+      const order = orderSnap.data()!;
+      const currentStatus = String(order.status || "pending").toLowerCase();
+      assertCustomerCanCancelOrder(res.locals.customerUid, order.customerUid, currentStatus);
+      const { shouldRestoreStock, quantities } = buildOrderStatusPlan(
+        order.status, "cancelled", order.stockDeducted, order.stockRestorationApplied, order.items,
+      );
+
+      for (const [productId, quantity] of quantities) {
+        const productRef = adminDb.collection("products").doc(productId);
+        const productSnap = await transaction.get(productRef);
+        if (productSnap.exists) {
+          const stock = Number(productSnap.data()?.stock);
+          transaction.update(productRef, { stock: (Number.isFinite(stock) ? stock : 0) + quantity });
+        }
+      }
+
+      transaction.update(orderRef, {
+        status: "cancelled",
+        statusUpdatedAt: FieldValue.serverTimestamp(),
+        ...(shouldRestoreStock ? { stockRestorationApplied: true, stockRestoredAt: FieldValue.serverTimestamp() } : {}),
+      });
+      return { status: "cancelled", stockRestored: shouldRestoreStock };
+    });
+    return res.json({ success: true, ...result });
+  } catch (error: any) {
+    return res.status(error.statusCode || 500).json({ error: error.message || "Failed to cancel order" });
+  }
+});
 
 app.post("/api/orders/:orderId/status", requireSupplierAdminAuth, async (req, res) => {
   const orderId = String(req.params.orderId || "").trim();

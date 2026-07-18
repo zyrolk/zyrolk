@@ -1,6 +1,6 @@
 import { Product } from '../../types';
 
-export type AccountSection = 'overview' | 'profile' | 'addresses' | 'security' | 'settings';
+export type AccountSection = 'overview' | 'orders' | 'order-details' | 'profile' | 'addresses' | 'security' | 'settings';
 
 export interface CustomerNotificationSettings {
   orderUpdates: boolean;
@@ -26,15 +26,6 @@ export interface CustomerAddress {
 
 export type CustomerAddressDraft = Omit<CustomerAddress, 'id' | 'createdAt' | 'updatedAt'>;
 
-export interface CustomerOrderSummary {
-  id: string;
-  orderNumber?: string;
-  totalPrice: number;
-  status: string;
-  createdAt?: string;
-  itemsCount: number;
-}
-
 export const DEFAULT_NOTIFICATION_SETTINGS: CustomerNotificationSettings = {
   orderUpdates: true,
   wishlistUpdates: true,
@@ -56,6 +47,8 @@ export const EMPTY_ADDRESS_DRAFT: CustomerAddressDraft = {
 
 export const ACCOUNT_PAGE_TO_SECTION: Record<string, AccountSection> = {
   account: 'overview',
+  'account-orders': 'orders',
+  'account-order-details': 'order-details',
   'account-profile': 'profile',
   'account-addresses': 'addresses',
   'account-security': 'security',
@@ -64,6 +57,8 @@ export const ACCOUNT_PAGE_TO_SECTION: Record<string, AccountSection> = {
 
 export const ACCOUNT_SECTION_TO_PAGE: Record<AccountSection, string> = {
   overview: 'account',
+  orders: 'account-orders',
+  'order-details': 'account-order-details',
   profile: 'account-profile',
   addresses: 'account-addresses',
   security: 'account-security',

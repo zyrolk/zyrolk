@@ -1,5 +1,18 @@
 export interface OrderStockItem { productId?: unknown; quantity?: unknown }
 
+export function assertCustomerCanCancelOrder(
+  authenticatedUid: string,
+  orderCustomerUid: unknown,
+  currentStatus: unknown,
+): void {
+  if (!authenticatedUid || orderCustomerUid !== authenticatedUid) {
+    throw Object.assign(new Error('Order not found'), { statusCode: 404 });
+  }
+  if (String(currentStatus || 'pending').toLowerCase() !== 'pending') {
+    throw Object.assign(new Error('Only pending orders can be cancelled'), { statusCode: 409 });
+  }
+}
+
 export function buildOrderStatusPlan(
   currentStatus: unknown,
   newStatus: string,

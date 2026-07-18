@@ -258,7 +258,7 @@ export default function Navbar({
 
   const accountItems = [
     { label: 'My Account', icon: User, action: user ? () => navigateToPage('account') : () => { onOpenAuthModal(); setIsProfileOpen(false); }, pending: false },
-    { label: 'Orders', icon: ReceiptText, action: user ? () => navigateToPage('account') : () => { onOpenAuthModal(); setIsProfileOpen(false); }, pending: false },
+    { label: 'Orders', icon: ReceiptText, action: user ? () => navigateToPage('account-orders') : () => { onOpenAuthModal(); setIsProfileOpen(false); }, pending: false },
     ...(isWishlistEnabled ? [{ label: 'Wishlist', icon: Heart, action: () => navigateToPage('wishlist'), pending: false }] : []),
     { label: 'Addresses', icon: MapPin, action: user ? () => navigateToPage('account-addresses') : () => { onOpenAuthModal(); setIsProfileOpen(false); }, pending: false },
     { label: 'Notifications', icon: Bell, action: user ? () => navigateToPage('account-settings') : () => { onOpenAuthModal(); setIsProfileOpen(false); }, pending: false },
@@ -668,6 +668,9 @@ export default function Navbar({
               <div className="grid grid-cols-2 gap-2">
                 {user && (
                   <button type="button" onClick={() => navigateToPage('account')} className="zy-mobile-account-card"><User className="h-5 w-5" aria-hidden="true" /><span>My Account</span></button>
+                )}
+                {user && (
+                  <button type="button" onClick={() => navigateToPage('account-orders')} className="zy-mobile-account-card"><ReceiptText className="h-5 w-5" aria-hidden="true" /><span>My Orders</span></button>
                 )}
                 {user && (
                   <button type="button" onClick={() => navigateToPage('account-addresses')} className="zy-mobile-account-card"><MapPin className="h-5 w-5" aria-hidden="true" /><span>Addresses</span></button>

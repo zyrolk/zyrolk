@@ -11,25 +11,31 @@ import {
   collection, doc, getDocs, onSnapshot, query, serverTimestamp, setDoc, where, writeBatch,
 } from 'firebase/firestore';
 import { db } from '../../firebase';
-import { Product } from '../../types';
+import { Product, WebsiteSettings } from '../../types';
 import { getAuthErrorMessage } from '../auth/authErrorMessage';
 import { reportClientIssue } from '../../services/observability/clientDiagnostics';
 import {
   ACCOUNT_PAGE_TO_SECTION, ACCOUNT_SECTION_TO_PAGE, AccountSection, CustomerAddress, CustomerAddressDraft,
-  CustomerNotificationSettings, CustomerOrderSummary, DEFAULT_NOTIFICATION_SETTINGS, EMPTY_ADDRESS_DRAFT,
+  CustomerNotificationSettings, DEFAULT_NOTIFICATION_SETTINGS, EMPTY_ADDRESS_DRAFT,
   formatAccountDate, normalizeAddressDraft, normalizeNotificationSettings, sortCustomerAddresses,
   validateAddressDraft,
 } from './accountData';
+import CustomerOrdersView from './CustomerOrdersView';
+import { CustomerOrder, normalizeCustomerOrder } from './customerOrders';
 import './accountCenter.css';
 
 interface AccountCenterProps {
   currentPage: string;
   user: User | null;
+  products: Product[];
   wishlist: Product[];
   recentlyViewed: Product[];
+  settings: WebsiteSettings | null;
   onNavigate: (page: string) => void;
   onOpenAuth: () => void;
   onViewProduct: (product: Product) => void;
+  onAddToCart: (product: Product, quantity: number) => void;
+  onOpenCart: () => void;
 }
 
 interface CustomerProfileDocument {
@@ -46,6 +52,8 @@ const DISTRICTS = [
 
 const SECTION_COPY: Record<AccountSection, { eyebrow: string; title: string; description: string }> = {
   overview: { eyebrow: 'Account overview', title: 'Your Zyro.lk dashboard', description: 'Manage the details that make shopping faster and keep an eye on your marketplace activity.' },
+  orders: { eyebrow: 'Purchase history', title: 'My Orders', description: 'Search your live order history, track fulfilment, and open detailed invoices.' },
+  'order-details': { eyebrow: 'Order tracking', title: 'Order details', description: 'Review delivery progress, order information, totals, and available customer actions.' },
   profile: { eyebrow: 'Personal details', title: 'Profile management', description: 'Keep your account identity and preferred contact number current.' },
   addresses: { eyebrow: 'Delivery details', title: 'Address book', description: 'Save multiple delivery addresses and choose one default shipping destination.' },
   security: { eyebrow: 'Account protection', title: 'Security & sign-in', description: 'Review your sign-in foundation, email status, and password security.' },
@@ -55,17 +63,6 @@ const SECTION_COPY: Record<AccountSection, { eyebrow: string; title: string; des
 const formatPrice = (amount: number) => new Intl.NumberFormat('en-LK', {
   style: 'currency', currency: 'LKR', minimumFractionDigits: 0, maximumFractionDigits: 0,
 }).format(Number.isFinite(amount) ? amount : 0);
-
-const safeOrder = (id: string, value: Record<string, unknown>): CustomerOrderSummary => ({
-  id,
-  orderNumber: typeof value.orderNumber === 'string' ? value.orderNumber : undefined,
-  totalPrice: Number(value.totalPrice) || 0,
-  status: typeof value.status === 'string' ? value.status : 'pending',
-  createdAt: typeof value.createdAt === 'string' ? value.createdAt : undefined,
-  itemsCount: Array.isArray(value.items)
-    ? value.items.reduce((total, item) => total + Math.max(0, Number((item as { quantity?: unknown })?.quantity) || 0), 0)
-    : 0,
-});
 
 const Skeleton = ({ rows = 3 }: { rows?: number }) => (
   <div className="zy-account-skeleton" role="status" aria-label="Loading account information">
@@ -83,12 +80,14 @@ const Field = ({ label, children, hint }: { label: string; children: ReactNode; 
 );
 
 export default function AccountCenter({
-  currentPage, user, wishlist, recentlyViewed, onNavigate, onOpenAuth, onViewProduct,
+  currentPage, user, products, wishlist, recentlyViewed, settings, onNavigate, onOpenAuth, onViewProduct,
+  onAddToCart, onOpenCart,
 }: AccountCenterProps) {
   const section = ACCOUNT_PAGE_TO_SECTION[currentPage] || 'overview';
   const contentHeadingRef = useRef<HTMLHeadingElement>(null);
   const [profile, setProfile] = useState<CustomerProfileDocument>({});
-  const [orders, setOrders] = useState<CustomerOrderSummary[]>([]);
+  const [orders, setOrders] = useState<CustomerOrder[]>([]);
+  const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [addresses, setAddresses] = useState<CustomerAddress[]>([]);
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [loadingOrders, setLoadingOrders] = useState(true);
@@ -158,7 +157,7 @@ export default function AccountCenter({
       query(collection(db, 'orders'), where('customerUid', '==', user.uid)),
       snapshot => {
         const nextOrders = snapshot.docs
-          .map(orderDoc => safeOrder(orderDoc.id, orderDoc.data()))
+          .map(orderDoc => normalizeCustomerOrder(orderDoc.id, orderDoc.data()))
           .sort((left, right) => new Date(right.createdAt || 0).getTime() - new Date(left.createdAt || 0).getTime());
         setOrders(nextOrders);
         setLoadingOrders(false);
@@ -410,6 +409,7 @@ export default function AccountCenter({
 
   const navigationItems: Array<{ id: AccountSection; label: string; icon: typeof Home }> = [
     { id: 'overview', label: 'Overview', icon: Home },
+    { id: 'orders', label: 'My Orders', icon: ShoppingBag },
     { id: 'profile', label: 'Profile', icon: UserRound },
     { id: 'addresses', label: 'Addresses', icon: MapPin },
     { id: 'security', label: 'Security', icon: ShieldCheck },
@@ -428,7 +428,7 @@ export default function AccountCenter({
         </div>
         <nav>
           {navigationItems.map(({ id, label, icon: Icon }) => (
-            <button key={id} type="button" onClick={() => navigateSection(id)} className={section === id ? 'is-active' : ''} aria-current={section === id ? 'page' : undefined}>
+            <button key={id} type="button" onClick={() => navigateSection(id)} className={section === id || (id === 'orders' && section === 'order-details') ? 'is-active' : ''} aria-current={section === id || (id === 'orders' && section === 'order-details') ? 'page' : undefined}>
               <Icon aria-hidden="true" /><span>{label}</span><ChevronRight aria-hidden="true" />
             </button>
           ))}
@@ -449,7 +449,7 @@ export default function AccountCenter({
           <div className="zy-account-overview">
             <div className="zy-account-overview-cards">
               <button type="button" onClick={() => navigateSection('profile')}><span><UserRound /></span><small>Profile</small><strong>{profileComplete ? 'Complete' : 'Needs attention'}</strong><p>{profile.phoneNumber || 'Add your phone number'}</p></button>
-              <button type="button" onClick={() => document.getElementById('account-recent-orders')?.scrollIntoView({ behavior: 'smooth' })}><span><PackageCheck /></span><small>Orders</small><strong>{loadingOrders ? '-' : orders.length}</strong><p>{orders.length === 1 ? 'Order placed' : 'Orders placed'}</p></button>
+              <button type="button" onClick={() => navigateSection('orders')}><span><PackageCheck /></span><small>Orders</small><strong>{loadingOrders ? '-' : orders.length}</strong><p>{orders.length === 1 ? 'Order placed' : 'Orders placed'}</p></button>
               <button type="button" onClick={() => onNavigate('wishlist')}><span><Heart /></span><small>Wishlist</small><strong>{wishlist.length}</strong><p>{wishlist.length === 1 ? 'Saved product' : 'Saved products'}</p></button>
               <button type="button" onClick={() => document.getElementById('account-recently-viewed')?.scrollIntoView({ behavior: 'smooth' })}><span><Clock3 /></span><small>Recently viewed</small><strong>{recentlyViewed.length}</strong><p>Device-local history</p></button>
             </div>
@@ -460,7 +460,7 @@ export default function AccountCenter({
                 <div className="zy-account-empty"><PackageCheck /><strong>No orders yet</strong><p>Your completed Zyro.lk orders will appear here.</p><button type="button" onClick={() => onNavigate('products')}>Browse products</button></div>
               ) : (
                 <div className="zy-account-order-list">
-                  {orders.slice(0, 4).map(order => <article key={order.id}><div><small>{order.orderNumber || `Order ${order.id.slice(0, 8).toUpperCase()}`}</small><strong>{formatPrice(order.totalPrice)}</strong><span>{formatAccountDate(order.createdAt)}</span></div><div><b className={`status-${order.status.toLowerCase().replace(/[^a-z]/gu, '')}`}>{order.status}</b><span>{order.itemsCount} {order.itemsCount === 1 ? 'item' : 'items'}</span></div></article>)}
+                  {orders.slice(0, 4).map(order => { const itemCount = order.items.reduce((total, item) => total + item.quantity, 0); return <article key={order.id} role="button" tabIndex={0} onClick={() => { setSelectedOrderId(order.id); navigateSection('order-details'); }} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setSelectedOrderId(order.id); navigateSection('order-details'); } }}><div><small>{order.orderNumber || `Order ${order.id.slice(0, 8).toUpperCase()}`}</small><strong>{formatPrice(order.totalPrice)}</strong><span>{formatAccountDate(order.createdAt)}</span></div><div><b className={`status-${order.status.toLowerCase().replace(/[^a-z]/gu, '')}`}>{order.status}</b><span>{itemCount} {itemCount === 1 ? 'item' : 'items'}</span></div></article>; })}
                 </div>
               )}
             </div>
@@ -474,6 +474,23 @@ export default function AccountCenter({
               )}
             </div>
           </div>
+        )}
+
+        {(section === 'orders' || section === 'order-details') && (
+          <CustomerOrdersView
+            mode={section === 'order-details' ? 'details' : 'list'}
+            user={user}
+            orders={orders}
+            loading={loadingOrders}
+            selectedOrderId={selectedOrderId}
+            products={products}
+            settings={settings}
+            onSelectOrder={(orderId) => { setSelectedOrderId(orderId); navigateSection('order-details'); }}
+            onBackToOrders={() => navigateSection('orders')}
+            onAddToCart={onAddToCart}
+            onOpenCart={onOpenCart}
+            onContactSupport={() => onNavigate('contact')}
+          />
         )}
 
         {section === 'profile' && (

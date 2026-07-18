@@ -54,7 +54,7 @@ const formatPrice = (amount: number) => new Intl.NumberFormat('en-LK', {
 
 const STOREFRONT_PAGE_IDS = new Set([
   'home', 'legacy-home', 'products', 'categories', 'wishlist', 'contact',
-  'account', 'account-profile', 'account-addresses', 'account-security', 'account-settings',
+  'account', 'account-orders', 'account-order-details', 'account-profile', 'account-addresses', 'account-security', 'account-settings',
   'about-us', 'privacy-policy', 'terms-conditions', 'return-policy', 'faq',
 ]);
 
@@ -1542,16 +1542,20 @@ export default function App() {
           )}
 
           {/* CUSTOMER ACCOUNT CENTER */}
-          {['account', 'account-profile', 'account-addresses', 'account-security', 'account-settings'].includes(currentPage) && (
+          {['account', 'account-orders', 'account-order-details', 'account-profile', 'account-addresses', 'account-security', 'account-settings'].includes(currentPage) && (
             <Suspense fallback={<LazyBlockFallback className="mx-auto my-12 min-h-[32rem] max-w-6xl" label="Loading your Account Center" />}>
               <AccountCenter
                 currentPage={currentPage}
                 user={user}
+                products={products}
                 wishlist={wishlist}
                 recentlyViewed={recentlyViewedProducts}
+                settings={settings}
                 onNavigate={(page) => { setIsAdminMode(false); setCurrentPage(page); }}
                 onOpenAuth={() => setIsAuthModalOpen(true)}
                 onViewProduct={handleViewProduct}
+                onAddToCart={handleAddToCart}
+                onOpenCart={() => setIsCartOpen(true)}
               />
             </Suspense>
           )}

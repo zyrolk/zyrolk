@@ -74,7 +74,7 @@ export interface Order {
     imageUrl: string;
   }[];
   totalPrice: number;
-  status: 'pending' | 'confirmed' | 'cancelled';
+  status: 'pending' | 'confirmed' | 'processing' | 'packed' | 'shipped' | 'delivered' | 'cancelled';
   paymentMethod: 'cod' | 'whatsapp_confirm';
   createdAt: string;
 }

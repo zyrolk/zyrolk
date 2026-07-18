@@ -34,15 +34,17 @@ const product = (id: string, active = true): Product => ({
 });
 
 test('account sections use the existing state-based storefront navigation', () => {
-  assert.deepEqual(ACCOUNT_PAGE_TO_SECTION, {
+  const phaseOneSections = {
     account: 'overview',
     'account-profile': 'profile',
     'account-addresses': 'addresses',
     'account-security': 'security',
     'account-settings': 'settings',
-  });
+  } as const;
+  Object.entries(phaseOneSections).forEach(([page, section]) => assert.equal(ACCOUNT_PAGE_TO_SECTION[page], section));
   assert.match(app, /const AccountCenter = lazy/);
-  assert.match(app, /'account', 'account-profile', 'account-addresses', 'account-security', 'account-settings'/);
+  ['account', 'account-profile', 'account-addresses', 'account-security', 'account-settings']
+    .forEach(page => assert.match(app, new RegExp(`'${page}'`)));
   assert.match(app, /<AccountCenter[\s\S]*wishlist=\{wishlist\}[\s\S]*recentlyViewed=\{recentlyViewedProducts\}/);
 });
 
@@ -142,7 +144,7 @@ test('premium account UI includes loading, empty, error, keyboard, mobile, and m
   assert.match(account, /role="alert"/);
   assert.match(account, /Your address book is empty/);
   assert.match(account, /No orders yet/);
-  assert.match(account, /aria-current=\{section === id \? 'page'/);
+  assert.match(account, /aria-current=\{section === id \|\| \(id === 'orders' && section === 'order-details'\) \? 'page'/);
   assert.match(account, /contentHeadingRef\.current\?\.focus/);
   assert.match(styles, /@media \(max-width: 820px\)/);
   assert.match(styles, /@media \(prefers-reduced-motion: reduce\)/);

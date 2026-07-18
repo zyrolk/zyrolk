@@ -21,6 +21,8 @@ const PAGE_COPY: Record<string, { title: string; description: string }> = {
     description: 'Review the marketplace products you have saved while comparing your options.',
   },
   account: { title: 'My Account', description: 'Manage your Zyro.lk customer account.' },
+  'account-orders': { title: 'My Orders', description: 'Review and track your private Zyro.lk order history.' },
+  'account-order-details': { title: 'Order Details', description: 'Review private Zyro.lk order details and fulfilment progress.' },
   'account-profile': { title: 'Account Profile', description: 'Manage your Zyro.lk account profile.' },
   'account-addresses': { title: 'Address Book', description: 'Manage your private Zyro.lk delivery address book.' },
   'account-security': { title: 'Account Security', description: 'Review your Zyro.lk account security and sign-in information.' },
