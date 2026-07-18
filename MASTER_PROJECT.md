@@ -278,6 +278,16 @@ Security rules for future development:
 - Any customer-owned data must validate ownership with `request.auth.uid`.
 - Any admin-only workflow must use `isAdmin()`.
 
+Sprint 84 payment and launch controls:
+
+- PayHere checkout supports sandbox and live modes through server-owned configuration; `PAYHERE_MERCHANT_SECRET` must remain in Firebase Secret Manager.
+- A browser redirect never confirms payment. Only a correctly signed PayHere notification with the expected merchant, order attempt, amount, and currency may mark an order paid.
+- PayHere stock is deducted inside the checkout transaction as an availability reservation. Successful verification commits that reservation; failure, cancellation, or expiry restores it once inside a Firestore transaction.
+- Private `payment_transactions`, `payment_receipts`, `notification_outbox`, and `mail` collections are server-owned and explicitly denied to storefront clients.
+- Email delivery uses the Firebase Trigger Email extension through the private `mail` collection. Notification outbox IDs are deterministic to prevent duplicate sends.
+- App Check enforcement is controlled by `REQUIRE_APP_CHECK` and should be enabled only after the web client is registered and valid production traffic is confirmed.
+- Deployment configuration and release checks are documented in `docs/SPRINT_84_DEPLOYMENT.md`.
+
 ## Git Workflow
 
 Repository hygiene:

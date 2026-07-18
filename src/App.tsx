@@ -23,6 +23,8 @@ import {
   sortCategoriesAlphabetically,
 } from './services/categories/categoryUtils';
 import { ProductionReview, calculateProductionRatingSummary, projectProductionReview } from './features/reviews/reviewModel';
+import { getPaymentReturnContext } from './features/checkout/payhere';
+import { trackCommerceEvent } from './services/observability/commerceAnalytics';
 
 // Components
 import Navbar from './components/Navbar';
@@ -45,6 +47,7 @@ const ProductDetailModal = lazy(() => import('./components/ProductDetailModal'))
 const AccountCenter = lazy(() => import('./features/account/AccountCenter'));
 const WishlistExperience = lazy(() => import('./features/personalization/WishlistExperience'));
 const CompareProducts = lazy(() => import('./features/personalization/CompareProducts'));
+const PaymentReturnPage = lazy(() => import('./features/checkout/PaymentReturnPage'));
 
 // Lucide Icons
 import { 
@@ -63,6 +66,7 @@ const STOREFRONT_PAGE_IDS = new Set([
   'home', 'legacy-home', 'products', 'categories', 'wishlist', 'recently-viewed', 'compare', 'contact',
   'account', 'account-orders', 'account-order-details', 'account-profile', 'account-addresses', 'account-security', 'account-settings',
   'about-us', 'privacy-policy', 'terms-conditions', 'return-policy', 'faq',
+  'payment-return',
 ]);
 
 const LazyBlockFallback = ({ className = "", label = 'Loading content' }: { className?: string; label?: string }) => (
@@ -87,8 +91,17 @@ const OverlayLoadingFallback = ({ label }: { label: string }) => (
 
 export default function App() {
   // Page Navigation State
-  const [currentPage, setCurrentPage] = useState<string>('home'); // home, products, categories, wishlist, contact, admin
+  const [paymentReturnContext, setPaymentReturnContext] = useState(() => (
+    typeof window === 'undefined' ? null : getPaymentReturnContext(window.location.search)
+  ));
+  const [currentPage, setCurrentPage] = useState<string>(() => paymentReturnContext ? 'payment-return' : 'home'); // home, products, categories, wishlist, contact, admin
   const [isAdminMode, setIsAdminMode] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (!paymentReturnContext || typeof window === 'undefined') return;
+    // Payment access tokens are consumed from memory and removed from browser history immediately.
+    window.history.replaceState({}, document.title, window.location.pathname);
+  }, [paymentReturnContext]);
 
   // Website Settings
   const [settings, setSettings] = useState<WebsiteSettings | null>(null);
@@ -165,6 +178,14 @@ export default function App() {
   useEffect(() => { wishlistRef.current = wishlist; }, [wishlist]);
   useEffect(() => { cartRef.current = cart; }, [cart]);
   useEffect(() => { recentlyViewedIdsRef.current = recentlyViewedProductIds; }, [recentlyViewedProductIds]);
+
+  useEffect(() => {
+    if (!products.length || paymentReturnContext || typeof window === 'undefined') return;
+    const productId = new URLSearchParams(window.location.search).get('product')?.trim();
+    if (!productId) return;
+    const product = products.find(candidate => candidate.id === productId && candidate.isActive !== false);
+    if (product) setSelectedProduct(product);
+  }, [paymentReturnContext, products]);
 
   useEffect(() => {
     const handleOnline = () => setIsOffline(false);
@@ -525,6 +546,7 @@ export default function App() {
   // --- CART FUNCTIONS ---
   const handleAddToCart = useCallback((product: Product, qty: number = 1) => {
     if (product.stock <= 0) return;
+    void trackCommerceEvent('add_to_cart', { currency: 'LKR', value: product.price * qty, product_id: product.id, quantity: qty });
     setCart(prev => {
       const existing = prev.find(item => item.product.id === product.id);
       if (existing) {
@@ -566,9 +588,15 @@ export default function App() {
     setCart(prev => prev.filter(item => item.product.id !== productId));
   };
 
-  const handleClearCart = () => {
+  const handleClearCart = useCallback(() => {
     setCart([]);
-  };
+  }, []);
+
+  const finishPaymentReturn = useCallback((destination: 'home' | 'account-orders') => {
+    window.history.replaceState({}, document.title, window.location.pathname);
+    setPaymentReturnContext(null);
+    setCurrentPage(destination);
+  }, []);
 
   // --- WISHLIST FUNCTIONS ---
   const handleToggleWishlist = useCallback((product: Product) => {
@@ -827,6 +855,20 @@ export default function App() {
             </aside>
           )}
           {/* Main Content Pages */}
+
+          {currentPage === 'payment-return' && paymentReturnContext && (
+            <Suspense fallback={<LazyBlockFallback className="mx-auto my-12 min-h-96 max-w-3xl" label="Verifying payment" />}>
+              <PaymentReturnPage
+                user={user}
+                outcome={paymentReturnContext.outcome}
+                orderId={paymentReturnContext.orderId}
+                accessToken={paymentReturnContext.accessToken}
+                onPaymentConfirmed={handleClearCart}
+                onContinue={() => finishPaymentReturn('home')}
+                onOrders={() => finishPaymentReturn('account-orders')}
+              />
+            </Suspense>
+          )}
 
           {/* PAGE 1: STOREFRONT V2 PHASE 1 */}
           {currentPage === 'home' && (

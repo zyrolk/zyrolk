@@ -34,8 +34,20 @@ export interface CustomerOrder {
   couponCode?: string;
   status: CustomerOrderStatus;
   paymentMethod: string;
+  paymentStatus?: string;
+  paymentReference?: string;
+  paymentAttempt?: number;
+  paymentTimeline: CustomerPaymentTimelineEvent[];
   createdAt?: string;
   orderNotes?: string;
+}
+
+export interface CustomerPaymentTimelineEvent {
+  id: string;
+  status: string;
+  label: string;
+  source: string;
+  at?: string;
 }
 
 export interface CustomerOrderTimelineStep {
@@ -85,6 +97,20 @@ export function normalizeCustomerOrder(id: string, value: Record<string, unknown
       imageUrl: cleanText(item.imageUrl, 2000),
     };
   }).filter((item): item is CustomerOrderItem => Boolean(item));
+  const paymentTimeline = (Array.isArray(value.paymentTimeline) ? value.paymentTimeline : []).flatMap((rawEvent, index) => {
+    if (!rawEvent || typeof rawEvent !== 'object') return [];
+    const event = rawEvent as Record<string, unknown>;
+    const status = cleanText(event.status, 40);
+    const label = cleanText(event.label, 160);
+    if (!status || !label) return [];
+    return [{
+      id: cleanText(event.id, 120) || `${status}-${index}`,
+      status,
+      label,
+      source: cleanText(event.source, 40) || 'system',
+      at: cleanText(event.at, 80) || undefined,
+    }];
+  }).slice(-20);
 
   return {
     id: cleanText(id, 200),
@@ -105,6 +131,10 @@ export function normalizeCustomerOrder(id: string, value: Record<string, unknown
     couponCode: cleanText(value.couponCode, 40) || undefined,
     status: normalizeStatus(value.status),
     paymentMethod: cleanText(value.paymentMethod, 80) || 'cod',
+    paymentStatus: cleanText(value.paymentStatus, 40) || undefined,
+    paymentReference: cleanText(value.paymentReference, 200) || undefined,
+    paymentAttempt: value.paymentAttempt === undefined ? undefined : Math.max(1, Math.floor(safeNumber(value.paymentAttempt)) || 1),
+    paymentTimeline,
     createdAt: cleanText(value.createdAt, 80) || undefined,
     orderNotes: cleanText(value.orderNotes ?? value.notes, 2000) || undefined,
   };
@@ -180,5 +210,6 @@ export function getCustomerOrderReference(order: Pick<CustomerOrder, 'id' | 'ord
 export function getPaymentMethodLabel(paymentMethod: string): string {
   if (paymentMethod === 'cod') return 'Cash on Delivery';
   if (paymentMethod === 'whatsapp_confirm') return 'WhatsApp confirmation';
+  if (paymentMethod === 'payhere') return 'PayHere online payment';
   return cleanText(paymentMethod, 80).replace(/[_-]+/gu, ' ') || 'Not available';
 }

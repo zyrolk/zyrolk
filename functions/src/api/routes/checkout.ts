@@ -19,6 +19,11 @@ import {
 import { sendApiError } from "../errors";
 import { adminAuth, adminDb } from "../firebase";
 import { appLogger } from "../logging";
+import {
+  buildInitialPayHereOrderFields,
+  createPayHereSessionForOrder,
+  getPayHereAvailability,
+} from "./payments";
 
 const enforceCheckoutRateLimit = createCheckoutRateLimiter();
 const enforceCouponRateLimit = createCheckoutRateLimiter();
@@ -123,6 +128,9 @@ export function registerCheckoutRoutes(app: express.Express): void {
       validatedCartItems = validateCheckoutCartItems(cartItems);
       idempotencyKey = getIdempotencyKeyFromValues(req.header("Idempotency-Key"), req.body?.idempotencyKey);
       requestHash = createCheckoutRequestHash(req.body, validatedCartItems);
+      if (paymentMethod === "payhere" && !getPayHereAvailability().enabled) {
+        throw new CheckoutError("Online payments are not configured", 503);
+      }
     } catch (error: any) {
       sendApiError(res, error, {
         logMessage: "Checkout validation failed.",
@@ -239,6 +247,10 @@ export function registerCheckoutRoutes(app: express.Express): void {
         }
 
         const orderRef = adminDb.collection("orders").doc();
+        const payHereFields = paymentMethod === "payhere"
+          ? buildInitialPayHereOrderFields(orderRef.id, totals.grandTotalPrice)
+          : null;
+        const paymentTransaction = payHereFields?.paymentTransaction;
         const orderData = {
           orderNumber,
           customerUid: customerUid || "guest",
@@ -258,10 +270,36 @@ export function registerCheckoutRoutes(app: express.Express): void {
           status: "pending",
           stockDeducted: true,
           paymentMethod: paymentMethod || "cod",
+          ...(payHereFields ? {
+            paymentProvider: payHereFields.paymentProvider,
+            paymentStatus: payHereFields.paymentStatus,
+            paymentAttempt: payHereFields.paymentAttempt,
+            paymentGatewayOrderId: payHereFields.paymentGatewayOrderId,
+            paymentTimeline: payHereFields.paymentTimeline,
+            stockReservationStatus: payHereFields.stockReservationStatus,
+            stockReservationExpiresAt: payHereFields.stockReservationExpiresAt,
+            stockRestorationApplied: false,
+          } : {
+            paymentStatus: "not_required",
+            stockReservationStatus: "committed",
+          }),
           createdAt: new Date().toISOString()
         };
 
         transaction.set(orderRef, orderData);
+        if (paymentTransaction) {
+          transaction.create(adminDb.collection("payment_transactions").doc(paymentTransaction.gatewayOrderId), {
+            provider: "payhere",
+            orderId: orderRef.id,
+            gatewayOrderId: paymentTransaction.gatewayOrderId,
+            attempt: paymentTransaction.attempt,
+            amount: paymentTransaction.amount,
+            currency: paymentTransaction.currency,
+            status: "initialized",
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          });
+        }
 
         const order = {
           id: orderRef.id,
@@ -290,7 +328,13 @@ export function registerCheckoutRoutes(app: express.Express): void {
         orderNumber: finalizedOrder.orderNumber,
       });
 
-      res.json({ success: true, order: finalizedOrder });
+      res.json({
+        success: true,
+        order: finalizedOrder,
+        ...(finalizedOrder.paymentMethod === "payhere"
+          ? { paymentSession: createPayHereSessionForOrder(finalizedOrder) }
+          : {}),
+      });
     } catch (error: any) {
       sendApiError(res, error, {
         logMessage: "Checkout transaction failed.",

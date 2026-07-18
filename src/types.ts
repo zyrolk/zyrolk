@@ -79,7 +79,11 @@ export interface Order {
   discountAmount?: number;
   couponCode?: string;
   status: 'pending' | 'confirmed' | 'processing' | 'packed' | 'shipped' | 'delivered' | 'cancelled';
-  paymentMethod: 'cod' | 'whatsapp_confirm';
+  paymentMethod: 'cod' | 'whatsapp_confirm' | 'payhere';
+  paymentStatus?: 'not_required' | 'awaiting_payment' | 'pending' | 'paid' | 'cancelled' | 'failed' | 'chargedback' | 'expired';
+  paymentReference?: string;
+  paymentAttempt?: number;
+  paymentTimeline?: Array<{ id: string; status: string; label: string; source: string; at: string }>;
   createdAt: string;
 }
 

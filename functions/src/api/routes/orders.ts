@@ -4,8 +4,9 @@ import { requireAdminAuth } from "../middleware/adminAuth";
 import { adminAuth, adminDb } from "../firebase";
 import { sendApiError } from "../errors";
 import { assertCustomerCanCancelOrder, buildOrderStatusPlan } from "../orders/orderStatusLogic";
+import { appendPaymentTimeline, createPaymentTimelineEvent } from "../payments/payhereLogic";
 
-const ORDER_STATUSES = new Set(["pending", "confirmed", "packed", "shipped", "delivered", "cancelled"]);
+const ORDER_STATUSES = new Set(["pending", "confirmed", "processing", "packed", "shipped", "delivered", "cancelled"]);
 
 const requireCustomerAuth: express.RequestHandler = async (req, res, next) => {
   const match = (req.header("Authorization") || "").match(/^Bearer\s+(.+)$/i);
@@ -35,6 +36,10 @@ async function updateOrderStatus(orderId: string, newStatus: string, customerUid
     const { shouldRestoreStock, quantities } = buildOrderStatusPlan(
       order.status, newStatus, order.stockDeducted, order.stockRestorationApplied, order.items,
     );
+    const cancellingUnsettledPayHere = shouldRestoreStock
+      && order.paymentMethod === "payhere"
+      && new Set(["awaiting_payment", "pending"]).has(String(order.paymentStatus || ""));
+    const cancellingPaidPayHere = shouldRestoreStock && order.paymentMethod === "payhere" && order.paymentStatus === "paid";
 
     const productStocks: Array<{ ref: FirebaseFirestore.DocumentReference; stock: number; quantity: number }> = [];
     for (const [productId, quantity] of quantities) {
@@ -53,8 +58,23 @@ async function updateOrderStatus(orderId: string, newStatus: string, customerUid
       ...(shouldRestoreStock ? {
         stockRestorationApplied: true,
         stockRestoredAt: FieldValue.serverTimestamp(),
+        stockReservationStatus: order.paymentMethod === "payhere" ? "released" : order.stockReservationStatus,
+        ...(cancellingUnsettledPayHere ? {
+          paymentStatus: "cancelled",
+          paymentTimeline: appendPaymentTimeline(order.paymentTimeline, createPaymentTimelineEvent("cancelled", "Order cancelled and reserved stock released", customerUid ? "customer" : "system")),
+        } : {}),
+        ...(cancellingPaidPayHere ? {
+          paymentReviewRequired: true,
+          paymentReviewReason: "cancelled_paid_order",
+        } : {}),
       } : {}),
     });
+    if (cancellingUnsettledPayHere && typeof order.paymentGatewayOrderId === "string") {
+      transaction.set(adminDb.collection("payment_transactions").doc(order.paymentGatewayOrderId), {
+        status: "cancelled",
+        updatedAt: FieldValue.serverTimestamp(),
+      }, { merge: true });
+    }
 
     return { status: newStatus, stockRestored: shouldRestoreStock };
   });

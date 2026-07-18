@@ -29,6 +29,7 @@ const PAGE_COPY: Record<string, { title: string; description: string }> = {
   'account-addresses': { title: 'Address Book', description: 'Manage your private Zyro.lk delivery address book.' },
   'account-security': { title: 'Account Security', description: 'Review your Zyro.lk account security and sign-in information.' },
   'account-settings': { title: 'Customer Settings', description: 'Manage your Zyro.lk customer communication preferences.' },
+  'payment-return': { title: 'Payment Status', description: 'Securely verify the status of your Zyro.lk payment.' },
   contact: {
     title: 'Contact & Support',
     description: 'Contact Zyro.lk for marketplace support, product questions and ordering assistance.',
@@ -85,7 +86,9 @@ export interface StorefrontSeoDescriptor {
 
 export const buildStorefrontSeo = ({ currentPage, product, settings, origin, isAdminMode = false }: StorefrontSeoInput): StorefrontSeoDescriptor => {
   const resolvedOrigin = safeOrigin(origin);
-  const canonical = `${resolvedOrigin}/`;
+  const canonical = product?.id
+    ? `${resolvedOrigin}/?product=${encodeURIComponent(product.id)}`
+    : `${resolvedOrigin}/`;
   const storeName = cleanText(settings?.storeName) || 'Zyro.lk';
   const pageCopy = PAGE_COPY[currentPage === 'legacy-home' ? 'home' : currentPage] || {
     title: 'Page Not Found',
@@ -117,27 +120,38 @@ export const buildStorefrontSeo = ({ currentPage, product, settings, origin, isA
     resolvedOrigin,
   );
   const keywords = cleanText(settings?.seoKeywords) || 'Zyro.lk, online marketplace Sri Lanka, online shopping Sri Lanka';
-  const isPrivateCustomerPage = ['wishlist', 'recently-viewed', 'compare'].includes(currentPage) || currentPage.startsWith('account');
+  const isPrivateCustomerPage = ['wishlist', 'recently-viewed', 'compare', 'payment-return'].includes(currentPage) || currentPage.startsWith('account');
   const robots = isAdminMode || isMissingPage || isPrivateCustomerPage ? 'noindex, follow' : 'index, follow';
   const socialLinks = [settings?.facebookUrl, settings?.instagramUrl, settings?.tiktokUrl, settings?.youtubeUrl]
     .map(value => absoluteHttpUrl(value, resolvedOrigin))
     .filter((value): value is string => Boolean(value));
 
-  const storeData: Record<string, unknown> = {
-    '@context': 'https://schema.org',
-    '@type': 'OnlineStore',
+  const organizationData: Record<string, unknown> = {
+    '@type': 'Organization',
+    '@id': `${resolvedOrigin}/#organization`,
     name: storeName,
-    url: canonical,
-    description,
-    currenciesAccepted: 'LKR',
+    url: `${resolvedOrigin}/`,
     ...(image ? { logo: image } : {}),
     ...(settings?.contactPhone ? { telephone: settings.contactPhone } : {}),
     ...(settings?.contactEmail ? { email: settings.contactEmail } : {}),
     ...(socialLinks.length > 0 ? { sameAs: socialLinks } : {}),
   };
 
-  const structuredData = isProduct && product ? {
-    '@context': 'https://schema.org',
+  const storeData: Record<string, unknown> = {
+    '@type': 'OnlineStore',
+    '@id': `${resolvedOrigin}/#store`,
+    name: storeName,
+    url: `${resolvedOrigin}/`,
+    description,
+    currenciesAccepted: 'LKR',
+    parentOrganization: { '@id': `${resolvedOrigin}/#organization` },
+    ...(image ? { logo: image } : {}),
+    ...(settings?.contactPhone ? { telephone: settings.contactPhone } : {}),
+    ...(settings?.contactEmail ? { email: settings.contactEmail } : {}),
+    ...(socialLinks.length > 0 ? { sameAs: socialLinks } : {}),
+  };
+
+  const productData = isProduct && product ? {
     '@type': 'Product',
     name: productName,
     description,
@@ -160,7 +174,21 @@ export const buildStorefrontSeo = ({ currentPage, product, settings, origin, isA
         reviewCount: product.reviewsCount,
       },
     } : {}),
-  } : storeData;
+  } : null;
+
+  const breadcrumbData = {
+    '@type': 'BreadcrumbList',
+    itemListElement: [
+      { '@type': 'ListItem', position: 1, name: 'Home', item: `${resolvedOrigin}/` },
+      ...(isProduct && product ? [{ '@type': 'ListItem', position: 2, name: productName, item: canonical }] : []),
+    ],
+  };
+
+  const structuredData: Record<string, unknown> = {
+    '@context': 'https://schema.org',
+    ...(productData || storeData),
+    '@graph': [organizationData, storeData, breadcrumbData, ...(productData ? [productData] : [])],
+  };
 
   return {
     title: truncate(title, 68),

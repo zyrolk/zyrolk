@@ -4,6 +4,7 @@ export interface RuntimeConfig {
   adminEmail: string;
   allowedOrigins: string[];
   corsAllowsAllOrigins: boolean;
+  requireAppCheck: boolean;
 }
 
 let cachedConfig: RuntimeConfig | null = null;
@@ -23,6 +24,7 @@ export function loadRuntimeConfig(): RuntimeConfig {
     adminEmail: PRODUCTION_ADMIN_EMAIL,
     allowedOrigins,
     corsAllowsAllOrigins: allowedOrigins.length === 0,
+    requireAppCheck: process.env.REQUIRE_APP_CHECK === "true",
   };
 }
 
@@ -33,6 +35,7 @@ export function getRuntimeConfig(): RuntimeConfig {
       adminEmailConfigured: true,
       allowedOriginsCount: cachedConfig.allowedOrigins.length,
       corsMode: cachedConfig.corsAllowsAllOrigins ? "compatibility-wildcard" : "allowlist",
+      appCheckRequired: cachedConfig.requireAppCheck,
     });
   }
 

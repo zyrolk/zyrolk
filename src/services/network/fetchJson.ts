@@ -33,7 +33,10 @@ export async function fetchJson<T>(input: RequestInfo | URL, init: RequestInit =
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const response = await fetchImpl(input, { ...init, signal: controller.signal });
+    const appCheckHeaders = options.fetchImpl ? {} : await getAppCheckRequestHeaders();
+    const headers = new Headers(init.headers);
+    Object.entries(appCheckHeaders).forEach(([key, value]) => headers.set(key, value));
+    const response = await fetchImpl(input, { ...init, headers, signal: controller.signal });
     const bodyText = await response.text();
     let body: unknown = null;
 
@@ -61,3 +64,4 @@ export async function fetchJson<T>(input: RequestInfo | URL, init: RequestInit =
     clearTimeout(timeoutId);
   }
 }
+import { getAppCheckRequestHeaders } from '../security/appCheck';

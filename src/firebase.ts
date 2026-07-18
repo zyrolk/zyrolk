@@ -11,7 +11,9 @@ const firebaseConfig = {
   projectId: appletConfig.projectId,
   storageBucket: appletConfig.storageBucket,
   messagingSenderId: appletConfig.messagingSenderId,
-  appId: appletConfig.appId
+  appId: appletConfig.appId,
+  measurementId: appletConfig.measurementId
+    || (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env?.VITE_FIREBASE_MEASUREMENT_ID,
 };
 
 // Reuse the initialized app during development refreshes and production module reuse.
@@ -19,7 +21,7 @@ const app = getApps()[0] || initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-export { db, auth, firebaseConfig };
+export { app, db, auth, firebaseConfig };
 
 export enum OperationType {
   CREATE = 'create',

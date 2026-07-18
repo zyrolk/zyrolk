@@ -39,6 +39,7 @@ import {
 import { collection, doc, getDocs, limit, onSnapshot, orderBy, query, setDoc, writeBatch } from 'firebase/firestore';
 import { auth, db, handleFirestoreError, OperationType } from '../firebase';
 import { Product } from '../types';
+import { getAppCheckRequestHeaders } from '../services/security/appCheck';
 import { approveSupplierQueueItem, deleteSupplierQueueItem, rejectSupplierQueueItem } from '../services/supplierQueueService';
 import { matchesSupplierSearch } from '../services/supplierSearch';
 import { isActiveWebsiteSupplier } from '../services/supplierSourceUtils';
@@ -499,10 +500,14 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
       throw new Error("Admin authentication is required. Please sign in again.");
     }
 
-    const token = await user.getIdToken(forceRefresh);
+    const [token, appCheckHeaders] = await Promise.all([
+      user.getIdToken(forceRefresh),
+      getAppCheckRequestHeaders(),
+    ]);
     return {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${token}`
+      'Authorization': `Bearer ${token}`,
+      ...appCheckHeaders,
     };
   };
 

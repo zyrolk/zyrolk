@@ -1,0 +1,28 @@
+.zy-payment-return { min-height: calc(100vh - 8rem); display: grid; place-items: center; padding: clamp(1rem, 4vw, 3rem); background: radial-gradient(circle at 50% 0%, rgba(37, 99, 235, .12), transparent 32rem), #f6f8fc; }
+.zy-payment-return-card { width: min(100%, 42rem); padding: clamp(1.25rem, 5vw, 3rem); border: 1px solid rgba(148, 163, 184, .24); border-radius: 1.5rem; background: #fff; box-shadow: 0 30px 70px -42px rgba(15, 23, 42, .65); text-align: center; }
+.zy-payment-return-icon { display: grid; width: 4.5rem; height: 4.5rem; margin: 0 auto 1.2rem; place-items: center; border-radius: 999px; color: #1d4ed8; background: #eff6ff; }
+.zy-payment-return-icon svg { width: 2.2rem; height: 2.2rem; }
+.zy-payment-return-card.is-paid .zy-payment-return-icon { color: #fff; background: #16a34a; }
+.zy-payment-return-card.is-failed .zy-payment-return-icon, .zy-payment-return-card.is-cancelled .zy-payment-return-icon, .zy-payment-return-card.is-expired .zy-payment-return-icon { color: #b91c1c; background: #fef2f2; }
+.zy-payment-return-card .zy-section-eyebrow { justify-content: center; }
+.zy-payment-return-card h1 { margin: .35rem 0 .65rem; font-size: clamp(1.65rem, 5vw, 2.5rem); }
+.zy-payment-return-card > p:not(.zy-section-eyebrow) { margin: 0 auto; max-width: 34rem; color: #64748b; line-height: 1.7; }
+.zy-payment-return-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: .7rem; margin-top: 1.4rem; }
+.zy-payment-return-summary > div { display: grid; gap: .2rem; min-width: 0; padding: .9rem; border: 1px solid #e2e8f0; border-radius: .85rem; background: #f8fafc; }
+.zy-payment-return-summary small { color: #64748b; font-size: .7rem; text-transform: uppercase; letter-spacing: .08em; }
+.zy-payment-return-summary strong { overflow-wrap: anywhere; font-size: .85rem; }
+.zy-payment-timeline { display: grid; gap: .65rem; margin: 1.25rem 0 0; padding: 0; text-align: left; list-style: none; }
+.zy-payment-timeline li { display: flex; gap: .7rem; align-items: center; padding: .75rem; border-radius: .8rem; background: #f8fafc; }
+.zy-payment-timeline li > span { display: grid; width: 2rem; height: 2rem; flex: 0 0 auto; place-items: center; border-radius: 999px; color: #1d4ed8; background: #e8f0ff; }
+.zy-payment-timeline svg { width: 1rem; }
+.zy-payment-timeline li > div { display: grid; gap: .15rem; }
+.zy-payment-timeline strong { font-size: .78rem; }
+.zy-payment-timeline small { color: #64748b; font-size: .68rem; }
+.zy-payment-return-error { margin-top: 1rem; padding: .8rem; border: 1px solid #fecaca; border-radius: .8rem; color: #b91c1c; background: #fef2f2; font-size: .8rem; }
+.zy-payment-return-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: .65rem; margin-top: 1.4rem; }
+.zy-payment-return-actions button { display: flex; min-height: 3rem; align-items: center; justify-content: center; gap: .4rem; padding: .7rem 1rem; border: 1px solid #cbd5e1; border-radius: .8rem; color: #334155; background: #fff; font-weight: 800; }
+.zy-payment-return-actions button:first-child { color: #fff; border-color: #1d4ed8; background: #1d4ed8; }
+.zy-payment-return-actions button:disabled { opacity: .55; }
+.zy-payment-return-actions svg { width: 1rem; }
+@media (max-width: 600px) { .zy-payment-return-summary { grid-template-columns: 1fr; } .zy-payment-return-actions { display: grid; } }
+@media (prefers-reduced-motion: reduce) { .zy-payment-return * { scroll-behavior: auto !important; animation: none !important; transition: none !important; } }

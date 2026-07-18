@@ -15,6 +15,8 @@ import {
   validateCheckoutForm, writeCheckoutDraft,
 } from './checkoutModel';
 import { Order } from '../../types';
+import { trackCommerceEvent, trackPurchaseOnce } from '../../services/observability/commerceAnalytics';
+import { PayHerePaymentSession, submitPayHerePayment } from './payhere';
 import './premiumCheckout.css';
 
 const IDEMPOTENCY_KEY = 'zyro.checkout.idempotency';
@@ -47,6 +49,7 @@ function clearIdempotencyKey(): void {
 }
 
 interface CouponQuote { code: string; discountAmount: number; cartSignature: string }
+interface PayHereAvailability { enabled: boolean; mode?: 'sandbox' | 'live' }
 
 function Field({ field, label, error, children }: { field: CheckoutField; label: string; error?: string; children: ReactNode }) {
   return <label className="zy-checkout-field" htmlFor={`checkout-${field}`}><span>{label}</span>{children}{error && <small id={`checkout-${field}-error`} role="alert">{error}</small>}</label>;
@@ -68,6 +71,9 @@ export default function PremiumCheckoutDrawer({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [placedOrder, setPlacedOrder] = useState<Order | null>(null);
   const [copied, setCopied] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState<'cod' | 'payhere'>('cod');
+  const [payHereAvailability, setPayHereAvailability] = useState<PayHereAvailability>({ enabled: false });
+  const [paymentOptionsLoading, setPaymentOptionsLoading] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const confirmationHeadingRef = useRef<HTMLHeadingElement>(null);
@@ -140,6 +146,24 @@ export default function PremiumCheckoutDrawer({
   }, [isOpen, user]);
 
   useEffect(() => {
+    if (!isOpen) return;
+    let active = true;
+    setPaymentOptionsLoading(true);
+    fetchJson<PayHereAvailability>('/api/payments/config', { method: 'POST' }, { fallbackMessage: 'Online payment availability could not be checked.' })
+      .then(result => {
+        if (!active) return;
+        setPayHereAvailability(result);
+        if (!result.enabled) setPaymentMethod('cod');
+      })
+      .catch(error => {
+        if (active) { setPayHereAvailability({ enabled: false }); setPaymentMethod('cod'); }
+        reportClientIssue('payhere-config', error, 'warning');
+      })
+      .finally(() => { if (active) setPaymentOptionsLoading(false); });
+    return () => { active = false; };
+  }, [isOpen]);
+
+  useEffect(() => {
     if (!user) return;
     setForm(current => ({
       ...current,
@@ -196,29 +220,37 @@ export default function PremiumCheckoutDrawer({
     event.preventDefault();
     if (!cartItems.length || isSubmitting) return;
     const normalized = normalizeCheckoutForm(form);
-    const nextErrors = validateCheckoutForm(normalized);
+    const nextErrors = validateCheckoutForm(normalized, { requireEmail: paymentMethod === 'payhere' });
     setForm(normalized); setErrors(nextErrors); setCheckoutError('');
     const firstError = Object.keys(nextErrors)[0] as CheckoutField | undefined;
     if (firstError) { document.getElementById(`checkout-${firstError}`)?.focus(); return; }
 
     setIsSubmitting(true);
     try {
+      void trackCommerceEvent('begin_checkout', { currency: 'LKR', value: grandTotal, items: cartItems.length });
       const token = user ? await user.getIdToken() : '';
       const payload = {
         customerUid: user?.uid || 'guest', customerName: normalized.customerName, customerPhone: normalized.customerPhone,
         customerPhone2: normalized.customerPhone2, customerEmail: normalized.customerEmail || 'guest@zyro.lk',
         customerAddress: normalized.customerAddress, district: normalized.district, city: normalized.city,
-        paymentMethod: 'cod' as const, couponCode: couponQuote?.code || '',
+        paymentMethod, couponCode: couponQuote?.code || '',
         cartItems: cartItems.map(item => ({ productId: item.product.id, quantity: item.quantity })),
       };
       const idempotencyKey = getIdempotencyKey(JSON.stringify(payload));
-      const result = await fetchJson<{ success: boolean; order: Order; error?: string }>('/api/checkout', {
+      const result = await fetchJson<{ success: boolean; order: Order; paymentSession?: PayHerePaymentSession; error?: string }>('/api/checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify({ ...payload, idempotencyKey }),
       }, { fallbackMessage: 'Checkout is temporarily unavailable. Your cart is still saved.' });
       if (!result.success) throw new Error(result.error || 'The order could not be placed.');
-      setPlacedOrder(result.order);
+      if (paymentMethod === 'payhere') {
+        if (!result.paymentSession) throw new Error('The secure PayHere session was not returned. Your reserved order remains available for retry.');
+        void trackCommerceEvent('add_payment_info', { currency: 'LKR', value: result.order.totalPrice, payment_type: 'payhere' });
+        submitPayHerePayment(result.paymentSession);
+      } else {
+        setPlacedOrder(result.order);
+        trackPurchaseOnce(result.order.id, result.order.totalPrice, 'cod', result.order.couponCode);
+      }
       clearIdempotencyKey();
       clearCheckoutDraft(window.sessionStorage);
       onClearCart();
@@ -286,10 +318,10 @@ export default function PremiumCheckoutDrawer({
             <Field field="customerAddress" label="Street address" error={errors.customerAddress}><textarea id="checkout-customerAddress" value={form.customerAddress} onChange={event => updateField('customerAddress', event.target.value)} maxLength={500} rows={3} autoComplete="street-address" aria-invalid={Boolean(errors.customerAddress)} aria-describedby={errors.customerAddress ? 'checkout-customerAddress-error' : undefined} /></Field>
           </div>
 
-          <div className="zy-payment-method"><ShieldCheck /><span><b>Cash on Delivery</b><small>Pay when your confirmed order arrives.</small></span><CheckCircle2 /></div>
+          <fieldset className="zy-payment-options"><legend>Payment method</legend><label className={paymentMethod === 'cod' ? 'is-selected' : ''}><input type="radio" name="paymentMethod" value="cod" checked={paymentMethod === 'cod'} onChange={() => setPaymentMethod('cod')} /><ShieldCheck /><span><b>Cash on Delivery</b><small>Pay when your confirmed order arrives.</small></span><CheckCircle2 /></label>{paymentOptionsLoading ? <div className="zy-payment-option-skeleton" role="status" aria-label="Checking online payment availability" /> : payHereAvailability.enabled && <label className={paymentMethod === 'payhere' ? 'is-selected' : ''}><input type="radio" name="paymentMethod" value="payhere" checked={paymentMethod === 'payhere'} onChange={() => setPaymentMethod('payhere')} /><CircleDollarSign /><span><b>Pay securely with PayHere</b><small>Cards and supported local payment methods{payHereAvailability.mode === 'sandbox' ? ' - Sandbox mode' : ''}.</small></span><CheckCircle2 /></label>}</fieldset>
           <aside className="zy-checkout-summary" aria-labelledby="checkout-summary-title"><h3 id="checkout-summary-title">Order summary</h3><div><span>Items subtotal</span><b>{formatPrice(itemsSubtotal)}</b></div>{discountAmount > 0 && <div className="is-discount"><span>Coupon discount</span><b>−{formatPrice(discountAmount)}</b></div>}<div><span>Delivery to {form.district}</span><b>{deliveryFee === 0 ? 'Free' : formatPrice(deliveryFee)}</b></div><div className="is-total"><span>Total payable</span><b>{formatPrice(grandTotal)}</b></div></aside>
           {checkoutError && <div className="zy-checkout-error" role="alert">{checkoutError}<small>Your cart and delivery draft are still saved.</small></div>}
-          <button className="zy-place-order" type="submit" disabled={isSubmitting || cartItems.length === 0} aria-busy={isSubmitting}>{isSubmitting ? <><LoaderCircle className="is-spinning" />Placing your order securely…</> : <><LockKeyhole />Place COD order · {formatPrice(grandTotal)}<ChevronRight /></>}</button>
+          <button className="zy-place-order" type="submit" disabled={isSubmitting || cartItems.length === 0} aria-busy={isSubmitting}>{isSubmitting ? <><LoaderCircle className="is-spinning" />{paymentMethod === 'payhere' ? 'Preparing PayHere…' : 'Placing your order securely…'}</> : <><LockKeyhole />{paymentMethod === 'payhere' ? 'Continue to PayHere' : 'Place COD order'} · {formatPrice(grandTotal)}<ChevronRight /></>}</button>
           <p className="zy-checkout-assurance"><LockKeyhole />Prices, coupons, stock, delivery, and totals are verified again by the secure checkout service.</p>
         </section>
       </form>}

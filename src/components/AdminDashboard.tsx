@@ -33,6 +33,7 @@ import { normalizeSlideSpeed, validateHeroSlides } from '../services/hero-slider
 import { sanitizeFirestoreData } from '../services/firestore/sanitizeFirestoreData';
 import { validateProductForSave } from '../services/products/productValidation';
 import { isHttpUrl, validateStoreSettings } from '../services/settings/storeSettingsValidation';
+import { getAppCheckRequestHeaders } from '../services/security/appCheck';
 import { 
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, 
   CartesianGrid, Tooltip, PieChart, Pie, Cell, BarChart, Bar, Legend
@@ -1700,11 +1701,14 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
     if (!authorized) return;
     setUpdatingOrderStatus(prev => ({ ...prev, [orderId]: true }));
     try {
-      const token = await auth.currentUser?.getIdToken();
+      const [token, appCheckHeaders] = await Promise.all([
+        auth.currentUser?.getIdToken(),
+        getAppCheckRequestHeaders(),
+      ]);
       if (!token) throw new Error("Admin authentication is required. Please sign in again.");
       const response = await fetch(`/api/orders/${encodeURIComponent(orderId)}/status`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}`, ...appCheckHeaders },
         body: JSON.stringify({ status: newStatus }),
       });
       const result = await response.json().catch(() => ({}));

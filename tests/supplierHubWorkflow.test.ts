@@ -46,7 +46,8 @@ test("A2Z secrets are bound to both HTTPS and scheduled Functions", () => {
 
   assert.match(secrets, /defineSecret\("A2Z_USERNAME"\)/);
   assert.match(secrets, /defineSecret\("A2Z_PASSWORD"\)/);
-  assert.match(apiEntry, /secrets:\s*A2Z_SECRETS/);
+  assert.match(apiEntry, /secrets:\s*API_SECRETS/);
+  assert.match(secrets, /API_SECRETS\s*=\s*\[\.\.\.A2Z_SECRETS,\s*PAYHERE_MERCHANT_SECRET\]/);
   assert.match(scheduledSync, /secrets:\s*A2Z_SECRETS/);
 });
 

@@ -35,7 +35,7 @@ export function normalizeCheckoutForm(value: Partial<CheckoutFormValues>): Check
   };
 }
 
-export function validateCheckoutForm(value: CheckoutFormValues): CheckoutErrors {
+export function validateCheckoutForm(value: CheckoutFormValues, options: { requireEmail?: boolean } = {}): CheckoutErrors {
   const normalized = normalizeCheckoutForm(value);
   const errors: CheckoutErrors = {};
   if (!normalized.customerName) errors.customerName = 'Enter the recipient name.';
@@ -45,7 +45,8 @@ export function validateCheckoutForm(value: CheckoutFormValues): CheckoutErrors 
     const secondaryDigits = normalized.customerPhone2.replace(/\D/gu, '');
     if (secondaryDigits.length < 9 || secondaryDigits.length > 15) errors.customerPhone2 = 'Enter a valid secondary phone number.';
   }
-  if (normalized.customerEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(normalized.customerEmail)) errors.customerEmail = 'Enter a valid email address.';
+  if (options.requireEmail && !normalized.customerEmail) errors.customerEmail = 'Email is required for secure online payment.';
+  else if (normalized.customerEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(normalized.customerEmail)) errors.customerEmail = 'Enter a valid email address.';
   if (!normalized.customerAddress) errors.customerAddress = 'Enter the street address.';
   if (!normalized.city) errors.city = 'Enter the delivery city.';
   if (!normalized.district) errors.district = 'Choose a delivery district.';

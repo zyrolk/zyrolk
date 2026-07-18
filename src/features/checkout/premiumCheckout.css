@@ -167,6 +167,18 @@
 .zy-payment-method span { display: grid; }
 .zy-payment-method small { color: #4f7160; font-size: 0.72rem; }
 
+.zy-payment-options { display: grid; gap: .65rem; margin: 0; padding: 1rem; border: 1px solid rgba(148, 163, 184, .24); border-radius: 1rem; background: #fff; }
+.zy-payment-options legend { padding: 0 .3rem; color: #334155; font-size: .76rem; font-weight: 800; }
+.zy-payment-options label { position: relative; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: .75rem; min-height: 4rem; padding: .8rem; border: 1px solid #dbe3ef; border-radius: .85rem; cursor: pointer; transition: border-color 180ms ease, background-color 180ms ease, box-shadow 180ms ease; }
+.zy-payment-options label.is-selected { border-color: #60a5fa; background: #eff6ff; box-shadow: 0 0 0 3px rgba(37, 99, 235, .08); }
+.zy-payment-options input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.zy-payment-options label > svg:first-of-type { color: #1d4ed8; }
+.zy-payment-options label > svg:last-of-type { color: #16a34a; opacity: 0; }
+.zy-payment-options label.is-selected > svg:last-of-type { opacity: 1; }
+.zy-payment-options label span { display: grid; gap: .12rem; }
+.zy-payment-options label small { color: #64748b; font-size: .7rem; }
+.zy-payment-option-skeleton { height: 4rem; border-radius: .85rem; background: linear-gradient(90deg, #edf1f6 25%, #f8fafc 50%, #edf1f6 75%); background-size: 200% 100%; animation: zy-checkout-shimmer 1.3s linear infinite; }
+
 .zy-checkout-summary { display: grid; gap: 0.65rem; }
 .zy-checkout-summary h3 { margin: 0 0 0.35rem; font-size: 1rem; }
 .zy-checkout-summary > div, .zy-confirmation-totals > div { display: flex; justify-content: space-between; gap: 1rem; color: #64748b; font-size: 0.8rem; }
@@ -248,7 +260,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .zy-checkout-overlay, .zy-premium-checkout, .zy-address-skeleton, .zy-delivery-progress > i > b, .zy-place-order, .is-spinning { animation: none !important; transition: none !important; }
+  .zy-checkout-overlay, .zy-premium-checkout, .zy-address-skeleton, .zy-payment-option-skeleton, .zy-delivery-progress > i > b, .zy-place-order, .is-spinning { animation: none !important; transition: none !important; }
 }
 
 @media print {

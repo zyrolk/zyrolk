@@ -184,6 +184,23 @@ service cloud.firestore {
       allow read, write: if isAdmin();
     }
 
+    // Payment verification, provider receipts and notification delivery are trusted-server only.
+    match /payment_transactions/{transactionId} {
+      allow read, write: if false;
+    }
+
+    match /payment_receipts/{receiptId} {
+      allow read, write: if false;
+    }
+
+    match /notification_outbox/{notificationId} {
+      allow read, write: if false;
+    }
+
+    match /mail/{mailId} {
+      allow read, write: if false;
+    }
+
     // Production clients do not use a public connection-test collection.
     match /test/{docId} {
       allow read, write: if false;

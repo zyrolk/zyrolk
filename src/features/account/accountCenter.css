@@ -341,6 +341,15 @@ button:disabled { cursor: not-allowed; opacity: .62; }
 .zy-order-timeline.is-cancelled li.is-current { color: #a02d35; }
 .zy-order-timeline.is-cancelled li.is-current::before { background: linear-gradient(90deg, #43a777, #cf4a53); }
 .zy-order-timeline.is-cancelled li.is-current > span { border-color: #cf4a53; background: #cf4a53; box-shadow: 0 0 0 5px rgba(207, 74, 83, .12); }
+.zy-order-payment-timeline { padding: clamp(1.1rem, 2.5vw, 1.6rem); border: 1px solid #c9daf4; border-radius: 1.3rem; background: linear-gradient(135deg, #fff, #f4f8ff); }
+.zy-order-payment-timeline ol { display: grid; gap: .65rem; margin: 0; padding: 0; list-style: none; }
+.zy-order-payment-timeline li { display: flex; align-items: center; gap: .7rem; }
+.zy-order-payment-timeline li > span { display: grid; width: 2rem; height: 2rem; flex: 0 0 auto; place-items: center; border-radius: 50%; color: #0758c9; background: #e6effd; }
+.zy-order-payment-timeline li svg { width: .9rem; }
+.zy-order-payment-timeline li > div { display: grid; gap: .1rem; }
+.zy-order-payment-timeline li strong { font-size: .78rem; }
+.zy-order-payment-timeline li small, .zy-order-payment-timeline > p { color: #64748b; font-size: .68rem; }
+.zy-order-payment-timeline > p { margin: .8rem 0 0; overflow-wrap: anywhere; }
 .zy-order-cancelled-note { display: flex; align-items: center; justify-content: center; gap: .5rem; margin: 1rem 0 0; color: #a02d35; font-size: .72rem; }
 .zy-order-cancelled-note svg { width: 1rem; }
 

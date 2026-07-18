@@ -6,7 +6,7 @@ export const CHECKOUT_RATE_LIMIT_WINDOW_MS = 60 * 1000;
 export const CHECKOUT_RATE_LIMIT_MAX_REQUESTS = 10;
 export const CHECKOUT_IDEMPOTENCY_COLLECTION = "checkout_idempotency";
 
-const ALLOWED_PAYMENT_METHODS = new Set(["cod", "whatsapp_confirm"]);
+const ALLOWED_PAYMENT_METHODS = new Set(["cod", "whatsapp_confirm", "payhere"]);
 
 export interface CheckoutCartItem {
   productId: string;
@@ -106,16 +106,16 @@ function requireNonEmptyString(value: unknown, fieldName: string, maxLength: num
   return trimmedValue;
 }
 
-export function validatePaymentMethod(paymentMethod: unknown): "cod" | "whatsapp_confirm" {
+export function validatePaymentMethod(paymentMethod: unknown): "cod" | "whatsapp_confirm" | "payhere" {
   if (paymentMethod === undefined || paymentMethod === null || paymentMethod === "") {
     return "cod";
   }
 
   if (typeof paymentMethod !== "string" || !ALLOWED_PAYMENT_METHODS.has(paymentMethod)) {
-    throw new CheckoutError("Payment method must be cod or whatsapp_confirm");
+    throw new CheckoutError("Payment method must be cod, whatsapp_confirm or payhere");
   }
 
-  return paymentMethod as "cod" | "whatsapp_confirm";
+  return paymentMethod as "cod" | "whatsapp_confirm" | "payhere";
 }
 
 export function validateCheckoutDetails(body: Record<string, unknown>): void {
@@ -123,7 +123,7 @@ export function validateCheckoutDetails(body: Record<string, unknown>): void {
   const customerPhone = requireNonEmptyString(body.customerPhone, "Phone", 30);
   requireNonEmptyString(body.customerAddress, "Address", 500);
   requireNonEmptyString(body.district, "District", 80);
-  validatePaymentMethod(body.paymentMethod);
+  const validatedPaymentMethod = validatePaymentMethod(body.paymentMethod);
 
   if (body.city !== undefined && body.city !== null && String(body.city).trim().length > 80) {
     throw new CheckoutError("City cannot exceed 80 characters");
@@ -143,6 +143,11 @@ export function validateCheckoutDetails(body: Record<string, unknown>): void {
     if (email.length > 160 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       throw new CheckoutError("Customer email must be valid when provided");
     }
+    if (validatedPaymentMethod === "payhere" && email.toLowerCase() === "guest@zyro.lk") {
+      throw new CheckoutError("A customer email is required for PayHere payments");
+    }
+  } else if (validatedPaymentMethod === "payhere") {
+    throw new CheckoutError("Customer email is required for PayHere payments");
   }
 
   if (body.customerPhone2 !== undefined && body.customerPhone2 !== null && body.customerPhone2 !== "") {

@@ -130,5 +130,5 @@ test("checkout request validation returns clear validation errors", () => {
     customerAddress: "No 1",
     district: "Colombo",
     paymentMethod: "card",
-  }), /Payment method must be cod or whatsapp_confirm/);
+  }), /Payment method must be cod, whatsapp_confirm or payhere/);
 });

@@ -1,4 +1,5 @@
 type ClientDiagnosticLevel = 'warning' | 'error';
+let productionReportCount = 0;
 
 const isDevelopmentRuntime = (): boolean => {
   if (typeof process !== 'undefined' && process.env.NODE_ENV) return process.env.NODE_ENV !== 'production';
@@ -20,9 +21,26 @@ const normalizeError = (error: unknown): Record<string, string> => {
 };
 
 export function reportClientIssue(context: string, error: unknown, level: ClientDiagnosticLevel = 'error'): void {
-  if (!isDevelopmentRuntime()) return;
-
   const details = normalizeError(error);
+  if (!isDevelopmentRuntime()) {
+    if (productionReportCount >= 5 || typeof window === 'undefined') return;
+    productionReportCount += 1;
+    void import('./commerceAnalytics').then(({ trackCommerceEvent }) => trackCommerceEvent('exception', {
+      description: context.slice(0, 100),
+      fatal: level === 'error',
+    })).catch(() => undefined);
+    void import('../security/appCheck').then(async ({ getAppCheckRequestHeaders }) => {
+      const appCheckHeaders = await getAppCheckRequestHeaders();
+      return fetch('/api/monitoring/client-error', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...appCheckHeaders },
+        body: JSON.stringify({ context: context.slice(0, 100), name: details.name || 'Error', code: details.code || '' }),
+        keepalive: true,
+      });
+    }).catch(() => undefined);
+    return;
+  }
+
   if (level === 'warning') {
     console.warn(`[${context}]`, details);
     return;

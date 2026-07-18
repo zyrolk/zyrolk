@@ -5,6 +5,7 @@ import { createHash } from "crypto";
 import { createServer as createViteServer } from "vite";
 import { initializeApp, getApps } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
+import { getAppCheck } from "firebase-admin/app-check";
 import { FieldValue, getFirestore } from "firebase-admin/firestore";
 import { A2ZConnectorService } from "./src/services/connectors/a2z-website/A2ZConnectorService";
 import { getApprovedSupplierHosts, validateSupplierRequestTarget } from "./src/server/security/supplierUrlProtection";
@@ -12,11 +13,18 @@ import { getSupplierProductLimit } from "./src/services/supplierSyncSettings";
 import { assertCustomerCanCancelOrder, buildOrderStatusPlan } from "./functions/src/api/orders/orderStatusLogic";
 import { registerReviewSystemRoutes } from "./functions/src/api/routes/reviewSystem";
 import {
+  buildInitialPayHereOrderFields,
+  createPayHereSessionForOrder,
+  getPayHereAvailability,
+  registerPaymentRoutes,
+} from "./functions/src/api/routes/payments";
+import {
   calculateCheckoutTotals as calculateTrustedCheckoutTotals,
   getCouponDocumentId,
   normalizeCouponCode,
   resolveCouponDiscount,
 } from "./functions/src/api/checkout/checkoutLogic";
+import { appendPaymentTimeline, createPaymentTimelineEvent } from "./functions/src/api/payments/payhereLogic";
 
 const app = express();
 const PORT = 3000;
@@ -27,6 +35,10 @@ app.use((req, res, next) => {
   res.setHeader("X-Frame-Options", "DENY");
   res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
   res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  if (process.env.NODE_ENV === "production") {
+    res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload");
+    res.setHeader("Content-Security-Policy", "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self' https://sandbox.payhere.lk https://www.payhere.lk; script-src 'self' https://www.google.com https://www.gstatic.com https://www.googletagmanager.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.googleapis.com https://*.google.com https://*.gstatic.com https://*.googletagmanager.com https://*.google-analytics.com https://*.firebaseio.com wss://*.firebaseio.com; frame-src https://www.google.com https://www.gstatic.com; upgrade-insecure-requests");
+  }
   if (req.path.startsWith("/api/")) res.setHeader("Cache-Control", "no-store");
   next();
 });
@@ -50,18 +62,65 @@ if (getApps().length === 0) {
 }
 const adminDb = getFirestore();
 const adminAuth = getAuth();
+const adminAppCheck = getAppCheck();
 const MAX_CART_ITEMS = 50;
 const MAX_ITEM_QUANTITY = 99;
 const CHECKOUT_RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const CHECKOUT_RATE_LIMIT_MAX_REQUESTS = 10;
 const CHECKOUT_IDEMPOTENCY_COLLECTION = "checkout_idempotency";
-const ALLOWED_PAYMENT_METHODS = new Set(["cod", "whatsapp_confirm"]);
+const ALLOWED_PAYMENT_METHODS = new Set(["cod", "whatsapp_confirm", "payhere"]);
 const ADMIN_EMAIL = "zyrolkofficial@gmail.com";
+
+app.use(async (req, res, next) => {
+  const allowedOrigins = (process.env.API_ALLOWED_ORIGINS || "").split(",").map((origin) => origin.trim()).filter(Boolean);
+  const origin = req.header("Origin");
+  if (origin && allowedOrigins.length && !allowedOrigins.includes(origin)) {
+    res.status(403).json({ error: "Origin is not allowed" });
+    return;
+  }
+  if (process.env.REQUIRE_APP_CHECK !== "true" || req.path === "/api/payments/payhere/notify" || req.path === "/sitemap.xml") {
+    next();
+    return;
+  }
+  const token = req.header("X-Firebase-AppCheck");
+  if (!token) {
+    res.status(401).json({ error: "App verification is required" });
+    return;
+  }
+  try {
+    await adminAppCheck.verifyToken(token);
+    next();
+  } catch {
+    res.status(401).json({ error: "App verification failed" });
+  }
+});
 
 registerReviewSystemRoutes(app, {
   db: adminDb,
   verifyIdToken: (token) => adminAuth.verifyIdToken(token),
   isAdminEmail: (email) => (email || "").toLowerCase() === ADMIN_EMAIL,
+});
+registerPaymentRoutes(app, { db: adminDb, auth: adminAuth });
+
+app.post("/api/monitoring/client-error", (req, res) => {
+  const context = typeof req.body?.context === "string" ? req.body.context.trim().slice(0, 100) : "client-error";
+  const name = typeof req.body?.name === "string" ? req.body.name.trim().slice(0, 80) : "Error";
+  const code = typeof req.body?.code === "string" ? req.body.code.trim().slice(0, 80) : "";
+  console.warn("[Storefront client exception]", { context, name, code });
+  res.status(202).json({ accepted: true });
+});
+
+app.get("/sitemap.xml", async (_req, res) => {
+  try {
+    const snapshot = await adminDb.collection("products").limit(5000).get();
+    const escapeXml = (value: string) => value.replace(/[<>&'\"]/g, (character) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", "'": "&apos;", '"': "&quot;" }[character] || character));
+    const productUrls = snapshot.docs.filter((product) => product.data().isActive !== false).map((product) => `<url><loc>${escapeXml(`https://zyro.lk/?product=${encodeURIComponent(product.id)}`)}</loc><changefreq>daily</changefreq><priority>0.8</priority></url>`);
+    res.setHeader("Content-Type", "application/xml; charset=utf-8");
+    res.setHeader("Cache-Control", "public, max-age=3600, stale-while-revalidate=86400");
+    res.status(200).send(`<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>https://zyro.lk/</loc><changefreq>daily</changefreq><priority>1.0</priority></url>${productUrls.join("")}</urlset>`);
+  } catch {
+    res.status(503).type("text/plain").send("Sitemap temporarily unavailable");
+  }
 });
 
 const checkoutRateLimitBuckets = new Map<string, { count: number; resetAt: number }>();
@@ -122,16 +181,16 @@ function requireNonEmptyString(value: unknown, fieldName: string, maxLength: num
   return trimmedValue;
 }
 
-function validatePaymentMethod(paymentMethod: unknown): "cod" | "whatsapp_confirm" {
+function validatePaymentMethod(paymentMethod: unknown): "cod" | "whatsapp_confirm" | "payhere" {
   if (paymentMethod === undefined || paymentMethod === null || paymentMethod === "") {
     return "cod";
   }
 
   if (typeof paymentMethod !== "string" || !ALLOWED_PAYMENT_METHODS.has(paymentMethod)) {
-    throw new CheckoutError("Payment method must be cod or whatsapp_confirm");
+    throw new CheckoutError("Payment method must be cod, whatsapp_confirm or payhere");
   }
 
-  return paymentMethod as "cod" | "whatsapp_confirm";
+  return paymentMethod as "cod" | "whatsapp_confirm" | "payhere";
 }
 
 function validateCheckoutDetails(body: Record<string, unknown>): void {
@@ -139,7 +198,7 @@ function validateCheckoutDetails(body: Record<string, unknown>): void {
   requireNonEmptyString(body.customerName, "Customer name", 120);
   requireNonEmptyString(body.customerAddress, "Address", 500);
   requireNonEmptyString(body.district, "District", 80);
-  validatePaymentMethod(body.paymentMethod);
+  const validatedPaymentMethod = validatePaymentMethod(body.paymentMethod);
 
   if (body.city !== undefined && body.city !== null && String(body.city).trim().length > 80) {
     throw new CheckoutError("City cannot exceed 80 characters");
@@ -159,6 +218,11 @@ function validateCheckoutDetails(body: Record<string, unknown>): void {
     if (email.length > 160 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       throw new CheckoutError("Customer email must be valid when provided");
     }
+    if (validatedPaymentMethod === "payhere" && email.toLowerCase() === "guest@zyro.lk") {
+      throw new CheckoutError("A customer email is required for PayHere payments");
+    }
+  } else if (validatedPaymentMethod === "payhere") {
+    throw new CheckoutError("Customer email is required for PayHere payments");
   }
 
   if (body.customerPhone2 !== undefined && body.customerPhone2 !== null && body.customerPhone2 !== "") {
@@ -322,6 +386,9 @@ app.post("/api/checkout", async (req, res) => {
     validatedCartItems = validateCheckoutCartItems(cartItems);
     idempotencyKey = getIdempotencyKey(req);
     requestHash = createCheckoutRequestHash(req.body, validatedCartItems);
+    if (paymentMethod === "payhere" && !getPayHereAvailability().enabled) {
+      throw new CheckoutError("Online payments are not configured", 503);
+    }
   } catch (error: any) {
     return res.status(error.statusCode || 400).json({ error: error.message || "Invalid checkout request" });
   }
@@ -422,6 +489,10 @@ app.post("/api/checkout", async (req, res) => {
 
       // 5. Store the finalized order document
       const orderRef = adminDb.collection("orders").doc();
+      const payHereFields = paymentMethod === "payhere"
+        ? buildInitialPayHereOrderFields(orderRef.id, totals.grandTotalPrice)
+        : null;
+      const paymentTransaction = payHereFields?.paymentTransaction;
       const orderData = {
         orderNumber,
         customerUid: customerUid || "guest",
@@ -441,10 +512,36 @@ app.post("/api/checkout", async (req, res) => {
         status: "pending",
         stockDeducted: true,
         paymentMethod: paymentMethod || "cod",
+        ...(payHereFields ? {
+          paymentProvider: payHereFields.paymentProvider,
+          paymentStatus: payHereFields.paymentStatus,
+          paymentAttempt: payHereFields.paymentAttempt,
+          paymentGatewayOrderId: payHereFields.paymentGatewayOrderId,
+          paymentTimeline: payHereFields.paymentTimeline,
+          stockReservationStatus: payHereFields.stockReservationStatus,
+          stockReservationExpiresAt: payHereFields.stockReservationExpiresAt,
+          stockRestorationApplied: false,
+        } : {
+          paymentStatus: "not_required",
+          stockReservationStatus: "committed",
+        }),
         createdAt: new Date().toISOString()
       };
 
       transaction.set(orderRef, orderData);
+      if (paymentTransaction) {
+        transaction.create(adminDb.collection("payment_transactions").doc(paymentTransaction.gatewayOrderId), {
+          provider: "payhere",
+          orderId: orderRef.id,
+          gatewayOrderId: paymentTransaction.gatewayOrderId,
+          attempt: paymentTransaction.attempt,
+          amount: paymentTransaction.amount,
+          currency: paymentTransaction.currency,
+          status: "initialized",
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        });
+      }
 
       const order = {
         id: orderRef.id,
@@ -467,7 +564,13 @@ app.post("/api/checkout", async (req, res) => {
       return order;
     });
 
-    res.json({ success: true, order: finalizedOrder });
+    res.json({
+      success: true,
+      order: finalizedOrder,
+      ...(finalizedOrder.paymentMethod === "payhere"
+        ? { paymentSession: createPayHereSessionForOrder(finalizedOrder) }
+        : {}),
+    });
   } catch (error: any) {
     console.error("Checkout Transaction Failed:", error);
     res.status(error.statusCode || 500).json({ error: error.message || "Failed to process checkout transaction" });
@@ -570,21 +673,45 @@ app.post("/api/orders/:orderId/cancel", requireCustomerAuth, async (req, res) =>
       const { shouldRestoreStock, quantities } = buildOrderStatusPlan(
         order.status, "cancelled", order.stockDeducted, order.stockRestorationApplied, order.items,
       );
+      const cancellingUnsettledPayHere = shouldRestoreStock
+        && order.paymentMethod === "payhere"
+        && new Set(["awaiting_payment", "pending"]).has(String(order.paymentStatus || ""));
+      const cancellingPaidPayHere = shouldRestoreStock && order.paymentMethod === "payhere" && order.paymentStatus === "paid";
 
+      const productStocks: Array<{ ref: FirebaseFirestore.DocumentReference; stock: number; quantity: number }> = [];
       for (const [productId, quantity] of quantities) {
         const productRef = adminDb.collection("products").doc(productId);
         const productSnap = await transaction.get(productRef);
         if (productSnap.exists) {
           const stock = Number(productSnap.data()?.stock);
-          transaction.update(productRef, { stock: (Number.isFinite(stock) ? stock : 0) + quantity });
+          productStocks.push({ ref: productRef, stock: Number.isFinite(stock) ? stock : 0, quantity });
         }
       }
 
+      productStocks.forEach(({ ref, stock, quantity }) => transaction.update(ref, { stock: stock + quantity }));
       transaction.update(orderRef, {
         status: "cancelled",
         statusUpdatedAt: FieldValue.serverTimestamp(),
-        ...(shouldRestoreStock ? { stockRestorationApplied: true, stockRestoredAt: FieldValue.serverTimestamp() } : {}),
+        ...(shouldRestoreStock ? {
+          stockRestorationApplied: true,
+          stockRestoredAt: FieldValue.serverTimestamp(),
+          stockReservationStatus: order.paymentMethod === "payhere" ? "released" : order.stockReservationStatus,
+          ...(cancellingUnsettledPayHere ? {
+            paymentStatus: "cancelled",
+            paymentTimeline: appendPaymentTimeline(order.paymentTimeline, createPaymentTimelineEvent("cancelled", "Order cancelled and reserved stock released", "customer")),
+          } : {}),
+          ...(cancellingPaidPayHere ? {
+            paymentReviewRequired: true,
+            paymentReviewReason: "cancelled_paid_order",
+          } : {}),
+        } : {}),
       });
+      if (cancellingUnsettledPayHere && typeof order.paymentGatewayOrderId === "string") {
+        transaction.set(adminDb.collection("payment_transactions").doc(order.paymentGatewayOrderId), {
+          status: "cancelled",
+          updatedAt: FieldValue.serverTimestamp(),
+        }, { merge: true });
+      }
       return { status: "cancelled", stockRestored: shouldRestoreStock };
     });
     return res.json({ success: true, ...result });
@@ -596,7 +723,7 @@ app.post("/api/orders/:orderId/cancel", requireCustomerAuth, async (req, res) =>
 app.post("/api/orders/:orderId/status", requireSupplierAdminAuth, async (req, res) => {
   const orderId = String(req.params.orderId || "").trim();
   const newStatus = typeof req.body?.status === "string" ? req.body.status.trim().toLowerCase() : "";
-  const allowedStatuses = new Set(["pending", "confirmed", "packed", "shipped", "delivered", "cancelled"]);
+  const allowedStatuses = new Set(["pending", "confirmed", "processing", "packed", "shipped", "delivered", "cancelled"]);
   if (!orderId || !allowedStatuses.has(newStatus)) {
     return res.status(400).json({ error: "A valid order ID and status are required" });
   }
@@ -613,6 +740,10 @@ app.post("/api/orders/:orderId/status", requireSupplierAdminAuth, async (req, re
       }
 
       const shouldRestoreStock = newStatus === "cancelled" && order.stockDeducted === true && order.stockRestorationApplied !== true;
+      const cancellingUnsettledPayHere = shouldRestoreStock
+        && order.paymentMethod === "payhere"
+        && new Set(["awaiting_payment", "pending"]).has(String(order.paymentStatus || ""));
+      const cancellingPaidPayHere = shouldRestoreStock && order.paymentMethod === "payhere" && order.paymentStatus === "paid";
       const quantities = new Map<string, number>();
       if (shouldRestoreStock) {
         for (const item of Array.isArray(order.items) ? order.items : []) {
@@ -638,8 +769,26 @@ app.post("/api/orders/:orderId/status", requireSupplierAdminAuth, async (req, re
       transaction.update(orderRef, {
         status: newStatus,
         statusUpdatedAt: FieldValue.serverTimestamp(),
-        ...(shouldRestoreStock ? { stockRestorationApplied: true, stockRestoredAt: FieldValue.serverTimestamp() } : {}),
+        ...(shouldRestoreStock ? {
+          stockRestorationApplied: true,
+          stockRestoredAt: FieldValue.serverTimestamp(),
+          stockReservationStatus: order.paymentMethod === "payhere" ? "released" : order.stockReservationStatus,
+          ...(cancellingUnsettledPayHere ? {
+            paymentStatus: "cancelled",
+            paymentTimeline: appendPaymentTimeline(order.paymentTimeline, createPaymentTimelineEvent("cancelled", "Order cancelled and reserved stock released", "system")),
+          } : {}),
+          ...(cancellingPaidPayHere ? {
+            paymentReviewRequired: true,
+            paymentReviewReason: "cancelled_paid_order",
+          } : {}),
+        } : {}),
       });
+      if (cancellingUnsettledPayHere && typeof order.paymentGatewayOrderId === "string") {
+        transaction.set(adminDb.collection("payment_transactions").doc(order.paymentGatewayOrderId), {
+          status: "cancelled",
+          updatedAt: FieldValue.serverTimestamp(),
+        }, { merge: true });
+      }
       return { status: newStatus, stockRestored: shouldRestoreStock };
     });
     return res.json({ success: true, ...result });
