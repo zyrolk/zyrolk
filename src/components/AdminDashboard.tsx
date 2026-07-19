@@ -9,7 +9,7 @@ import {
   ArrowDownRight, AlertTriangle, TrendingDown, ArrowRight, History, User
 } from 'lucide-react';
 import { 
-  collection, getDocs, doc, addDoc, updateDoc, deleteDoc, getDoc, setDoc, onSnapshot 
+  collection, getDocs, doc, addDoc, updateDoc, deleteDoc, getDoc, setDoc, onSnapshot, writeBatch, deleteField
 } from 'firebase/firestore';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { onAuthStateChanged } from 'firebase/auth';
@@ -25,15 +25,43 @@ import {
   normalizeCategorySlug,
   sortCategoriesAlphabetically,
 } from '../services/categories/categoryUtils';
-import { Product, Category, Order, WebsiteSettings, SupplierReviewQueueItem } from '../types';
+import {
+  countProductsForBrand,
+  isDuplicateBrand,
+  normalizeBrandId,
+  normalizeBrandName,
+  productReferencesBrand,
+  sortBrandsAlphabetically,
+} from '../services/brands/brandUtils';
+import {
+  applySpecificationTemplate,
+  buildProductSavePayload,
+  createProductDraft,
+  getActiveSubcategories,
+  getSelectedCategory,
+  normalizeCategoryBlueprint,
+  normalizeProductForEditor,
+  normalizeSpecificationTemplate,
+  normalizeSubcategories,
+} from '../services/products/productBlueprint';
+import { Product, Category, Brand, Order, WebsiteSettings, SupplierReviewQueueItem } from '../types';
 import { isProductionAdminEmail, PRODUCTION_ADMIN_EMAIL } from '../config/admin';
 import { CloudinaryUpload } from './CloudinaryUpload';
 import HeroSliderEditor from './HeroSliderEditor';
+import BusinessConfigurationEditor from './admin/BusinessConfigurationEditor';
+import PaymentConfigurationPanel from './admin/PaymentConfigurationPanel';
 import { normalizeSlideSpeed, validateHeroSlides } from '../services/hero-slider/heroSlider';
 import { sanitizeFirestoreData } from '../services/firestore/sanitizeFirestoreData';
 import { validateProductForSave } from '../services/products/productValidation';
+import {
+  buildCommercialFieldDeletes,
+  mergeProductCommercialData,
+  PRODUCT_PRIVATE_COLLECTION,
+  splitProductData,
+} from '../services/products/productCommercialData';
 import { isHttpUrl, validateStoreSettings } from '../services/settings/storeSettingsValidation';
 import { getAppCheckRequestHeaders } from '../services/security/appCheck';
+import { normalizeWebsiteSettings } from '../services/settings/websiteSettings';
 import { 
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, 
   CartesianGrid, Tooltip, PieChart, Pie, Cell, BarChart, Bar, Legend
@@ -91,7 +119,7 @@ const AdminLazyPanelFallback = () => (
   </div>
 );
 
-const DEFAULT_WEBSITE_SETTINGS: WebsiteSettings = {
+const DEFAULT_WEBSITE_SETTINGS: WebsiteSettings = normalizeWebsiteSettings({
   storeName: "Zyro.lk",
   storeTagline: "Sri Lanka's Premium Electronics & Solar Solutions Hub",
   logoUrl: "",
@@ -123,7 +151,7 @@ const DEFAULT_WEBSITE_SETTINGS: WebsiteSettings = {
   enableWishlist: true,
   enableReviews: true,
   enableFeaturedProducts: true
-};
+});
 
 const DEFAULT_SUPPLIER_HUB_SETTINGS = {
   autoSync: false,
@@ -152,6 +180,42 @@ const DEFAULT_SUPPLIER_SETTINGS = {
 };
 
 const isValidUrl = (url: string) => !url.trim() || isHttpUrl(url);
+
+const formatAdminTimestamp = (value: unknown): string => {
+  if (!value) return 'Legacy product — timestamp will be added on save';
+  const resolved = typeof value === 'object' && value !== null && 'toDate' in value && typeof value.toDate === 'function'
+    ? value.toDate()
+    : new Date(String(value));
+  return Number.isNaN(resolved.getTime()) ? 'Timestamp unavailable' : resolved.toLocaleString();
+};
+
+interface CategoryDraft {
+  id: string;
+  name: string;
+  icon: string;
+  imageUrl: string;
+  isActive: boolean;
+  subcategories: NonNullable<Category['subcategories']>;
+  specificationTemplate: NonNullable<Category['specificationTemplate']>;
+}
+
+const createEmptyCategoryDraft = (): CategoryDraft => ({
+  id: '',
+  name: '',
+  icon: 'Smartphone',
+  imageUrl: '',
+  isActive: true,
+  subcategories: [],
+  specificationTemplate: [],
+});
+
+interface BrandDraft {
+  id: string;
+  name: string;
+  isActive: boolean;
+}
+
+const createEmptyBrandDraft = (): BrandDraft => ({ id: '', name: '', isActive: true });
 
 const DEFAULT_PAGES = [
   {
@@ -231,6 +295,11 @@ You have the right to request access to your stored personal data, request corre
 3. Warranty Claims
 • Beyond the initial 7-day replacement period, products are covered by their respective manufacturer or store warranties as specified on the product page.
 • Warranty repairs and servicing will be handled through authorized local service centers in Sri Lanka.`
+  },
+  {
+    id: "warranty-policy",
+    title: "Warranty Policy",
+    content: `Warranty coverage applies only where it is explicitly stated on the product page, order record, invoice, or documentation supplied with the item. Duration and provider vary by product. Proof of purchase may be required. Accidental damage, misuse, unauthorized repairs, consumable wear, and incompatible power or accessories are excluded unless the product-specific terms state otherwise. Contact Zyro.lk with your order reference and issue details so the applicable terms can be confirmed before inspection or service.`
   },
   {
     id: "faq",
@@ -373,8 +442,13 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
   const [showNotifications, setShowNotifications] = useState<boolean>(false);
 
   // States loaded from Firestore
-  const [products, setProducts] = useState<Product[]>([]);
+  const [publicProducts, setPublicProducts] = useState<Product[]>([]);
+  const [productCommercialById, setProductCommercialById] = useState<Record<string, Record<string, unknown>>>({});
+  const products = useMemo(() => publicProducts.map((product) => (
+    mergeProductCommercialData(product, productCommercialById[product.id])
+  )), [productCommercialById, publicProducts]);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [brands, setBrands] = useState<Brand[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [customers, setCustomers] = useState<any[]>([]);
   const [users, setUsers] = useState<any[]>([]);
@@ -463,15 +537,10 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
   const [processingChangeId, setProcessingChangeId] = useState<string | null>(null);
   const [processingImportId, setProcessingImportId] = useState<string | null>(null);
   
-  const [newProduct, setNewProduct] = useState<Partial<Product>>({
-    name: "", description: "", price: 0, originalPrice: 0, discount: 0,
-    imageUrl: "", imageUrls: [], category: "electronics", stock: 10, specs: {},
-    isNew: false, isFeatured: false, isBestSeller: false, isActive: true, sku: "",
-    supplierItemCode: "", costPrice: undefined, marketPrice: undefined
-  });
+  const [newProduct, setNewProduct] = useState<Partial<Product>>(() => createProductDraft('electronics', ''));
 
   const [showCategoryModal, setShowCategoryModal] = useState(false);
-  const [newCategory, setNewCategory] = useState({ id: "", name: "", icon: "Smartphone", imageUrl: "", isActive: true });
+  const [newCategory, setNewCategory] = useState<CategoryDraft>(createEmptyCategoryDraft);
   const [editingCategory, setEditingCategory] = useState<Category | null>(null);
   const [categoryToDelete, setCategoryToDelete] = useState<Category | null>(null);
   const [savingCategory, setSavingCategory] = useState(false);
@@ -481,6 +550,14 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
   const categoryDeleteCancelRef = useRef<HTMLButtonElement | null>(null);
   const [specKey, setSpecKey] = useState("");
   const [specVal, setSpecVal] = useState("");
+  const [subcategoryName, setSubcategoryName] = useState('');
+  const [specificationTemplateName, setSpecificationTemplateName] = useState('');
+  const [specificationTemplateRequired, setSpecificationTemplateRequired] = useState(false);
+  const [showBrandModal, setShowBrandModal] = useState(false);
+  const [brandDraft, setBrandDraft] = useState<BrandDraft>(createEmptyBrandDraft);
+  const [editingBrand, setEditingBrand] = useState<Brand | null>(null);
+  const [brandToDelete, setBrandToDelete] = useState<Brand | null>(null);
+  const [savingBrand, setSavingBrand] = useState(false);
 
   // Website Settings Form State
   const [settingsForm, setSettingsForm] = useState<WebsiteSettings | null>(DEFAULT_WEBSITE_SETTINGS);
@@ -508,6 +585,18 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
   const categoryProductCounts = useMemo(
     () => buildCategoryProductCounts(categories, products),
     [categories, products],
+  );
+  const selectedProductCategory = useMemo(
+    () => getSelectedCategory(categories, newProduct.category),
+    [categories, newProduct.category],
+  );
+  const selectedProductSubcategories = useMemo(
+    () => getActiveSubcategories(selectedProductCategory),
+    [selectedProductCategory],
+  );
+  const selectedProductSpecificationTemplate = useMemo(
+    () => normalizeSpecificationTemplate(selectedProductCategory?.specificationTemplate),
+    [selectedProductCategory],
   );
 
   const restoreCategoryFocus = () => {
@@ -713,18 +802,29 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
   const loadData = async () => {
     setLoading(true);
     try {
-      const prodSnap = await getDocs(collection(db, "products"));
+      const [prodSnap, commercialSnap] = await Promise.all([
+        getDocs(collection(db, "products")),
+        getDocs(collection(db, PRODUCT_PRIVATE_COLLECTION)),
+      ]);
       const prodList: Product[] = [];
       prodSnap.forEach((d) => prodList.push({ id: d.id, ...d.data() } as Product));
-      setProducts(prodList);
+      setPublicProducts(prodList);
+      setProductCommercialById(Object.fromEntries(commercialSnap.docs.map((document) => [document.id, document.data()])));
     } catch (e) { console.warn("Products load error", e); }
 
     try {
       const catSnap = await getDocs(collection(db, "categories"));
       const catList: Category[] = [];
-      catSnap.forEach((d) => catList.push({ id: d.id, ...d.data() } as Category));
+      catSnap.forEach((d) => catList.push(normalizeCategoryBlueprint({ id: d.id, ...d.data() } as Category)));
       setCategories(sortCategoriesAlphabetically(catList));
     } catch (e) { console.warn("Categories load error", e); }
+
+    try {
+      const brandSnap = await getDocs(collection(db, 'brands'));
+      const brandList: Brand[] = [];
+      brandSnap.forEach((d) => brandList.push({ id: d.id, ...d.data() } as Brand));
+      setBrands(sortBrandsAlphabetically(brandList));
+    } catch (e) { console.warn('Brands load error', e); }
 
     try {
       const userSnap = await getDocs(collection(db, "users"));
@@ -737,7 +837,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
       const settingsSnap = await getDoc(doc(db, "settings", "website"));
       if (settingsSnap.exists()) {
         const sData = settingsSnap.data() as WebsiteSettings;
-        const merged = { ...DEFAULT_WEBSITE_SETTINGS, ...sData };
+        const merged = normalizeWebsiteSettings(sData);
         setSettings(merged);
         setSettingsForm(merged);
         setTempDeliveryCharge(String(merged.deliveryCharge));
@@ -1404,9 +1504,15 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
       snapshot.forEach((d) => {
         prodList.push({ id: d.id, ...d.data() } as Product);
       });
-      setProducts(prodList);
+      setPublicProducts(prodList);
     }, (error) => {
       handleFirestoreError(error, OperationType.GET, "products");
+    });
+
+    const unsubscribeProductCommercial = onSnapshot(collection(db, PRODUCT_PRIVATE_COLLECTION), (snapshot) => {
+      setProductCommercialById(Object.fromEntries(snapshot.docs.map((document) => [document.id, document.data()])));
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, PRODUCT_PRIVATE_COLLECTION);
     });
 
     loadData();
@@ -1420,6 +1526,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
       unsubscribeSyncHistory();
       unsubscribeSupplierSettings();
       unsubscribeProducts();
+      unsubscribeProductCommercial();
     };
   }, [authorized]);
 
@@ -1489,6 +1596,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
       product: { ...newProduct, sku: finalSku },
       products,
       categories,
+      brands,
       editingProductId: editingProduct?.id,
     });
     if (productErrors.length > 0) {
@@ -1498,46 +1606,43 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
 
     setSavingProduct(true);
     try {
-      let disc = 0;
-      if (newProduct.originalPrice && newProduct.originalPrice > (newProduct.price || 0)) {
-        disc = Math.round(((newProduct.originalPrice - (newProduct.price || 0)) / newProduct.originalPrice) * 100);
-      }
+      const selectedBrand = brands.find((brand) => brand.id === newProduct.brand);
+      const payload = sanitizeFirestoreData(buildProductSavePayload({
+        draft: { ...newProduct, sku: finalSku },
+        storedProduct: editingProduct,
+        selectedBrand,
+        now: new Date().toISOString(),
+      }));
 
-      const payload = sanitizeFirestoreData({
-        ...newProduct,
-        id: editingProduct ? editingProduct.id : newProduct.id,
-        price: Number(newProduct.price),
-        imageUrl: newProduct.imageUrl?.trim(),
-        imageUrls: [...new Set((newProduct.imageUrls || []).map((url) => url.trim()))],
-        originalPrice: newProduct.originalPrice ? Number(newProduct.originalPrice) : undefined,
-        discount: disc || undefined,
-        stock: Number(newProduct.stock),
-        rating: editingProduct ? editingProduct.rating : 5,
-        reviewsCount: editingProduct ? editingProduct.reviewsCount : 0,
-        isActive: newProduct.isActive !== false,
-        sku: finalSku,
-        supplierItemCode: newProduct.supplierItemCode || undefined,
-        costPrice: newProduct.costPrice ? Number(newProduct.costPrice) : undefined,
-        marketPrice: newProduct.marketPrice ? Number(newProduct.marketPrice) : undefined
-      });
+      const productId = editingProduct?.id || newProduct.id!;
+      const { publicData, commercialData } = splitProductData(payload as Record<string, unknown>);
+      const productBatch = writeBatch(db);
+      productBatch.set(doc(db, "products", productId), {
+        ...publicData,
+        id: productId,
+        ...buildCommercialFieldDeletes(deleteField()),
+      }, { merge: true });
+      const commercialReference = doc(db, PRODUCT_PRIVATE_COLLECTION, productId);
+      if (Object.keys(commercialData).length > 0) {
+        productBatch.set(commercialReference, {
+          ...commercialData,
+          productId,
+          updatedAt: payload.updatedAt,
+        });
+      } else {
+        productBatch.delete(commercialReference);
+      }
+      await productBatch.commit();
 
       if (editingProduct) {
-        await updateDoc(doc(db, "products", editingProduct.id), payload);
         showSettingsToast("success", `Product "${newProduct.name}" updated successfully.`);
       } else {
-        const pId = newProduct.id!;
-        await setDoc(doc(db, "products", pId), { ...payload, id: pId });
         showSettingsToast("success", `Product "${newProduct.name}" created successfully.`);
       }
 
       setShowProductModal(false);
       setEditingProduct(null);
-      setNewProduct({
-        name: "", description: "", price: 0, originalPrice: 0, discount: 0,
-        imageUrl: "", imageUrls: [], category: categories[0]?.id || "", stock: 10, specs: {},
-        isNew: false, isFeatured: false, isBestSeller: false, isActive: true, sku: "",
-        supplierItemCode: "", costPrice: undefined, marketPrice: undefined
-      });
+      setNewProduct(createProductDraft(categories[0]?.id || '', ''));
       setSpecKey("");
       setSpecVal("");
       loadData();
@@ -1551,10 +1656,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
 
   const handleEditProductClick = (prod: Product) => {
     setEditingProduct(prod);
-    setNewProduct({
-      ...prod,
-      imageUrls: prod.imageUrls || []
-    });
+    setNewProduct(normalizeProductForEditor(prod, brands, categories));
     setShowProductModal(true);
   };
 
@@ -1582,7 +1684,10 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
     if (!productToDelete || !authorized) return;
     try {
       const productName = productToDelete.name;
-      await deleteDoc(doc(db, "products", productToDelete.id));
+      const productBatch = writeBatch(db);
+      productBatch.delete(doc(db, "products", productToDelete.id));
+      productBatch.delete(doc(db, PRODUCT_PRIVATE_COLLECTION, productToDelete.id));
+      await productBatch.commit();
       showSettingsToast("success", `Product "${productName}" deleted successfully.`);
       setProductToDelete(null);
       loadData();
@@ -1623,9 +1728,12 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
         icon: newCategory.icon.trim() || 'Layers',
         imageUrl: newCategory.imageUrl.trim(),
         isActive: newCategory.isActive,
+        subcategories: normalizeSubcategories(newCategory.subcategories),
+        specificationTemplate: normalizeSpecificationTemplate(newCategory.specificationTemplate),
+        updatedAt: new Date().toISOString(),
       }, { merge: Boolean(editingCategory) });
       showSettingsToast('success', `Category "${name}" ${editingCategory ? 'updated' : 'created'} successfully.`);
-      setNewCategory({ id: "", name: "", icon: "Smartphone", imageUrl: "", isActive: true });
+      setNewCategory(createEmptyCategoryDraft());
       closeCategoryModal();
       loadData();
     } catch (err: any) {
@@ -1639,7 +1747,10 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
   const openCreateCategory = (trigger: HTMLElement) => {
     categoryTriggerRef.current = trigger;
     setEditingCategory(null);
-    setNewCategory({ id: '', name: '', icon: 'Smartphone', imageUrl: '', isActive: true });
+    setNewCategory(createEmptyCategoryDraft());
+    setSubcategoryName('');
+    setSpecificationTemplateName('');
+    setSpecificationTemplateRequired(false);
     setShowCategoryModal(true);
   };
 
@@ -1652,7 +1763,12 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
       icon: category.icon || 'Layers',
       imageUrl: category.imageUrl || '',
       isActive: category.isActive !== false,
+      subcategories: normalizeSubcategories(category.subcategories),
+      specificationTemplate: normalizeSpecificationTemplate(category.specificationTemplate),
     });
+    setSubcategoryName('');
+    setSpecificationTemplateName('');
+    setSpecificationTemplateRequired(false);
     setShowCategoryModal(true);
   };
 
@@ -1697,6 +1813,115 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
     }
   };
 
+  const openCreateBrand = () => {
+    setEditingBrand(null);
+    setBrandDraft(createEmptyBrandDraft());
+    setShowBrandModal(true);
+  };
+
+  const openEditBrand = (brand: Brand) => {
+    setEditingBrand(brand);
+    setBrandDraft({ id: brand.id, name: brand.name, isActive: brand.isActive !== false });
+    setShowBrandModal(true);
+  };
+
+  const handleSaveBrand = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!authorized) return;
+    const name = normalizeBrandName(brandDraft.name);
+    const id = editingBrand?.id ?? normalizeBrandId(brandDraft.id || name);
+    if (!id || !name) {
+      showSettingsToast('error', 'Brand name and brand ID are required.');
+      return;
+    }
+    if (isDuplicateBrand(brands, id, name, editingBrand?.id)) {
+      showSettingsToast('error', 'A brand with this name or ID already exists.');
+      return;
+    }
+    setSavingBrand(true);
+    try {
+      if (!editingBrand) {
+        const existingBrand = await getDoc(doc(db, 'brands', id));
+        if (existingBrand.exists()) {
+          showSettingsToast('error', `Brand ID "${id}" already exists.`);
+          return;
+        }
+      }
+      const now = new Date().toISOString();
+      await setDoc(doc(db, 'brands', id), {
+        id,
+        name,
+        isActive: brandDraft.isActive,
+        createdAt: editingBrand?.createdAt ?? now,
+        updatedAt: now,
+      }, { merge: Boolean(editingBrand) });
+      if (editingBrand && editingBrand.name !== name) {
+        const referencedProducts = products.filter((product) => productReferencesBrand(product, editingBrand));
+        for (let start = 0; start < referencedProducts.length; start += 450) {
+          const brandProductUpdates = writeBatch(db);
+          referencedProducts.slice(start, start + 450).forEach((product) => {
+            brandProductUpdates.update(doc(db, 'products', product.id), {
+              'specs.Brand': name,
+              updatedAt: now,
+            });
+          });
+          await brandProductUpdates.commit();
+        }
+      }
+      showSettingsToast('success', `Brand "${name}" ${editingBrand ? 'updated' : 'created'} successfully.`);
+      setShowBrandModal(false);
+      setEditingBrand(null);
+      setBrandDraft(createEmptyBrandDraft());
+      loadData();
+    } catch (error: unknown) {
+      console.error('Save brand failed:', error);
+      showSettingsToast('error', error instanceof Error ? error.message : 'Failed to save brand.');
+    } finally {
+      setSavingBrand(false);
+    }
+  };
+
+  const toggleBrandActive = async (brand: Brand) => {
+    if (!authorized) return;
+    try {
+      await updateDoc(doc(db, 'brands', brand.id), {
+        isActive: brand.isActive === false,
+        updatedAt: new Date().toISOString(),
+      });
+      showSettingsToast('success', `Brand "${brand.name}" ${brand.isActive === false ? 'activated' : 'deactivated'}.`);
+      loadData();
+    } catch (error: unknown) {
+      console.error('Update brand status failed:', error);
+      showSettingsToast('error', error instanceof Error ? error.message : 'Failed to update brand status.');
+    }
+  };
+
+  const confirmDeleteBrand = async () => {
+    if (!authorized || !brandToDelete) return;
+    setSavingBrand(true);
+    try {
+      const currentProductsSnapshot = await getDocs(collection(db, 'products'));
+      const currentProducts: Product[] = [];
+      currentProductsSnapshot.forEach((productDocument) => {
+        currentProducts.push({ id: productDocument.id, ...productDocument.data() } as Product);
+      });
+      if (countProductsForBrand(currentProducts, brandToDelete) > 0) {
+        showSettingsToast('error', 'This brand is currently used by products and cannot be deleted.');
+        setBrandToDelete(null);
+        return;
+      }
+      await deleteDoc(doc(db, 'brands', brandToDelete.id));
+      showSettingsToast('success', `Brand "${brandToDelete.name}" deleted successfully.`);
+      setBrandToDelete(null);
+      loadData();
+    } catch (error: unknown) {
+      console.error('Delete brand failed:', error);
+      showSettingsToast('error', error instanceof Error ? error.message : 'Failed to delete brand.');
+    } finally {
+      setSavingBrand(false);
+    }
+  };
+
   const handleUpdateOrderStatus = async (orderId: string, newStatus: string) => {
     if (!authorized) return;
     setUpdatingOrderStatus(prev => ({ ...prev, [orderId]: true }));
@@ -1722,6 +1947,32 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
     }
   };
 
+  const handleAssignOrderSupplier = async (orderId: string, supplierId: string) => {
+    if (!authorized || !supplierId) return;
+    const operationKey = `supplier-${orderId}`;
+    setUpdatingOrderStatus(prev => ({ ...prev, [operationKey]: true }));
+    try {
+      const [token, appCheckHeaders] = await Promise.all([
+        auth.currentUser?.getIdToken(),
+        getAppCheckRequestHeaders(),
+      ]);
+      if (!token) throw new Error('Admin authentication is required. Please sign in again.');
+      const response = await fetch(`/api/supplier-portal/orders/${encodeURIComponent(orderId)}/assign`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...appCheckHeaders },
+        body: JSON.stringify({ supplierId }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.success) throw new Error(result.error || 'Failed to assign supplier.');
+      showSettingsToast('success', `Order #${orderId.substring(0, 8).toUpperCase()} assigned to supplier.`);
+    } catch (error: unknown) {
+      console.error('Supplier order assignment failed:', error);
+      showSettingsToast('error', error instanceof Error ? error.message : 'Failed to assign supplier.');
+    } finally {
+      setUpdatingOrderStatus(prev => ({ ...prev, [operationKey]: false }));
+    }
+  };
+
   const addSpecItem = () => {
     if (specKey && specVal) {
       setNewProduct(prev => ({
@@ -1737,6 +1988,53 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
     const updatedSpecs = { ...(newProduct.specs || {}) };
     delete updatedSpecs[key];
     setNewProduct(prev => ({ ...prev, specs: updatedSpecs }));
+  };
+
+  const addSubcategoryToDraft = () => {
+    const name = normalizeCategoryName(subcategoryName);
+    const id = normalizeCategorySlug(name);
+    if (!name || !id) return;
+    if (newCategory.subcategories.some((subcategory) => subcategory.id === id)) {
+      showSettingsToast('error', `Sub category "${name}" already exists in this category.`);
+      return;
+    }
+    setNewCategory((previous) => ({
+      ...previous,
+      subcategories: [...previous.subcategories, { id, name, isActive: true }],
+    }));
+    setSubcategoryName('');
+  };
+
+  const removeSubcategoryFromDraft = (subcategoryId: string) => {
+    const isUsed = editingCategory && products.some((product) => (
+      categoryMatches(product.category, editingCategory.id) && product.subcategory === subcategoryId
+    ));
+    if (isUsed) {
+      showSettingsToast('error', 'This sub category is currently used by products. Deactivate it instead.');
+      return;
+    }
+    setNewCategory((previous) => ({
+      ...previous,
+      subcategories: previous.subcategories.filter((subcategory) => subcategory.id !== subcategoryId),
+    }));
+  };
+
+  const addSpecificationTemplateField = () => {
+    const name = normalizeCategoryName(specificationTemplateName);
+    if (!name) return;
+    if (newCategory.specificationTemplate.some((field) => field.name.toLocaleLowerCase() === name.toLocaleLowerCase())) {
+      showSettingsToast('error', `Specification "${name}" already exists in this template.`);
+      return;
+    }
+    setNewCategory((previous) => ({
+      ...previous,
+      specificationTemplate: [
+        ...previous.specificationTemplate,
+        { name, required: specificationTemplateRequired },
+      ],
+    }));
+    setSpecificationTemplateName('');
+    setSpecificationTemplateRequired(false);
   };
 
   const handleSaveSettings = async (e: React.FormEvent) => {
@@ -1759,7 +2057,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
       return;
     }
 
-    const updatedSettings: WebsiteSettings = {
+    const updatedSettings: WebsiteSettings = normalizeWebsiteSettings({
       ...settingsForm,
       storeName: settingsForm.storeName.trim(),
       logoUrl: settingsForm.logoUrl?.trim(),
@@ -1775,14 +2073,14 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
       autoSlideSpeed: normalizeSlideSpeed(settingsForm.autoSlideSpeed),
       deliveryCharge: settingsValidation.deliveryCharge!,
       freeDeliveryMin: settingsValidation.freeDeliveryMin!,
-    };
+    });
 
     setSavingSettings(true);
     try {
       await setDoc(doc(db, "settings", "website"), updatedSettings);
       const persistedSnapshot = await getDoc(doc(db, "settings", "website"));
       if (!persistedSnapshot.exists()) throw new Error('Settings could not be verified after saving.');
-      const persistedSettings = { ...DEFAULT_WEBSITE_SETTINGS, ...persistedSnapshot.data() } as WebsiteSettings;
+      const persistedSettings = normalizeWebsiteSettings(persistedSnapshot.data() as Partial<WebsiteSettings>);
       setSettings(persistedSettings);
       setSettingsForm(persistedSettings);
       setTempDeliveryCharge(String(persistedSettings.deliveryCharge));
@@ -2861,15 +3159,25 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                   <h2 className="text-xl font-extrabold tracking-tight">Active Stock Portfolio</h2>
                   <p className="text-xs text-slate-400">Direct importer item indexes and stock levels</p>
                 </div>
-                <button
+                <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+                  <button
+                    type="button"
+                    onClick={openCreateBrand}
+                    className="flex min-h-11 items-center justify-center gap-1.5 rounded-xl border border-blue-500/25 bg-blue-500/10 px-4 py-2.5 text-xs font-bold text-blue-500 transition-colors hover:bg-blue-500/15 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-500/25"
+                  >
+                    <Award className="h-4 w-4" aria-hidden="true" />
+                    <span>Add Brand</span>
+                  </button>
+                  <button
+                  type="button"
                   onClick={() => {
                     const nextSku = generateNextSku(products);
                     setEditingProduct(null);
+                    const categoryId = categories.find((category) => category.isActive !== false)?.id || categories[0]?.id || '';
+                    const category = getSelectedCategory(categories, categoryId);
                     setNewProduct({
-                      name: "", description: "", price: 0, originalPrice: 0, discount: 0,
-                      imageUrl: "", imageUrls: [], category: categories.find(category => category.isActive !== false)?.id || categories[0]?.id || "", stock: 10, specs: {},
-                      isNew: false, isFeatured: false, isBestSeller: false, isActive: true, sku: nextSku,
-                      supplierItemCode: "", costPrice: undefined, marketPrice: undefined, id: ""
+                      ...createProductDraft(categoryId, nextSku),
+                      specs: applySpecificationTemplate({}, category?.specificationTemplate),
                     });
                     setSpecKey("");
                     setSpecVal("");
@@ -2879,8 +3187,46 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                 >
                   <Plus className="h-4 w-4" />
                   <span>Create Item Record</span>
-                </button>
+                  </button>
+                </div>
               </div>
+
+              <section className={`rounded-2xl border p-4 ${isDarkMode ? 'border-slate-800/60 bg-[#101827]/75' : 'border-slate-200/80 bg-white shadow-xs'}`} aria-labelledby="brand-registry-title">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <h3 id="brand-registry-title" className="text-sm font-extrabold">Brand Registry</h3>
+                    <p className="mt-1 text-[11px] text-slate-400">Products can only select brands registered here.</p>
+                  </div>
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{brands.length} brands</span>
+                </div>
+                {brands.length === 0 ? (
+                  <div className="mt-4 rounded-xl border border-dashed border-slate-300 p-4 text-center text-xs text-slate-500 dark:border-slate-700">
+                    No brands registered. Create a brand before publishing a new product.
+                  </div>
+                ) : (
+                  <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                    {brands.map((brand) => {
+                      const productCount = countProductsForBrand(products, brand);
+                      return (
+                        <div key={brand.id} className="flex items-center justify-between gap-3 rounded-xl border border-slate-200/70 bg-slate-50/70 p-3 dark:border-slate-800 dark:bg-slate-900/50">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="truncate text-xs font-bold">{brand.name}</span>
+                              <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold uppercase ${brand.isActive !== false ? 'bg-emerald-500/10 text-emerald-500' : 'bg-slate-500/10 text-slate-400'}`}>{brand.isActive !== false ? 'Active' : 'Inactive'}</span>
+                            </div>
+                            <p className="mt-1 text-[10px] text-slate-400">{brand.id} · {productCount} products</p>
+                          </div>
+                          <div className="flex shrink-0 gap-1">
+                            <button type="button" onClick={() => toggleBrandActive(brand)} className="flex h-10 w-10 items-center justify-center rounded-lg text-slate-400 hover:bg-emerald-500/10 hover:text-emerald-500 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-emerald-500/20" aria-label={`${brand.isActive !== false ? 'Deactivate' : 'Activate'} ${brand.name}`}><Power className="h-4 w-4" aria-hidden="true" /></button>
+                            <button type="button" onClick={() => openEditBrand(brand)} className="flex h-10 w-10 items-center justify-center rounded-lg text-slate-400 hover:bg-blue-500/10 hover:text-blue-500 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-500/20" aria-label={`Edit ${brand.name}`}><Edit3 className="h-4 w-4" aria-hidden="true" /></button>
+                            <button type="button" disabled={productCount > 0} onClick={() => setBrandToDelete(brand)} className="flex h-10 w-10 items-center justify-center rounded-lg text-slate-400 hover:bg-red-500/10 hover:text-red-500 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-red-500/20 disabled:cursor-not-allowed disabled:opacity-30" aria-label={`Delete ${brand.name}`}><Trash2 className="h-4 w-4" aria-hidden="true" /></button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </section>
 
               {/* Filters list */}
               <div className={`p-4 rounded-2xl border flex flex-col md:flex-row gap-4 items-center justify-between ${isDarkMode ? 'bg-[#101827]/75 border-slate-800/60' : 'bg-white border-slate-200/80 shadow-xs'}`}>
@@ -3047,6 +3393,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                           <h3 className="font-bold text-sm text-slate-800 dark:text-white">{c.name}</h3>
                           <span className="text-[10px] text-slate-400 font-mono">Slug: {c.id}</span>
                           <span className={`ml-2 rounded-full px-2 py-0.5 text-[9px] font-bold uppercase ${c.isActive !== false ? 'bg-emerald-500/10 text-emerald-500' : 'bg-slate-500/10 text-slate-400'}`}>{c.isActive !== false ? 'Active' : 'Inactive'}</span>
+                          <p className="mt-2 text-[10px] text-slate-400">{normalizeSubcategories(c.subcategories).length} sub categories · {normalizeSpecificationTemplate(c.specificationTemplate).length} specification fields</p>
                         </div>
                       </div>
 
@@ -3334,7 +3681,22 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                             </div>
 
                             {/* Status Changer Controls */}
-                            <div className="flex items-center space-x-2.5">
+                            <div className="flex flex-wrap items-center justify-end gap-2.5">
+                              <label className="text-left">
+                                <span className="block text-[9px] text-slate-400 font-bold uppercase tracking-wider">Assigned Supplier</span>
+                                <select
+                                  aria-label="Assign order to supplier"
+                                  value={selectedOrder.supplierId || ''}
+                                  disabled={updatingOrderStatus[`supplier-${selectedOrder.id}`] || ['cancelled', 'delivered'].includes(selectedOrder.status)}
+                                  onChange={(event) => void handleAssignOrderSupplier(selectedOrder.id, event.target.value)}
+                                  className="mt-1 max-w-48 text-xs bg-slate-50 dark:bg-[#111928] border border-slate-200 dark:border-slate-850 rounded-xl px-3.5 py-2 focus:outline-hidden focus:border-blue-500 font-bold cursor-pointer disabled:opacity-50"
+                                >
+                                  <option value="">Unassigned</option>
+                                  {users.filter((account) => account.role === 'supplier').map((account) => (
+                                    <option key={account.id} value={account.id}>{account.displayName || account.email || account.id}</option>
+                                  ))}
+                                </select>
+                              </label>
                               <div className="text-right hidden sm:block">
                                 <span className="block text-[9px] text-slate-400 font-bold uppercase tracking-wider">Modify Order State</span>
                                 <span className="text-[10px] font-medium text-slate-400">Instant database update</span>
@@ -4238,6 +4600,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                       { id: 'privacy-policy', title: 'Privacy Policy', desc: 'Secure transactions & consumer data rules.' },
                       { id: 'terms-conditions', title: 'Terms & Conditions', desc: 'E-commerce shipping, prices & legal terms.' },
                       { id: 'return-policy', title: 'Return Policy', desc: '7-day replacement and warranty guidelines.' },
+                      { id: 'warranty-policy', title: 'Warranty Policy', desc: 'Product-specific coverage and claims guidance.' },
                       { id: 'faq', title: 'Frequently Asked Questions', desc: 'Common answers for Sri Lankan buyers.' },
                       { id: 'contact-us', title: 'Contact Us', desc: 'Inquiry form messages, support hours & feedback.' }
                     ].map(pageItem => {
@@ -4676,6 +5039,8 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                     setBannerErrors={setBannerErrors}
                     onImageUpload={handleBannerImageUpload}
                   />
+                  <BusinessConfigurationEditor settings={settingsForm} setSettings={setSettingsForm} />
+                  <PaymentConfigurationPanel />
                   <div className="hidden">
                     <span className="block text-[10px] font-black uppercase tracking-widest text-blue-500">Promotional Slider Banners</span>
                     {false && settingsForm.heroBanners.map((banner, index) => (
@@ -6289,6 +6654,58 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                       />
                     </div>
 
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <div className="space-y-1">
+                        <label className="flex items-center font-bold text-slate-400">
+                          Brand <span className="ml-0.5 text-red-500">*</span>
+                        </label>
+                        <select
+                          required
+                          value={newProduct.brand || ''}
+                          onChange={(event) => setNewProduct((previous) => ({ ...previous, brand: event.target.value }))}
+                          className="w-full cursor-pointer rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs transition-colors focus:border-blue-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-900"
+                        >
+                          <option value="">Select a registered brand</option>
+                          {brands.map((brand) => <option key={brand.id} value={brand.id}>{brand.name}{brand.isActive === false ? ' (Inactive)' : ''}</option>)}
+                        </select>
+                      </div>
+                      <div className="space-y-1">
+                        <label className="font-bold text-slate-400">Model</label>
+                        <input type="text" value={newProduct.model || ''} onChange={(event) => setNewProduct((previous) => ({ ...previous, model: event.target.value }))} placeholder="e.g. WH-1000XM5" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs transition-colors focus:border-blue-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-900" />
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="font-bold text-slate-400">Assigned Supplier</label>
+                      <select
+                        value={newProduct.supplierId || ''}
+                        onChange={(event) => setNewProduct((previous) => ({ ...previous, supplierId: event.target.value || undefined }))}
+                        className="w-full cursor-pointer rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs transition-colors focus:border-blue-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-900"
+                      >
+                        <option value="">No supplier portal account assigned</option>
+                        {users.filter((account) => account.role === 'supplier').map((account) => (
+                          <option key={account.id} value={account.id}>{account.displayName || account.email || account.id}</option>
+                        ))}
+                      </select>
+                      <p className="text-[9px] text-slate-400">Assignment controls Supplier Portal visibility only; it does not grant direct product editing.</p>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <div className="space-y-1">
+                        <label className="font-bold text-slate-400">Barcode</label>
+                        <input type="text" inputMode="numeric" value={newProduct.barcode || ''} onChange={(event) => setNewProduct((previous) => ({ ...previous, barcode: event.target.value.replace(/\s/gu, '') }))} placeholder="8–14 digit GTIN" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs transition-colors focus:border-blue-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-900" />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="font-bold text-slate-400">Product Type</label>
+                        <input type="text" value={newProduct.productType || ''} onChange={(event) => setNewProduct((previous) => ({ ...previous, productType: event.target.value }))} placeholder="e.g. Wireless Headphones" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs transition-colors focus:border-blue-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-900" />
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="font-bold text-slate-400">Short Description</label>
+                      <textarea rows={2} value={newProduct.shortDescription || ''} onChange={(event) => setNewProduct((previous) => ({ ...previous, shortDescription: event.target.value }))} placeholder="Concise customer-facing product summary..." className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs transition-colors focus:border-blue-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-900" />
+                    </div>
+
                     <div className="space-y-1">
                       <label className="text-slate-400 font-bold">Description</label>
                       <textarea
@@ -6306,12 +6723,53 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                       </label>
                       <select
                         value={newProduct.category || "electronics"}
-                        onChange={(e) => setNewProduct(prev => ({ ...prev, category: e.target.value }))}
+                        onChange={(event) => {
+                          const category = getSelectedCategory(categories, event.target.value);
+                          setNewProduct((previous) => ({
+                            ...previous,
+                            category: event.target.value,
+                            subcategory: '',
+                            specs: applySpecificationTemplate(previous.specs, category?.specificationTemplate),
+                          }));
+                        }}
                         className="w-full px-3 py-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-hidden focus:border-blue-500 transition-colors text-xs cursor-pointer"
                       >
                         {categories.length === 0 && <option value="">No categories available</option>}
                         {categories.map(cat => <option key={cat.id} value={cat.id}>{cat.name}{cat.isActive === false ? ' (Inactive)' : ''}</option>)}
                       </select>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="flex items-center font-bold text-slate-400">
+                        Sub Category {selectedProductSubcategories.length > 0 && <span className="ml-0.5 text-red-500">*</span>}
+                      </label>
+                      <select
+                        value={newProduct.subcategory || ''}
+                        disabled={selectedProductSubcategories.length === 0}
+                        onChange={(event) => setNewProduct((previous) => ({ ...previous, subcategory: event.target.value }))}
+                        className="w-full cursor-pointer rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs transition-colors focus:border-blue-500 focus:outline-hidden disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900"
+                      >
+                        <option value="">{selectedProductSubcategories.length === 0 ? 'No sub categories configured' : 'Select a sub category'}</option>
+                        {selectedProductSubcategories.map((subcategory) => <option key={subcategory.id} value={subcategory.id}>{subcategory.name}</option>)}
+                      </select>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="font-bold text-slate-400">Tags</label>
+                      <input type="text" value={(newProduct.tags || []).join(', ')} onChange={(event) => setNewProduct((previous) => ({ ...previous, tags: event.target.value.split(',') }))} placeholder="audio, wireless, premium" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs transition-colors focus:border-blue-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-900" />
+                      <p className="text-[10px] text-slate-400">Separate tags with commas.</p>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="font-bold text-slate-400">Key Features</label>
+                      <textarea rows={2} value={(newProduct.keyFeatures || []).join(', ')} onChange={(event) => setNewProduct((previous) => ({ ...previous, keyFeatures: event.target.value.split(',') }))} placeholder="Active noise cancelling, 30-hour battery" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs transition-colors focus:border-blue-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-900" />
+                      <p className="text-[10px] text-slate-400">Separate features with commas.</p>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="font-bold text-slate-400">What's Included</label>
+                      <textarea rows={2} value={(newProduct.whatsIncluded || []).join(', ')} onChange={(event) => setNewProduct((previous) => ({ ...previous, whatsIncluded: event.target.value.split(',') }))} placeholder="Headphones, carry case, charging cable" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs transition-colors focus:border-blue-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-900" />
+                      <p className="text-[10px] text-slate-400">Separate package items with commas.</p>
                     </div>
                   </div>
 
@@ -6497,6 +6955,13 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                       )}
                     </div>
 
+                    {editingProduct && (
+                      <div className="rounded-lg border border-slate-200 bg-slate-100/70 p-2 text-[10px] text-slate-500 dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-400">
+                        <span className="font-bold uppercase">Last updated:</span>{' '}
+                        {formatAdminTimestamp(editingProduct.updatedAt)}
+                      </div>
+                    )}
+
                     <div className="space-y-1">
                       <label className="text-slate-400 font-bold flex items-center">
                         Stock Quantity <span className="text-red-500 ml-0.5">*</span>
@@ -6551,6 +7016,31 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                   {/* Specifications Builder Group */}
                   <div className="space-y-3.5 p-4 rounded-2xl border border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/10">
                     <span className="block text-[9px] font-black text-blue-500 uppercase tracking-widest">Product Specifications</span>
+                    {selectedProductSpecificationTemplate.length > 0 && (
+                      <div className="space-y-3 rounded-xl border border-blue-500/15 bg-blue-500/5 p-3">
+                        <div>
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-blue-500">Category Template</span>
+                          <p className="mt-1 text-[10px] text-slate-400">These fields are generated from the selected category.</p>
+                        </div>
+                        {selectedProductSpecificationTemplate.map((field) => (
+                          <div key={field.name} className="space-y-1">
+                            <label className="flex items-center font-bold text-slate-500 dark:text-slate-300">
+                              {field.name}{field.required && <span className="ml-0.5 text-red-500">*</span>}
+                            </label>
+                            <input
+                              type="text"
+                              required={field.required}
+                              value={newProduct.specs?.[field.name] || ''}
+                              onChange={(event) => setNewProduct((previous) => ({
+                                ...previous,
+                                specs: { ...(previous.specs || {}), [field.name]: event.target.value },
+                              }))}
+                              className="w-full rounded-xl border border-slate-200 bg-white px-2.5 py-2 text-xs focus:border-blue-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-900"
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    )}
                     <div className="grid grid-cols-2 gap-2">
                       <div className="space-y-1">
                         <input 
@@ -6578,9 +7068,9 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                     >
                       Add Attribute Specification
                     </button>
-                    {newProduct.specs && Object.keys(newProduct.specs).length > 0 && (
+                    {newProduct.specs && Object.keys(newProduct.specs).some((key) => !selectedProductSpecificationTemplate.some((field) => field.name === key)) && (
                       <div className="pt-2 divide-y divide-slate-100 dark:divide-slate-800/60 text-[10px]">
-                        {Object.entries(newProduct.specs).map(([k, v]) => (
+                        {Object.entries(newProduct.specs).filter(([key]) => !selectedProductSpecificationTemplate.some((field) => field.name === key)).map(([k, v]) => (
                           <div key={k} className="flex justify-between items-center py-1.5">
                             <span className="font-medium text-slate-700 dark:text-slate-300">
                               {k}: <span className="text-slate-400 font-semibold">{v}</span>
@@ -6762,10 +7252,51 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
         </div>
       )}
 
+      {/* --- BRAND REGISTRY MODALS --- */}
+      {showBrandModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowBrandModal(false); }}>
+          <div className="w-full max-w-md rounded-3xl border border-slate-200/50 bg-white p-6 text-left shadow-2xl dark:border-slate-800 dark:bg-[#111928]" role="dialog" aria-modal="true" aria-labelledby="brand-modal-title">
+            <div className="mb-4 flex items-center justify-between border-b border-slate-100 pb-3 dark:border-slate-800">
+              <div>
+                <h3 id="brand-modal-title" className="text-sm font-bold text-slate-900 dark:text-white">{editingBrand ? 'Edit Brand' : 'Create Brand'}</h3>
+                <p className="mt-1 text-[10px] text-slate-400">Products select brands from this controlled registry.</p>
+              </div>
+              <button type="button" onClick={() => setShowBrandModal(false)} className="flex h-11 w-11 items-center justify-center rounded-full bg-slate-100 text-slate-400 hover:text-slate-900 dark:bg-slate-800 dark:hover:text-white" aria-label="Close brand dialog"><X className="h-4 w-4" aria-hidden="true" /></button>
+            </div>
+            <form onSubmit={handleSaveBrand} className="space-y-4 text-xs">
+              <div>
+                <label htmlFor="brand-name" className="mb-1 block font-bold uppercase text-slate-400">Brand Name *</label>
+                <input id="brand-name" required value={brandDraft.name} onChange={(event) => setBrandDraft((previous) => ({ ...previous, name: event.target.value, id: editingBrand ? previous.id : normalizeBrandId(event.target.value) }))} placeholder="e.g. Sony" className="min-h-11 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-500/25 dark:border-slate-700 dark:bg-slate-800" />
+              </div>
+              <div>
+                <label htmlFor="brand-id" className="mb-1 block font-bold uppercase text-slate-400">Brand ID *</label>
+                <input id="brand-id" required disabled={Boolean(editingBrand)} value={brandDraft.id} onChange={(event) => setBrandDraft((previous) => ({ ...previous, id: normalizeBrandId(event.target.value) }))} className="min-h-11 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 font-mono disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800" />
+              </div>
+              <label className="flex min-h-11 items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 dark:border-slate-700 dark:bg-slate-800"><span className="font-bold uppercase text-slate-400">Active</span><input type="checkbox" checked={brandDraft.isActive} onChange={(event) => setBrandDraft((previous) => ({ ...previous, isActive: event.target.checked }))} className="h-4 w-4 accent-blue-600" /></label>
+              <button type="submit" disabled={savingBrand} className="min-h-11 w-full rounded-xl bg-blue-600 px-4 font-bold text-white hover:bg-blue-700 disabled:cursor-wait disabled:opacity-60">{savingBrand ? 'Saving...' : editingBrand ? 'Update Brand' : 'Create Brand'}</button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {brandToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs" role="presentation">
+          <div className="w-full max-w-sm rounded-3xl border border-slate-200/50 bg-white p-6 text-left shadow-2xl dark:border-slate-800 dark:bg-[#111928]" role="alertdialog" aria-modal="true" aria-labelledby="delete-brand-title" aria-describedby="delete-brand-description">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-red-500/10 text-red-500"><Trash2 className="h-5 w-5" aria-hidden="true" /></div>
+            <h3 id="delete-brand-title" className="mt-4 text-base font-bold text-slate-900 dark:text-white">Delete {brandToDelete.name}?</h3>
+            <p id="delete-brand-description" className="mt-2 text-xs leading-relaxed text-slate-500">Only brands that are not referenced by products can be deleted.</p>
+            <div className="mt-6 flex justify-end gap-3">
+              <button type="button" onClick={() => setBrandToDelete(null)} className="min-h-11 rounded-xl border border-slate-200 px-4 text-xs font-bold dark:border-slate-700">Cancel</button>
+              <button type="button" onClick={confirmDeleteBrand} disabled={savingBrand} className="min-h-11 rounded-xl bg-red-600 px-4 text-xs font-bold text-white hover:bg-red-700 disabled:cursor-wait disabled:opacity-60">{savingBrand ? 'Deleting...' : 'Delete Brand'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* --- ADD CATEGORY MODAL --- */}
       {showCategoryModal && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeCategoryModal(); }}>
-          <div className="bg-white dark:bg-[#111928] border border-slate-200/50 dark:border-slate-800 rounded-3xl max-w-sm w-full p-6 text-left shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="category-modal-title">
+          <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-3xl border border-slate-200/50 bg-white p-6 text-left shadow-2xl dark:border-slate-800 dark:bg-[#111928]" role="dialog" aria-modal="true" aria-labelledby="category-modal-title">
             <div className="flex items-center justify-between mb-4 pb-2 border-b border-slate-100 dark:border-slate-800">
               <h3 id="category-modal-title" className="text-sm font-bold font-display text-slate-900 dark:text-white">{editingCategory ? 'Edit Category' : 'Create Custom Category'}</h3>
               <button type="button" onClick={closeCategoryModal} className="flex h-11 w-11 items-center justify-center rounded-full bg-slate-100 text-slate-400 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-500/25 dark:bg-slate-800 dark:hover:text-white" aria-label="Close category dialog">
@@ -6815,6 +7346,64 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                 <label htmlFor="category-image-url" className="block text-slate-400 font-bold mb-1 uppercase">Image URL</label>
                 <input id="category-image-url" type="url" placeholder="https://..." value={newCategory.imageUrl} onChange={(e) => setNewCategory(prev => ({ ...prev, imageUrl: e.target.value }))} className="min-h-11 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-500/25 dark:border-slate-700 dark:bg-slate-800" />
               </div>
+
+              <section className="rounded-2xl border border-slate-200 p-4 dark:border-slate-700" aria-labelledby="subcategory-editor-title">
+                <div>
+                  <h4 id="subcategory-editor-title" className="font-bold uppercase text-slate-500">Sub Categories</h4>
+                  <p className="mt-1 text-[10px] text-slate-400">Product sub categories remain scoped to this parent category.</p>
+                </div>
+                <div className="mt-3 space-y-2">
+                  {newCategory.subcategories.map((subcategory, index) => (
+                    <div key={subcategory.id} className="grid grid-cols-[1fr_auto_auto] items-center gap-2 rounded-xl bg-slate-50 p-2 dark:bg-slate-800/70">
+                      <div>
+                        <input
+                          aria-label={`Sub category name ${index + 1}`}
+                          value={subcategory.name}
+                          onChange={(event) => setNewCategory((previous) => ({
+                            ...previous,
+                            subcategories: previous.subcategories.map((item) => item.id === subcategory.id ? { ...item, name: event.target.value } : item),
+                          }))}
+                          className="min-h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs dark:border-slate-700 dark:bg-slate-900"
+                        />
+                        <span className="mt-1 block font-mono text-[9px] text-slate-400">{subcategory.id}</span>
+                      </div>
+                      <label className="flex min-h-10 items-center gap-2 text-[10px] font-bold text-slate-500">
+                        <input type="checkbox" checked={subcategory.isActive !== false} onChange={(event) => setNewCategory((previous) => ({ ...previous, subcategories: previous.subcategories.map((item) => item.id === subcategory.id ? { ...item, isActive: event.target.checked } : item) }))} className="h-4 w-4 accent-blue-600" />
+                        Active
+                      </label>
+                      <button type="button" onClick={() => removeSubcategoryFromDraft(subcategory.id)} className="flex h-10 w-10 items-center justify-center rounded-lg text-red-500 hover:bg-red-500/10 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-red-500/20" aria-label={`Remove ${subcategory.name}`}><Trash2 className="h-4 w-4" aria-hidden="true" /></button>
+                    </div>
+                  ))}
+                  {newCategory.subcategories.length === 0 && <p className="rounded-xl border border-dashed border-slate-300 p-3 text-center text-[10px] text-slate-400 dark:border-slate-700">No sub categories configured.</p>}
+                </div>
+                <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                  <input value={subcategoryName} onChange={(event) => setSubcategoryName(event.target.value)} placeholder="e.g. Smartphones" className="min-h-11 flex-1 rounded-lg border border-slate-200 bg-slate-50 px-3 dark:border-slate-700 dark:bg-slate-800" />
+                  <button type="button" onClick={addSubcategoryToDraft} className="min-h-11 rounded-xl bg-slate-900 px-4 font-bold text-white dark:bg-slate-700">Add Sub Category</button>
+                </div>
+              </section>
+
+              <section className="rounded-2xl border border-slate-200 p-4 dark:border-slate-700" aria-labelledby="specification-template-title">
+                <div>
+                  <h4 id="specification-template-title" className="font-bold uppercase text-slate-500">Specification Template</h4>
+                  <p className="mt-1 text-[10px] text-slate-400">These fields are generated automatically in the Product Editor.</p>
+                </div>
+                <div className="mt-3 space-y-2">
+                  {newCategory.specificationTemplate.map((field, index) => (
+                    <div key={`${field.name}-${index}`} className="grid grid-cols-[1fr_auto_auto] items-center gap-2 rounded-xl bg-slate-50 p-2 dark:bg-slate-800/70">
+                      <input aria-label={`Specification name ${index + 1}`} value={field.name} onChange={(event) => setNewCategory((previous) => ({ ...previous, specificationTemplate: previous.specificationTemplate.map((item, itemIndex) => itemIndex === index ? { ...item, name: event.target.value } : item) }))} className="min-h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs dark:border-slate-700 dark:bg-slate-900" />
+                      <label className="flex min-h-10 items-center gap-2 text-[10px] font-bold text-slate-500"><input type="checkbox" checked={field.required === true} onChange={(event) => setNewCategory((previous) => ({ ...previous, specificationTemplate: previous.specificationTemplate.map((item, itemIndex) => itemIndex === index ? { ...item, required: event.target.checked } : item) }))} className="h-4 w-4 accent-blue-600" />Required</label>
+                      <button type="button" onClick={() => setNewCategory((previous) => ({ ...previous, specificationTemplate: previous.specificationTemplate.filter((_, itemIndex) => itemIndex !== index) }))} className="flex h-10 w-10 items-center justify-center rounded-lg text-red-500 hover:bg-red-500/10 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-red-500/20" aria-label={`Remove ${field.name}`}><Trash2 className="h-4 w-4" aria-hidden="true" /></button>
+                    </div>
+                  ))}
+                  {newCategory.specificationTemplate.length === 0 && <p className="rounded-xl border border-dashed border-slate-300 p-3 text-center text-[10px] text-slate-400 dark:border-slate-700">No specification fields configured.</p>}
+                </div>
+                <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-[1fr_auto_auto] sm:items-center">
+                  <input value={specificationTemplateName} onChange={(event) => setSpecificationTemplateName(event.target.value)} placeholder="e.g. Battery" className="min-h-11 rounded-lg border border-slate-200 bg-slate-50 px-3 dark:border-slate-700 dark:bg-slate-800" />
+                  <label className="flex min-h-11 items-center gap-2 rounded-lg border border-slate-200 px-3 font-bold text-slate-500 dark:border-slate-700"><input type="checkbox" checked={specificationTemplateRequired} onChange={(event) => setSpecificationTemplateRequired(event.target.checked)} className="h-4 w-4 accent-blue-600" />Required</label>
+                  <button type="button" onClick={addSpecificationTemplateField} className="min-h-11 rounded-xl bg-slate-900 px-4 font-bold text-white dark:bg-slate-700">Add Field</button>
+                </div>
+              </section>
+
               <label className="flex min-h-11 items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 dark:border-slate-700 dark:bg-slate-800">
                 <span className="font-bold uppercase text-slate-400">Active on storefront</span>
                 <input type="checkbox" checked={newCategory.isActive} onChange={(e) => setNewCategory(prev => ({ ...prev, isActive: e.target.checked }))} className="h-4 w-4 accent-blue-600" />

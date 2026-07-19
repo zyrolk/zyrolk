@@ -132,6 +132,7 @@ export default function Footer({ setCurrentPage, onSelectCategory, settings, cat
               <li><button type="button" onClick={() => setCurrentPage('about-us')}>About us</button></li>
               <li><button type="button" onClick={() => setCurrentPage('faq')}>FAQs & guides</button></li>
               <li><button type="button" onClick={() => setCurrentPage('return-policy')}>Purchase support policy</button></li>
+              <li><button type="button" onClick={() => setCurrentPage('warranty-policy')}>Warranty policy</button></li>
               <li><button type="button" onClick={() => setCurrentPage('terms-conditions')}>Terms & conditions</button></li>
               <li><button type="button" onClick={() => setCurrentPage('privacy-policy')}>Privacy policy</button></li>
             </ul>

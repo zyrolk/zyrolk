@@ -14,8 +14,12 @@ export class A2ZConnectorService {
   private static readonly REQUEST_TIMEOUT_MS = 15000;
   private static readonly BROWSER_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
 
+  private static debugLog(...values: unknown[]): void {
+    if (process.env.SUPPLIER_DEBUG_LOGS === "true") console.info(...values);
+  }
+
   private static logDiagnostic(authenticationStage: string, details: Record<string, unknown>): void {
-    console.info("[A2Z-Connector]", JSON.stringify({
+    this.debugLog("[A2Z-Connector]", JSON.stringify({
       event: "a2z_integration_diagnostic",
       authenticationStage,
       ...details,
@@ -112,7 +116,7 @@ export class A2ZConnectorService {
     credentials: { username?: string; password?: string }
   ): Promise<string> {
     const baseDomain = this.getBaseDomain(baseUrl);
-    console.log(`[A2Z-Connector] Triggering authentic login sequence for domain: ${baseDomain}`);
+    this.debugLog(`[A2Z-Connector] Triggering authentic login sequence for domain: ${baseDomain}`);
 
     const username = credentials.username;
     const password = credentials.password;
@@ -122,11 +126,11 @@ export class A2ZConnectorService {
     }
 
     assertA2ZCredentialByteSafety(username, password);
-    console.info(JSON.stringify(fingerprintA2ZCredentials(username, password)));
+    this.debugLog(JSON.stringify(fingerprintA2ZCredentials(username, password)));
 
     try {
       const preLoginUrl = `${baseDomain}/dash`;
-      console.log(`[A2Z-Connector] Pre-authenticating GET request to: ${preLoginUrl}`);
+      this.debugLog(`[A2Z-Connector] Pre-authenticating GET request to: ${preLoginUrl}`);
 
       const preRes = await this.fetchWithTimeout(preLoginUrl, {
         redirect: "follow",
@@ -154,7 +158,7 @@ export class A2ZConnectorService {
       });
 
       const authUrl = `${baseDomain}/Login/auth`;
-      console.log(`[A2Z-Connector] Posting credentials to: ${authUrl}`);
+      this.debugLog(`[A2Z-Connector] Posting credentials to: ${authUrl}`);
 
       const loginBody = buildA2ZBrowserLoginBody(username, password);
 
@@ -217,7 +221,7 @@ export class A2ZConnectorService {
       this.sessionCookie = finalCookie;
       this.lastLoginTime = Date.now();
 
-      console.log("[A2Z-Connector] Authentication successfully completed. Preserved clean session cookie.");
+      this.debugLog("[A2Z-Connector] Authentication successfully completed. Preserved clean session cookie.");
       return finalCookie;
     } catch (err: any) {
       console.error("[A2Z-Connector] Authentication failed:", err.message || err);
@@ -240,11 +244,11 @@ export class A2ZConnectorService {
     const isSessionExpired = Date.now() - this.lastLoginTime > this.SESSION_TTL;
 
     if (!this.sessionCookie || isSessionExpired) {
-      console.log("[A2Z-Connector] Preserved session is missing or expired. Authenticating...");
+      this.debugLog("[A2Z-Connector] Preserved session is missing or expired. Authenticating...");
       await this.login(baseUrl, credentials);
     }
 
-    console.log(`[A2Z-Connector] Fetching catalog from target API: ${productsUrl}`);
+    this.debugLog(`[A2Z-Connector] Fetching catalog from target API: ${productsUrl}`);
 
     let responseBodyText = "";
 
@@ -273,7 +277,7 @@ export class A2ZConnectorService {
 
         if (fetchResponse.status === 200) {
           if (responseBodyText.trim().startsWith("<!DOCTYPE html")) {
-            console.log("[A2Z-Connector] Received HTML response instead of JSON. Session is likely invalid.");
+            this.debugLog("[A2Z-Connector] Received HTML response instead of JSON. Session is likely invalid.");
             return false;
           }
           return true;
@@ -288,7 +292,7 @@ export class A2ZConnectorService {
     let isSuccess = await executeFetch();
 
     if (!isSuccess) {
-      console.log("[A2Z-Connector] Session invalidated or fetch failed. Retrying login...");
+      this.debugLog("[A2Z-Connector] Session invalidated or fetch failed. Retrying login...");
       await this.login(baseUrl, credentials);
       isSuccess = await executeFetch();
     }
@@ -329,14 +333,14 @@ export class A2ZConnectorService {
         if (parsed.sku && parsed.title && isLiveStatus) {
           parsedProducts.push(parsed);
         } else {
-          console.log(`[A2Z-Connector] Filtering out inactive or invalid product SKU: ${parsed.sku}`);
+          this.debugLog(`[A2Z-Connector] Filtering out inactive or invalid product SKU: ${parsed.sku}`);
         }
       } catch (parseErr) {
         console.warn("[A2Z-Connector] Error parsing catalog product item:", parseErr);
       }
     }
 
-    console.log(`[A2Z-Connector] Successfully retrieved, parsed, and mapped ${parsedProducts.length} live products.`);
+    this.debugLog(`[A2Z-Connector] Successfully retrieved, parsed, and mapped ${parsedProducts.length} live products.`);
     return parsedProducts;
   }
 }

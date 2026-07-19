@@ -1,4 +1,4 @@
-import { doc, serverTimestamp, writeBatch } from 'firebase/firestore';
+import { deleteField, doc, serverTimestamp, writeBatch } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 import {
   buildSupplierQueueDecisionPlan,
@@ -8,6 +8,7 @@ import {
 } from './supplierQueueDecisionPlan';
 import { normalizeSupplierProductImages } from './connectors/a2z-website/productImages';
 import { validateSupplierPublishPayload } from './supplierReviewEditor';
+import { buildCommercialFieldDeletes } from './products/productCommercialData';
 
 export type { SupplierQueueDecisionItem };
 export { getSupplierReviewQueueItemId };
@@ -68,10 +69,13 @@ const writeSupplierQueueDecision = async (
   );
 
   for (const operation of plan.sets) {
+    const operationData = operation.removeCommercialProductFields
+      ? { ...operation.data, ...buildCommercialFieldDeletes(deleteField()) }
+      : operation.data;
     if (operation.options) {
-      batch.set(doc(db, operation.collection, operation.id), operation.data, operation.options);
+      batch.set(doc(db, operation.collection, operation.id), operationData, operation.options);
     } else {
-      batch.set(doc(db, operation.collection, operation.id), operation.data);
+      batch.set(doc(db, operation.collection, operation.id), operationData);
     }
   }
 

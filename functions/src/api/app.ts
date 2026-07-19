@@ -2,9 +2,11 @@ import * as express from "express";
 import { getRuntimeConfig } from "./config";
 import { registerCheckoutRoutes } from "./routes/checkout";
 import { registerSupplierRoutes } from "./routes/supplier";
+import { registerSupplierPortalRoutes } from "./routes/supplierPortal";
 import { registerOrderRoutes } from "./routes/orders";
 import { registerReviewSystemRoutes } from "./routes/reviewSystem";
 import { registerPaymentRoutes } from "./routes/payments";
+import { registerAdminConfigurationRoutes } from "./routes/adminConfiguration";
 import { adminAppCheck, adminAuth, adminDb } from "./firebase";
 import { appLogger } from "./logging";
 
@@ -88,6 +90,7 @@ export function createApiApp(): express.Express {
   app.use(express.json({ limit: "100kb" }));
 
   registerPaymentRoutes(app, { db: adminDb, auth: adminAuth, logger: appLogger });
+  registerAdminConfigurationRoutes(app, { auth: adminAuth, adminEmail: runtimeConfig.adminEmail });
   registerCheckoutRoutes(app);
   registerOrderRoutes(app);
   registerReviewSystemRoutes(app, {
@@ -96,6 +99,7 @@ export function createApiApp(): express.Express {
     isAdminEmail: (email) => (email || "").toLowerCase() === runtimeConfig.adminEmail,
   });
   registerSupplierRoutes(app);
+  registerSupplierPortalRoutes(app, { db: adminDb, auth: adminAuth });
 
   app.post("/api/monitoring/client-error", (req, res) => {
     const context = typeof req.body?.context === "string" ? req.body.context.trim().slice(0, 100) : "client-error";

@@ -35,14 +35,16 @@ export async function getA2ZCredentials(): Promise<{ username: string; password:
     ? fingerprintA2ZCredentials(credentials.username, credentials.password)
     : {};
 
-  console.info("[A2Z-Connector]", JSON.stringify({
-    event: "a2z_credentials_resolved",
-    authenticationStage: "credential-selection",
-    credentialSource: credentials?.source || "none",
-    usernamePresent: Boolean(credentials?.username),
-    passwordPresent: Boolean(credentials?.password),
-    ...credentialForensics,
-  }));
+  if (process.env.SUPPLIER_DEBUG_LOGS === "true") {
+    console.info("[A2Z-Connector]", JSON.stringify({
+      event: "a2z_credentials_resolved",
+      authenticationStage: "credential-selection",
+      credentialSource: credentials?.source || "none",
+      usernamePresent: Boolean(credentials?.username),
+      passwordPresent: Boolean(credentials?.password),
+      ...credentialForensics,
+    }));
+  }
 
   if (!credentials) {
     throw new Error("A2Z credentials are not configured. Set A2Z_USERNAME and A2Z_PASSWORD in the server environment or save credentials in supplierSources.");

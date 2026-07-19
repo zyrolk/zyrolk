@@ -34,7 +34,7 @@ export function registerSupplierRoutes(app: express.Express): void {
   });
 
   app.post("/api/fetch-supplier", requireAdminAuth, async (req, res) => {
-    const { websiteUrl, endpoint = "", productLimit, sourceId, batchId } = req.body;
+    const { websiteUrl, endpoint = "", productLimit } = req.body;
 
     if (!websiteUrl) {
       res.status(400).json({ error: "Website URL is required" });
@@ -43,12 +43,6 @@ export function registerSupplierRoutes(app: express.Express): void {
 
     try {
       const result = await fetchSupplierProductsFromTarget(websiteUrl, endpoint, productLimit);
-      console.info("[SupplierLimitTrace] api-request-received", {
-        sourceId: String(sourceId || "unknown"),
-        batchId: String(batchId || "unknown"),
-        requestProductLimit: productLimit ?? null,
-        resolvedProductLimit: result.requestedProductLimit,
-      });
       res.json({
         success: true,
         products: result.products,

@@ -5,6 +5,11 @@ export const MAX_ITEM_QUANTITY = 99;
 export const CHECKOUT_RATE_LIMIT_WINDOW_MS = 60 * 1000;
 export const CHECKOUT_RATE_LIMIT_MAX_REQUESTS = 10;
 export const CHECKOUT_IDEMPOTENCY_COLLECTION = "checkout_idempotency";
+export const CHECKOUT_ABUSE_COLLECTION = "checkout_abuse_limits";
+export const OFFLINE_CHECKOUT_LIMIT_WINDOW_MS = 60 * 60 * 1000;
+export const OFFLINE_CHECKOUT_PHONE_LIMIT = 3;
+export const OFFLINE_CHECKOUT_NETWORK_LIMIT = 12;
+export const COD_CONFIRMATION_WINDOW_MS = 60 * 60 * 1000;
 
 const ALLOWED_PAYMENT_METHODS = new Set(["cod", "whatsapp_confirm", "payhere"]);
 
@@ -16,6 +21,7 @@ export interface CheckoutCartItem {
 export interface CheckoutSettings {
   deliveryCharge?: unknown;
   freeDeliveryMin?: unknown;
+  deliveryAreas?: unknown;
 }
 
 export interface CheckoutTotals {
@@ -46,6 +52,11 @@ export interface CheckoutIdempotencyRecord {
   requestHash?: unknown;
   status?: unknown;
   order?: unknown;
+}
+
+export interface CheckoutAbuseCounter {
+  count?: unknown;
+  windowStartedAt?: unknown;
 }
 
 export type CheckoutIdempotencyDecision =
@@ -86,6 +97,27 @@ export function createCheckoutRateLimiter(
     if (bucket.count > maxRequests) {
       throw new CheckoutError("Too many checkout attempts. Please wait a moment and try again.", 429);
     }
+  };
+}
+
+export function nextCheckoutAbuseCounter(
+  current: CheckoutAbuseCounter | null,
+  maximum: number,
+  now = Date.now(),
+  windowMs = OFFLINE_CHECKOUT_LIMIT_WINDOW_MS,
+): { count: number; windowStartedAt: number; expiresAt: Date } {
+  const count = Number(current?.count);
+  const windowStartedAt = Number(current?.windowStartedAt);
+  const isCurrentWindow = Number.isFinite(windowStartedAt) && windowStartedAt > now - windowMs;
+  const currentCount = isCurrentWindow && Number.isInteger(count) && count >= 0 ? count : 0;
+  if (currentCount >= maximum) {
+    throw new CheckoutError("Too many cash-on-delivery orders were placed recently. Please try again later or use online payment.", 429);
+  }
+  const nextWindowStartedAt = isCurrentWindow ? windowStartedAt : now;
+  return {
+    count: currentCount + 1,
+    windowStartedAt: nextWindowStartedAt,
+    expiresAt: new Date(nextWindowStartedAt + windowMs),
   };
 }
 
@@ -311,8 +343,18 @@ export function calculateCheckoutTotals(
   settings: CheckoutSettings | null,
   discountAmount = 0,
 ): CheckoutTotals {
-  const baseDeliveryCharge = (settings && settings.deliveryCharge !== undefined)
-    ? Number(settings.deliveryCharge)
+  const districtKey = district.trim().toLowerCase();
+  const matchingArea = Array.isArray(settings?.deliveryAreas)
+    ? settings.deliveryAreas.find((candidate): candidate is { charge?: unknown; districts?: unknown } => {
+      if (!candidate || typeof candidate !== 'object') return false;
+      const area = candidate as { isActive?: unknown; districts?: unknown };
+      return area.isActive !== false && Array.isArray(area.districts) && area.districts.some((value) => typeof value === 'string' && value.trim().toLowerCase() === districtKey);
+    })
+    : undefined;
+  const configuredDeliveryCharge = matchingArea?.charge ?? settings?.deliveryCharge;
+  const parsedDeliveryCharge = Number(configuredDeliveryCharge);
+  const baseDeliveryCharge = configuredDeliveryCharge !== undefined && Number.isFinite(parsedDeliveryCharge) && parsedDeliveryCharge >= 0
+    ? parsedDeliveryCharge
     : (DISTRICT_DELIVERY[district] || 500);
 
   const freeDeliveryThreshold = (settings && settings.freeDeliveryMin !== undefined)

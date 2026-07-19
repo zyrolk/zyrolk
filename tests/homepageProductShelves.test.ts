@@ -9,14 +9,9 @@ const styles = readFileSync('src/index.css', 'utf8');
 
 test('Sprint 74 composes all five homepage sections from the generic storefront shelf', () => {
   assert.equal((homepage.match(/<StorefrontProductShelf/g) || []).length, 5);
-  for (const title of [
-    'Flash Deals',
-    'Featured Products',
-    'New Arrivals',
-    'Best Sellers',
-    'Recommended Products',
-  ]) {
-    assert.match(homepage, new RegExp(`title="${title}"`));
+  for (const key of ['flashDeals', 'featured', 'newArrivals', 'bestSellers', 'recommended']) {
+    assert.match(homepage, new RegExp(`title=\\{homepageSections\\.${key}\\.title\\}`));
+    assert.match(homepage, new RegExp(`homepageSections\\.${key}\\.enabled`));
   }
   assert.doesNotMatch(homepage, /<ProductCard/);
 });

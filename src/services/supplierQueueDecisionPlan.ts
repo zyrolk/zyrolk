@@ -1,4 +1,5 @@
 import { Product } from '../types';
+import { PRODUCT_PRIVATE_COLLECTION, splitProductData } from './products/productCommercialData';
 
 export interface SupplierQueueDecisionItem {
   id: string;
@@ -10,6 +11,10 @@ export interface SupplierQueueDecisionItem {
   rejectionReason?: string;
   deletionReason?: string;
   supplierSnapshot?: Record<string, unknown>;
+  portalRequestId?: string;
+  supplierId?: string;
+  supplierSkuClaimId?: string;
+  productFingerprintClaimId?: string;
 }
 
 export interface SupplierQueueReviewer {
@@ -24,6 +29,7 @@ export interface SupplierQueueSetOperation {
   id: string;
   data: Record<string, unknown>;
   options?: { merge: boolean };
+  removeCommercialProductFields?: boolean;
 }
 
 export interface SupplierQueueDeleteOperation {
@@ -85,12 +91,26 @@ export function buildSupplierQueueDecisionPlan(
       auditPayload.supplierSnapshot = item.supplierSnapshot;
     }
     auditPayload.publishedProductSnapshot = item.productPayload;
+    const { publicData, commercialData } = splitProductData(item.productPayload);
     sets.push({
       collection: 'products',
       id: productId,
-      data: item.productPayload,
+      data: publicData,
       options: { merge: true },
+      removeCommercialProductFields: true,
     });
+    if (Object.keys(commercialData).length > 0) {
+      sets.push({
+        collection: PRODUCT_PRIVATE_COLLECTION,
+        id: productId,
+        data: {
+          ...commercialData,
+          productId,
+          updatedAt: item.productPayload.updatedAt || reviewedAt,
+        },
+        options: { merge: true },
+      });
+    }
   }
 
   if (action === 'rejected' && item.rejectionReason) {
@@ -99,6 +119,45 @@ export function buildSupplierQueueDecisionPlan(
 
   if (action === 'deleted' && item.deletionReason) {
     auditPayload.deletionReason = item.deletionReason;
+  }
+
+  if (item.portalRequestId && item.supplierId) {
+    const requestStatus = action === 'approved' ? 'approved' : 'rejected';
+    const reason = action === 'rejected'
+      ? item.rejectionReason || 'Product request rejected by admin.'
+      : action === 'deleted'
+        ? item.deletionReason || 'Product request removed by admin.'
+        : '';
+    sets.push({
+      collection: 'supplier_product_requests',
+      id: item.portalRequestId,
+      data: {
+        status: requestStatus,
+        reviewedAt,
+        reviewedBy: reviewer,
+        ...(reason ? { rejectionReason: reason } : {}),
+      },
+      options: { merge: true },
+    });
+    sets.push({
+      collection: 'supplier_notifications',
+      id: `${item.portalRequestId}-${action}`,
+      data: {
+        supplierId: item.supplierId,
+        type: action === 'approved' ? 'product_approved' : 'product_rejected',
+        title: action === 'approved' ? 'Product approved' : 'Product rejected',
+        message: action === 'approved'
+          ? `${item.productName || 'Your product'} was approved.`
+          : reason,
+        productRequestId: item.portalRequestId,
+        isRead: false,
+        createdAt: reviewedAt,
+      },
+    });
+    if (action !== 'approved') {
+      if (item.supplierSkuClaimId) deletes.push({ collection: 'supplier_sku_claims', id: item.supplierSkuClaimId });
+      if (item.productFingerprintClaimId) deletes.push({ collection: 'supplier_product_claims', id: item.productFingerprintClaimId });
+    }
   }
 
   sets.push({

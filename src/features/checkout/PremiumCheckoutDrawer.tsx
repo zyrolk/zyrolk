@@ -17,6 +17,7 @@ import {
 import { Order } from '../../types';
 import { trackCommerceEvent, trackPurchaseOnce } from '../../services/observability/commerceAnalytics';
 import { PayHerePaymentSession, submitPayHerePayment } from './payhere';
+import { resolveDeliveryCharge } from '../../services/settings/shippingSettings';
 import './premiumCheckout.css';
 
 const IDEMPOTENCY_KEY = 'zyro.checkout.idempotency';
@@ -85,7 +86,7 @@ export default function PremiumCheckoutDrawer({
 
   const itemsSubtotal = useMemo(() => cartItems.reduce((sum, item) => sum + item.product.price * item.quantity, 0), [cartItems]);
   const cartSignature = useMemo(() => getCheckoutCartSignature(cartItems), [cartItems]);
-  const baseDelivery = settings?.deliveryCharge ?? DISTRICT_DELIVERY[form.district] ?? 500;
+  const baseDelivery = resolveDeliveryCharge(settings, form.district, DISTRICT_DELIVERY[form.district] ?? 500);
   const freeDeliveryThreshold = Math.max(0, settings?.freeDeliveryMin ?? 5000);
   const deliveryFee = itemsSubtotal > 0 && itemsSubtotal < freeDeliveryThreshold ? baseDelivery : 0;
   const discountAmount = couponQuote?.cartSignature === cartSignature ? couponQuote.discountAmount : 0;

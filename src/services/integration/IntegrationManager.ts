@@ -4,6 +4,12 @@ import { Product } from '../../types';
 import { SyncPipeline, PipelineResult } from './SyncPipeline';
 import { HistoryPipeline, PreparedHistoryPayload } from './HistoryPipeline';
 
+const debugIntegration = (...values: unknown[]): void => {
+  if (typeof window !== 'undefined' && ['localhost', '127.0.0.1', '0.0.0.0'].includes(window.location.hostname)) {
+    console.info(...values);
+  }
+};
+
 export interface IntegrationRunResult {
   success: boolean;
   totalProcessed: number;
@@ -34,7 +40,7 @@ export class IntegrationManager {
     triggeredBy: string = 'System Integration Agent'
   ): Promise<IntegrationRunResult> {
     const startTime = Date.now();
-    console.log(`[IntegrationManager] Starting integration of ${rawProducts.length} raw products for supplier: ${supplierName}`);
+    debugIntegration(`[IntegrationManager] Starting integration of ${rawProducts.length} raw products for supplier: ${supplierName}`);
 
     // Index existing catalog items by supplier SKU
     const existingMap = new Map<string, Product>();
@@ -104,7 +110,7 @@ export class IntegrationManager {
       console.warn('[IntegrationManager] Failed to prepare historical payload:', e);
     }
 
-    console.log(`[IntegrationManager] Integration run completed in ${durationMs}ms. Processed: ${rawProducts.length}, Failed: ${failedCount}`);
+    debugIntegration(`[IntegrationManager] Integration run completed in ${durationMs}ms. Processed: ${rawProducts.length}, Failed: ${failedCount}`);
 
     return {
       success: true,

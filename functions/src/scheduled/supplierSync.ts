@@ -3,6 +3,7 @@ import { onSchedule } from "firebase-functions/v2/scheduler";
 import { A2Z_SECRETS } from "../config/secrets";
 import { adminDb } from "../api/firebase";
 import { appLogger } from "../api/logging";
+import { mergeProductData, PRODUCT_PRIVATE_COLLECTION } from "../api/products/productCommercialData";
 import { SupplierRegistry } from "../api/suppliers/SupplierRegistry";
 import { isValidSupplierImageUrl, ProductParser } from "../api/suppliers/a2z/ProductParser";
 import { RawA2ZProduct } from "../api/suppliers/a2z/types";
@@ -303,7 +304,7 @@ function buildProductPayload(
     supplierItemCode: product.sku,
     costPrice: priceUpdateEnabled ? wholesale : (match?.costPrice || 0),
     marketPrice: priceUpdateEnabled ? (product.recommendedRetailPrice || 0) : (match?.marketPrice || 0),
-    rating: match?.rating ?? 5,
+    rating: match?.rating ?? 0,
     reviewsCount: match?.reviewsCount ?? 0,
     createdAt: match?.createdAt || new Date().toISOString(),
   };
@@ -491,11 +492,15 @@ export async function runScheduledSupplierSync(): Promise<void> {
   try {
     appLogger.info("Scheduled supplier sync started.", { batchId });
 
-    const existingSnap = await adminDb.collection("products").get();
+    const [existingSnap, commercialSnapshot] = await Promise.all([
+      adminDb.collection("products").get(),
+      adminDb.collection(PRODUCT_PRIVATE_COLLECTION).get(),
+    ]);
+    const commercialById = new Map(commercialSnapshot.docs.map((document) => [document.id, document.data()]));
     const existingProducts = existingSnap.docs.map((productDoc) => ({
+      ...mergeProductData(productDoc.data(), commercialById.get(productDoc.id)),
       id: productDoc.id,
-      ...productDoc.data(),
-    })) as ExistingProduct[];
+    } as ExistingProduct));
 
     const categoriesSnap = await adminDb.collection("categories").get();
     const storeCategories = categoriesSnap.docs.map((categoryDoc) => ({

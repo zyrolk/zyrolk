@@ -40,6 +40,11 @@ async function updateOrderStatus(orderId: string, newStatus: string, customerUid
       && order.paymentMethod === "payhere"
       && new Set(["awaiting_payment", "pending"]).has(String(order.paymentStatus || ""));
     const cancellingPaidPayHere = shouldRestoreStock && order.paymentMethod === "payhere" && order.paymentStatus === "paid";
+    const committingOfflineReservation = !shouldRestoreStock
+      && order.paymentMethod !== "payhere"
+      && order.stockReservationStatus === "reserved"
+      && newStatus !== "pending"
+      && newStatus !== "cancelled";
 
     const productStocks: Array<{ ref: FirebaseFirestore.DocumentReference; stock: number; quantity: number }> = [];
     for (const [productId, quantity] of quantities) {
@@ -55,10 +60,16 @@ async function updateOrderStatus(orderId: string, newStatus: string, customerUid
     transaction.update(orderRef, {
       status: newStatus,
       statusUpdatedAt: FieldValue.serverTimestamp(),
+      ...(committingOfflineReservation ? {
+        stockReservationStatus: "committed",
+        stockReservationExpiresAt: FieldValue.delete(),
+        stockReservationCommittedAt: FieldValue.serverTimestamp(),
+      } : {}),
       ...(shouldRestoreStock ? {
         stockRestorationApplied: true,
         stockRestoredAt: FieldValue.serverTimestamp(),
-        stockReservationStatus: order.paymentMethod === "payhere" ? "released" : order.stockReservationStatus,
+        stockReservationStatus: "released",
+        stockReservationExpiresAt: FieldValue.delete(),
         ...(cancellingUnsettledPayHere ? {
           paymentStatus: "cancelled",
           paymentTimeline: appendPaymentTimeline(order.paymentTimeline, createPaymentTimelineEvent("cancelled", "Order cancelled and reserved stock released", customerUid ? "customer" : "system")),

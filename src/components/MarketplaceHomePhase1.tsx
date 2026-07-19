@@ -5,6 +5,7 @@ import HomepageCustomerReviews, { HomepageReview } from './HomepageCustomerRevie
 import HomepageTrustStrip from './HomepageTrustStrip';
 import HomepageWhyChoose from './HomepageWhyChoose';
 import StorefrontProductShelf from './StorefrontProductShelf';
+import { DEFAULT_HOMEPAGE_SECTIONS } from '../services/settings/websiteSettings';
 
 export interface HomepageCategoryVisual {
   category: Category;
@@ -56,6 +57,7 @@ export default function MarketplaceHomePhase1({
   onViewDetail,
 }: MarketplaceHomePhase1Props) {
   const hasCategories = categoryVisuals.length > 0;
+  const homepageSections = settings?.homepageSections || DEFAULT_HOMEPAGE_SECTIONS;
 
   return (
     <div className="zy-foundation-home zy-launch-home animate-fadeIn">
@@ -130,12 +132,12 @@ export default function MarketplaceHomePhase1({
       </div>
 
       <div className="zy-foundation-container zy-foundation-shelf-stack">
-        <StorefrontProductShelf
+        {homepageSections.flashDeals.enabled && <StorefrontProductShelf
           id="homepage-flash-deals"
           eyebrow="Live savings"
           tone="deals"
-          title="Flash Deals"
-          subtitle="Genuine savings from products with a verified regular price and lower selling price."
+          title={homepageSections.flashDeals.title}
+          subtitle={homepageSections.flashDeals.subtitle}
           products={discountedProducts}
           loading={loading}
           emptyState={{
@@ -148,14 +150,14 @@ export default function MarketplaceHomePhase1({
           onToggleWishlist={onToggleWishlist}
           onViewDetail={onViewDetail}
           settings={settings}
-        />
+        />}
 
-        <StorefrontProductShelf
+        {homepageSections.featured.enabled && <StorefrontProductShelf
           id="homepage-featured-products"
           eyebrow="Marketplace spotlight"
           tone="featured"
-          title="Featured Products"
-          subtitle="Storefront highlights selected from the currently published marketplace catalog."
+          title={homepageSections.featured.title}
+          subtitle={homepageSections.featured.subtitle}
           products={featuredProducts}
           loading={loading}
           emptyState={{
@@ -168,14 +170,14 @@ export default function MarketplaceHomePhase1({
           onToggleWishlist={onToggleWishlist}
           onViewDetail={onViewDetail}
           settings={settings}
-        />
+        />}
 
-        <StorefrontProductShelf
+        {homepageSections.newArrivals.enabled && <StorefrontProductShelf
           id="homepage-new-arrivals"
           eyebrow="Recently added"
           tone="new"
-          title="New Arrivals"
-          subtitle="Fresh additions available now from the live Zyro.lk catalog."
+          title={homepageSections.newArrivals.title}
+          subtitle={homepageSections.newArrivals.subtitle}
           products={newArrivalProducts}
           loading={loading}
           emptyState={{
@@ -188,14 +190,14 @@ export default function MarketplaceHomePhase1({
           onToggleWishlist={onToggleWishlist}
           onViewDetail={onViewDetail}
           settings={settings}
-        />
+        />}
 
-        <StorefrontProductShelf
+        {homepageSections.bestSellers.enabled && <StorefrontProductShelf
           id="homepage-best-sellers"
           eyebrow="Popular picks"
           tone="best-seller"
-          title="Best Sellers"
-          subtitle="Popular marketplace picks identified from the live product catalog."
+          title={homepageSections.bestSellers.title}
+          subtitle={homepageSections.bestSellers.subtitle}
           products={bestSellerProducts}
           loading={loading}
           emptyState={{
@@ -208,14 +210,14 @@ export default function MarketplaceHomePhase1({
           onToggleWishlist={onToggleWishlist}
           onViewDetail={onViewDetail}
           settings={settings}
-        />
+        />}
 
-        <StorefrontProductShelf
+        {homepageSections.recommended.enabled && <StorefrontProductShelf
           id="homepage-recommended-products"
           eyebrow="Explore more"
           tone="recommended"
-          title="Recommended Products"
-          subtitle="A convenient starting point selected from products currently available in the marketplace."
+          title={homepageSections.recommended.title}
+          subtitle={homepageSections.recommended.subtitle}
           products={recommendedProducts}
           loading={loading}
           emptyState={{
@@ -228,7 +230,7 @@ export default function MarketplaceHomePhase1({
           onToggleWishlist={onToggleWishlist}
           onViewDetail={onViewDetail}
           settings={settings}
-        />
+        />}
       </div>
 
       <div className="zy-foundation-container zy-launch-reviews-wrap">

@@ -12,6 +12,12 @@ service cloud.firestore {
       return request.auth != null && request.auth.uid == userId;
     }
 
+    function isSupplier() {
+      return request.auth != null &&
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'supplier';
+    }
+
     function isValidCustomerAddress(data) {
       return data.keys().hasOnly([
                'label', 'fullName', 'phone', 'addressLine1', 'addressLine2',
@@ -30,14 +36,41 @@ service cloud.firestore {
              data.updatedAt is timestamp;
     }
 
+    function isPublicProductData(data) {
+      return !data.keys().hasAny([
+        'supplierItemCode', 'supplierItemCodeNormalized', 'supplierId',
+        'costPrice', 'marketPrice', 'supplierPurchasePrice',
+        'supplierInternalNotes', 'supplierProfit', 'supplierPrice',
+        'purchasePrice', 'profitMargin', 'commission',
+        'supplierMetadata', 'supplierCommercialMetadata', 'wholesalePrice',
+        'recommendedRetailPrice', 'supplierCode', 'supplierSku', 'supplierSKU',
+        'supplierCost', 'internalCost', 'margin', 'profit',
+        'supplierSourceId', 'supplierSource', 'supplierLeadTime',
+        'supplierMoq', 'supplierMOQ'
+      ]);
+    }
+
     // Products Rules
     match /products/{productId} {
       allow read: if true;
-      allow write: if isAdmin();
+      allow create, update: if isAdmin() && isPublicProductData(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    // Commercial product data is never stored in the public catalogue document.
+    // Suppliers receive an explicit allowlisted projection through the trusted API.
+    match /product_private/{productId} {
+      allow read, write: if isAdmin();
     }
 
     // Categories Rules
     match /categories/{categoryId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Brand registry: public catalogue metadata, managed only by admins.
+    match /brands/{brandId} {
       allow read: if true;
       allow write: if isAdmin();
     }
@@ -154,6 +187,33 @@ service cloud.firestore {
       allow read, write: if isAdmin();
     }
 
+    // Supplier Portal request payloads are projected by the trusted API so nested
+    // workflow data cannot bypass the supplier response allowlist.
+    match /supplier_profiles/{supplierId} {
+      allow read: if isAdmin() || (isSupplier() && isOwner(supplierId));
+      allow write: if isAdmin();
+    }
+
+    match /supplier_product_requests/{requestId} {
+      allow read: if isAdmin();
+      allow write: if isAdmin();
+    }
+
+    match /supplier_notifications/{notificationId} {
+      allow read: if isAdmin() || (isSupplier() && resource.data.supplierId == request.auth.uid);
+      allow write: if isAdmin();
+    }
+
+    match /supplier_sku_claims/{claimId} {
+      allow read: if false;
+      allow write: if isAdmin();
+    }
+
+    match /supplier_product_claims/{claimId} {
+      allow read: if false;
+      allow write: if isAdmin();
+    }
+
     // Orders Rules
     match /orders/{orderId} {
       // Customers can read their own orders. Admins can read all.
@@ -176,6 +236,11 @@ service cloud.firestore {
 
     // Checkout idempotency records are written only by trusted backend code.
     match /checkout_idempotency/{docId} {
+      allow read, write: if false;
+    }
+
+    // Distributed checkout abuse counters contain hashed network/customer signals only.
+    match /checkout_abuse_limits/{docId} {
       allow read, write: if false;
     }
 

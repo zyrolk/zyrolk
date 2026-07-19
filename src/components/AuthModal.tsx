@@ -16,9 +16,10 @@ import { reportClientIssue } from '../services/observability/clientDiagnostics';
 interface AuthModalProps {
   isOpen: boolean;
   onClose: () => void;
+  registrationEnabled?: boolean;
 }
 
-export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
+export default function AuthModal({ isOpen, onClose, registrationEnabled = true }: AuthModalProps) {
   const [isSignUp, setIsSignUp] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -39,6 +40,11 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
     const cleanDisplayName = displayName.trim();
 
     if (isSignUp) {
+      if (!registrationEnabled) {
+        setError('New customer registration is temporarily unavailable. Existing customers can still sign in.');
+        setLoading(false);
+        return;
+      }
       if (password.length < 6) {
         setError("Security Rule: Password must be at least 6 characters long.");
         setLoading(false);
@@ -266,7 +272,7 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
         )}
 
         {/* Divider */}
-        {!isResetMode && <><div className="relative my-6 text-center">
+        {!isResetMode && registrationEnabled && <><div className="relative my-6 text-center">
           <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-slate-100"></div></div>
           <span className="relative bg-white px-3 text-[11px] font-bold text-slate-500 uppercase tracking-wider">or connect via</span>
         </div>
@@ -287,7 +293,7 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
         </>}
 
         {/* Toggle signup */}
-        {!isResetMode && <div className="mt-6 text-center text-xs text-slate-500">
+        {!isResetMode && registrationEnabled && <div className="mt-6 text-center text-xs text-slate-500">
           {isSignUp ? "Already have a Zyro account?" : "New to Zyro.lk?"}{" "}
           <button
             onClick={() => setIsSignUp(!isSignUp)}
@@ -296,6 +302,7 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
             {isSignUp ? "Sign In" : "Register Now"}
           </button>
         </div>}
+        {!isResetMode && !registrationEnabled && <p className="mt-6 text-center text-xs text-slate-500" role="status">New account registration is currently paused. Existing customers can continue with email sign in.</p>}
 
       </div>
     </div>

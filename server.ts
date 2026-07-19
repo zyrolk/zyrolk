@@ -19,15 +19,25 @@ import {
   registerPaymentRoutes,
 } from "./functions/src/api/routes/payments";
 import {
+  CHECKOUT_ABUSE_COLLECTION,
+  COD_CONFIRMATION_WINDOW_MS,
   calculateCheckoutTotals as calculateTrustedCheckoutTotals,
   getCouponDocumentId,
+  nextCheckoutAbuseCounter,
   normalizeCouponCode,
+  OFFLINE_CHECKOUT_NETWORK_LIMIT,
+  OFFLINE_CHECKOUT_PHONE_LIMIT,
   resolveCouponDiscount,
 } from "./functions/src/api/checkout/checkoutLogic";
 import { appendPaymentTimeline, createPaymentTimelineEvent } from "./functions/src/api/payments/payhereLogic";
+import { registerSupplierPortalRoutes } from "./functions/src/api/routes/supplierPortal";
+import { registerAdminConfigurationRoutes } from "./functions/src/api/routes/adminConfiguration";
 
 const app = express();
 const PORT = 3000;
+const debugLog = (...values: unknown[]): void => {
+  if (process.env.NODE_ENV !== "production") console.info(...values);
+};
 
 app.disable("x-powered-by");
 app.use((req, res, next) => {
@@ -70,15 +80,27 @@ const CHECKOUT_RATE_LIMIT_MAX_REQUESTS = 10;
 const CHECKOUT_IDEMPOTENCY_COLLECTION = "checkout_idempotency";
 const ALLOWED_PAYMENT_METHODS = new Set(["cod", "whatsapp_confirm", "payhere"]);
 const ADMIN_EMAIL = "zyrolkofficial@gmail.com";
+const DEFAULT_ALLOWED_ORIGINS = ["https://zyro.lk", "https://www.zyro.lk", "https://zyrolk-e0164.web.app"];
 
 app.use(async (req, res, next) => {
-  const allowedOrigins = (process.env.API_ALLOWED_ORIGINS || "").split(",").map((origin) => origin.trim()).filter(Boolean);
+  const configuredOrigins = (process.env.API_ALLOWED_ORIGINS || "").split(",").map((origin) => origin.trim()).filter(Boolean);
+  const allowedOrigins = configuredOrigins.length > 0 ? configuredOrigins : DEFAULT_ALLOWED_ORIGINS;
   const origin = req.header("Origin");
-  if (origin && allowedOrigins.length && !allowedOrigins.includes(origin)) {
+  if (origin && !allowedOrigins.includes(origin)) {
     res.status(403).json({ error: "Origin is not allowed" });
     return;
   }
-  if (process.env.REQUIRE_APP_CHECK !== "true" || req.path === "/api/payments/payhere/notify" || req.path === "/sitemap.xml") {
+  if (origin) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Vary", "Origin");
+  }
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, Idempotency-Key, X-Firebase-AppCheck");
+  if (req.method === "OPTIONS") {
+    res.status(204).send("");
+    return;
+  }
+  if (process.env.REQUIRE_APP_CHECK === "false" || req.path === "/api/payments/payhere/notify" || req.path === "/sitemap.xml") {
     next();
     return;
   }
@@ -101,6 +123,8 @@ registerReviewSystemRoutes(app, {
   isAdminEmail: (email) => (email || "").toLowerCase() === ADMIN_EMAIL,
 });
 registerPaymentRoutes(app, { db: adminDb, auth: adminAuth });
+registerSupplierPortalRoutes(app, { db: adminDb, auth: adminAuth });
+registerAdminConfigurationRoutes(app, { auth: adminAuth, adminEmail: ADMIN_EMAIL });
 
 app.post("/api/monitoring/client-error", (req, res) => {
   const context = typeof req.body?.context === "string" ? req.body.context.trim().slice(0, 100) : "client-error";
@@ -377,16 +401,18 @@ app.post("/api/checkout", async (req, res) => {
   let validatedCartItems: CheckoutCartItem[];
   let idempotencyKey: string | null;
   let requestHash: string;
+  let validatedPaymentMethod: "cod" | "whatsapp_confirm" | "payhere";
   try {
     customerUid = await resolveCheckoutCustomerUid(req);
     if (requestedCustomerUid && requestedCustomerUid !== "guest" && requestedCustomerUid !== customerUid) {
       throw new CheckoutError("Checkout customer identity does not match the signed-in account", 403);
     }
     validateCheckoutDetails(req.body);
+    validatedPaymentMethod = validatePaymentMethod(paymentMethod);
     validatedCartItems = validateCheckoutCartItems(cartItems);
     idempotencyKey = getIdempotencyKey(req);
     requestHash = createCheckoutRequestHash(req.body, validatedCartItems);
-    if (paymentMethod === "payhere" && !getPayHereAvailability().enabled) {
+    if (validatedPaymentMethod === "payhere" && !getPayHereAvailability().enabled) {
       throw new CheckoutError("Online payments are not configured", 503);
     }
   } catch (error: any) {
@@ -413,6 +439,22 @@ app.post("/api/checkout", async (req, res) => {
           }
         }
       }
+
+      const offlineLimitRefs = validatedPaymentMethod === "payhere" ? [] : [
+        {
+          ref: adminDb.collection(CHECKOUT_ABUSE_COLLECTION).doc(hashValue(`offline-phone:${String(customerPhone).replace(/\D/gu, "")}`)),
+          maximum: OFFLINE_CHECKOUT_PHONE_LIMIT,
+        },
+        {
+          ref: adminDb.collection(CHECKOUT_ABUSE_COLLECTION).doc(hashValue(`offline-network:${getClientRateLimitKey(req)}`)),
+          maximum: OFFLINE_CHECKOUT_NETWORK_LIMIT,
+        },
+      ];
+      const offlineLimitSnapshots = await Promise.all(offlineLimitRefs.map(({ ref }) => transaction.get(ref)));
+      const offlineLimitUpdates = offlineLimitRefs.map(({ ref, maximum }, index) => ({
+        ref,
+        data: nextCheckoutAbuseCounter(offlineLimitSnapshots[index].data() || null, maximum),
+      }));
 
       let itemsSubtotal = 0;
       const verifiedItems = [];
@@ -482,6 +524,7 @@ app.post("/api/checkout", async (req, res) => {
       
       const nextSeq = currentSeq + 1;
       transaction.set(counterRef, { currentSeq: nextSeq }, { merge: true });
+      offlineLimitUpdates.forEach(({ ref, data }) => transaction.set(ref, data, { merge: true }));
       const orderNumber = `ZY${nextSeq}`;
 
       // 4. Atomically decrease product stock
@@ -489,7 +532,7 @@ app.post("/api/checkout", async (req, res) => {
 
       // 5. Store the finalized order document
       const orderRef = adminDb.collection("orders").doc();
-      const payHereFields = paymentMethod === "payhere"
+      const payHereFields = validatedPaymentMethod === "payhere"
         ? buildInitialPayHereOrderFields(orderRef.id, totals.grandTotalPrice)
         : null;
       const paymentTransaction = payHereFields?.paymentTransaction;
@@ -511,7 +554,7 @@ app.post("/api/checkout", async (req, res) => {
         ...(couponCode ? { couponCode } : {}),
         status: "pending",
         stockDeducted: true,
-        paymentMethod: paymentMethod || "cod",
+        paymentMethod: validatedPaymentMethod,
         ...(payHereFields ? {
           paymentProvider: payHereFields.paymentProvider,
           paymentStatus: payHereFields.paymentStatus,
@@ -523,7 +566,9 @@ app.post("/api/checkout", async (req, res) => {
           stockRestorationApplied: false,
         } : {
           paymentStatus: "not_required",
-          stockReservationStatus: "committed",
+          stockReservationStatus: "reserved",
+          stockReservationExpiresAt: new Date(Date.now() + COD_CONFIRMATION_WINDOW_MS),
+          stockRestorationApplied: false,
         }),
         createdAt: new Date().toISOString()
       };
@@ -695,7 +740,8 @@ app.post("/api/orders/:orderId/cancel", requireCustomerAuth, async (req, res) =>
         ...(shouldRestoreStock ? {
           stockRestorationApplied: true,
           stockRestoredAt: FieldValue.serverTimestamp(),
-          stockReservationStatus: order.paymentMethod === "payhere" ? "released" : order.stockReservationStatus,
+          stockReservationStatus: "released",
+          stockReservationExpiresAt: FieldValue.delete(),
           ...(cancellingUnsettledPayHere ? {
             paymentStatus: "cancelled",
             paymentTimeline: appendPaymentTimeline(order.paymentTimeline, createPaymentTimelineEvent("cancelled", "Order cancelled and reserved stock released", "customer")),
@@ -744,6 +790,11 @@ app.post("/api/orders/:orderId/status", requireSupplierAdminAuth, async (req, re
         && order.paymentMethod === "payhere"
         && new Set(["awaiting_payment", "pending"]).has(String(order.paymentStatus || ""));
       const cancellingPaidPayHere = shouldRestoreStock && order.paymentMethod === "payhere" && order.paymentStatus === "paid";
+      const committingOfflineReservation = !shouldRestoreStock
+        && order.paymentMethod !== "payhere"
+        && order.stockReservationStatus === "reserved"
+        && newStatus !== "pending"
+        && newStatus !== "cancelled";
       const quantities = new Map<string, number>();
       if (shouldRestoreStock) {
         for (const item of Array.isArray(order.items) ? order.items : []) {
@@ -769,10 +820,16 @@ app.post("/api/orders/:orderId/status", requireSupplierAdminAuth, async (req, re
       transaction.update(orderRef, {
         status: newStatus,
         statusUpdatedAt: FieldValue.serverTimestamp(),
+        ...(committingOfflineReservation ? {
+          stockReservationStatus: "committed",
+          stockReservationExpiresAt: FieldValue.delete(),
+          stockReservationCommittedAt: FieldValue.serverTimestamp(),
+        } : {}),
         ...(shouldRestoreStock ? {
           stockRestorationApplied: true,
           stockRestoredAt: FieldValue.serverTimestamp(),
-          stockReservationStatus: order.paymentMethod === "payhere" ? "released" : order.stockReservationStatus,
+          stockReservationStatus: "released",
+          stockReservationExpiresAt: FieldValue.delete(),
           ...(cancellingUnsettledPayHere ? {
             paymentStatus: "cancelled",
             paymentTimeline: appendPaymentTimeline(order.paymentTimeline, createPaymentTimelineEvent("cancelled", "Order cancelled and reserved stock released", "system")),
@@ -820,7 +877,7 @@ app.post("/api/test-supplier", requireSupplierAdminAuth, async (req, res) => {
 
   if (isA2Z) {
     try {
-      console.log("[A2Z-Connector] Triggering secure connection test via A2Z Connector Service...");
+      debugLog("[A2Z-Connector] Triggering secure connection test via A2Z Connector Service...");
       const credentials = await getA2ZCredentials();
       const products = await A2ZConnectorService.fetchCatalog(validatedTarget.targetUrl, credentials);
       
@@ -841,7 +898,7 @@ app.post("/api/test-supplier", requireSupplierAdminAuth, async (req, res) => {
   }
 
   try {
-    console.log("Testing connection to target URL:", validatedTarget.targetUrl);
+    debugLog("Testing connection to target URL:", validatedTarget.targetUrl);
     
     let fetchResponse: any = null;
     let data: any = null;
@@ -904,17 +961,11 @@ app.post("/api/test-supplier", requireSupplierAdminAuth, async (req, res) => {
 
 // Server-side proxy for fetching supplier products securely (bypasses CORS)
 app.post("/api/fetch-supplier", requireSupplierAdminAuth, async (req, res) => {
-  const { websiteUrl, endpoint, productLimit, sourceId, batchId } = req.body;
+  const { websiteUrl, endpoint, productLimit } = req.body;
   const requestedProductLimit = getSupplierProductLimit(
     productLimit === undefined || productLimit === null ? 'All' : String(productLimit),
     250,
   );
-  console.info('[SupplierLimitTrace] api-request-received', {
-    sourceId: String(sourceId || 'unknown'),
-    batchId: String(batchId || 'unknown'),
-    requestProductLimit: productLimit ?? null,
-    resolvedProductLimit: requestedProductLimit,
-  });
   
   if (!websiteUrl) {
     return res.status(400).json({ error: "Website URL is required" });
@@ -934,7 +985,7 @@ app.post("/api/fetch-supplier", requireSupplierAdminAuth, async (req, res) => {
 
   if (isA2Z) {
     try {
-      console.log("[A2Z-Connector] Orchestrating secure, authenticated catalog sync from A2Z Supplier...");
+      debugLog("[A2Z-Connector] Orchestrating secure, authenticated catalog sync from A2Z Supplier...");
       const credentials = await getA2ZCredentials();
       const products = await A2ZConnectorService.fetchCatalog(validatedTarget.targetUrl, credentials);
       return res.json({ success: true, products, requestedProductLimit });
@@ -948,7 +999,7 @@ app.post("/api/fetch-supplier", requireSupplierAdminAuth, async (req, res) => {
   }
 
   try {
-    console.log("Fetching from target URL:", validatedTarget.targetUrl);
+    debugLog("Fetching from target URL:", validatedTarget.targetUrl);
     
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout

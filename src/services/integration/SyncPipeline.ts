@@ -8,6 +8,12 @@ import { QueuePipeline } from './QueuePipeline';
 import { ReviewPipeline, PreparedReviewPayload } from './ReviewPipeline';
 import { ProductParser } from '../connectors/a2z-website/ProductParser';
 
+const debugIntegration = (...values: unknown[]): void => {
+  if (typeof window !== 'undefined' && ['localhost', '127.0.0.1', '0.0.0.0'].includes(window.location.hostname)) {
+    console.info(...values);
+  }
+};
+
 export interface PipelineResult {
   sku: string;
   status: 'ignored' | 'queued' | 'error';
@@ -69,7 +75,7 @@ export class SyncPipeline {
       const comparison = await ComparisonPipeline.compareProduct(existing, mapped, config);
 
       if (!comparison.hasChanges) {
-        console.log(`[SyncPipeline] No fluctuations detected for SKU ${sku}. Discarding pipeline state.`);
+        debugIntegration(`[SyncPipeline] No fluctuations detected for SKU ${sku}. Discarding pipeline state.`);
         return { sku, status: 'ignored', comparison };
       }
 
@@ -130,7 +136,7 @@ export class SyncPipeline {
         newValue: newValueText
       });
 
-      console.log(`[SyncPipeline] Successfully prepared payloads for SKU ${sku}`);
+      debugIntegration(`[SyncPipeline] Successfully prepared payloads for SKU ${sku}`);
 
       return {
         sku,

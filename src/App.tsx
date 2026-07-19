@@ -37,6 +37,8 @@ import FloatingWhatsApp from './components/FloatingWhatsApp';
 import MarketplaceHomePhase1 from './components/MarketplaceHomePhase1';
 import StorefrontNotFound from './components/StorefrontNotFound';
 import StorefrontSeo from './components/StorefrontSeo';
+import StorefrontMaintenance from './components/StorefrontMaintenance';
+import { normalizeWebsiteSettings } from './services/settings/websiteSettings';
 
 const AdminDashboard = lazy(() => import('./components/AdminDashboard'));
 const CartDrawer = lazy(() => import('./components/CartDrawer'));
@@ -48,11 +50,12 @@ const AccountCenter = lazy(() => import('./features/account/AccountCenter'));
 const WishlistExperience = lazy(() => import('./features/personalization/WishlistExperience'));
 const CompareProducts = lazy(() => import('./features/personalization/CompareProducts'));
 const PaymentReturnPage = lazy(() => import('./features/checkout/PaymentReturnPage'));
+const SupplierPortal = lazy(() => import('./features/supplier-portal/SupplierPortal'));
 
 // Lucide Icons
 import { 
   ShieldCheck, Truck, RefreshCw, Star, ArrowRight,
-  SlidersHorizontal, ShoppingBag, Phone, Heart, X, Grid3X3, WifiOff
+  SlidersHorizontal, ShoppingBag, Phone, Heart, X, Grid3X3, WifiOff, Clock
 } from 'lucide-react';
 
 const formatPrice = (amount: number) => new Intl.NumberFormat('en-LK', {
@@ -65,7 +68,7 @@ const formatPrice = (amount: number) => new Intl.NumberFormat('en-LK', {
 const STOREFRONT_PAGE_IDS = new Set([
   'home', 'legacy-home', 'products', 'categories', 'wishlist', 'recently-viewed', 'compare', 'contact',
   'account', 'account-orders', 'account-order-details', 'account-profile', 'account-addresses', 'account-security', 'account-settings',
-  'about-us', 'privacy-policy', 'terms-conditions', 'return-policy', 'faq',
+  'about-us', 'privacy-policy', 'terms-conditions', 'return-policy', 'warranty-policy', 'faq',
   'payment-return',
 ]);
 
@@ -166,6 +169,7 @@ export default function App() {
   const [personalizationSyncError, setPersonalizationSyncError] = useState('');
   const [compareMessage, setCompareMessage] = useState('');
   const [isAdminUser, setIsAdminUser] = useState<boolean>(false);
+  const [isSupplierUser, setIsSupplierUser] = useState<boolean>(false);
   const [adminInitialTab, setAdminInitialTab] = useState<'stats' | 'products' | 'categories' | 'orders' | 'customers' | 'pages' | 'settings'>('stats');
   const [adminInitialCmsPageId, setAdminInitialCmsPageId] = useState<string>('about-us');
 
@@ -225,6 +229,7 @@ export default function App() {
           if (isProductionAdminEmail(currentUser.email)) {
             setIsAdminMode(true);
             setIsAdminUser(true);
+            setIsSupplierUser(false);
           } else {
             const userDoc = await getDoc(doc(db, "users", currentUser.uid));
             if (userDoc.exists()) {
@@ -232,6 +237,15 @@ export default function App() {
               setIsAdminUser(false);
               // Sync user's wishlist from firestore and merge with current guest wishlist
               const userData = userDoc.data();
+              if (userData?.role === 'supplier') {
+                setIsSupplierUser(true);
+                setWishlistLoadedForUser(null);
+                setCartLoadedForUser(null);
+                setRecentlyViewedLoadedForUser(null);
+                setUser(currentUser);
+                return;
+              }
+              setIsSupplierUser(false);
               if (userData && userData.wishlist && Array.isArray(userData.wishlist)) {
                 const cloudWishlist = userData.wishlist as Product[];
                 const merged = [...cloudWishlist];
@@ -269,6 +283,7 @@ export default function App() {
             } else {
               setIsAdminMode(false);
               setIsAdminUser(false);
+              setIsSupplierUser(false);
             }
           }
           setWishlist(loadedWishlist);
@@ -282,6 +297,7 @@ export default function App() {
           reportClientIssue('auth-profile-load', e, 'warning');
           setIsAdminMode(false);
           setIsAdminUser(false);
+          setIsSupplierUser(false);
           setWishlistLoadedForUser(currentUser.uid);
           setCartLoadedForUser(currentUser.uid);
           setRecentlyViewedLoadedForUser(currentUser.uid);
@@ -290,6 +306,7 @@ export default function App() {
       } else {
         setIsAdminMode(false);
         setIsAdminUser(false);
+        setIsSupplierUser(false);
         setWishlistLoadedForUser(null);
         setCartLoadedForUser(null);
         setRecentlyViewedLoadedForUser(null);
@@ -428,7 +445,7 @@ export default function App() {
       const sUnsub = onSnapshot(doc(db, "settings", "website"), (snap) => {
         if (!isMounted) return;
         if (snap.exists()) {
-          const data = snap.data() as WebsiteSettings;
+          const data = normalizeWebsiteSettings(snap.data() as Partial<WebsiteSettings>);
           if (!data.logoUrl || data.logoUrl.trim() === "") {
             data.logoUrl = "/logo.png";
           }
@@ -451,6 +468,8 @@ export default function App() {
             cleanData.contactEmail = "";
           }
           setSettings(cleanData);
+        } else {
+          setSettings(normalizeWebsiteSettings(null));
         }
       }, error => handleDataFailure('settings', error));
       if (!isMounted) {
@@ -793,6 +812,21 @@ export default function App() {
   const compareIdSet = useMemo(() => new Set(compareProductIds), [compareProductIds]);
   const isKnownStorefrontPage = STOREFRONT_PAGE_IDS.has(currentPage);
 
+  if (isSupplierUser && user) {
+    return (
+      <Suspense fallback={<LazyBlockFallback className="min-h-screen rounded-none border-0 bg-slate-100" label="Loading Supplier Hub" />}>
+        <SupplierPortal user={user} />
+      </Suspense>
+    );
+  }
+
+  if (settings?.maintenanceMode && !isAdminMode && !isAdminUser) {
+    return <>
+      <StorefrontMaintenance settings={settings} onSignIn={() => setIsAuthModalOpen(true)} />
+      {hasOpenedAuth && <Suspense fallback={null}><AuthModal isOpen={isAuthModalOpen} onClose={() => setIsAuthModalOpen(false)} registrationEnabled={settings.registrationEnabled !== false} /></Suspense>}
+    </>;
+  }
+
   return (
     <div className="flex flex-col min-h-screen bg-slate-50 text-slate-800">
       <StorefrontSeo
@@ -854,6 +888,7 @@ export default function App() {
               )}
             </aside>
           )}
+          {settings?.storeStatus === 'closed' && <aside className="mx-auto mt-4 flex max-w-7xl items-center gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900" role="status"><Clock className="h-5 w-5" aria-hidden="true" /><div><strong>Store currently closed</strong><p>{settings.storeStatusMessage || 'Orders remain available and will be processed during the next business period.'}</p></div></aside>}
           {/* Main Content Pages */}
 
           {currentPage === 'payment-return' && paymentReturnContext && (
@@ -1723,7 +1758,7 @@ export default function App() {
           )}
 
           {/* PAGE 6: CMS DYNAMIC PAGES */}
-          {['about-us', 'privacy-policy', 'terms-conditions', 'return-policy', 'faq'].includes(currentPage) && (
+          {['about-us', 'privacy-policy', 'terms-conditions', 'return-policy', 'warranty-policy', 'faq'].includes(currentPage) && (
             <Suspense fallback={<LazyBlockFallback className="mx-auto my-12 min-h-96 max-w-5xl" label="Loading page content" />}>
               <CmsPage
                 pageId={currentPage}
@@ -1831,6 +1866,7 @@ export default function App() {
           <AuthModal
             isOpen={isAuthModalOpen}
             onClose={() => setIsAuthModalOpen(false)}
+            registrationEnabled={settings?.registrationEnabled !== false}
           />
         </Suspense>
       )}

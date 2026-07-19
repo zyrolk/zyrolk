@@ -9,6 +9,12 @@ export class A2ZConnectorService {
   private static readonly REQUEST_TIMEOUT_MS = 15000;
   private static readonly BROWSER_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
 
+  private static debugLog(...values: unknown[]): void {
+    if (typeof window !== 'undefined' && ['localhost', '127.0.0.1', '0.0.0.0'].includes(window.location.hostname)) {
+      console.info(...values);
+    }
+  }
+
   private static async fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.REQUEST_TIMEOUT_MS);
@@ -110,7 +116,7 @@ export class A2ZConnectorService {
     credentials: { username?: string; password?: string }
   ): Promise<string> {
     const baseDomain = this.getBaseDomain(baseUrl);
-    console.log(`[A2Z-Connector] Triggering authentic login sequence for domain: ${baseDomain}`);
+    this.debugLog(`[A2Z-Connector] Triggering authentic login sequence for domain: ${baseDomain}`);
 
     const username = credentials.username;
     const password = credentials.password;
@@ -122,7 +128,7 @@ export class A2ZConnectorService {
     try {
       // Step 1: Pre-authenticate GET request to initialize session cookies
       const preLoginUrl = `${baseDomain}/dash`;
-      console.log(`[A2Z-Connector] Pre-authenticating GET request to: ${preLoginUrl}`);
+      this.debugLog(`[A2Z-Connector] Pre-authenticating GET request to: ${preLoginUrl}`);
       
       const preRes = await this.fetchWithTimeout(preLoginUrl, {
         redirect: 'follow',
@@ -140,7 +146,7 @@ export class A2ZConnectorService {
         preCookieStr = preSetCookie;
       }
       const cleanPreCookie = this.extractCleanCookies(preCookieStr);
-      console.info('[A2Z-Connector]', JSON.stringify({
+      this.debugLog('[A2Z-Connector]', JSON.stringify({
         event: 'a2z_integration_diagnostic',
         authenticationStage: 'pre-authentication',
         endpoint: preLoginUrl,
@@ -154,7 +160,7 @@ export class A2ZConnectorService {
 
       // Step 2: Post credentials to /Login/auth
       const authUrl = `${baseDomain}/Login/auth`;
-      console.log(`[A2Z-Connector] Posting credentials to: ${authUrl}`);
+      this.debugLog(`[A2Z-Connector] Posting credentials to: ${authUrl}`);
 
       const loginBody = this.buildBrowserLoginBody(username, password);
 
@@ -175,7 +181,7 @@ export class A2ZConnectorService {
       });
 
       const authBody = await authRes.text();
-      console.info('[A2Z-Connector]', JSON.stringify({
+      this.debugLog('[A2Z-Connector]', JSON.stringify({
         event: 'a2z_integration_diagnostic',
         authenticationStage: 'credential-submission',
         endpoint: authUrl,
@@ -220,7 +226,7 @@ export class A2ZConnectorService {
       this.sessionCookie = finalCookie;
       this.lastLoginTime = Date.now();
 
-      console.log('[A2Z-Connector] Authentication successfully completed. Preserved clean session cookie.');
+      this.debugLog('[A2Z-Connector] Authentication successfully completed. Preserved clean session cookie.');
       return finalCookie;
 
     } catch (err: any) {
@@ -249,11 +255,11 @@ export class A2ZConnectorService {
     // Determine if we need to log in / refresh session
     const isSessionExpired = Date.now() - this.lastLoginTime > this.SESSION_TTL;
     if (!this.sessionCookie || isSessionExpired) {
-      console.log('[A2Z-Connector] Preserved session is missing or expired. Authenticating...');
+      this.debugLog('[A2Z-Connector] Preserved session is missing or expired. Authenticating...');
       await this.login(baseUrl, credentials);
     }
 
-    console.log(`[A2Z-Connector] Fetching catalog from target API: ${productsUrl}`);
+    this.debugLog(`[A2Z-Connector] Fetching catalog from target API: ${productsUrl}`);
 
     let fetchResponse: Response;
     let responseBodyText = '';
@@ -270,7 +276,7 @@ export class A2ZConnectorService {
         });
 
         responseBodyText = await fetchResponse.text();
-        console.info('[A2Z-Connector]', JSON.stringify({
+        this.debugLog('[A2Z-Connector]', JSON.stringify({
           event: 'a2z_integration_diagnostic',
           authenticationStage: 'catalog-fetch',
           endpoint: productsUrl,
@@ -285,7 +291,7 @@ export class A2ZConnectorService {
         if (fetchResponse.status === 200) {
           // If response is HTML (login page), the session is invalid/expired
           if (responseBodyText.trim().startsWith('<!DOCTYPE html')) {
-            console.log('[A2Z-Connector] Received HTML response instead of JSON. Session is likely invalid.');
+            this.debugLog('[A2Z-Connector] Received HTML response instead of JSON. Session is likely invalid.');
             return false;
           }
           return true;
@@ -301,7 +307,7 @@ export class A2ZConnectorService {
 
     // If fetch failed or session was invalid, re-authenticate once and retry
     if (!isSuccess) {
-      console.log('[A2Z-Connector] Session invalidated or fetch failed. Retrying login...');
+      this.debugLog('[A2Z-Connector] Session invalidated or fetch failed. Retrying login...');
       await this.login(baseUrl, credentials);
       isSuccess = await executeFetch();
     }
@@ -346,14 +352,14 @@ export class A2ZConnectorService {
         if (parsed.sku && parsed.title && isLiveStatus) {
           parsedProducts.push(parsed);
         } else {
-          console.log(`[A2Z-Connector] Filtering out inactive or invalid product SKU: ${parsed.sku}`);
+          this.debugLog(`[A2Z-Connector] Filtering out inactive or invalid product SKU: ${parsed.sku}`);
         }
       } catch (parseErr) {
         console.warn('[A2Z-Connector] Error parsing catalog product item:', parseErr);
       }
     }
 
-    console.log(`[A2Z-Connector] Successfully retrieved, parsed, and mapped ${parsedProducts.length} live products.`);
+    this.debugLog(`[A2Z-Connector] Successfully retrieved, parsed, and mapped ${parsedProducts.length} live products.`);
     return parsedProducts;
   }
 }

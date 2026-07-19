@@ -1,6 +1,8 @@
 import * as express from "express";
 import {
+  CHECKOUT_ABUSE_COLLECTION,
   CHECKOUT_IDEMPOTENCY_COLLECTION,
+  COD_CONFIRMATION_WINDOW_MS,
   calculateCheckoutTotals,
   CheckoutCartItem,
   CheckoutError,
@@ -10,11 +12,15 @@ import {
   getIdempotencyKeyFromValues,
   getCouponDocumentId,
   hashValue,
+  nextCheckoutAbuseCounter,
   normalizeCouponCode,
+  OFFLINE_CHECKOUT_NETWORK_LIMIT,
+  OFFLINE_CHECKOUT_PHONE_LIMIT,
   resolveCouponDiscount,
   resolveCheckoutIdempotency,
   validateCheckoutCartItems,
   validateCheckoutDetails,
+  validatePaymentMethod,
 } from "../checkout/checkoutLogic";
 import { sendApiError } from "../errors";
 import { adminAuth, adminDb } from "../firebase";
@@ -119,16 +125,18 @@ export function registerCheckoutRoutes(app: express.Express): void {
     let validatedCartItems: CheckoutCartItem[];
     let idempotencyKey: string | null;
     let requestHash: string;
+    let validatedPaymentMethod: "cod" | "whatsapp_confirm" | "payhere";
     try {
       customerUid = await resolveCheckoutCustomerUid(req.header("Authorization"));
       if (requestedCustomerUid && requestedCustomerUid !== "guest" && requestedCustomerUid !== customerUid) {
         throw new CheckoutError("Checkout customer identity does not match the signed-in account", 403);
       }
       validateCheckoutDetails(req.body);
+      validatedPaymentMethod = validatePaymentMethod(paymentMethod);
       validatedCartItems = validateCheckoutCartItems(cartItems);
       idempotencyKey = getIdempotencyKeyFromValues(req.header("Idempotency-Key"), req.body?.idempotencyKey);
       requestHash = createCheckoutRequestHash(req.body, validatedCartItems);
-      if (paymentMethod === "payhere" && !getPayHereAvailability().enabled) {
+      if (validatedPaymentMethod === "payhere" && !getPayHereAvailability().enabled) {
         throw new CheckoutError("Online payments are not configured", 503);
       }
     } catch (error: any) {
@@ -167,6 +175,23 @@ export function registerCheckoutRoutes(app: express.Express): void {
             }
           }
         }
+
+        const checkoutNetworkKey = getClientRateLimitKey(req.header("x-forwarded-for"), req.ip);
+        const offlineLimitRefs = validatedPaymentMethod === "payhere" ? [] : [
+          {
+            ref: adminDb.collection(CHECKOUT_ABUSE_COLLECTION).doc(hashValue(`offline-phone:${String(customerPhone).replace(/\D/gu, "")}`)),
+            maximum: OFFLINE_CHECKOUT_PHONE_LIMIT,
+          },
+          {
+            ref: adminDb.collection(CHECKOUT_ABUSE_COLLECTION).doc(hashValue(`offline-network:${checkoutNetworkKey}`)),
+            maximum: OFFLINE_CHECKOUT_NETWORK_LIMIT,
+          },
+        ];
+        const offlineLimitSnapshots = await Promise.all(offlineLimitRefs.map(({ ref }) => transaction.get(ref)));
+        const offlineLimitUpdates = offlineLimitRefs.map(({ ref, maximum }, index) => ({
+          ref,
+          data: nextCheckoutAbuseCounter(offlineLimitSnapshots[index].data() || null, maximum),
+        }));
 
         let itemsSubtotal = 0;
         const verifiedItems = [];
@@ -238,6 +263,7 @@ export function registerCheckoutRoutes(app: express.Express): void {
 
         const nextSeq = currentSeq + 1;
         transaction.set(counterRef, { currentSeq: nextSeq }, { merge: true });
+        offlineLimitUpdates.forEach(({ ref, data }) => transaction.set(ref, data, { merge: true }));
         const orderNumber = `ZY${nextSeq}`;
 
         for (const update of productUpdates) {
@@ -247,7 +273,7 @@ export function registerCheckoutRoutes(app: express.Express): void {
         }
 
         const orderRef = adminDb.collection("orders").doc();
-        const payHereFields = paymentMethod === "payhere"
+        const payHereFields = validatedPaymentMethod === "payhere"
           ? buildInitialPayHereOrderFields(orderRef.id, totals.grandTotalPrice)
           : null;
         const paymentTransaction = payHereFields?.paymentTransaction;
@@ -269,7 +295,7 @@ export function registerCheckoutRoutes(app: express.Express): void {
           ...(couponCode ? { couponCode } : {}),
           status: "pending",
           stockDeducted: true,
-          paymentMethod: paymentMethod || "cod",
+          paymentMethod: validatedPaymentMethod,
           ...(payHereFields ? {
             paymentProvider: payHereFields.paymentProvider,
             paymentStatus: payHereFields.paymentStatus,
@@ -281,7 +307,9 @@ export function registerCheckoutRoutes(app: express.Express): void {
             stockRestorationApplied: false,
           } : {
             paymentStatus: "not_required",
-            stockReservationStatus: "committed",
+            stockReservationStatus: "reserved",
+            stockReservationExpiresAt: new Date(Date.now() + COD_CONFIRMATION_WINDOW_MS),
+            stockRestorationApplied: false,
           }),
           createdAt: new Date().toISOString()
         };

@@ -12,8 +12,8 @@ const readSpecification = (product: Pick<Product, 'specs'>, key: 'brand' | 'mode
   return typeof entry?.[1] === 'string' ? entry[1].trim() : '';
 };
 
-export const getProductBrand = (product: Pick<Product, 'specs'>): string =>
-  readSpecification(product, 'brand');
+export const getProductBrand = (product: Pick<Product, 'specs' | 'brand'>): string =>
+  readSpecification(product, 'brand') || product.brand?.trim() || '';
 
-export const getProductModel = (product: Pick<Product, 'specs'>): string =>
-  readSpecification(product, 'model');
+export const getProductModel = (product: Pick<Product, 'specs' | 'model'>): string =>
+  product.model?.trim() || readSpecification(product, 'model');

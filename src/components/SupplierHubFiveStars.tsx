@@ -39,6 +39,7 @@ import {
 import { collection, doc, getDocs, limit, onSnapshot, orderBy, query, setDoc, writeBatch } from 'firebase/firestore';
 import { auth, db, handleFirestoreError, OperationType } from '../firebase';
 import { Product } from '../types';
+import { mergeProductCommercialData, PRODUCT_PRIVATE_COLLECTION } from '../services/products/productCommercialData';
 import { getAppCheckRequestHeaders } from '../services/security/appCheck';
 import { approveSupplierQueueItem, deleteSupplierQueueItem, rejectSupplierQueueItem } from '../services/supplierQueueService';
 import { matchesSupplierSearch } from '../services/supplierSearch';
@@ -62,6 +63,11 @@ import {
 
 const SYNC_HISTORY_LIMIT = 100;
 const FIRESTORE_BATCH_WRITE_LIMIT = 450;
+const supplierDebug = (...values: unknown[]): void => {
+  if (typeof window !== 'undefined' && ['localhost', '127.0.0.1', '0.0.0.0'].includes(window.location.hostname)) {
+    console.info(...values);
+  }
+};
 
 interface SupplierSyncWrite {
   collectionName: string;
@@ -140,7 +146,11 @@ export interface ReviewQueueItem {
   productPayload?: Product & Record<string, unknown>; // Full product data to be written on approval
   matchedProductId?: string | null; // ID of existing product if match found
   supplierName?: string;
-  source?: 'Website' | 'WhatsApp';
+  source?: 'Website' | 'WhatsApp' | 'Supplier Portal';
+  portalRequestId?: string;
+  supplierId?: string;
+  supplierSkuClaimId?: string;
+  productFingerprintClaimId?: string;
   sourceId?: string;
   batchId?: string;
   createdAt?: string;
@@ -229,10 +239,6 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
         const sources: any[] = [];
         snapshot.forEach((doc) => {
           const data = doc.data();
-          console.info('[SupplierLimitTrace] firestore-source-loaded', {
-            sourceId: doc.id,
-            productLimit: data.settings?.productLimit ?? null,
-          });
           sources.push({
             id: doc.id,
             ...data,
@@ -282,10 +288,6 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
       (snapshot) => {
         if (snapshot.exists()) {
           const persistedSettings = snapshot.data();
-          console.info('[SupplierLimitTrace] firestore-hub-settings-loaded', {
-            productLimit: persistedSettings.productLimit ?? null,
-            scheduledMaxProducts: persistedSettings.maxProducts ?? null,
-          });
           setSupplierSettings(prev => ({ ...prev, ...persistedSettings }));
         }
       },
@@ -449,6 +451,8 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
   const [processingChangeId, setProcessingChangeId] = useState<string | null>(null);
   const [comparingChange, setComparingChange] = useState<any | null>(null);
   const [editingReviewItem, setEditingReviewItem] = useState<ReviewQueueItem | null>(null);
+  const [rejectingReviewItem, setRejectingReviewItem] = useState<ReviewQueueItem | null>(null);
+  const [rejectionReasonDraft, setRejectionReasonDraft] = useState('');
 
   // 3. Settings states
   const [supplierSettings, setSupplierSettings] = useState<any>({
@@ -532,11 +536,15 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
     try {
       const syncBatchId = `batch-${Date.now()}`;
       // 1. Fetch existing products from Firestore
-      const querySnapshot = await getDocs(collection(db, "products"));
-      const existingProducts: Product[] = [];
-      querySnapshot.forEach((docSnap) => {
-        existingProducts.push({ id: docSnap.id, ...docSnap.data() } as Product);
-      });
+      const [querySnapshot, commercialSnapshot] = await Promise.all([
+        getDocs(collection(db, "products")),
+        getDocs(collection(db, PRODUCT_PRIVATE_COLLECTION)),
+      ]);
+      const commercialById = new Map(commercialSnapshot.docs.map((document) => [document.id, document.data()]));
+      const existingProducts: Product[] = querySnapshot.docs.map((document) => mergeProductCommercialData(
+        { id: document.id, ...document.data() },
+        commercialById.get(document.id),
+      ));
 
       // 2. Fetch raw products from active website suppliers
       const activeSources = supplierSources.filter(src => 
@@ -580,14 +588,6 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
           supplierSettings.productLimit,
           250,
         );
-        console.info('[SupplierLimitTrace] react-sync-limit-resolved', {
-          sourceId: source.id,
-          firestoreSourceValue: sourceSettings.productLimit ?? null,
-          firestoreHubValue: supplierSettings.productLimit ?? null,
-          scheduledMaxProductsIgnoredByManualSync: supplierSettings.maxProducts ?? null,
-          resolvedProductLimit: limitNum,
-          batchId: syncBatchId,
-        });
         
         if (!urlToFetch) {
           const message = `${source.supplierName || source.name || source.id}: missing website URL`;
@@ -602,11 +602,6 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
         }
 
         try {
-          console.info('[SupplierLimitTrace] sync-request-dispatched', {
-            sourceId: source.id,
-            productLimit: limitNum,
-            batchId: syncBatchId,
-          });
           const res = await postSupplierApi('/api/fetch-supplier', {
             websiteUrl: urlToFetch,
             endpoint: endpointToFetch,
@@ -623,13 +618,6 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
           const result = await res.json();
           if (result.success && Array.isArray(result.products)) {
             const dryRunMode = sourceSettings.dryRunMode === true;
-            console.info('[SupplierLimitTrace] api-response-received', {
-              sourceId: source.id,
-              requestedProductLimit: limitNum,
-              apiAcknowledgedProductLimit: result.requestedProductLimit ?? null,
-              fetchedCount: result.products.length,
-              batchId: syncBatchId,
-            });
             const discoveredCategories = collectDiscoveredSupplierCategories(result.products);
             let fetched = result.products;
 
@@ -661,13 +649,6 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
 
             const slicedProducts = limitSupplierProducts<RawA2ZProduct>(fetched as RawA2ZProduct[], limitNum);
             totalProcessedCount += slicedProducts.length;
-            console.info('[SupplierLimitTrace] post-filter-limit-applied', {
-              sourceId: source.id,
-              requestedProductLimit: limitNum,
-              filteredCount: fetched.length,
-              processedCount: slicedProducts.length,
-              batchId: syncBatchId,
-            });
 
             // Map and compare each product
             const sourceMappedQueue: ReviewQueueItem[] = [];
@@ -810,7 +791,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
                 supplierItemCode: prod.sku,
                 costPrice: priceUpdateEnabled ? wholesale : (match?.costPrice || 0),
                 marketPrice: priceUpdateEnabled ? (prod.recommendedRetailPrice || 0) : (match?.marketPrice || 0),
-                rating: match ? (match.rating ?? 5) : 5,
+                rating: match ? (match.rating ?? 0) : 0,
                 reviewsCount: match ? (match.reviewsCount ?? 0) : 0,
                 createdAt: match ? (match.createdAt || new Date().toISOString()) : new Date().toISOString()
               };
@@ -874,7 +855,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
             }
 
             aggregatedMappedQueue.push(...sourceMappedQueue);
-            console.info('[SupplierLimitTrace] queue-writer-input', {
+            supplierDebug('[SupplierLimitTrace] queue-writer-input', {
               sourceId: source.id,
               requestedProductLimit: limitNum,
               processedCount: slicedProducts.length,
@@ -1321,7 +1302,6 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
       };
 
       await approveSupplierQueueItem(queueDecisionItem, validCategoryIds);
-      console.log(`[Approval Pipeline] Successfully approved and wrote product for queue item: ${change.id}`);
 
       setProcessingChangeId(null);
       setSuccessMsg(`Change for "${change.productName}" approved successfully.`);
@@ -1375,7 +1355,6 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
       const approvalItem = buildSupplierApprovalItem(item, draft, validCategoryIds);
       await persistReviewCategoryMapping(item, draft.category.trim());
       await approveSupplierQueueItem(approvalItem, validCategoryIds);
-      console.log(`[Approval Pipeline] Successfully approved and wrote product for queue item: ${item.id}`);
 
       setEditingReviewItem(null);
       setSuccessMsg(`Product "${draft.productName.trim()}" approved and published successfully.`);
@@ -1389,11 +1368,13 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
     }
   };
 
-  const handleRejectReviewItem = async (item: ReviewQueueItem) => {
+  const handleRejectReviewItem = async (item: ReviewQueueItem, rejectionReason: string) => {
     setProcessingChangeId(item.id);
     try {
-      await rejectSupplierQueueItem(item);
+      await rejectSupplierQueueItem({ ...item, rejectionReason: rejectionReason.trim() });
       setProcessingChangeId(null);
+      setRejectingReviewItem(null);
+      setRejectionReasonDraft('');
       setSuccessMsg(`Product "${item.productName}" rejected.`);
       setTimeout(() => setSuccessMsg(null), 3000);
     } catch (error: any) {
@@ -1950,7 +1931,10 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
                                   Edit & Publish
                                 </button>
                                 <button
-                                  onClick={() => handleRejectReviewItem(item)}
+                                  onClick={() => {
+                                    setRejectingReviewItem(item);
+                                    setRejectionReasonDraft('');
+                                  }}
                                   disabled={processingChangeId === item.id}
                                   className="px-3 py-1.5 bg-red-600 hover:bg-red-700 disabled:bg-slate-700 text-white font-bold rounded-lg text-[10px] transition-colors flex items-center gap-1 cursor-pointer"
                                 >
@@ -3384,6 +3368,38 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
           }}
           onPublish={(draft) => handleApproveReviewItem(editingReviewItem, draft)}
         />
+      )}
+
+      {rejectingReviewItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-xs" role="dialog" aria-modal="true" aria-labelledby="supplier-rejection-title">
+          <form
+            className="w-full max-w-md space-y-4 rounded-3xl border border-slate-200 bg-white p-6 text-left shadow-2xl dark:border-slate-800 dark:bg-[#111928]"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (rejectionReasonDraft.trim()) void handleRejectReviewItem(rejectingReviewItem, rejectionReasonDraft);
+            }}
+          >
+            <div>
+              <h3 id="supplier-rejection-title" className="text-sm font-extrabold text-slate-900 dark:text-white">Reject supplier product</h3>
+              <p className="mt-1 text-xs text-slate-500">Give the supplier a clear reason they can act on.</p>
+            </div>
+            <label className="block text-xs font-bold text-slate-600 dark:text-slate-300">
+              Rejection reason
+              <textarea
+                autoFocus
+                required
+                maxLength={500}
+                value={rejectionReasonDraft}
+                onChange={(event) => setRejectionReasonDraft(event.target.value)}
+                className="mt-2 min-h-28 w-full rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-900 outline-none focus:border-blue-500 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+              />
+            </label>
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => { setRejectingReviewItem(null); setRejectionReasonDraft(''); }} className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-bold text-slate-600 dark:border-slate-700 dark:text-slate-300">Cancel</button>
+              <button type="submit" disabled={!rejectionReasonDraft.trim() || processingChangeId === rejectingReviewItem.id} className="rounded-xl bg-red-600 px-4 py-2 text-xs font-bold text-white disabled:opacity-50">Reject Product</button>
+            </div>
+          </form>
+        </div>
       )}
 
       {showResetSettingsConfirm && (

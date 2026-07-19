@@ -77,6 +77,34 @@ export const validateStoreSettings = ({
   if (parsedDeliveryCharge === undefined) errors.push('Delivery charge must be a non-negative number.');
   if (parsedFreeDeliveryMin === undefined) errors.push('Free delivery threshold must be a non-negative number.');
 
+  if (settings.currency && settings.currency !== 'LKR') errors.push('Currency must remain LKR for the current checkout contract.');
+  if (settings.storeStatus && !['open', 'closed'].includes(settings.storeStatus)) errors.push('Store status is invalid.');
+  if (settings.maintenanceMode && !settings.maintenanceMessage?.trim()) errors.push('A maintenance message is required when maintenance mode is enabled.');
+
+  const areaIds = new Set<string>();
+  const districts = new Set<string>();
+  (settings.deliveryAreas || []).forEach((area, index) => {
+    const label = `Delivery area ${index + 1}`;
+    const id = area.id.trim().toLocaleLowerCase();
+    if (!id || areaIds.has(id)) errors.push(`${label} must have a unique identifier.`);
+    areaIds.add(id);
+    if (!area.name.trim()) errors.push(`${label} name is required.`);
+    if (!Number.isFinite(Number(area.charge)) || Number(area.charge) < 0) errors.push(`${label} charge must be a non-negative number.`);
+    if (!area.estimatedDelivery.trim()) errors.push(`${label} estimated delivery time is required.`);
+    if (!area.districts.length) errors.push(`${label} must include at least one district.`);
+    area.districts.forEach((district) => {
+      const districtKey = district.trim().toLocaleLowerCase();
+      if (!districtKey || districts.has(districtKey)) errors.push(`${label} contains a missing or duplicate district assignment.`);
+      districts.add(districtKey);
+    });
+  });
+
+  Object.values(settings.homepageSections || {}).forEach((section) => {
+    if (section.enabled && !section.title.trim()) errors.push('Enabled homepage sections require a title.');
+    if (section.title.length > 80) errors.push('Homepage section titles must be 80 characters or fewer.');
+    if (section.subtitle.length > 220) errors.push('Homepage section subtitles must be 220 characters or fewer.');
+  });
+
   return {
     errors,
     deliveryCharge: parsedDeliveryCharge,

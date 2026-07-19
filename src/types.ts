@@ -8,6 +8,15 @@ export interface Product {
   imageUrl: string;
   imageUrls?: string[];
   category: string; // e.g. 'electronics'
+  subcategory?: string;
+  brand?: string; // registered brand document ID
+  model?: string;
+  barcode?: string;
+  productType?: string;
+  tags?: string[];
+  shortDescription?: string;
+  keyFeatures?: string[];
+  whatsIncluded?: string[];
   rating: number; // 0 when unrated; otherwise 1-5
   reviewsCount: number;
   isNew?: boolean;
@@ -18,9 +27,31 @@ export interface Product {
   stock: number;
   specs: Record<string, string>;
   createdAt?: string;
+  updatedAt?: string;
   supplierItemCode?: string;
+  supplierId?: string;
+  lowStockLimit?: number;
   costPrice?: number;
   marketPrice?: number;
+}
+
+export interface Brand {
+  id: string;
+  name: string;
+  isActive?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface SubCategory {
+  id: string;
+  name: string;
+  isActive?: boolean;
+}
+
+export interface SpecificationTemplateField {
+  name: string;
+  required?: boolean;
 }
 
 /** Customer-search-safe view of a product. Keep this explicit and allowlisted. */
@@ -48,6 +79,9 @@ export interface Category {
   imageUrl?: string;
   isActive?: boolean;
   count?: number;
+  subcategories?: SubCategory[];
+  specificationTemplate?: SpecificationTemplateField[];
+  updatedAt?: string;
 }
 
 export interface CartItem {
@@ -84,6 +118,11 @@ export interface Order {
   paymentReference?: string;
   paymentAttempt?: number;
   paymentTimeline?: Array<{ id: string; status: string; label: string; source: string; at: string }>;
+  supplierId?: string;
+  supplierIds?: string[];
+  supplierFulfilmentStatus?: 'pending' | 'processing' | 'packed' | 'shipped';
+  supplierAssignedAt?: string;
+  supplierFulfilmentUpdatedAt?: string;
   createdAt: string;
 }
 
@@ -98,6 +137,27 @@ export interface HeroBannerSettings {
   buttonText?: string;
   buttonUrl?: string;
   enabled?: boolean;
+}
+
+export interface HomepageSectionSettings {
+  enabled: boolean;
+  title: string;
+  subtitle: string;
+}
+
+export interface DeliveryAreaSettings {
+  id: string;
+  name: string;
+  districts: string[];
+  charge: number;
+  estimatedDelivery: string;
+  isActive: boolean;
+}
+
+export interface BusinessHoursSettings {
+  weekdays: string;
+  saturday: string;
+  sunday: string;
 }
 
 export interface WebsiteSettings {
@@ -115,6 +175,13 @@ export interface WebsiteSettings {
   heroBanners: HeroBannerSettings[];
   autoSlideSpeed?: number; // Seconds
   enableSlider?: boolean;
+  homepageSections?: {
+    flashDeals: HomepageSectionSettings;
+    featured: HomepageSectionSettings;
+    newArrivals: HomepageSectionSettings;
+    bestSellers: HomepageSectionSettings;
+    recommended: HomepageSectionSettings;
+  };
 
   // Branding
   primaryColor?: string;
@@ -140,19 +207,30 @@ export interface WebsiteSettings {
   // Shipping
   deliveryCharge: number;
   freeDeliveryMin: number;
+  deliveryAreas?: DeliveryAreaSettings[];
+  currency?: 'LKR';
+  businessHours?: BusinessHoursSettings;
+  storeStatus?: 'open' | 'closed';
+  storeStatusMessage?: string;
 
   // Store Options
   enableCOD?: boolean;
   enableWishlist?: boolean;
   enableReviews?: boolean;
   enableFeaturedProducts?: boolean;
+  maintenanceMode?: boolean;
+  maintenanceMessage?: string;
+  registrationEnabled?: boolean;
+  supplierRegistrationEnabled?: boolean;
+  emailNotificationsEnabled?: boolean;
+  orderNotificationsEnabled?: boolean;
 }
 
 export interface UserProfile {
   uid: string;
   email: string;
   displayName: string;
-  role: 'customer' | 'admin';
+  role: 'customer' | 'admin' | 'supplier';
   createdAt: string;
 }
 
@@ -170,7 +248,7 @@ export interface SupplierReviewQueueItem {
   supplierCode: string;
   supplierName: string;
   productName: string;
-  source: 'Website' | 'WhatsApp';
+  source: 'Website' | 'WhatsApp' | 'Supplier Portal';
   changeType: 'NEW_PRODUCT' | 'PRICE_CHANGED' | 'STOCK_CHANGED' | 'IMAGE_CHANGED' | 'DESCRIPTION_CHANGED';
   oldValue: string;
   newValue: string;

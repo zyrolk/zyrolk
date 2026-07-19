@@ -115,8 +115,12 @@ export const sendOrderNotifications = onDocumentWritten("orders/{orderId}", asyn
   const orderId = event.params.orderId;
   const order = { id: orderId, ...after };
   const messages: EmailMessage[] = [];
+  const settingsSnapshot = await adminDb.collection('settings').doc('website').get();
+  const notificationSettings = settingsSnapshot.exists ? settingsSnapshot.data() || {} : {};
+  if (notificationSettings.emailNotificationsEnabled === false) return;
+  const orderNotificationsEnabled = notificationSettings.orderNotificationsEnabled !== false;
 
-  if (!before) {
+  if (!before && orderNotificationsEnabled) {
     const customer = customerOrderEmail(order);
     if (customer) messages.push(customer);
     messages.push(adminOrderEmail(order));
@@ -130,7 +134,7 @@ export const sendOrderNotifications = onDocumentWritten("orders/{orderId}", asyn
     if (admin) messages.push(admin);
   }
 
-  if (before && before.status !== after.status && !paymentBecamePaid) {
+  if (orderNotificationsEnabled && before && before.status !== after.status && !paymentBecamePaid) {
     const customer = statusEmail(order);
     if (customer) messages.push(customer);
   }

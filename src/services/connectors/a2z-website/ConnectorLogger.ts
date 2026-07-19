@@ -4,6 +4,8 @@ import { ConnectorLogEntry } from './types';
 
 export class ConnectorLogger {
   private static readonly LOGS_COLLECTION = 'supplierSyncLogs';
+  private static readonly CONSOLE_ENABLED = typeof window !== 'undefined'
+    && ['localhost', '127.0.0.1', '0.0.0.0'].includes(window.location.hostname);
 
   /**
    * Logs an operational event from the connector modules.
@@ -27,14 +29,15 @@ export class ConnectorLogger {
       details
     };
 
-    // Print to developer console
-    const formattedConsoleMsg = `[A2Z-Website-Connector][${level.toUpperCase()}][${module}] ${message}`;
-    if (level === 'error') {
-      console.error(formattedConsoleMsg, details || '');
-    } else if (level === 'warn') {
-      console.warn(formattedConsoleMsg, details || '');
-    } else {
-      console.log(formattedConsoleMsg, details || '');
+    if (this.CONSOLE_ENABLED) {
+      const formattedConsoleMsg = `[A2Z-Website-Connector][${level.toUpperCase()}][${module}] ${message}`;
+      if (level === 'error') {
+        console.error(formattedConsoleMsg, details || '');
+      } else if (level === 'warn') {
+        console.warn(formattedConsoleMsg, details || '');
+      } else {
+        console.info(formattedConsoleMsg, details || '');
+      }
     }
 
     try {
@@ -52,7 +55,7 @@ export class ConnectorLogger {
         ...details
       });
     } catch (e) {
-      console.warn('Logging telemetry write skipped or failed:', e);
+      if (this.CONSOLE_ENABLED) console.warn('Logging telemetry write skipped or failed:', e);
     }
 
     return entry;

@@ -97,6 +97,11 @@ You have the right to request access to your stored personal data, request corre
 • Warranty repairs and servicing will be handled through authorized local service centers in Sri Lanka.`
   },
   {
+    id: "warranty-policy",
+    title: "Warranty Policy",
+    content: `Warranty coverage applies only where it is explicitly stated on the product page, order record, invoice, or documentation supplied with the item. Duration and provider vary by product. Proof of purchase may be required. Accidental damage, misuse, unauthorized repairs, consumable wear, and incompatible power or accessories are excluded unless the product-specific terms state otherwise. Contact Zyro.lk with your order reference and issue details so the applicable terms can be confirmed before inspection or service.`
+  },
+  {
     id: "faq",
     title: "Frequently Asked Questions",
     content: `Find answers to some of our customers' most common questions regarding shipping, warranties, and orders.
@@ -286,6 +291,7 @@ const getSectionIcon = (title: string, pageId: string) => {
   if (pageId === 'privacy-policy') return <Lock className="h-5 w-5 text-emerald-500" />;
   if (pageId === 'terms-conditions') return <FileText className="h-5 w-5 text-indigo-500" />;
   if (pageId === 'return-policy') return <RefreshCw className="h-5 w-5 text-purple-500" />;
+  if (pageId === 'warranty-policy') return <Award className="h-5 w-5 text-amber-500" />;
   if (pageId === 'contact-us') return <Phone className="h-5 w-5 text-blue-500" />;
 
   return <FileText className="h-5 w-5 text-slate-400" />;

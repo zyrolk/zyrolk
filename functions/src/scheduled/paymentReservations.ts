@@ -12,7 +12,12 @@ async function expireReservation(orderRef: FirebaseFirestore.DocumentReference):
     const expiresAt = order.stockReservationExpiresAt instanceof Timestamp
       ? order.stockReservationExpiresAt.toMillis()
       : new Date(order.stockReservationExpiresAt || 0).getTime();
-    if (!new Set(["awaiting_payment", "pending"]).has(order.paymentStatus) || order.stockReservationStatus !== "reserved" || expiresAt > Date.now()) return false;
+    const isPayHereReservation = order.paymentMethod === "payhere"
+      && new Set(["awaiting_payment", "pending"]).has(String(order.paymentStatus || ""));
+    const isOfflineConfirmationReservation = order.paymentMethod !== "payhere"
+      && String(order.status || "pending") === "pending"
+      && order.paymentStatus === "not_required";
+    if ((!isPayHereReservation && !isOfflineConfirmationReservation) || order.stockReservationStatus !== "reserved" || expiresAt > Date.now()) return false;
 
     const productUpdates: Array<{ ref: FirebaseFirestore.DocumentReference; stock: number }> = [];
     for (const item of Array.isArray(order.items) ? order.items : []) {
@@ -29,8 +34,14 @@ async function expireReservation(orderRef: FirebaseFirestore.DocumentReference):
 
     productUpdates.forEach((update) => transaction.update(update.ref, { stock: update.stock }));
     transaction.update(orderRef, {
-      paymentStatus: "expired",
-      paymentTimeline: appendPaymentTimeline(order.paymentTimeline, createPaymentTimelineEvent("expired", "Payment window expired and reserved stock was released", "system")),
+      ...(isPayHereReservation ? { paymentStatus: "expired" } : { reservationExpiredReason: "cod_confirmation_expired" }),
+      paymentTimeline: appendPaymentTimeline(order.paymentTimeline, createPaymentTimelineEvent(
+        "expired",
+        isPayHereReservation
+          ? "Payment window expired and reserved stock was released"
+          : "Cash-on-delivery confirmation window expired and reserved stock was released",
+        "system",
+      )),
       stockReservationStatus: "released",
       stockRestorationApplied: true,
       stockRestoredAt: FieldValue.serverTimestamp(),
@@ -38,7 +49,7 @@ async function expireReservation(orderRef: FirebaseFirestore.DocumentReference):
       statusUpdatedAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
     });
-    if (typeof order.paymentGatewayOrderId === "string") {
+    if (isPayHereReservation && typeof order.paymentGatewayOrderId === "string") {
       transaction.set(adminDb.collection("payment_transactions").doc(order.paymentGatewayOrderId), {
         status: "expired",
         updatedAt: FieldValue.serverTimestamp(),
@@ -56,5 +67,5 @@ export const expirePaymentReservations = onSchedule("every 5 minutes", async () 
     .get();
   const results = await Promise.all(snapshot.docs.map((order) => expireReservation(order.ref)));
   const expiredCount = results.filter(Boolean).length;
-  if (expiredCount) appLogger.info("Expired PayHere stock reservations.", { expiredCount });
+  if (expiredCount) appLogger.info("Expired unconfirmed stock reservations.", { expiredCount });
 });
