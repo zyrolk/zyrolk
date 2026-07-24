@@ -71,7 +71,7 @@ export default function MarketplaceHomePhase1({
         />
       </div>
 
-      <section className="zy-foundation-category-dock" aria-labelledby="phase-one-categories-title">
+      <section className="zy-foundation-category-dock" data-zy-reveal aria-labelledby="phase-one-categories-title">
         <header className="zy-foundation-dock-header">
           <div className="zy-foundation-dock-copy">
             <span className="zy-foundation-eyebrow">Quick shopping</span>
@@ -96,6 +96,7 @@ export default function MarketplaceHomePhase1({
                 type="button"
                 onClick={() => onSelectCategory(category.id)}
                 className="zy-foundation-category-tile"
+                data-zy-category-motion
                 aria-label={`Browse ${category.name}, ${itemsCount} ${itemsCount === 1 ? 'product' : 'products'}`}
                 role="listitem"
               >
@@ -123,11 +124,11 @@ export default function MarketplaceHomePhase1({
         )}
       </section>
 
-      <div className="zy-foundation-container zy-launch-trust-wrap">
+      <div className="zy-foundation-container zy-launch-trust-wrap" data-zy-reveal>
         <HomepageTrustStrip />
       </div>
 
-      <div className="zy-foundation-container zy-launch-why-wrap">
+      <div className="zy-foundation-container zy-launch-why-wrap" data-zy-reveal>
         <HomepageWhyChoose />
       </div>
 
@@ -233,7 +234,7 @@ export default function MarketplaceHomePhase1({
         />}
       </div>
 
-      <div className="zy-foundation-container zy-launch-reviews-wrap">
+      <div className="zy-foundation-container zy-launch-reviews-wrap" data-zy-reveal>
         <HomepageCustomerReviews
           reviews={reviews}
           products={products}

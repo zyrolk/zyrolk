@@ -6,6 +6,8 @@ import {
   buildA2ZBrowserLoginBody,
   fingerprintA2ZCredentials,
 } from "./credentialForensics";
+import { fetchSupplierOutbound, SupplierOutboundPolicy, SupplierOutboundResponse } from "../../security/supplierOutboundRequest";
+import { SupplierCatalogPageRequest, SupplierCatalogPageResult } from "../types";
 
 export class A2ZConnectorService {
   private static sessionCookie: string | null = null;
@@ -26,12 +28,16 @@ export class A2ZConnectorService {
     }));
   }
 
-  private static async fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
+  private static async fetchWithTimeout(
+    url: string,
+    init: RequestInit,
+    outboundPolicy: SupplierOutboundPolicy,
+  ): Promise<SupplierOutboundResponse> {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.REQUEST_TIMEOUT_MS);
 
     try {
-      return await fetch(url, { ...init, signal: controller.signal });
+      return await fetchSupplierOutbound(url, { ...init, signal: controller.signal }, outboundPolicy);
     } finally {
       clearTimeout(timeoutId);
     }
@@ -113,7 +119,8 @@ export class A2ZConnectorService {
 
   public static async login(
     baseUrl: string,
-    credentials: { username?: string; password?: string }
+    credentials: { username?: string; password?: string },
+    outboundPolicy: SupplierOutboundPolicy,
   ): Promise<string> {
     const baseDomain = this.getBaseDomain(baseUrl);
     this.debugLog(`[A2Z-Connector] Triggering authentic login sequence for domain: ${baseDomain}`);
@@ -133,13 +140,13 @@ export class A2ZConnectorService {
       this.debugLog(`[A2Z-Connector] Pre-authenticating GET request to: ${preLoginUrl}`);
 
       const preRes = await this.fetchWithTimeout(preLoginUrl, {
-        redirect: "follow",
+          redirect: "manual",
         headers: {
           "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
           "Accept-Language": "en-US,en;q=0.9",
           "User-Agent": this.BROWSER_USER_AGENT,
         },
-      });
+      }, outboundPolicy);
       const preSetCookie = preRes.headers.get("set-cookie");
       let preCookieStr = "";
       if (typeof preRes.headers.getSetCookie === "function") {
@@ -164,7 +171,7 @@ export class A2ZConnectorService {
 
       const authRes = await this.fetchWithTimeout(authUrl, {
         method: "POST",
-        redirect: "follow",
+          redirect: "manual",
         headers: {
           "Accept": "application/json, text/javascript, */*; q=0.01",
           "Accept-Language": "en-US,en;q=0.9",
@@ -176,7 +183,7 @@ export class A2ZConnectorService {
           "X-Requested-With": "XMLHttpRequest",
         },
         body: loginBody
-      });
+      }, outboundPolicy);
 
       const authBody = await authRes.text();
       this.logDiagnostic("credential-submission", {
@@ -185,7 +192,7 @@ export class A2ZConnectorService {
         contentType: "application/x-www-form-urlencoded; charset=UTF-8",
         requestPayloadKeys: ["un", "pw"],
         requestHeaderNames: ["Accept", "Accept-Language", "Content-Type", "Cookie", "Origin", "Referer", "User-Agent", "X-Requested-With"],
-        redirectMode: "follow",
+        redirectMode: "validated-manual",
         timeoutMs: this.REQUEST_TIMEOUT_MS,
         httpStatus: authRes.status,
         responseHeaders: sanitizeA2ZResponseHeaders(authRes.headers),
@@ -231,21 +238,32 @@ export class A2ZConnectorService {
     }
   }
 
-  public static async fetchCatalog(
+  private static async fetchCatalogInternal(
     baseUrl: string,
-    credentials: { username?: string; password?: string }
-  ): Promise<RawA2ZProduct[]> {
+    credentials: { username?: string; password?: string },
+    outboundPolicy: SupplierOutboundPolicy,
+    pageRequest?: SupplierCatalogPageRequest,
+  ): Promise<SupplierCatalogPageResult> {
     if (!baseUrl) {
       throw new Error("A2Z Connector Service requires a valid websiteUrl base path.");
     }
 
     const baseDomain = this.getBaseDomain(baseUrl);
-    const productsUrl = `${baseDomain}/Product/getAllproducts2`;
+    const requestedOffset = pageRequest?.cursor?.startsWith("a2z-local:")
+      ? Math.max(0, Number(pageRequest.cursor.slice("a2z-local:".length)) || 0)
+      : Math.max(0, Number(pageRequest?.cursor) || 0);
+    const pageSize = Math.max(1, Math.min(Number(pageRequest?.pageSize) || 100, 200));
+    const productsUrlObject = new URL(`${baseDomain}/Product/getAllproducts2`);
+    if (pageRequest && !pageRequest.cursor?.startsWith("a2z-local:")) {
+      productsUrlObject.searchParams.set("start", String(requestedOffset));
+      productsUrlObject.searchParams.set("length", String(pageSize));
+    }
+    const productsUrl = productsUrlObject.toString();
     const isSessionExpired = Date.now() - this.lastLoginTime > this.SESSION_TTL;
 
     if (!this.sessionCookie || isSessionExpired) {
       this.debugLog("[A2Z-Connector] Preserved session is missing or expired. Authenticating...");
-      await this.login(baseUrl, credentials);
+      await this.login(baseUrl, credentials, outboundPolicy);
     }
 
     this.debugLog(`[A2Z-Connector] Fetching catalog from target API: ${productsUrl}`);
@@ -256,19 +274,19 @@ export class A2ZConnectorService {
       try {
         const fetchResponse = await this.fetchWithTimeout(productsUrl, {
           method: "GET",
-          redirect: "error",
+          redirect: "manual",
           headers: {
             "Cookie": this.sessionCookie || "",
             "Accept": "application/json"
           }
-        });
+        }, outboundPolicy);
 
         responseBodyText = await fetchResponse.text();
         this.logDiagnostic("catalog-fetch", {
           endpoint: productsUrl,
           method: "GET",
           requestPayloadKeys: [],
-          redirectMode: "error",
+          redirectMode: "validated-manual",
           timeoutMs: this.REQUEST_TIMEOUT_MS,
           httpStatus: fetchResponse.status,
           responseHeaders: sanitizeA2ZResponseHeaders(fetchResponse.headers),
@@ -293,7 +311,7 @@ export class A2ZConnectorService {
 
     if (!isSuccess) {
       this.debugLog("[A2Z-Connector] Session invalidated or fetch failed. Retrying login...");
-      await this.login(baseUrl, credentials);
+      await this.login(baseUrl, credentials, outboundPolicy);
       isSuccess = await executeFetch();
     }
 
@@ -324,23 +342,62 @@ export class A2ZConnectorService {
       }
     }
 
+    const reportedTotal = Number(responseBody?.recordsTotal ?? responseBody?.total ?? responseBody?.count);
+    const usesLocalPagination = Boolean(pageRequest && rawList.length > pageSize) || pageRequest?.cursor?.startsWith("a2z-local:") === true;
+    const productsForPage = pageRequest && usesLocalPagination
+      ? rawList.slice(requestedOffset, requestedOffset + pageSize)
+      : rawList;
     const parsedProducts: RawA2ZProduct[] = [];
+    let invalidProducts = 0;
 
-    for (const item of rawList) {
+    for (const item of productsForPage) {
       try {
         const parsed = ProductParser.parseJsonPayload(item, baseDomain);
         const isLiveStatus = item.status !== "inactive" && item.active !== false;
         if (parsed.sku && parsed.title && isLiveStatus) {
           parsedProducts.push(parsed);
+        } else if (isLiveStatus) {
+          invalidProducts += 1;
         } else {
           this.debugLog(`[A2Z-Connector] Filtering out inactive or invalid product SKU: ${parsed.sku}`);
         }
       } catch (parseErr) {
+        invalidProducts += 1;
         console.warn("[A2Z-Connector] Error parsing catalog product item:", parseErr);
       }
     }
 
+    const remotePagination = pageRequest && !usesLocalPagination && Number.isFinite(reportedTotal);
+    const consumed = requestedOffset + productsForPage.length;
+    const complete = !pageRequest
+      || (usesLocalPagination
+        ? consumed >= rawList.length
+        : remotePagination
+          ? consumed >= reportedTotal
+          : productsForPage.length < pageSize);
+    const nextCursor = complete
+      ? null
+      : usesLocalPagination
+        ? `a2z-local:${consumed}`
+        : String(consumed);
     this.debugLog(`[A2Z-Connector] Successfully retrieved, parsed, and mapped ${parsedProducts.length} live products.`);
-    return parsedProducts;
+    return { products: parsedProducts, targetUrl: productsUrl, nextCursor, complete, invalidProducts };
+  }
+
+  public static async fetchCatalog(
+    baseUrl: string,
+    credentials: { username?: string; password?: string },
+    outboundPolicy: SupplierOutboundPolicy,
+  ): Promise<RawA2ZProduct[]> {
+    return (await this.fetchCatalogInternal(baseUrl, credentials, outboundPolicy)).products as RawA2ZProduct[];
+  }
+
+  public static async fetchCatalogPage(
+    baseUrl: string,
+    credentials: { username?: string; password?: string },
+    outboundPolicy: SupplierOutboundPolicy,
+    request: SupplierCatalogPageRequest,
+  ): Promise<SupplierCatalogPageResult> {
+    return this.fetchCatalogInternal(baseUrl, credentials, outboundPolicy, request);
   }
 }

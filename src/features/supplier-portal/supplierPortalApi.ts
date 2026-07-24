@@ -14,7 +14,16 @@ const request = async <T>(user: User, path: string, method = 'GET', body?: unkno
   }, { fallbackMessage: 'Supplier Hub could not complete this request.' });
 };
 
-export const loadSupplierPortal = (user: User): Promise<SupplierPortalData> => request(user, '/api/supplier-portal');
+export const loadSupplierPortal = (
+  user: User,
+  cursors: Partial<Pick<SupplierPortalData['pagination'], 'productsCursor' | 'requestsCursor' | 'ordersCursor' | 'notificationsCursor'>> = {},
+): Promise<SupplierPortalData> => {
+  const query = new URLSearchParams({ pageSize: '100' });
+  (Object.entries(cursors) as Array<[keyof typeof cursors, string | null | undefined]>).forEach(([key, value]) => {
+    if (value) query.set(key, value);
+  });
+  return request(user, `/api/supplier-portal?${query.toString()}`);
+};
 
 export const saveSupplierProfile = (user: User, profile: SupplierPortalProfile): Promise<{ success: true }> => request(
   user, '/api/supplier-portal/profile', 'PUT', profile,

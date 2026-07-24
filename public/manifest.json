@@ -1,6 +1,10 @@
 {
   "short_name": "Zyro.lk",
   "name": "Zyro.lk Sri Lankan Marketplace",
+  "description": "Shop live marketplace collections with convenient ordering and islandwide delivery across Sri Lanka.",
+  "id": "/",
+  "lang": "en-LK",
+  "dir": "ltr",
   "icons": [
     {
       "src": "/favicon.png",
@@ -17,5 +21,6 @@
   "background_color": "#0f172a",
   "theme_color": "#2563eb",
   "display": "standalone",
-  "orientation": "portrait"
+  "orientation": "portrait",
+  "categories": ["shopping", "lifestyle"]
 }

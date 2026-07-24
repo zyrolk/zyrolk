@@ -140,6 +140,7 @@ export default function HeroBanner({
     <MotionConfig reducedMotion="user">
       <section
         className="zy-hero-v2"
+        data-zy-reveal
         aria-label="Featured marketplace campaigns"
         aria-roledescription="carousel"
         onMouseEnter={() => setIsPlaying(false)}

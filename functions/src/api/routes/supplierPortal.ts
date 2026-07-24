@@ -1,9 +1,11 @@
 import { createHash } from "crypto";
 import * as express from "express";
-import { FieldValue } from "firebase-admin/firestore";
+import { FieldPath, FieldValue } from "firebase-admin/firestore";
 import { ApiError, sendApiError } from "../errors";
-import { requireAdminAuth } from "../middleware/adminAuth";
+import { requireSupplierHubAdmin } from "../middleware/supplierHubAdminAuth";
 import { PRODUCT_PRIVATE_COLLECTION, sanitizePublicProductData } from "../products/productCommercialData";
+import { buildSupplierAuditEvent, createSupplierAuditEvent } from "../suppliers/supplierAuditTrail";
+import { buildSupplierProductApprovalBaseline } from "../suppliers/supplierApprovalConcurrency";
 import {
   assertSupplierOrderTransition,
   calculateSupplierSummary,
@@ -45,6 +47,17 @@ const cleanId = (value: unknown, label: string): string => {
   if (!result || result.includes("/")) throw new ApiError(`A valid ${label} is required`, 400);
   return result;
 };
+
+const readPageSize = (value: unknown): number => {
+  const requested = Number(value);
+  return Number.isInteger(requested) ? Math.min(100, Math.max(10, requested)) : 100;
+};
+
+const readCursor = (value: unknown): string => typeof value === "string" && /^[A-Za-z0-9_-]{1,160}$/.test(value) ? value : "";
+
+const applyDocumentCursor = <T extends FirebaseFirestore.Query>(query: T, cursor: string): T => (
+  cursor ? query.startAfter(cursor) as T : query
+);
 
 const hashId = (value: string): string => createHash("sha256").update(value).digest("hex");
 
@@ -169,7 +182,7 @@ export function registerSupplierPortalRoutes(app: express.Express, dependencies:
     }
   );
 
-  app.post("/api/supplier-portal/orders/:orderId/assign", requireAdminAuth, async (req, res) => {
+  app.post("/api/supplier-portal/orders/:orderId/assign", requireSupplierHubAdmin, async (req, res) => {
     const orderId = typeof req.params.orderId === "string" ? req.params.orderId.trim() : "";
     const supplierId = typeof req.body?.supplierId === "string" ? req.body.supplierId.trim() : "";
     if (!orderId || orderId.includes("/") || !supplierId || supplierId.includes("/")) {
@@ -219,15 +232,20 @@ export function registerSupplierPortalRoutes(app: express.Express, dependencies:
     }
   });
 
-  app.get("/api/supplier-portal", route(async (_req, res, identity) => {
+  app.get("/api/supplier-portal", route(async (req, res, identity) => {
+    const pageSize = readPageSize(req.query.pageSize);
+    const productCursor = readCursor(req.query.productsCursor);
+    const requestCursor = readCursor(req.query.requestsCursor);
+    const orderCursor = readCursor(req.query.ordersCursor);
+    const notificationCursor = readCursor(req.query.notificationsCursor);
     const [profileSnapshot, commercialProductSnapshot, legacyProductSnapshot, requestSnapshot, directOrders, sharedOrders, notificationSnapshot, categorySnapshot, brandSnapshot] = await Promise.all([
       dependencies.db.collection("supplier_profiles").doc(identity.uid).get(),
-      dependencies.db.collection(PRODUCT_PRIVATE_COLLECTION).where("supplierId", "==", identity.uid).limit(500).get(),
-      dependencies.db.collection("products").where("supplierId", "==", identity.uid).limit(500).get(),
-      dependencies.db.collection("supplier_product_requests").where("supplierId", "==", identity.uid).limit(500).get(),
-      dependencies.db.collection("orders").where("supplierId", "==", identity.uid).limit(200).get(),
-      dependencies.db.collection("orders").where("supplierIds", "array-contains", identity.uid).limit(200).get(),
-      dependencies.db.collection("supplier_notifications").where("supplierId", "==", identity.uid).limit(200).get(),
+      applyDocumentCursor(dependencies.db.collection(PRODUCT_PRIVATE_COLLECTION).where("supplierId", "==", identity.uid).orderBy(FieldPath.documentId()).limit(pageSize), productCursor).get(),
+      applyDocumentCursor(dependencies.db.collection("products").where("supplierId", "==", identity.uid).orderBy(FieldPath.documentId()).limit(pageSize), productCursor).get(),
+      applyDocumentCursor(dependencies.db.collection("supplier_product_requests").where("supplierId", "==", identity.uid).orderBy(FieldPath.documentId()).limit(pageSize), requestCursor).get(),
+      applyDocumentCursor(dependencies.db.collection("orders").where("supplierId", "==", identity.uid).orderBy(FieldPath.documentId()).limit(pageSize), orderCursor).get(),
+      applyDocumentCursor(dependencies.db.collection("orders").where("supplierIds", "array-contains", identity.uid).orderBy(FieldPath.documentId()).limit(pageSize), orderCursor).get(),
+      applyDocumentCursor(dependencies.db.collection("supplier_notifications").where("supplierId", "==", identity.uid).orderBy(FieldPath.documentId()).limit(pageSize), notificationCursor).get(),
       dependencies.db.collection("categories").get(),
       dependencies.db.collection("brands").get(),
     ]);
@@ -284,6 +302,19 @@ export function registerSupplierPortalRoutes(app: express.Express, dependencies:
       orders,
       notifications: [...storedNotifications, ...derivedNotifications].sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt))),
       summary: calculateSupplierSummary(products, requests, orders),
+      pagination: {
+        pageSize,
+        productsCursor: commercialProductSnapshot.docs.at(-1)?.id || legacyProductSnapshot.docs.at(-1)?.id || null,
+        requestsCursor: requestSnapshot.docs.at(-1)?.id || null,
+        ordersCursor: directOrders.docs.at(-1)?.id || sharedOrders.docs.at(-1)?.id || null,
+        notificationsCursor: notificationSnapshot.docs.at(-1)?.id || null,
+        hasMore: {
+          products: commercialProductSnapshot.size === pageSize || legacyProductSnapshot.size === pageSize,
+          requests: requestSnapshot.size === pageSize,
+          orders: directOrders.size === pageSize || sharedOrders.size === pageSize,
+          notifications: notificationSnapshot.size === pageSize,
+        },
+      },
       catalog: {
         categories: categorySnapshot.docs.filter((document) => document.data().isActive !== false).map((document) => ({
           id: document.id,
@@ -405,6 +436,8 @@ export function registerSupplierPortalRoutes(app: express.Express, dependencies:
     ]);
     const errors = validateSupplierProductForSubmission(draft, categorySnapshot.data(), brandSnapshot.data());
     const productId = String(requestData.productId || "");
+    const queuedProductId = String((requestData.productPayload as { id?: unknown } | undefined)?.id || productId);
+    const baselineProductDocument = productId ? allProductsSnapshot.docs.find((document) => document.id === productId) : undefined;
     const supplierSkuNormalized = normalizeSupplierSku(draft.supplierSku);
     const fingerprint = normalizeProductFingerprint(draft);
     const commercialByProductId = new Map(allCommercialProductsSnapshot.docs.map((document) => [document.id, document.data()]));
@@ -433,7 +466,7 @@ export function registerSupplierPortalRoutes(app: express.Express, dependencies:
       transaction.set(dependencies.db.collection("supplier_sku_claims").doc(skuClaimId), { supplierId: identity.uid, requestId, supplierSkuNormalized, updatedAt: now });
       if (productClaimId) transaction.set(dependencies.db.collection("supplier_product_claims").doc(productClaimId), { supplierId: identity.uid, requestId, fingerprint, updatedAt: now });
       transaction.update(requestReference, { status: "pending", submittedAt: now, updatedAt: now, rejectionReason: FieldValue.delete() });
-      transaction.set(dependencies.db.collection("supplier_review_queue").doc(queueId), {
+      const queueRecord = {
         id: queueId,
         portalRequestId: requestId,
         supplierId: identity.uid,
@@ -447,15 +480,41 @@ export function registerSupplierPortalRoutes(app: express.Express, dependencies:
         stock: draft.stock,
         imageUrl: draft.imageUrl,
         source: "Supplier Portal",
+        connector: "supplier_portal",
         sourceId: "supplier-portal",
         changeType: requestData.requestType === "new_product" ? "NEW_PRODUCT" : "DESCRIPTION_CHANGED",
         comparisonStatus: requestData.requestType === "new_product" ? "NEW_PRODUCT" : "DESCRIPTION_CHANGED",
         matchedProductId: requestData.requestType === "product_change" ? productId : null,
         productPayload: requestData.productPayload,
         supplierSnapshot: { supplierId: identity.uid, supplierSku: draft.supplierSku, submittedPayload: requestData.productPayload },
+        approvalBaseline: buildSupplierProductApprovalBaseline(
+          queuedProductId,
+          baselineProductDocument?.data(),
+        ),
         status: "Pending",
+        queueState: "review_pending",
+        retryCount: 0,
+        retryLimit: 5,
+        queueCreatedAt: now,
         createdAt: now,
         updatedAt: now,
+      };
+      transaction.set(dependencies.db.collection("supplier_review_queue").doc(queueId), queueRecord);
+      createSupplierAuditEvent(dependencies.db, transaction, {
+        queueItemId: queueId,
+        queueItem: queueRecord,
+        action: "queued",
+        previousState: null,
+        newState: "queued",
+        reason: "Supplier product submission entered the approval workflow.",
+      });
+      createSupplierAuditEvent(dependencies.db, transaction, {
+        queueItemId: queueId,
+        queueItem: queueRecord,
+        action: "review_pending",
+        previousState: "queued",
+        newState: "review_pending",
+        reason: "Supplier product submission is awaiting administrator review.",
       });
     });
     res.json({ success: true, status: "pending" });
@@ -493,7 +552,7 @@ export function registerSupplierPortalRoutes(app: express.Express, dependencies:
       createdAt: now,
       updatedAt: now,
     });
-    batch.set(dependencies.db.collection("supplier_review_queue").doc(queueId), {
+    const queueRecord = {
       id: queueId,
       portalRequestId: requestReference.id,
       supplierId: identity.uid,
@@ -505,16 +564,34 @@ export function registerSupplierPortalRoutes(app: express.Express, dependencies:
       stock: proposedStock,
       imageUrl: String(product.imageUrl || ""),
       source: "Supplier Portal",
+      connector: "supplier_portal",
       sourceId: "supplier-portal",
       changeType: "STOCK_CHANGED",
       comparisonStatus: "STOCK_CHANGED",
       matchedProductId: productId,
       productPayload,
       supplierSnapshot: { supplierId: identity.uid, previousStock: Number(product.stock || 0), proposedStock },
+      approvalBaseline: buildSupplierProductApprovalBaseline(productId, productSnapshot.data()),
       status: "Pending",
+      queueState: "review_pending",
+      retryCount: 0,
+      retryLimit: 5,
+      queueCreatedAt: now,
       createdAt: now,
       updatedAt: now,
-    });
+    };
+    batch.set(dependencies.db.collection("supplier_review_queue").doc(queueId), queueRecord);
+    for (const eventInput of [
+      { action: "queued" as const, previousState: null, newState: "queued", reason: "Supplier stock proposal entered the approval workflow." },
+      { action: "review_pending" as const, previousState: "queued", newState: "review_pending", reason: "Supplier stock proposal is awaiting administrator review." },
+    ]) {
+      const auditReference = dependencies.db.collection("supplier_approval_audit").doc();
+      batch.create(auditReference, buildSupplierAuditEvent({
+        queueItemId: queueId,
+        queueItem: queueRecord,
+        ...eventInput,
+      }, auditReference.id));
+    }
     await batch.commit();
     res.json({ success: true, status: "pending" });
   }));

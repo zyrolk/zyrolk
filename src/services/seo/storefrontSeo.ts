@@ -77,7 +77,10 @@ export interface StorefrontSeoDescriptor {
   title: string;
   description: string;
   keywords: string;
+  siteName: string;
+  locale: string;
   image?: string;
+  imageAlt?: string;
   canonical: string;
   type: 'website' | 'product';
   robots: string;
@@ -153,9 +156,11 @@ export const buildStorefrontSeo = ({ currentPage, product, settings, origin, isA
 
   const productData = isProduct && product ? {
     '@type': 'Product',
+    '@id': `${canonical}#product`,
     name: productName,
     description,
     image: [image].filter(Boolean),
+    mainEntityOfPage: canonical,
     ...(cleanText(product.sku) ? { sku: cleanText(product.sku) } : {}),
     category: cleanText(product.category),
     offers: {
@@ -176,25 +181,37 @@ export const buildStorefrontSeo = ({ currentPage, product, settings, origin, isA
     } : {}),
   } : null;
 
-  const breadcrumbData = {
+  const breadcrumbData = isProduct && product ? {
     '@type': 'BreadcrumbList',
     itemListElement: [
       { '@type': 'ListItem', position: 1, name: 'Home', item: `${resolvedOrigin}/` },
-      ...(isProduct && product ? [{ '@type': 'ListItem', position: 2, name: productName, item: canonical }] : []),
+      { '@type': 'ListItem', position: 2, name: productName, item: canonical },
     ],
+  } : null;
+
+  const websiteData: Record<string, unknown> = {
+    '@type': 'WebSite',
+    '@id': `${resolvedOrigin}/#website`,
+    name: storeName,
+    url: `${resolvedOrigin}/`,
+    inLanguage: 'en-LK',
+    publisher: { '@id': `${resolvedOrigin}/#organization` },
   };
 
   const structuredData: Record<string, unknown> = {
     '@context': 'https://schema.org',
     ...(productData || storeData),
-    '@graph': [organizationData, storeData, breadcrumbData, ...(productData ? [productData] : [])],
+    '@graph': [organizationData, websiteData, storeData, ...(breadcrumbData ? [breadcrumbData] : []), ...(productData ? [productData] : [])],
   };
 
   return {
     title: truncate(title, 68),
     description,
     keywords,
+    siteName: storeName,
+    locale: 'en_LK',
     image,
+    imageAlt: isProduct ? productName : `${storeName} marketplace`,
     canonical,
     type: isProduct ? 'product' : 'website',
     robots,

@@ -4,11 +4,13 @@ import { appLogger } from "./logging";
 export class ApiError extends Error {
   statusCode: number;
   publicMessage: string;
+  details?: unknown;
 
-  constructor(message: string, statusCode = 500, publicMessage = message) {
+  constructor(message: string, statusCode = 500, publicMessage = message, details?: unknown) {
     super(message);
     this.statusCode = statusCode;
     this.publicMessage = publicMessage;
+    this.details = details;
   }
 }
 
@@ -85,5 +87,6 @@ export function sendSupplierFailure(
     success: false,
     ...(options.includeStatus ? { status: "Failed" } : {}),
     error: clientMessage,
+    ...(error instanceof ApiError && error.details !== undefined ? { details: error.details } : {}),
   });
 }

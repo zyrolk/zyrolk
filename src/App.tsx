@@ -38,6 +38,7 @@ import MarketplaceHomePhase1 from './components/MarketplaceHomePhase1';
 import StorefrontNotFound from './components/StorefrontNotFound';
 import StorefrontSeo from './components/StorefrontSeo';
 import StorefrontMaintenance from './components/StorefrontMaintenance';
+import StorefrontMotionController from './components/StorefrontMotionController';
 import { normalizeWebsiteSettings } from './services/settings/websiteSettings';
 
 const AdminDashboard = lazy(() => import('./components/AdminDashboard'));
@@ -112,7 +113,16 @@ export default function App() {
   const [storefrontDataError, setStorefrontDataError] = useState<string | null>(null);
 
   useEffect(() => {
-    const faviconUrl = settings?.faviconUrl?.trim() || '/favicon.png';
+    const configuredFavicon = settings?.faviconUrl?.trim();
+    let faviconUrl = '/favicon.png';
+    if (configuredFavicon) {
+      try {
+        const parsed = new URL(configuredFavicon, window.location.origin);
+        if (parsed.protocol === 'http:' || parsed.protocol === 'https:') faviconUrl = parsed.toString();
+      } catch {
+        // Keep the launch-safe local favicon when a legacy setting is malformed.
+      }
+    }
     let favicon = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
     if (!favicon) {
       favicon = document.createElement('link');
@@ -828,7 +838,7 @@ export default function App() {
   }
 
   return (
-    <div className="flex flex-col min-h-screen bg-slate-50 text-slate-800">
+    <div className="zy-l6-shell flex flex-col min-h-screen bg-slate-50 text-slate-800">
       <StorefrontSeo
         currentPage={currentPage}
         product={liveSelectedProduct}
@@ -873,9 +883,13 @@ export default function App() {
           id="storefront-content"
           ref={storefrontContentRef}
           tabIndex={-1}
-          className="flex-1 pb-[calc(7rem+env(safe-area-inset-bottom))] outline-none md:pb-0"
+          className="zy-l6-main flex-1 pb-[calc(7rem+env(safe-area-inset-bottom))] outline-none md:pb-0"
           aria-busy={loading}
         >
+          <StorefrontMotionController
+            rootRef={storefrontContentRef}
+            motionKey={`${currentPage}:${loading}:${filteredProducts.length}:${activeProducts.length}`}
+          />
           {(isOffline || storefrontDataError) && (
             <aside className="zy-storefront-connection-state" role={storefrontDataError ? 'alert' : 'status'} aria-live="polite">
               <WifiOff className="h-5 w-5" aria-hidden="true" />
@@ -1366,7 +1380,7 @@ export default function App() {
           {/* PAGE 2: PRODUCTS BROWSER */}
           {currentPage === 'products' && (
             <div className="zy-storefront-page zy-catalog-page max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 animate-fadeIn text-left">
-              <header className="zy-page-banner mb-8 overflow-hidden rounded-[2rem] px-6 py-8 text-white sm:px-9 sm:py-10">
+              <header className="zy-page-banner mb-8 overflow-hidden rounded-[2rem] px-6 py-8 text-white sm:px-9 sm:py-10" data-zy-reveal>
                 <div className="relative z-10 max-w-2xl">
                   <span className="text-xs font-black uppercase tracking-[0.16em] text-blue-200">Zyro.lk marketplace</span>
                   <h1 className="mt-2 text-3xl font-black tracking-tight font-display sm:text-5xl">Find your next favourite</h1>
@@ -1402,7 +1416,7 @@ export default function App() {
                 <div className="lg:col-span-9 space-y-6">
                   
                   {/* Results summary header */}
-                  <div className="zy-surface zy-results-toolbar space-y-4 p-5">
+                  <div className="zy-surface zy-results-toolbar space-y-4 p-5" data-zy-reveal>
                     <div className="flex items-center justify-between gap-4">
                       <div>
                         <h2 className="text-lg font-black font-display text-slate-950">
@@ -1558,7 +1572,7 @@ export default function App() {
               aria-labelledby="categories-page-title"
             >
               <div className="zy-categories-shell">
-                <header className="zy-categories-intro">
+                <header className="zy-categories-intro" data-zy-reveal>
                   <div className="zy-categories-intro-copy">
                     <span className="zy-section-eyebrow zy-categories-eyebrow">Premium collections</span>
                     <h1 id="categories-page-title" className="zy-categories-title">
@@ -1595,7 +1609,7 @@ export default function App() {
                     ))}
                   </div>
                 ) : storefrontCategories.length === 0 ? (
-                  <div className="zy-categories-empty" role="status">
+                  <div className="zy-categories-empty" data-zy-reveal role="status">
                     <div className="zy-categories-empty-icon">
                       <Grid3X3 className="h-7 w-7" aria-hidden="true" />
                     </div>
@@ -1629,6 +1643,7 @@ export default function App() {
                               setCurrentPage('products');
                             }}
                             className="zy-category-collection-card group"
+                            data-zy-reveal
                             aria-label={`Explore ${cat.name}, ${itemsCount} ${itemsCount === 1 ? 'product' : 'products'}`}
                           >
                             <div className="zy-category-collection-media">

@@ -110,6 +110,14 @@ export interface SupplierPortalData {
     monthlySales: number;
     lowStockProducts: number;
   };
+  pagination: {
+    pageSize: number;
+    productsCursor: string | null;
+    requestsCursor: string | null;
+    ordersCursor: string | null;
+    notificationsCursor: string | null;
+    hasMore: { products: boolean; requests: boolean; orders: boolean; notifications: boolean };
+  };
   catalog: {
     categories: SupplierCatalogCategory[];
     brands: Array<{ id: string; name: string }>;

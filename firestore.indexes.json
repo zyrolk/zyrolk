@@ -7,6 +7,56 @@
         { "fieldPath": "stockReservationStatus", "order": "ASCENDING" },
         { "fieldPath": "stockReservationExpiresAt", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "supplier_review_queue",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "queueState", "order": "ASCENDING" },
+        { "fieldPath": "nextRetryAt", "order": "ASCENDING" },
+        { "fieldPath": "queueCreatedAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "supplier_review_queue",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "queueState", "order": "ASCENDING" },
+        { "fieldPath": "leaseExpiresAt", "order": "ASCENDING" },
+        { "fieldPath": "queueCreatedAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "supplier_review_queue",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "queueState", "order": "ASCENDING" },
+        { "fieldPath": "queueCreatedAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "supplier_review_queue",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "queueState", "order": "ASCENDING" },
+        { "fieldPath": "queueCreatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "supplier_approval_audit",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "action", "order": "ASCENDING" },
+        { "fieldPath": "timestamp", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "supplierSources",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "currentlySyncing", "order": "ASCENDING" },
+        { "fieldPath": "syncLeaseExpiresAt", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

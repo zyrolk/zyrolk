@@ -112,7 +112,7 @@ test('admin rejection records an actionable reason and releases duplicate claims
 
 test('Supplier Portal routes enforce role, ownership, duplicate prevention and projection boundaries', () => {
   const route = readFileSync('functions/src/api/routes/supplierPortal.ts', 'utf8');
-  assert.match(route, /orders\/:orderId\/assign", requireAdminAuth/);
+  assert.match(route, /orders\/:orderId\/assign", requireSupplierHubAdmin/);
   assert.match(route, /supplierSnapshot\.data\(\)\?\.role !== "supplier"/);
   assert.match(route, /userSnapshot\.data\(\)\?\.role !== "supplier"/);
   assert.match(route, /ownerId !== identity\.uid/);
@@ -136,11 +136,11 @@ test('Firestore rules expose only owned supplier portal records and deny claim a
   const portalRoutes = readFileSync('functions/src/api/routes/supplierPortal.ts', 'utf8');
   assert.match(rules, /function isSupplier\(\)/);
   assert.match(rules, /match \/supplier_profiles\/\{supplierId\}[\s\S]*isSupplier\(\) && isOwner\(supplierId\)/);
-  assert.match(rules, /match \/supplier_product_requests\/\{requestId\}[\s\S]*allow read: if isAdmin\(\)/);
+  assert.match(rules, /match \/supplier_product_requests\/\{requestId\}[\s\S]*allow read: if isSupplierHubAdmin\(\)/);
   assert.match(portalRoutes, /projectRequestPayload\(request\)/);
   assert.match(rules, /match \/supplier_notifications\/\{notificationId\}[\s\S]*resource\.data\.supplierId == request\.auth\.uid/);
-  assert.match(rules, /match \/supplier_sku_claims\/\{claimId\}[\s\S]*allow read: if false;[\s\S]*allow write: if isAdmin\(\)/);
-  assert.match(rules, /match \/supplier_product_claims\/\{claimId\}[\s\S]*allow read: if false;[\s\S]*allow write: if isAdmin\(\)/);
+  assert.match(rules, /match \/supplier_sku_claims\/\{claimId\}[\s\S]*allow read: if false;[\s\S]*allow write: if false;/);
+  assert.match(rules, /match \/supplier_product_claims\/\{claimId\}[\s\S]*allow read: if false;[\s\S]*allow write: if false;/);
   assert.match(rules, /match \/orders\/\{orderId\}[\s\S]*resource\.data\.customerUid == request\.auth\.uid/);
 });
 

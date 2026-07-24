@@ -500,10 +500,10 @@ export default function ProductDetailModal({
                         onMouseMove={handleMouseMove}
                       >
                         <motion.img
-                          key={activeImageIndex}
-                          initial={{ opacity: 0.6, scale: 0.95 }}
+                          key={`${activeImageIndex}-${activeImageUrl}`}
+                          initial={prefersReducedMotion ? { opacity: 1 } : { opacity: 0, scale: 0.965 }}
                           animate={{ opacity: 1, scale: 1 }}
-                          transition={{ duration: 0.3 }}
+                          transition={{ duration: prefersReducedMotion ? 0 : 0.32, ease: [0.2, 0.75, 0.25, 1] }}
                           src={activeImageUrl}
                           alt={product.name}
                           referrerPolicy="no-referrer"
@@ -748,7 +748,17 @@ export default function ProductDetailModal({
                       >
                         <Minus className="h-4 w-4" aria-hidden="true" />
                       </button>
-                      <span className="w-9 text-center text-base font-black text-slate-950" aria-live="polite" aria-label={`Quantity ${quantity}`}>{quantity}</span>
+                      <motion.span
+                        key={quantity}
+                        initial={prefersReducedMotion ? { opacity: 1 } : { opacity: 0.55, y: quantity > 1 ? 4 : -4 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: prefersReducedMotion ? 0 : 0.16 }}
+                        className="zy-product-experience-quantity-value w-9 text-center text-base font-black text-slate-950"
+                        aria-live="polite"
+                        aria-label={`Quantity ${quantity}`}
+                      >
+                        {quantity}
+                      </motion.span>
                       <button
                         type="button"
                         onClick={() => setQuantity(Math.min(product.stock, quantity + 1))}
@@ -1024,12 +1034,15 @@ export default function ProductDetailModal({
                 onMouseLeave={handleLightboxMouseUp}
               >
                 <motion.img
+                  key={`${activeImageIndex}-${activeImageUrl}`}
+                  initial={prefersReducedMotion ? { opacity: 1 } : { opacity: 0.45, scale: 0.96 }}
                   animate={{ 
+                    opacity: 1,
                     scale: lightboxZoom,
                     x: lightboxPan.x,
                     y: lightboxPan.y
                   }}
-                  transition={isDragging ? { type: 'tween', duration: 0 } : { type: 'spring', damping: 25 }}
+                  transition={isDragging || prefersReducedMotion ? { type: 'tween', duration: 0 } : { type: 'spring', damping: 25, stiffness: 220 }}
                   src={activeImageUrl}
                   alt={`${product.name}, image ${activeImageIndex + 1} of ${galleryImages.length}`}
                   referrerPolicy="no-referrer"
@@ -1116,10 +1129,10 @@ export default function ProductDetailModal({
       <AnimatePresence>
         {showStickyBar && !isLightboxOpen && (
           <motion.div
-            initial={{ y: 100, opacity: 0 }}
+            initial={prefersReducedMotion ? { opacity: 1 } : { y: 100, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
-            exit={{ y: 100, opacity: 0 }}
-            transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+            exit={prefersReducedMotion ? { opacity: 0 } : { y: 100, opacity: 0 }}
+            transition={prefersReducedMotion ? { duration: 0 } : { type: 'spring', damping: 25, stiffness: 200 }}
             className="zy-product-experience-mobile-bar fixed bottom-0 left-0 right-0 z-[60] bg-white/97 border-t border-slate-200 px-4 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] shadow-[0_-15px_40px_rgba(0,0,0,0.14)] md:hidden backdrop-blur-xl"
             aria-label="Mobile purchase actions"
           >

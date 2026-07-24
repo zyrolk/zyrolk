@@ -25,7 +25,7 @@ test("supplier sync regression: sync code does not queue direct writes to produc
   assert.equal(/batch\.set\(doc\(db,\s*["']products["']/.test(supplierHub), false);
   assert.equal(/queuedWrites\.push\(\{\s*collection:\s*["']products["']/.test(scheduledSync), false);
   assert.match(supplierHub, /if \(!enabledComparison\) continue/);
-  assert.match(scheduledSync, /if \(!comparison\) continue/);
+  assert.match(scheduledSync, /if \(!comparison\) \{[\s\S]*metrics\.productsSkipped \+= 1;[\s\S]*continue;/);
 });
 
 test("visible supplier sync controls invoke the real queue synchronization pipeline", () => {
@@ -47,7 +47,8 @@ test("A2Z secrets are bound to both HTTPS and scheduled Functions", () => {
   assert.match(secrets, /defineSecret\("A2Z_USERNAME"\)/);
   assert.match(secrets, /defineSecret\("A2Z_PASSWORD"\)/);
   assert.match(apiEntry, /secrets:\s*API_SECRETS/);
-  assert.match(secrets, /API_SECRETS\s*=\s*\[\.\.\.A2Z_SECRETS,\s*PAYHERE_MERCHANT_SECRET\]/);
+  assert.match(secrets, /API_SECRETS\s*=\s*\[\.\.\.A2Z_SECRETS\]/);
+  assert.doesNotMatch(secrets, /PAYHERE_MERCHANT_SECRET/);
   assert.match(scheduledSync, /secrets:\s*A2Z_SECRETS/);
 });
 
@@ -143,7 +144,8 @@ test("Supplier Hub exposes audited bulk actions and both sync paths resolve pers
   assert.match(supplierHub, /Bulk Delete/);
   assert.match(supplierHub, /resolveSupplierCategory/);
   assert.match(supplierHub, /matchesSupplierCategoryFilter/);
-  assert.match(scheduledSync, /resolveSupplierCategory/);
+  assert.match(scheduledSync, /suggestSupplierCategory/);
+  assert.match(scheduledSync, /categoryMappingRecords/);
   assert.match(scheduledSync, /matchesSupplierCategoryFilter/);
   assert.match(scheduledSync, /settings\.categoryMappings/);
   assert.match(scheduledSync, /isSupplierSourceAutoSyncDue/);
@@ -168,7 +170,8 @@ test("Supplier Hub production settings are enforced in both active sync paths", 
   assert.match(supplierHub, /resolveSupplierProductLimit/);
   assert.match(scheduledSync, /resolveSupplierProductLimit/);
   assert.match(supplierHub, /limitSupplierProducts<RawA2ZProduct>\(fetched as RawA2ZProduct\[\], limitNum\)/);
-  assert.match(scheduledSync, /limitSupplierProducts\(products, sourceLimit\)/);
+  assert.match(scheduledSync, /normalizeSupplierCatalogPageSize\(sourcePageSize\)/);
+  assert.match(scheduledSync, /runSupplierCatalogTraversal/);
   assert.match(supplierHub, /productLimit: limitNum/);
   assert.match(supplierHub, /for \(const prod of slicedProducts\)/);
   assert.match(scheduledSync, /for \(const product of productsToProcess\)/);

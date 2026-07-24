@@ -3,6 +3,8 @@ import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import AppErrorBoundary from './components/AppErrorBoundary.tsx';
 import './index.css';
+import './styles/storefrontL6.css';
+import './styles/storefrontL7.css';
 import { initializeStorefrontAppCheck } from './services/security/appCheck.ts';
 import { initializeStorefrontMonitoring } from './services/observability/commerceAnalytics.ts';
 

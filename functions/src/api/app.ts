@@ -5,7 +5,6 @@ import { registerSupplierRoutes } from "./routes/supplier";
 import { registerSupplierPortalRoutes } from "./routes/supplierPortal";
 import { registerOrderRoutes } from "./routes/orders";
 import { registerReviewSystemRoutes } from "./routes/reviewSystem";
-import { registerPaymentRoutes } from "./routes/payments";
 import { registerAdminConfigurationRoutes } from "./routes/adminConfiguration";
 import { adminAppCheck, adminAuth, adminDb } from "./firebase";
 import { appLogger } from "./logging";
@@ -15,7 +14,7 @@ const CONTENT_SECURITY_POLICY = [
   "base-uri 'self'",
   "object-src 'none'",
   "frame-ancestors 'none'",
-  "form-action 'self' https://sandbox.payhere.lk https://www.payhere.lk",
+  "form-action 'self'",
   "script-src 'self' https://www.google.com https://www.gstatic.com https://www.googletagmanager.com",
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   "font-src 'self' data: https://fonts.gstatic.com",
@@ -28,6 +27,14 @@ const CONTENT_SECURITY_POLICY = [
 const xmlEscape = (value: string): string => value.replace(/[<>&'\"]/g, (character) => ({
   "<": "&lt;", ">": "&gt;", "&": "&amp;", "'": "&apos;", '"': "&quot;",
 }[character] || character));
+
+const isExactLocalhost = (hostname: string): boolean => {
+  const host = hostname.trim().toLowerCase();
+  return ["localhost", "127.0.0.1", "::1", "[::1]"].includes(host)
+    || /^localhost:\d+$/u.test(host)
+    || /^127\.0\.0\.1:\d+$/u.test(host)
+    || /^\[::1\](?::\d+)?$/u.test(host);
+};
 
 export function createApiApp(): express.Express {
   const app = express();
@@ -70,7 +77,10 @@ export function createApiApp(): express.Express {
   });
 
   app.use(async (req, res, next) => {
-    if (!runtimeConfig.requireAppCheck || req.path === "/api/payments/payhere/notify" || req.path === "/sitemap.xml") {
+    // Functions only bypass App Check when running in the Firebase emulator and
+    // serving an exact loopback host. Deployed Functions always verify tokens.
+    const isFunctionsEmulatorRequest = process.env.FUNCTIONS_EMULATOR === "true" && isExactLocalhost(req.hostname || "");
+    if (isFunctionsEmulatorRequest || !runtimeConfig.requireAppCheck || req.path === "/sitemap.xml") {
       next();
       return;
     }
@@ -89,8 +99,8 @@ export function createApiApp(): express.Express {
 
   app.use(express.json({ limit: "100kb" }));
 
-  registerPaymentRoutes(app, { db: adminDb, auth: adminAuth, logger: appLogger });
-  registerAdminConfigurationRoutes(app, { auth: adminAuth, adminEmail: runtimeConfig.adminEmail });
+  // PayHere routes deliberately remain unregistered during the COD-only launch period.
+  registerAdminConfigurationRoutes(app, { auth: adminAuth });
   registerCheckoutRoutes(app);
   registerOrderRoutes(app);
   registerReviewSystemRoutes(app, {

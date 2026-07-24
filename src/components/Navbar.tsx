@@ -12,6 +12,7 @@ import { Category, CustomerProduct, WebsiteSettings } from '../types';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { searchCustomerProducts } from '../services/product-search/customerProductSearch';
 import { normalizeSearchText } from '../services/product-search/productSearchMetadata';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 
 const RECENT_SEARCHES_KEY = 'zyro_recent_searches';
 
@@ -61,6 +62,7 @@ export default function Navbar({
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
   const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(-1);
+  const prefersReducedMotion = useReducedMotion();
   const [recentSearches, setRecentSearches] = useState<string[]>(() => {
     try {
       const stored = sessionStorage.getItem(RECENT_SEARCHES_KEY);
@@ -275,7 +277,7 @@ export default function Navbar({
     const hasQuery = normalizedTempSearch.length > 0;
 
     return (
-      <form onSubmit={handleSearchSubmit} className="relative min-w-0 max-w-full w-full" role="search" data-product-search>
+      <form onSubmit={handleSearchSubmit} className="zy-search-shell relative min-w-0 max-w-full w-full" role="search" data-product-search>
         <label htmlFor={inputId} className="sr-only">Search products</label>
         <Search className="pointer-events-none absolute left-4 top-1/2 z-10 h-4.5 w-4.5 -translate-y-1/2 text-slate-500" aria-hidden="true" />
         <input
@@ -302,7 +304,7 @@ export default function Navbar({
           <button
             type="button"
             onClick={clearSearch}
-            className="absolute right-[5.75rem] top-1/2 z-10 flex h-12 w-10 -translate-y-1/2 items-center justify-center rounded-xl text-slate-500 transition-colors hover:bg-slate-200 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20"
+            className="zy-search-clear absolute right-[5.75rem] top-1/2 z-10 flex h-12 w-10 -translate-y-1/2 items-center justify-center rounded-xl text-slate-500 transition-colors hover:bg-slate-200 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20"
             aria-label="Clear product search"
           >
             <X className="h-4 w-4" aria-hidden="true" />
@@ -310,17 +312,22 @@ export default function Navbar({
         )}
         <button
           type="submit"
-          className="absolute right-0.5 top-1/2 z-10 flex h-12 min-w-[5.25rem] -translate-y-1/2 items-center justify-center gap-1.5 rounded-xl bg-brand-blue px-3 text-xs font-black text-white shadow-sm transition-all hover:bg-blue-700 active:scale-95 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/25"
+          className="zy-search-submit absolute right-0.5 top-1/2 z-10 flex h-12 min-w-[5.25rem] -translate-y-1/2 items-center justify-center gap-1.5 rounded-xl bg-brand-blue px-3 text-xs font-black text-white shadow-sm transition-all hover:bg-blue-700 active:scale-95 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/25"
           aria-label="Submit product search"
         >
           <span>Search</span>
           <ArrowUpRight className="h-4 w-4" aria-hidden="true" />
         </button>
 
-        {isSearchOpen && (
-          <div
+        <AnimatePresence initial={false}>
+          {isSearchOpen && (
+          <motion.div
             id={panelId}
-            className="absolute left-0 right-0 top-[calc(100%+0.65rem)] z-[70] overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-[0_24px_60px_-20px_rgba(15,23,42,0.35)]"
+            className="zy-search-suggestions absolute left-0 right-0 top-[calc(100%+0.65rem)] z-[70] overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-[0_24px_60px_-20px_rgba(15,23,42,0.35)]"
+            initial={prefersReducedMotion ? { opacity: 1 } : { opacity: 0, y: -8, scale: 0.985 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, y: -5, scale: 0.99 }}
+            transition={{ duration: prefersReducedMotion ? 0 : 0.18, ease: [0.2, 0.75, 0.25, 1] }}
             role="listbox"
             aria-label="Product search suggestions"
           >
@@ -346,7 +353,7 @@ export default function Navbar({
                         aria-selected={activeSuggestionIndex === index}
                         onMouseEnter={() => setActiveSuggestionIndex(index)}
                         onClick={() => selectProduct(product)}
-                        className={`flex min-h-14 w-full items-center gap-3 rounded-2xl px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20 ${activeSuggestionIndex === index ? 'bg-blue-50' : 'hover:bg-slate-50'}`}
+                        className={`zy-search-result flex min-h-14 w-full items-center gap-3 rounded-2xl px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20 ${activeSuggestionIndex === index ? 'bg-blue-50' : 'hover:bg-slate-50'}`}
                       >
                         <div className="flex h-11 w-11 flex-none items-center justify-center overflow-hidden rounded-xl border border-slate-100 bg-slate-50 p-1.5">
                           {product.image ? (
@@ -446,8 +453,9 @@ export default function Navbar({
                 </div>
               </div>
             )}
-          </div>
-        )}
+          </motion.div>
+          )}
+        </AnimatePresence>
       </form>
     );
   };
@@ -455,10 +463,10 @@ export default function Navbar({
   return (
     <header className={`zy-market-header sticky top-0 z-50 w-full ${isScrolled ? 'is-scrolled' : ''}`}>
       <div className="zy-market-header-shell mx-auto w-full max-w-[1480px] px-4 sm:px-6 lg:px-8">
-        <div className="flex h-16 items-center justify-between gap-2 md:h-20 md:gap-3">
+        <div className="zy-market-header-row flex h-16 items-center justify-between gap-2 md:h-20 md:gap-3">
           
           {/* Logo */}
-          <button type="button" className="flex min-h-12 flex-shrink-0 items-center rounded-xl cursor-pointer focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20" onClick={() => navigateToPage('home')} aria-label="Go to homepage">
+          <button type="button" className="zy-brand-button flex min-h-12 flex-shrink-0 items-center rounded-xl cursor-pointer focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20" onClick={() => navigateToPage('home')} aria-label="Go to homepage">
             {settings?.logoUrl ? (
               <img 
                 src={settings.logoUrl} 

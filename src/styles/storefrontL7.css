@@ -1,0 +1,654 @@
+/* Sprint L7 - premium storefront motion and interaction polish.
+ * This layer is presentation-only and intentionally contains no commerce or data behavior.
+ */
+
+:root {
+  --zy-l7-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --zy-l7-ease-soft: cubic-bezier(0.2, 0.75, 0.25, 1);
+  --zy-l7-duration-fast: 150ms;
+  --zy-l7-duration-base: 240ms;
+  --zy-l7-duration-reveal: 520ms;
+  --zy-l7-focus: 0 0 0 4px rgba(37, 99, 235, 0.2);
+  --zy-l7-shadow-rest: 0 18px 48px -38px rgba(15, 23, 42, 0.5);
+  --zy-l7-shadow-raised: 0 30px 70px -42px rgba(30, 64, 175, 0.5);
+}
+
+/* GPU-friendly, intersection-driven reveals. No dimensions change during entry. */
+[data-zy-reveal][data-zy-reveal-state="pending"] {
+  opacity: 0;
+  transform: translate3d(0, 0.9rem, 0) scale(0.992);
+  will-change: opacity, transform;
+}
+
+[data-zy-reveal][data-zy-reveal-state="visible"] {
+  opacity: 1;
+  transform: translate3d(0, 0, 0) scale(1);
+  transition:
+    opacity var(--zy-l7-duration-reveal) var(--zy-l7-ease-out) var(--zy-reveal-delay, 0ms),
+    transform var(--zy-l7-duration-reveal) var(--zy-l7-ease-out) var(--zy-reveal-delay, 0ms);
+}
+
+.zy-l6-main > :where(section, div).animate-fadeIn,
+.zy-l6-main .zy-storefront-page.animate-fadeIn {
+  animation: zy-l7-page-enter 360ms var(--zy-l7-ease-out) both;
+}
+
+@keyframes zy-l7-page-enter {
+  from { opacity: 0; transform: translate3d(0, 0.55rem, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+
+/* Intentional press feedback and a dependency-free ripple highlight. */
+.zy-l6-main :where(
+  .zy-button,
+  .zy-product-primary-action,
+  .zy-product-secondary-action,
+  .zy-product-enquiry-action,
+  .zy-storefront-product-shelf-action,
+  .zy-foundation-text-link
+),
+.zy-market-header :where(.zy-search-submit, .zy-navbar-action),
+.zy-bottom-dock .zy-mobile-tab {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    color var(--zy-l7-duration-fast) ease,
+    border-color var(--zy-l7-duration-fast) ease,
+    background-color var(--zy-l7-duration-fast) ease,
+    box-shadow var(--zy-l7-duration-base) ease,
+    transform var(--zy-l7-duration-fast) var(--zy-l7-ease-soft);
+}
+
+.zy-market-header .zy-search-submit {
+  position: absolute;
+}
+
+.zy-bottom-dock {
+  box-sizing: border-box;
+  width: calc(100vw - max(1.1rem, env(safe-area-inset-left) + env(safe-area-inset-right)));
+  max-width: calc(100vw - max(1.1rem, env(safe-area-inset-left) + env(safe-area-inset-right)));
+}
+
+.zy-bottom-dock .zy-mobile-dock {
+  display: grid !important;
+  width: 100%;
+  max-width: 100%;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  overflow: hidden;
+}
+
+.zy-bottom-dock .zy-mobile-tab {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  padding-inline: 0.1rem;
+}
+
+.zy-l6-main :where(
+  .zy-button,
+  .zy-product-primary-action,
+  .zy-product-secondary-action,
+  .zy-product-enquiry-action,
+  .zy-storefront-product-shelf-action
+)::after,
+.zy-market-header .zy-search-submit::after {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  content: "";
+  border-radius: inherit;
+  background: radial-gradient(circle at center, rgba(255, 255, 255, 0.34), transparent 58%);
+  opacity: 0;
+  transform: scale(0.42);
+  pointer-events: none;
+}
+
+.zy-l6-main :where(
+  .zy-button,
+  .zy-product-primary-action,
+  .zy-product-secondary-action,
+  .zy-product-enquiry-action,
+  .zy-storefront-product-shelf-action
+):active::after,
+.zy-market-header .zy-search-submit:active::after {
+  animation: zy-l7-ripple 360ms ease-out;
+}
+
+@keyframes zy-l7-ripple {
+  0% { opacity: 0; transform: scale(0.42); }
+  35% { opacity: 0.8; }
+  100% { opacity: 0; transform: scale(1.5); }
+}
+
+.zy-l6-main :where(button, a):active,
+.zy-market-header :where(button, a):active,
+.zy-bottom-dock button:active {
+  transform: scale(0.975);
+}
+
+.zy-l6-main :where(button, a, input, select, textarea):focus-visible,
+.zy-market-header :where(button, a, input, select, textarea):focus-visible,
+.zy-bottom-dock button:focus-visible {
+  outline: none;
+  box-shadow: var(--zy-l7-focus);
+}
+
+/* Hero choreography: slide content is staggered without affecting CMS behavior. */
+.zy-hero-v2-slide .zy-hero-v2-kicker,
+.zy-hero-v2-slide h1,
+.zy-hero-v2-slide .zy-hero-v2-campaign-title,
+.zy-hero-v2-slide .zy-hero-v2-subtitle,
+.zy-hero-v2-slide .zy-hero-v2-description,
+.zy-hero-v2-slide .zy-hero-v2-actions,
+.zy-hero-v2-slide .zy-hero-v2-trust {
+  animation: zy-l7-hero-copy 560ms var(--zy-l7-ease-out) both;
+}
+
+.zy-hero-v2-slide h1 { animation-delay: 45ms; }
+.zy-hero-v2-slide .zy-hero-v2-campaign-title { animation-delay: 80ms; }
+.zy-hero-v2-slide .zy-hero-v2-subtitle { animation-delay: 110ms; }
+.zy-hero-v2-slide .zy-hero-v2-description { animation-delay: 140ms; }
+.zy-hero-v2-slide .zy-hero-v2-actions { animation-delay: 170ms; }
+.zy-hero-v2-slide .zy-hero-v2-trust { animation-delay: 205ms; }
+
+@keyframes zy-l7-hero-copy {
+  from { opacity: 0; transform: translate3d(0, 0.75rem, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+
+.zy-hero-v2-image {
+  transform: scale(1.015);
+  animation: zy-l7-hero-image 720ms var(--zy-l7-ease-out) both;
+}
+
+@keyframes zy-l7-hero-image {
+  from { opacity: 0.35; transform: scale(1.045); }
+  to { opacity: 1; transform: scale(1.015); }
+}
+
+.zy-hero-v2-primary svg,
+.zy-hero-v2-secondary svg,
+.zy-storefront-product-shelf-action svg,
+.zy-foundation-text-link svg {
+  transition: transform var(--zy-l7-duration-base) var(--zy-l7-ease-out);
+}
+
+.zy-hero-v2-primary:hover svg,
+.zy-hero-v2-secondary:hover svg,
+.zy-storefront-product-shelf-action:hover svg,
+.zy-foundation-text-link:hover svg {
+  transform: translate3d(0.2rem, 0, 0);
+}
+
+/* Category discovery motion and horizontal gesture quality. */
+.zy-foundation-category-rail,
+.zy-storefront-product-shelf-grid,
+.zy-product-experience-thumbnails {
+  scroll-behavior: smooth;
+  overscroll-behavior-inline: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.zy-foundation-category-tile {
+  transform: translateZ(0);
+  transition:
+    border-color var(--zy-l7-duration-base) ease,
+    box-shadow var(--zy-l7-duration-base) ease,
+    transform var(--zy-l7-duration-base) var(--zy-l7-ease-out);
+}
+
+.zy-foundation-category-image,
+.zy-foundation-category-image img,
+.zy-foundation-category-image svg {
+  transition: transform 360ms var(--zy-l7-ease-out), filter 260ms ease;
+}
+
+.zy-foundation-category-tile:active .zy-foundation-category-image {
+  transform: scale(0.94);
+}
+
+.zy-foundation-category-tile:focus-visible .zy-foundation-category-image,
+.zy-foundation-category-tile:hover .zy-foundation-category-image {
+  transform: translate3d(0, -0.15rem, 0) scale(1.035);
+}
+
+.zy-foundation-category-tile:hover .zy-foundation-category-image img,
+.zy-foundation-category-tile:hover .zy-foundation-category-image svg {
+  transform: scale(1.06) rotate(-1.5deg);
+}
+
+/* Search discovery and navigation surfaces. */
+.zy-search-suggestions {
+  transform-origin: top center;
+  contain: layout paint;
+}
+
+.zy-search-result {
+  transition: background-color 150ms ease, border-color 150ms ease, transform 180ms var(--zy-l7-ease-out);
+}
+
+.zy-search-result:active { transform: scale(0.99); }
+
+.zy-search-result img {
+  transition: opacity 180ms ease, transform 240ms var(--zy-l7-ease-out);
+}
+
+.zy-search-result:hover img { transform: scale(1.06); }
+
+.zy-mobile-market-menu,
+.zy-account-menu {
+  transform-origin: top center;
+  animation: zy-l7-menu-enter 220ms var(--zy-l7-ease-out) both;
+}
+
+@keyframes zy-l7-menu-enter {
+  from { opacity: 0; transform: translate3d(0, -0.45rem, 0) scale(0.99); }
+  to { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+}
+
+.zy-bottom-dock .zy-mobile-tab svg,
+.zy-market-header .zy-navbar-action svg {
+  transition: transform 200ms var(--zy-l7-ease-out), color 160ms ease;
+}
+
+.zy-bottom-dock .zy-mobile-tab[aria-current="page"] svg,
+.zy-bottom-dock .zy-mobile-tab[aria-expanded="true"] svg {
+  transform: translate3d(0, -0.1rem, 0) scale(1.08);
+}
+
+/* Cards, badges, stock and commerce feedback. */
+.zy-product-card {
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  contain: layout paint style;
+}
+
+.zy-product-card-image {
+  will-change: opacity, transform;
+}
+
+.zy-product-card-image.is-loaded {
+  animation: zy-l7-product-image 420ms var(--zy-l7-ease-out) both;
+}
+
+@keyframes zy-l7-product-image {
+  from { opacity: 0; transform: scale(0.97); filter: blur(5px) drop-shadow(0 20px 20px rgba(15, 23, 42, 0.08)); }
+  to { opacity: 1; transform: scale(1); filter: blur(0) drop-shadow(0 20px 20px rgba(15, 23, 42, 0.1)); }
+}
+
+.zy-product-card-badges .zy-badge {
+  border: 1px solid rgba(255, 255, 255, 0.58);
+  box-shadow: 0 10px 24px -16px rgba(15, 23, 42, 0.68), inset 0 1px rgba(255, 255, 255, 0.36);
+  backdrop-filter: blur(8px);
+}
+
+.zy-product-discount {
+  background: linear-gradient(135deg, #dc2626, #f97316);
+}
+
+.zy-product-card-badge-new {
+  background: linear-gradient(135deg, #1d4ed8, #3b82f6);
+}
+
+.zy-product-card-badge-bestseller {
+  background: linear-gradient(135deg, #713f12, #d97706);
+  color: #fff;
+}
+
+.zy-product-card-stock > span {
+  position: relative;
+}
+
+.zy-product-card-stock.is-available > span::after,
+.zy-product-card-stock.is-low > span::after {
+  position: absolute;
+  inset: -0.2rem;
+  content: "";
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  opacity: 0;
+  animation: zy-l7-stock-pulse 2.4s ease-out infinite;
+}
+
+@keyframes zy-l7-stock-pulse {
+  0%, 45% { opacity: 0; transform: scale(0.75); }
+  65% { opacity: 0.28; }
+  100% { opacity: 0; transform: scale(1.8); }
+}
+
+.zy-product-card-wishlist svg {
+  transform-origin: center;
+  transition: transform 240ms var(--zy-l7-ease-out), color 180ms ease, fill 180ms ease;
+}
+
+.zy-product-card.is-wishlisted .zy-product-card-wishlist svg {
+  animation: zy-l7-wishlist 420ms var(--zy-l7-ease-out);
+}
+
+@keyframes zy-l7-wishlist {
+  0% { transform: scale(0.82); }
+  48% { transform: scale(1.28) rotate(-7deg); }
+  100% { transform: scale(1.1) rotate(0); }
+}
+
+.zy-product-card.is-added .zy-product-primary-action svg {
+  animation: zy-l7-cart-success 430ms var(--zy-l7-ease-out);
+}
+
+@keyframes zy-l7-cart-success {
+  0% { opacity: 0; transform: scale(0.45) rotate(-12deg); }
+  65% { opacity: 1; transform: scale(1.18) rotate(3deg); }
+  100% { transform: scale(1) rotate(0); }
+}
+
+.zy-product-quick-view {
+  transition: opacity 180ms ease, transform 220ms var(--zy-l7-ease-out), background-color 180ms ease;
+}
+
+/* Unified premium loading and empty states. */
+.zy-storefront-product-skeleton,
+.zy-foundation-category-skeleton,
+.zy-storefront-grid-loading > div,
+.zy-product-experience-image-loading,
+.zy-l6-main .animate-pulse {
+  overflow: hidden;
+}
+
+.zy-storefront-product-skeleton > span::after,
+.zy-storefront-product-skeleton i::after,
+.zy-storefront-product-skeleton small::after,
+.zy-storefront-product-skeleton b::after,
+.zy-foundation-category-skeleton > span::after,
+.zy-foundation-category-skeleton > i::after,
+.zy-foundation-category-skeleton > small::after,
+.zy-storefront-grid-loading > div > *::after {
+  background: linear-gradient(105deg, transparent 30%, rgba(255, 255, 255, 0.9) 48%, transparent 66%);
+  background-size: 230% 100%;
+  animation: zy-l7-shimmer 1.45s linear infinite;
+}
+
+@keyframes zy-l7-shimmer {
+  to { background-position-x: -230%; }
+}
+
+.zy-empty-state,
+.zy-categories-empty,
+.zy-storefront-product-shelf-empty,
+.zy-foundation-empty-note,
+.zy-storefront-not-found {
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 92% 12%, rgba(191, 219, 254, 0.22), transparent 12rem),
+    linear-gradient(145deg, #ffffff, #f8faff);
+}
+
+.zy-empty-state::after,
+.zy-categories-empty::after,
+.zy-storefront-product-shelf-empty::after {
+  position: absolute;
+  width: 8rem;
+  height: 8rem;
+  right: -3.5rem;
+  bottom: -4rem;
+  content: "";
+  border: 1.5rem solid rgba(37, 99, 235, 0.04);
+  border-radius: 999px;
+  pointer-events: none;
+}
+
+.zy-empty-state > div:first-child,
+.zy-categories-empty-icon,
+.zy-storefront-product-shelf-empty > span,
+.zy-storefront-not-found__icon {
+  box-shadow: 0 16px 34px -24px rgba(37, 99, 235, 0.6), inset 0 1px #fff;
+  animation: zy-l7-empty-float 3.8s ease-in-out infinite;
+}
+
+@keyframes zy-l7-empty-float {
+  0%, 100% { transform: translate3d(0, 0, 0); }
+  50% { transform: translate3d(0, -0.25rem, 0); }
+}
+
+/* Catalog controls stay discoverable on touch devices. */
+.zy-results-toolbar {
+  transition: box-shadow 180ms ease, border-color 180ms ease, background-color 180ms ease;
+}
+
+.zy-filter-panel {
+  max-height: calc(100dvh - 7.5rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+.zy-mobile-panel {
+  overscroll-behavior: contain;
+  box-shadow: -28px 0 72px -36px rgba(15, 23, 42, 0.66);
+}
+
+/* Product gallery and purchase experience. */
+.zy-product-experience-gallery,
+.zy-product-experience-lightbox-stage {
+  touch-action: pan-y pinch-zoom;
+}
+
+.zy-product-experience-image-stage {
+  contain: layout paint;
+}
+
+.zy-product-experience-image {
+  backface-visibility: hidden;
+  will-change: opacity, transform;
+}
+
+.zy-product-experience-thumbnails {
+  scroll-snap-type: x proximity;
+  padding-inline: 0.15rem;
+}
+
+.zy-product-experience-thumbnails button {
+  scroll-snap-align: start;
+  transform: translateZ(0);
+  transition: border-color 180ms ease, box-shadow 220ms ease, transform 220ms var(--zy-l7-ease-out);
+}
+
+.zy-product-experience-thumbnails button[aria-pressed="true"] {
+  transform: translate3d(0, -0.12rem, 0) scale(1.025);
+  box-shadow: 0 14px 30px -22px rgba(29, 78, 216, 0.72);
+}
+
+.zy-product-experience-quantity {
+  transition: border-color 180ms ease, box-shadow 220ms ease, background-color 180ms ease;
+}
+
+.zy-product-experience-quantity:focus-within {
+  border-color: rgba(37, 99, 235, 0.32);
+  background: #f8fbff;
+  box-shadow: 0 16px 34px -28px rgba(37, 99, 235, 0.7);
+}
+
+.zy-product-experience-quantity-value {
+  font-variant-numeric: tabular-nums;
+}
+
+.zy-product-experience-actions button,
+.zy-product-experience-mobile-bar button {
+  position: relative;
+  overflow: hidden;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.zy-product-experience-mobile-bar {
+  padding-inline: max(1rem, env(safe-area-inset-left));
+  transform: translateZ(0);
+}
+
+.zy-product-experience-lightbox {
+  overscroll-behavior: contain;
+}
+
+.zy-product-experience-lightbox-stage img {
+  backface-visibility: hidden;
+  will-change: transform, opacity;
+}
+
+/* Floating support action: quiet at rest, precise on interaction. */
+.zy-floating-whatsapp,
+[aria-label*="WhatsApp" i].fixed {
+  transition: box-shadow 220ms ease, filter 180ms ease;
+}
+
+.zy-floating-whatsapp svg {
+  transition: transform 220ms var(--zy-l7-ease-out);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .zy-product-card:hover .zy-product-card-image {
+    transform: scale(1.045);
+  }
+
+  .zy-product-card:hover .zy-product-quick-view {
+    transform: translate3d(-50%, -0.15rem, 0);
+  }
+
+  .zy-floating-whatsapp:hover,
+  [aria-label*="WhatsApp" i].fixed:hover {
+    filter: saturate(1.08);
+    box-shadow: 0 14px 36px rgba(37, 211, 102, 0.4);
+  }
+
+  .zy-floating-whatsapp:hover svg {
+    transform: scale(1.06) rotate(-2deg);
+  }
+}
+
+@media (max-width: 1023px) {
+  .zy-catalog-page .zy-results-toolbar {
+    position: sticky;
+    top: 7.15rem;
+    z-index: 24;
+    border-color: rgba(148, 163, 184, 0.18);
+    background: rgba(255, 255, 255, 0.94);
+    box-shadow: 0 18px 40px -30px rgba(15, 23, 42, 0.5);
+    backdrop-filter: blur(16px) saturate(140%);
+  }
+}
+
+@media (max-width: 767px) {
+  .zy-l6-main {
+    scroll-padding-bottom: calc(6.5rem + env(safe-area-inset-bottom));
+  }
+
+  .zy-launch-home .zy-foundation-shelf-stack {
+    gap: 3rem;
+  }
+
+  .zy-storefront-product-shelf-header {
+    margin-bottom: 1.15rem;
+  }
+
+  .zy-storefront-product-shelf-heading h2 {
+    line-height: 1.08;
+    text-wrap: balance;
+  }
+
+  .zy-foundation-category-rail,
+  .zy-storefront-product-shelf-grid {
+    scroll-padding-inline: 1rem;
+  }
+
+  .zy-catalog-page .zy-results-toolbar {
+    top: 7.05rem;
+    margin-inline: -0.25rem;
+    border-radius: 1rem;
+    padding: 0.9rem;
+  }
+
+  .zy-product-experience-scroll {
+    padding-bottom: calc(7.75rem + env(safe-area-inset-bottom));
+    scroll-padding-top: 5.5rem;
+  }
+
+  .zy-product-experience-gallery {
+    touch-action: pan-y pinch-zoom;
+  }
+
+  .zy-product-experience-lightbox {
+    padding:
+      max(0.75rem, env(safe-area-inset-top))
+      max(0.75rem, env(safe-area-inset-right))
+      max(0.75rem, env(safe-area-inset-bottom))
+      max(0.75rem, env(safe-area-inset-left));
+  }
+
+  .zy-mobile-sheet {
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+}
+
+@media (max-width: 359px) {
+  .zy-catalog-page .zy-results-toolbar {
+    top: 6.85rem;
+  }
+
+  .zy-product-experience-mobile-bar {
+    padding-inline: max(0.7rem, env(safe-area-inset-left));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+
+  [data-zy-reveal],
+  [data-zy-reveal][data-zy-reveal-state="pending"],
+  [data-zy-reveal][data-zy-reveal-state="visible"] {
+    opacity: 1 !important;
+    transform: none !important;
+    transition: none !important;
+  }
+
+  .zy-l6-main *,
+  .zy-market-header *,
+  .zy-bottom-dock * {
+    scroll-behavior: auto !important;
+  }
+
+  .zy-hero-v2-slide *,
+  .zy-hero-v2-image,
+  .zy-product-card-image.is-loaded,
+  .zy-product-card-stock > span::after,
+  .zy-product-card.is-wishlisted .zy-product-card-wishlist svg,
+  .zy-product-card.is-added .zy-product-primary-action svg,
+  .zy-empty-state > div:first-child,
+  .zy-categories-empty-icon,
+  .zy-storefront-product-shelf-empty > span,
+  .zy-storefront-not-found__icon,
+  .zy-mobile-market-menu,
+  .zy-account-menu {
+    animation: none !important;
+  }
+
+  .zy-product-card-image,
+  .zy-product-experience-image,
+  .zy-product-experience-lightbox-stage img {
+    will-change: auto;
+  }
+}
+
+@media (forced-colors: active) {
+  .zy-product-card-badges .zy-badge,
+  .zy-product-card-stock,
+  .zy-results-toolbar,
+  .zy-product-experience-mobile-bar {
+    border: 1px solid CanvasText;
+  }
+
+  [data-zy-reveal] {
+    opacity: 1 !important;
+    transform: none !important;
+  }
+}

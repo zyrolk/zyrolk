@@ -5,7 +5,10 @@ import { getSupplierSourceType, isActiveWebsiteSupplier } from '../src/services/
 test('supplier source type supports current and legacy website records', () => {
   assert.equal(getSupplierSourceType({ id: 'current', supplierType: 'Website' }), 'website');
   assert.equal(getSupplierSourceType({ id: 'legacy', type: 'website' }), 'website');
+  assert.equal(getSupplierSourceType({ id: 'a2z-traders', connectorType: 'a2z' }), 'website');
+  assert.equal(getSupplierSourceType({ id: 'a2z-traders', supplierType: 'a2z' }), 'website');
   assert.equal(isActiveWebsiteSupplier({ id: 'legacy', type: 'website', sourceStatus: 'active' }), true);
+  assert.equal(isActiveWebsiteSupplier({ id: 'a2z-traders', connectorType: 'a2z', sourceStatus: 'active' }), true);
 });
 
 test('supplier source eligibility excludes inactive and non-website sources', () => {

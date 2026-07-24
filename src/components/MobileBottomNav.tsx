@@ -8,6 +8,7 @@ import {
 import { auth } from '../firebase';
 import { signOut } from 'firebase/auth';
 import { WebsiteSettings, Category } from '../types';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 
 interface MobileBottomNavProps {
   currentPage: string;
@@ -41,6 +42,7 @@ export default function MobileBottomNav({
   setSelectedCategory
 }: MobileBottomNavProps) {
   const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
+  const prefersReducedMotion = useReducedMotion();
   const menuCloseButtonRef = useRef<HTMLButtonElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
 
@@ -91,7 +93,7 @@ export default function MobileBottomNav({
           {/* Tab 1: Home */}
           <button 
             onClick={() => handleTabClick('home')}
-            className={`flex min-h-12 flex-col items-center justify-center flex-1 transition-all relative py-1 cursor-pointer rounded-xl active:scale-95 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20 ${
+            className={`zy-mobile-tab flex min-h-12 flex-col items-center justify-center flex-1 transition-all relative py-1 cursor-pointer rounded-xl active:scale-95 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20 ${
               currentPage === 'home' && !isAdminMode ? activeTabClass : inactiveTabClass
             }`}
             aria-label="Go to home"
@@ -107,7 +109,7 @@ export default function MobileBottomNav({
           {/* Tab 2: Shop / Products */}
           <button 
             onClick={() => handleTabClick('products')}
-            className={`flex min-h-12 flex-col items-center justify-center flex-1 transition-all relative py-1 cursor-pointer rounded-xl active:scale-95 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20 ${
+            className={`zy-mobile-tab flex min-h-12 flex-col items-center justify-center flex-1 transition-all relative py-1 cursor-pointer rounded-xl active:scale-95 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20 ${
               currentPage === 'products' && !isAdminMode ? activeTabClass : inactiveTabClass
             }`}
             aria-label="Browse products"
@@ -126,7 +128,7 @@ export default function MobileBottomNav({
               setIsMoreMenuOpen(false);
               onOpenCart();
             }}
-            className="flex min-h-12 flex-col items-center justify-center flex-1 transition-all relative py-1 cursor-pointer rounded-xl text-slate-500 hover:text-slate-700 active:scale-95 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20"
+            className="zy-mobile-tab zy-mobile-tab-cart flex min-h-12 flex-col items-center justify-center flex-1 transition-all relative py-1 cursor-pointer rounded-xl text-slate-500 hover:text-slate-700 active:scale-95 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20"
             aria-label={`Open cart with ${cartCount} ${cartCount === 1 ? 'item' : 'items'}`}
           >
             <div className="relative">
@@ -143,7 +145,7 @@ export default function MobileBottomNav({
           {/* Tab 4: Wishlist */}
           <button 
             onClick={() => handleTabClick('wishlist')}
-            className={`flex min-h-12 flex-col items-center justify-center flex-1 transition-all relative py-1 cursor-pointer rounded-xl active:scale-95 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20 ${
+            className={`zy-mobile-tab flex min-h-12 flex-col items-center justify-center flex-1 transition-all relative py-1 cursor-pointer rounded-xl active:scale-95 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20 ${
               currentPage === 'wishlist' && !isAdminMode ? activeTabClass : inactiveTabClass
             }`}
             aria-label={`Open wishlist with ${wishlistCount} saved ${wishlistCount === 1 ? 'product' : 'products'}`}
@@ -166,7 +168,7 @@ export default function MobileBottomNav({
           {/* Tab 5: More Menu Bottom Sheet Toggle */}
           <button 
             onClick={() => setIsMoreMenuOpen(!isMoreMenuOpen)}
-            className={`flex min-h-12 flex-col items-center justify-center flex-1 transition-all relative py-1 cursor-pointer rounded-xl active:scale-95 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20 ${
+            className={`zy-mobile-tab flex min-h-12 flex-col items-center justify-center flex-1 transition-all relative py-1 cursor-pointer rounded-xl active:scale-95 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20 ${
               isMoreMenuOpen ? 'text-brand-blue scale-110' : 'text-slate-500 hover:text-slate-700'
             }`}
             aria-label={isMoreMenuOpen ? 'Close more menu' : 'Open more menu'}
@@ -181,8 +183,19 @@ export default function MobileBottomNav({
       </nav>
 
       {/* ==================== BOTTOM DRAWER SHEET ==================== */}
+      <AnimatePresence initial={false}>
       {isMoreMenuOpen && (
-        <div id="mobile-more-menu" className="fixed inset-0 z-30 md:hidden" role="dialog" aria-modal="true" aria-labelledby="mobile-more-menu-title">
+        <motion.div
+          id="mobile-more-menu"
+          className="fixed inset-0 z-30 md:hidden"
+          initial={{ opacity: prefersReducedMotion ? 1 : 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: prefersReducedMotion ? 0 : 0.2 }}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="mobile-more-menu-title"
+        >
           {/* Backdrop glass click closer */}
           <button
             type="button"
@@ -192,7 +205,13 @@ export default function MobileBottomNav({
           />
 
           {/* Drawer content board */}
-          <div className="zy-mobile-sheet absolute bottom-0 left-0 right-0 max-h-[88dvh] bg-white rounded-t-[2rem] sm:rounded-t-[2.5rem] shadow-2xl border-t border-slate-100 flex flex-col overflow-hidden pb-[calc(6.75rem+env(safe-area-inset-bottom))] animate-slideUp">
+          <motion.div
+            className="zy-mobile-sheet absolute bottom-0 left-0 right-0 max-h-[88dvh] bg-white rounded-t-[2rem] sm:rounded-t-[2.5rem] shadow-2xl border-t border-slate-100 flex flex-col overflow-hidden pb-[calc(6.75rem+env(safe-area-inset-bottom))]"
+            initial={prefersReducedMotion ? { y: 0 } : { y: '9%' }}
+            animate={{ y: 0 }}
+            exit={prefersReducedMotion ? { y: 0 } : { y: '7%' }}
+            transition={{ duration: prefersReducedMotion ? 0 : 0.26, ease: [0.2, 0.75, 0.25, 1] }}
+          >
             
             {/* Grab handle indicator for touch feel */}
             <div className="w-12 h-1 bg-slate-200 rounded-full mx-auto my-3.5 flex-shrink-0"></div>
@@ -404,9 +423,10 @@ export default function MobileBottomNav({
               </div>
 
             </div>
-          </div>
-        </div>
+          </motion.div>
+        </motion.div>
       )}
+      </AnimatePresence>
     </>
   );
 }
