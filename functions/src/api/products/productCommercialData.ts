@@ -14,6 +14,7 @@ export const COMMERCIAL_PRODUCT_FIELDS = [
   "profitMargin",
   "commission",
   "supplierMetadata",
+  "supplierMedia",
   "supplierCommercialMetadata",
   "wholesalePrice",
   "recommendedRetailPrice",

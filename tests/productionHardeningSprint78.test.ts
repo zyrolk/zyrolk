@@ -125,7 +125,9 @@ test('a root error boundary provides a customer-safe recovery path', () => {
 });
 
 test('customer workflows use safe diagnostics and resilient checkout networking', () => {
-  assert.match(cart, /fetchJson<\{ success: boolean; order: Order; paymentSession\?: PayHerePaymentSession; error\?: string \}>/);
+  assert.match(cart, /fetchJson<\{ success: boolean; order: Order; error\?: string \}>/);
+  assert.match(cart, /const paymentMethod = 'cod' as const/);
+  assert.doesNotMatch(cart, /submitPayHerePayment/);
   assert.match(cart, /Idempotency-Key/);
   assert.match(cart, /reportClientIssue\('checkout-request'/);
   for (const customerSurface of [app, cart, authModal, productDetail, contact, cms]) {

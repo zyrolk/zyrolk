@@ -55,6 +55,7 @@ export default function SupplierPortal({ user }: SupplierPortalProps) {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState('');
+  const [loadingMore, setLoadingMore] = useState(false);
   const [showProductEditor, setShowProductEditor] = useState(false);
   const [editingRequestId, setEditingRequestId] = useState('');
   const [editingProductId, setEditingProductId] = useState('');
@@ -75,6 +76,31 @@ export default function SupplierPortal({ user }: SupplierPortalProps) {
   }, [user]);
 
   useEffect(() => { void refresh(); }, [refresh]);
+
+  const loadMore = async () => {
+    if (!data || loadingMore) return;
+    setLoadingMore(true);
+    setError('');
+    try {
+      const next = await loadSupplierPortal(user, data.pagination);
+      const mergeById = <T extends { id: string }>(current: T[], incoming: T[]): T[] => {
+        const merged = new Map(current.map((item) => [item.id, item]));
+        incoming.forEach((item) => merged.set(item.id, item));
+        return [...merged.values()];
+      };
+      setData((current) => current ? {
+        ...next,
+        products: mergeById(current.products, next.products),
+        requests: mergeById(current.requests, next.requests),
+        orders: mergeById(current.orders, next.orders),
+        notifications: mergeById(current.notifications, next.notifications),
+      } : next);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'More supplier records could not be loaded.');
+    } finally {
+      setLoadingMore(false);
+    }
+  };
 
   const selectedCategory = data?.catalog.categories.find((category) => category.id === productDraft.category);
   const isProfileActive = data?.profile.profileStatus === 'active';
@@ -212,6 +238,7 @@ export default function SupplierPortal({ user }: SupplierPortalProps) {
         {data && tab === 'orders' && <section aria-labelledby="supplier-orders-title"><div className="mb-6"><p className="text-xs font-black uppercase tracking-wider text-blue-600">Assigned fulfilment</p><h2 id="supplier-orders-title" className="mt-1 text-2xl font-black">Orders</h2></div>{data.orders.length ? <div className="space-y-4">{data.orders.map((order) => <OrderCard key={order.id} order={order} busy={busy} onStatus={(status) => runAction(`order-${order.id}`, () => updateSupplierFulfilment(user, order.id, status).then(() => undefined), `Order ${order.orderNumber} moved to ${status}.`)} />)}</div> : <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center text-sm text-slate-500">No orders are assigned to your supplier account.</div>}</section>}
 
         {data && tab === 'notifications' && <section aria-labelledby="supplier-notifications-title"><div className="mb-6"><p className="text-xs font-black uppercase tracking-wider text-blue-600">Operational updates</p><h2 id="supplier-notifications-title" className="mt-1 text-2xl font-black">Notifications</h2></div>{data.notifications.length ? <div className="space-y-3">{data.notifications.map((notification) => <article key={notification.id} className={`rounded-2xl border p-4 ${notification.isRead ? 'border-slate-200 bg-white' : 'border-blue-200 bg-blue-50'}`}><div className="flex items-start justify-between gap-4"><div><div className="flex items-center gap-2"><Bell className="h-4 w-4 text-blue-600" aria-hidden="true" /><h3 className="text-sm font-black">{notification.title}</h3></div><p className="mt-2 text-sm text-slate-600">{notification.message}</p><p className="mt-2 text-[10px] font-bold text-slate-400">{formatDate(notification.createdAt)}</p></div>{!notification.isRead && !notification.id.startsWith('order-') && !notification.id.startsWith('stock-') && <button type="button" onClick={() => void runAction(`notification-${notification.id}`, () => markSupplierNotificationRead(user, notification.id).then(() => undefined), 'Notification marked as read.')} className="shrink-0 rounded-lg border border-blue-200 px-2 py-1 text-[10px] font-bold text-blue-700">Mark read</button>}</div></article>)}</div> : <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center text-sm text-slate-500">No supplier notifications yet.</div>}</section>}
+        {data && Object.values(data.pagination.hasMore).some(Boolean) && <div className="mt-8 flex justify-center"><button type="button" onClick={() => void loadMore()} disabled={loadingMore} className="min-h-11 rounded-xl border border-slate-300 bg-white px-5 text-xs font-bold text-slate-700 disabled:opacity-50">{loadingMore ? 'Loading more…' : 'Load more records'}</button></div>}
       </main>
 
       {showProductEditor && data && <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/75 p-3 backdrop-blur-sm sm:p-6" role="dialog" aria-modal="true" aria-labelledby="supplier-product-editor-title"><div className="mx-auto max-w-4xl rounded-3xl bg-white p-5 shadow-2xl sm:p-7"><div className="mb-5 flex items-start justify-between gap-3"><div><p className="text-xs font-black uppercase tracking-wider text-blue-600">{requestType === 'new_product' ? 'New product request' : 'Approved product change request'}</p><h2 id="supplier-product-editor-title" className="mt-1 text-xl font-black">Product Editor</h2><p className="mt-1 text-xs text-slate-500">Saving creates a draft only. Publishing always requires administrator approval.</p></div><button type="button" onClick={() => setShowProductEditor(false)} className="rounded-xl border border-slate-200 p-2" aria-label="Close product editor"><XCircle className="h-5 w-5" /></button></div><form className="grid gap-4 sm:grid-cols-2" onSubmit={(event) => { event.preventDefault(); void saveDraft(); }}>

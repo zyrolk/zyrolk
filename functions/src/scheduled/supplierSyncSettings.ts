@@ -9,6 +9,7 @@ export type SupplierComparisonStatus =
   | 'UNCHANGED';
 
 export interface SupplierSourceSyncSettings {
+  priority?: number;
   productLimit?: string;
   syncNewProducts?: boolean;
   syncPriceUpdates?: boolean;
@@ -28,6 +29,14 @@ export interface SupplierComparison {
 const PRICE_FIELDS = new Set(['Cost Price', 'Market Price']);
 const DESCRIPTION_FIELDS = new Set(['Product Name', 'Description']);
 const IMAGE_FIELDS = new Set(['Primary Image', 'Images']);
+const PRODUCT_DETAIL_FIELDS = new Set([
+  'Supplier Product ID', 'Barcode', 'Short Description', 'Supplier Brand', 'Manufacturer', 'Model',
+  'Supplier Category', 'Supplier Subcategory', 'Tags', 'Keywords', 'Product Type', 'Collection',
+  'Attributes', 'Variants', 'Options', 'Specifications', 'Features', 'Dimensions', 'Weight',
+  'Package Size', 'Shipping Class', 'Warranty', 'Country of Origin', 'Videos', 'Currency', 'Tax',
+  'Supplier Discount', 'Availability', 'Lead Time', 'Minimum Order Quantity', 'Maximum Order Quantity',
+  'Supplier Visibility', 'Supplier Status', 'SEO Slug', 'Meta Description', 'Extra Attributes',
+]);
 
 export function getSupplierProductLimit(productLimit: string | undefined, maximum = 250): number {
   const safeMaximum = Math.max(1, Math.floor(maximum));
@@ -71,6 +80,7 @@ export function filterSupplierComparison(
     if (field === 'Stock') return settings?.syncStockUpdates !== false;
     if (DESCRIPTION_FIELDS.has(field)) return settings?.syncDescriptionUpdates !== false;
     if (IMAGE_FIELDS.has(field)) return settings?.syncImageUpdates !== false;
+    if (PRODUCT_DETAIL_FIELDS.has(field)) return settings?.syncDescriptionUpdates !== false;
     return false;
   });
 

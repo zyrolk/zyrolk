@@ -153,7 +153,7 @@ export default function FloatingWhatsApp({ settings, isAdminMode }: FloatingWhat
         left: `${position.x}px`,
         top: `${position.y}px`,
         transform: 'none',
-        transition: isDragging ? 'none' : 'all 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28)',
+        transition: isDragging ? 'none' : 'left 240ms cubic-bezier(0.16, 1, 0.3, 1), top 240ms cubic-bezier(0.16, 1, 0.3, 1)',
       }
     : {};
 
@@ -179,7 +179,7 @@ export default function FloatingWhatsApp({ settings, isAdminMode }: FloatingWhat
         handleStart(e.touches[0].clientX, e.touches[0].clientY);
       }}
       style={inlineStyles}
-      className={`${fallbackClasses} w-16 h-16 rounded-full bg-[#25D366] text-white flex items-center justify-center shadow-[0_8px_30px_rgba(37,211,102,0.4)] border-2 border-white hover:scale-110 active:scale-95 cursor-pointer group select-none touch-none`}
+      className={`zy-floating-whatsapp ${fallbackClasses} w-16 h-16 rounded-full bg-[#25D366] text-white flex items-center justify-center shadow-[0_8px_30px_rgba(37,211,102,0.4)] border-2 border-white cursor-pointer group select-none touch-none`}
       aria-label="Chat on WhatsApp"
     >
       {/* Dynamic orientation for tooltip based on screen side */}

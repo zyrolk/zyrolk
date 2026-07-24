@@ -1,87 +1,52 @@
-import { deleteField, doc, serverTimestamp, writeBatch } from 'firebase/firestore';
-import { auth, db } from '../firebase';
+import { auth } from '../firebase';
+import { getAppCheckRequestHeaders } from './security/appCheck';
 import {
-  buildSupplierQueueDecisionPlan,
-  SupplierQueueAction,
-  SupplierQueueDecisionItem,
   getSupplierReviewQueueItemId,
+  SupplierQueueDecisionItem,
 } from './supplierQueueDecisionPlan';
-import { normalizeSupplierProductImages } from './connectors/a2z-website/productImages';
-import { validateSupplierPublishPayload } from './supplierReviewEditor';
-import { buildCommercialFieldDeletes } from './products/productCommercialData';
 
 export type { SupplierQueueDecisionItem };
 export { getSupplierReviewQueueItemId };
 
-export const approveSupplierQueueItem = async (
-  item: SupplierQueueDecisionItem,
-  validCategoryIds?: readonly string[],
+export type SupplierQueueDecisionAction = 'approve' | 'reject' | 'delete';
+
+/**
+ * Compatibility wrapper for legacy admin surfaces. Queue decisions are deliberately
+ * executed only by the authenticated Firebase Functions API; this module never
+ * performs browser Firestore writes.
+ */
+export const requestSupplierQueueDecision = async (
+  queueItemId: string,
+  action: SupplierQueueDecisionAction,
+  body: Record<string, unknown> = {},
 ): Promise<void> => {
-  const productPayload = item.productPayload;
-
-  if (!productPayload?.id) {
-    throw new Error(`Product payload not found for queue item: ${item.id}`);
+  const [token, appCheckHeaders] = await Promise.all([
+    auth.currentUser?.getIdToken(),
+    getAppCheckRequestHeaders(),
+  ]);
+  if (!token) throw new Error('Admin authentication is required. Please sign in again.');
+  const response = await fetch(`/api/supplier-review-queue/${encodeURIComponent(queueItemId)}/${action}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...appCheckHeaders },
+    body: JSON.stringify(body),
+  });
+  const result = await response.json().catch(() => ({})) as { success?: boolean; error?: string };
+  if (!response.ok || result.success !== true) {
+    throw new Error(result.error || 'Supplier review action could not be completed.');
   }
-
-  const validationErrors = validateSupplierPublishPayload(item, validCategoryIds);
-  const firstError = Object.values(validationErrors)[0];
-  if (firstError) {
-    throw new Error(firstError);
-  }
-
-  const normalizedImages = normalizeSupplierProductImages(productPayload.imageUrl, productPayload.imageUrls);
-
-  await writeSupplierQueueDecision({
-    ...item,
-    productPayload: {
-      ...productPayload,
-      imageUrl: normalizedImages[0],
-      imageUrls: normalizedImages,
-    },
-  }, 'approved');
 };
 
+/** @deprecated Use requestSupplierQueueDecision with an explicit review draft. */
+export const approveSupplierQueueItem = async (item: SupplierQueueDecisionItem): Promise<void> => {
+  await requestSupplierQueueDecision(item.id, 'approve');
+};
+
+/** @deprecated Use requestSupplierQueueDecision. */
 export const rejectSupplierQueueItem = async (item: SupplierQueueDecisionItem): Promise<void> => {
-  await writeSupplierQueueDecision(item, 'rejected');
+  await requestSupplierQueueDecision(item.id, 'reject', { rejectionReason: item.rejectionReason || 'Rejected by admin.' });
 };
 
+/** @deprecated Use requestSupplierQueueDecision. */
 export const deleteSupplierQueueItem = async (item: SupplierQueueDecisionItem): Promise<void> => {
-  await writeSupplierQueueDecision(item, 'deleted');
-};
-
-const writeSupplierQueueDecision = async (
-  item: SupplierQueueDecisionItem,
-  action: SupplierQueueAction,
-): Promise<void> => {
-  const reviewQueueItemId = getSupplierReviewQueueItemId(item);
-  const currentUser = auth.currentUser;
-  const batch = writeBatch(db);
-  const auditId = `${reviewQueueItemId}-${action}-${Date.now()}`;
-  const plan = buildSupplierQueueDecisionPlan(
-    item,
-    action,
-    {
-      uid: currentUser?.uid || 'unknown',
-      email: currentUser?.email || 'unknown',
-    },
-    serverTimestamp(),
-    auditId,
-  );
-
-  for (const operation of plan.sets) {
-    const operationData = operation.removeCommercialProductFields
-      ? { ...operation.data, ...buildCommercialFieldDeletes(deleteField()) }
-      : operation.data;
-    if (operation.options) {
-      batch.set(doc(db, operation.collection, operation.id), operationData, operation.options);
-    } else {
-      batch.set(doc(db, operation.collection, operation.id), operationData);
-    }
-  }
-
-  for (const operation of plan.deletes) {
-    batch.delete(doc(db, operation.collection, operation.id));
-  }
-
-  await batch.commit();
+  await requestSupplierQueueDecision(item.id, 'delete', { deletionReason: item.deletionReason || 'Deleted by admin.' });
 };

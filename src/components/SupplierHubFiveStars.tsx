@@ -37,16 +37,18 @@ import {
   normalizeSupplierProductImages,
 } from '../services/connectors/a2z-website/productImages';
 import { collection, doc, getDocs, limit, onSnapshot, orderBy, query, setDoc, writeBatch } from 'firebase/firestore';
+import { onIdTokenChanged } from 'firebase/auth';
 import { auth, db, handleFirestoreError, OperationType } from '../firebase';
 import { Product } from '../types';
 import { mergeProductCommercialData, PRODUCT_PRIVATE_COLLECTION } from '../services/products/productCommercialData';
 import { getAppCheckRequestHeaders } from '../services/security/appCheck';
-import { approveSupplierQueueItem, deleteSupplierQueueItem, rejectSupplierQueueItem } from '../services/supplierQueueService';
 import { matchesSupplierSearch } from '../services/supplierSearch';
-import { isActiveWebsiteSupplier } from '../services/supplierSourceUtils';
+import { isActiveWebsiteSupplier, normalizeSupplierSourceForUi } from '../services/supplierSourceUtils';
+import { buildSupplierOnboardingSource, SupplierOnboardingType } from '../services/supplierSourceOnboarding';
+import { reportSupplierImageFailure } from '../services/supplierImageDiagnostics';
 import SupplierReviewEditorModal from './SupplierReviewEditorModal';
+import SupplierOperationsDashboard from './supplier-operations/SupplierOperationsDashboard';
 import {
-  buildSupplierApprovalItem,
   calculateSupplierProfit,
   createSupplierReviewDraft,
   SupplierReviewDraft,
@@ -118,7 +120,10 @@ function SupplierImagePreview({ src, alt }: { src?: string; alt: string }) {
       className="h-10 w-10 rounded-lg border border-slate-200 object-cover dark:border-slate-800"
       referrerPolicy="no-referrer"
       loading="lazy"
-      onError={() => setFailed(true)}
+      onError={(event) => {
+        reportSupplierImageFailure(event.currentTarget);
+        setFailed(true);
+      }}
     />
   );
 }
@@ -132,7 +137,8 @@ export interface ComparisonResult {
 
 export interface ReviewQueueItem {
   id: string;
-  status: 'Pending' | 'Approved' | 'Rejected';
+  status: 'Pending' | 'CONFLICT' | 'Approved' | 'Rejected';
+  queueState?: string;
   supplierCode: string;
   productName: string;
   costPrice: number;
@@ -156,6 +162,38 @@ export interface ReviewQueueItem {
   createdAt?: string;
   updatedAt?: string;
   supplierSnapshot?: Record<string, unknown>;
+  managedMedia?: Array<Record<string, unknown>>;
+  mediaFailures?: Array<{ originalSupplierUrl?: string; reason?: string; retryable?: boolean; failedAt?: string }>;
+  mediaStatus?: string;
+  categoryMapping?: {
+    supplierCategory?: string;
+    targetCategoryId?: string;
+    targetSubcategoryId?: string;
+    confidence?: number;
+    mappingType?: string;
+    autoSelected?: boolean;
+    requiresManualSelection?: boolean;
+  };
+  brandMapping?: {
+    supplierBrand?: string;
+    mappedBrandId?: string;
+    confidence?: number;
+    mappingType?: string;
+    autoSelected?: boolean;
+    requiresManualSelection?: boolean;
+  };
+  productValidation?: {
+    readyToPublish?: boolean;
+    missingFields?: string[];
+    errors?: Array<{ field: string; code: string; message: string }>;
+    warnings?: Array<{ field: string; code: string; message: string; severity?: string }>;
+  };
+  approvalConflict?: {
+    reason?: string;
+    changedFields?: string[];
+    previousVersion?: string;
+    currentVersion?: string;
+  };
 }
 
 export interface SyncHistoryItem {
@@ -188,7 +226,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   // Supplier Hub navigation and interaction state
-  const [activeSubTab, setActiveSubTab] = useState<'review' | 'import_queue' | 'sources' | 'changes' | 'settings'>('review');
+  const [activeSubTab, setActiveSubTab] = useState<'operations' | 'review' | 'import_queue' | 'sources' | 'changes' | 'settings'>('operations');
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [reviewSearch, setReviewSearch] = useState<string>('');
   const [importSearch, setImportSearch] = useState<string>('');
@@ -200,7 +238,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
   const [showConnectModal, setShowConnectModal] = useState<boolean>(false);
   const [wizardStep, setWizardStep] = useState<number>(1);
   const [newSupplierName, setNewSupplierName] = useState<string>("");
-  const [newSupplierType, setNewSupplierType] = useState<string>("website");
+  const [newSupplierType, setNewSupplierType] = useState<SupplierOnboardingType>("a2z");
   const [newSupplierCode, setNewSupplierCode] = useState<string>("");
   const [newSupplierDesc, setNewSupplierDesc] = useState<string>("");
   
@@ -213,14 +251,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
   // API specific
   const [apiEndpoint, setApiEndpoint] = useState<string>("");
   const [apiMethod, setApiMethod] = useState<string>("GET");
-  const [apiHeaders, setApiHeaders] = useState<string>('{\n  "Content-Type": "application/json"\n}');
   const [apiDataPath, setApiDataPath] = useState<string>("products");
-
-  // WhatsApp specific
-  const [whatsappNumber, setWhatsappNumber] = useState<string>("");
-  const [whatsappSender, setWhatsappSender] = useState<string>("");
-  const [whatsappKeywords, setWhatsappKeywords] = useState<string>("STOCK_UPDATE, PRICE_CHANGE");
-  const [whatsappFormat, setWhatsappFormat] = useState<string>("Code: {code}, Qty: {qty}");
 
   const [savingSupplier, setSavingSupplier] = useState<boolean>(false);
   const [syncingSourceId, setSyncingSourceId] = useState<string | null>(null);
@@ -231,41 +262,38 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
   const [modalTestError, setModalTestError] = useState<string | null>(null);
   const [modalTestProductsCount, setModalTestProductsCount] = useState<number | null>(null);
 
-  // Sync supplier sources from Firestore on mount
+  // Supplier source definitions are deliberately projected by Functions. This
+  // keeps legacy credential fields out of every browser response.
   useEffect(() => {
-    const unsubscribe = onSnapshot(
-      collection(db, "supplierSources"),
-      (snapshot) => {
-        const sources: any[] = [];
-        snapshot.forEach((doc) => {
-          const data = doc.data();
-          sources.push({
-            id: doc.id,
-            ...data,
-            // Map the new structured schema fields to the existing layout keys for full visual compatibility
-            name: data.supplierName || data.name || "Unnamed Supplier",
-            type: data.supplierType || data.type || "website",
-            supplierType: data.supplierType || data.type || "website",
-            websiteUrl: data.websiteUrl || data.config?.targetUrl || "",
-            endpoint: data.endpoint || data.config?.apiEndpoint || "",
-            connectionStatus: data.connectionStatus || "Not Synced",
-            sourceStatus: data.sourceStatus || "active",
-            lastSync: data.lastSync || null,
-            lastError: data.lastError || "None"
-          });
-        });
-
-        setSupplierSources(sources);
-      },
-      (error) => {
-        console.error("onSnapshot error:", error);
-        handleFirestoreError(error, OperationType.GET, "supplierSources");
+    let cancelled = false;
+    const loadSources = async () => {
+      try {
+        const response = await getSupplierApi('/api/supplier-sources');
+        const result = await response.json().catch(() => ({})) as { success?: boolean; sources?: any[]; error?: string };
+        if (!response.ok || result.success !== true || !Array.isArray(result.sources)) {
+          throw new Error(result.error || 'Supplier sources could not be loaded.');
+        }
+        if (!cancelled) {
+          setSupplierSources(result.sources.map(normalizeSupplierSourceForUi));
+        }
+      } catch (error) {
+        if (!cancelled) handleFirestoreError(error, OperationType.GET, 'supplierSources API');
       }
-    );
-    return () => unsubscribe();
+    };
+    // Firebase may restore a persisted session after this lazy panel mounts.
+    // Load once the ID-token observer confirms an authenticated user, and load
+    // again after a token refresh so requests never depend on a stale snapshot.
+    const unsubscribeAuth = onIdTokenChanged(auth, (currentUser) => {
+      if (currentUser) void loadSources();
+    });
+    return () => {
+      cancelled = true;
+      unsubscribeAuth();
+    };
   }, []);
 
   const [categories, setCategories] = useState<any[]>([]);
+  const [brands, setBrands] = useState<any[]>([]);
 
   useEffect(() => {
     const unsubscribe = onSnapshot(
@@ -278,6 +306,15 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
       (error) => {
         console.error("Categories fetch error:", error);
       }
+    );
+    return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    const unsubscribe = onSnapshot(
+      collection(db, "brands"),
+      (snapshot) => setBrands(snapshot.docs.map((brand) => ({ id: brand.id, ...brand.data() }))),
+      (error) => handleFirestoreError(error, OperationType.GET, "brands"),
     );
     return () => unsubscribe();
   }, []);
@@ -313,7 +350,10 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
       (snapshot) => {
         const items: ReviewQueueItem[] = [];
         snapshot.forEach((queueDoc) => {
-          items.push({ id: queueDoc.id, ...queueDoc.data() } as ReviewQueueItem);
+          const queueItem = { id: queueDoc.id, ...queueDoc.data() } as ReviewQueueItem;
+          // Lifecycle-aware queue records remain durable after a decision, while the
+          // existing review UI continues to show only actionable review items.
+          if (!queueItem.queueState || ['review_pending', 'conflict'].includes(queueItem.queueState)) items.push(queueItem);
         });
         setReviewQueue(sortByCreatedAtDesc(items));
       },
@@ -499,6 +539,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
   };
 
   const getSupplierApiHeaders = async (forceRefresh = false) => {
+    await auth.authStateReady();
     const user = auth.currentUser;
     if (!user) {
       throw new Error("Admin authentication is required. Please sign in again.");
@@ -515,11 +556,11 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
     };
   };
 
-  const postSupplierApi = async (path: string, body: Record<string, unknown>) => {
+  const requestSupplierApi = async (path: string, method: 'GET' | 'POST' | 'PATCH', body?: Record<string, unknown>) => {
     const request = async (forceRefresh: boolean) => fetch(path, {
-      method: 'POST',
+      method,
       headers: await getSupplierApiHeaders(forceRefresh),
-      body: JSON.stringify(body),
+      ...(body ? { body: JSON.stringify(body) } : {}),
     });
 
     let response = await request(false);
@@ -527,7 +568,32 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
     return response;
   };
 
-  const handleSyncSupplier = async (sourceIds?: string[]): Promise<boolean> => {
+  const postSupplierApi = (path: string, body: Record<string, unknown>) => requestSupplierApi(path, 'POST', body);
+  const patchSupplierApi = (path: string, body: Record<string, unknown>) => requestSupplierApi(path, 'PATCH', body);
+  const getSupplierApi = (path: string) => requestSupplierApi(path, 'GET');
+
+  const decideSupplierReviewQueueItem = async (
+    queueItemId: string,
+    action: 'approve' | 'reject' | 'delete',
+    body: Record<string, unknown> = {},
+  ) => {
+    const response = await postSupplierApi(`/api/supplier-review-queue/${encodeURIComponent(queueItemId)}/${action}`, body);
+    const result = await response.json().catch(() => ({})) as {
+      success?: boolean;
+      error?: string;
+      status?: string;
+      conflict?: ReviewQueueItem['approvalConflict'];
+    };
+    if (response.status === 409 && result.status === 'conflict' && result.conflict) return result;
+    if (!response.ok || result.success !== true) {
+      throw new Error(result.error || 'Supplier review action could not be completed.');
+    }
+    return result;
+  };
+
+  // Retained only for an explicit local diagnostic session. Production sync execution is
+  // Functions-authoritative through /api/supplier-sync.
+  const runLocalSupplierSync = async (sourceIds?: string[]): Promise<boolean> => {
     setIsSyncing(true);
     setErrorMsg(null);
     setSyncStatusMsg("Initiating supplier synchronization checks...");
@@ -1022,11 +1088,75 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
     }
   };
 
+  const handleSyncSupplier = async (sourceIds?: string[]): Promise<boolean> => {
+    setIsSyncing(true);
+    setErrorMsg(null);
+    setSyncStatusMsg('Starting the supplier synchronization job...');
+    try {
+      const response = await postSupplierApi('/api/supplier-sync', sourceIds?.length ? { sourceIds } : {});
+      const result = await response.json().catch(() => ({})) as {
+        success?: boolean;
+        status?: string;
+        productsScanned?: number;
+        productsQueued?: number;
+        errors?: string[];
+        error?: string;
+      };
+      if (!response.ok || result.success === false) {
+        throw new Error(result.error || 'Supplier synchronization could not be completed.');
+      }
+
+      const errors = Array.isArray(result.errors) ? result.errors.filter(Boolean) : [];
+      if (result.status === 'Skipped') {
+        setSyncStatusMsg('No enabled supplier source was ready to synchronize.');
+      } else {
+        setSyncStatusMsg(`Synchronization complete. Scanned ${Number(result.productsScanned || 0)} products and queued ${Number(result.productsQueued || 0)} for review.${errors.length ? ` ${errors.length} source error${errors.length === 1 ? '' : 's'} recorded.` : ''}`);
+      }
+      setTimeout(() => setSyncStatusMsg(null), 5000);
+      return true;
+    } catch (error: any) {
+      setErrorMsg(error.message || 'Supplier synchronization failed.');
+      setSyncStatusMsg(null);
+      return false;
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
   // --- CONNECT SUPPLIER HANDLERS ---
+  const buildNewSupplierSource = (connectionStatus = modalTestStatus === 'Connected' ? 'connected' : 'Not Synced') => {
+    const code = newSupplierCode.trim() || generateSlug(newSupplierName);
+    return buildSupplierOnboardingSource({
+      id: code,
+      supplierName: newSupplierName,
+      supplierType: newSupplierType,
+      description: newSupplierDesc,
+      websiteUrl: newSupplierUrl,
+      endpoint: apiEndpoint,
+      apiMethod,
+      apiDataPath,
+      cssPriceSelector,
+      cssStockSelector,
+      cssImageSelector,
+      connectionStatus,
+      lastError: modalTestError,
+    });
+  };
+
   const handleModalTestConnection = async () => {
-    if (newSupplierType === 'website' && !newSupplierUrl.trim()) {
+    if (!newSupplierName.trim()) {
+      setModalTestStatus('Failed');
+      setModalTestError("Supplier name is required to test the selected connector.");
+      return;
+    }
+    if ((newSupplierType === 'website' || newSupplierType === 'a2z') && !newSupplierUrl.trim()) {
       setModalTestStatus('Failed');
       setModalTestError("Website URL is required to test connection.");
+      return;
+    }
+    if (newSupplierType === 'api' && !apiEndpoint.trim()) {
+      setModalTestStatus('Failed');
+      setModalTestError("REST endpoint URL is required to test connection.");
       return;
     }
 
@@ -1034,13 +1164,10 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
     setModalTestError(null);
     setModalTestProductsCount(null);
 
-    const targetUrl = newSupplierType === 'website' ? newSupplierUrl.trim() : apiEndpoint.trim();
-    const endpointPath = newSupplierType === 'website' ? apiEndpoint.trim() : '';
-
     try {
       const response = await postSupplierApi('/api/test-supplier', {
-        websiteUrl: targetUrl,
-        endpoint: endpointPath,
+        id: newSupplierCode.trim() || generateSlug(newSupplierName),
+        source: buildNewSupplierSource('Not Synced'),
       });
 
       const result = await response.json();
@@ -1061,7 +1188,6 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
 
   const handleTestExistingConnection = async (source: any) => {
     const urlToTest = source.websiteUrl || source.config?.targetUrl || '';
-    const endpointToTest = source.endpoint || source.config?.apiEndpoint || '';
 
     if (!urlToTest) {
       setErrorMsg(`Missing Website URL for supplier: ${source.name}`);
@@ -1074,40 +1200,31 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
     
     try {
       const response = await postSupplierApi('/api/test-supplier', {
-        websiteUrl: urlToTest,
-        endpoint: endpointToTest,
+        sourceId: source.id,
       });
 
       const result = await response.json();
 
       if (result.success) {
+        setSupplierSources((current) => current.map((item) => item.id === source.id
+          ? { ...item, connectionStatus: 'connected', lastError: 'None' }
+          : item));
         setSuccessMsg(`Connection successful! Discovered ${result.productsCount} products for ${source.name}.`);
         setTimeout(() => setSuccessMsg(null), 4000);
         
-        // Save connectionStatus = 'connected' in Firestore
-        await setDoc(doc(db, "supplierSources", source.id), {
-          connectionStatus: 'connected',
-          lastError: 'None'
-        }, { merge: true });
       } else {
+        setSupplierSources((current) => current.map((item) => item.id === source.id
+          ? { ...item, connectionStatus: 'Failed', lastError: result.error || 'Endpoint returned error response.' }
+          : item));
         setErrorMsg(`Connection failed for ${source.name}: ${result.error || 'Endpoint returned error response.'}`);
         setTimeout(() => setErrorMsg(null), 5000);
 
-        // Save connectionStatus = 'Failed' in Firestore
-        await setDoc(doc(db, "supplierSources", source.id), {
-          connectionStatus: 'Failed',
-          lastError: result.error || 'Endpoint returned error response.'
-        }, { merge: true });
       }
     } catch (err: any) {
       console.error("Test connection error:", err);
       setErrorMsg(`Network error during connection test: ${err.message || 'Unknown error'}`);
       setTimeout(() => setErrorMsg(null), 5000);
 
-      await setDoc(doc(db, "supplierSources", source.id), {
-        connectionStatus: 'Failed',
-        lastError: err.message || 'Network request failed.'
-      }, { merge: true });
     } finally {
       setTestingSourceId(null);
     }
@@ -1121,72 +1238,58 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
     const code = newSupplierCode.trim() || generateSlug(newSupplierName);
     setSavingSupplier(true);
 
-    const configData: any = {
-      description: newSupplierDesc.trim()
-    };
-
-    if (newSupplierType === 'website') {
-      configData.targetUrl = newSupplierUrl.trim();
-      configData.cssPriceSelector = cssPriceSelector.trim();
-      configData.cssStockSelector = cssStockSelector.trim();
-      configData.cssImageSelector = cssImageSelector.trim();
-    } else if (newSupplierType === 'api') {
-      configData.apiEndpoint = apiEndpoint.trim();
-      configData.apiMethod = apiMethod;
-      configData.apiHeaders = apiHeaders.trim();
-      configData.apiDataPath = apiDataPath.trim();
-    } else if (newSupplierType === 'whatsapp') {
-      configData.whatsappNumber = whatsappNumber.trim();
-      configData.whatsappSender = whatsappSender.trim();
-      configData.whatsappKeywords = whatsappKeywords.trim();
-      configData.whatsappFormat = whatsappFormat.trim();
-    }
-
-    const newSource = {
-      id: code,
-      supplierName: newSupplierName.trim(),
-      websiteUrl: newSupplierType === 'website' ? newSupplierUrl.trim() : (newSupplierType === 'api' ? apiEndpoint.trim() : ''),
-      endpoint: newSupplierType === 'website' ? apiEndpoint.trim() : '',
-      supplierType: newSupplierType,
-      connectionStatus: modalTestStatus === 'Connected' ? 'connected' : 'Not Synced',
-      sourceStatus: 'active',
-      lastSync: null,
-      lastError: modalTestError || 'None',
-      config: configData,
-      createdAt: new Date().toISOString()
-    };
+    const newSource = buildNewSupplierSource();
 
     try {
-      await setDoc(doc(db, "supplierSources", code), newSource);
+      const response = await postSupplierApi('/api/supplier-sources', {
+        id: code,
+        source: newSource,
+        testConnection: modalTestStatus === 'Connected',
+      });
+      const result = await response.json().catch(() => ({})) as {
+        success?: boolean;
+        source?: Record<string, any> & { id: string };
+        connectionTest?: { success?: boolean; error?: string };
+        error?: string;
+      };
+      if (!response.ok || result.success !== true) throw new Error(result.error || 'Supplier source could not be created.');
+      if (result.source) {
+        const normalizedSource = normalizeSupplierSourceForUi(result.source);
+        setSupplierSources((current) => [
+          ...current.filter((source) => source.id !== normalizedSource.id),
+          normalizedSource,
+        ]);
+      }
       
       // Reset form fields, test states, and modal
       setWizardStep(1);
       setNewSupplierName("");
       setNewSupplierCode("");
       setNewSupplierDesc("");
+      setNewSupplierType("a2z");
       setNewSupplierUrl("");
       setCssPriceSelector(".product-price");
       setCssStockSelector(".instock-status");
       setCssImageSelector(".product-image img");
       setApiEndpoint("");
       setApiMethod("GET");
-      setApiHeaders('{\n  "Content-Type": "application/json"\n}');
       setApiDataPath("products");
-      setWhatsappNumber("");
-      setWhatsappSender("");
-      setWhatsappKeywords("STOCK_UPDATE, PRICE_CHANGE");
-      setWhatsappFormat("Code: {code}, Qty: {qty}");
       
       setModalTestStatus('idle');
       setModalTestError(null);
       setModalTestProductsCount(null);
       
       setShowConnectModal(false);
-      setSuccessMsg(`Supplier "${newSupplierName}" successfully connected to "supplierSources"!`);
+      if (result.connectionTest?.success === false) {
+        setErrorMsg(`Supplier "${newSupplierName}" was saved, but the server connection test failed: ${result.connectionTest.error || 'Unknown error'}`);
+        setTimeout(() => setErrorMsg(null), 5000);
+      } else {
+        setSuccessMsg(`Supplier "${newSupplierName}" successfully connected to "supplierSources"!`);
+      }
       setTimeout(() => setSuccessMsg(null), 3000);
     } catch (err) {
       console.error("Firestore save error:", err);
-      setErrorMsg("Failed to save supplier configuration to Firestore. Please check security rules.");
+      setErrorMsg(err instanceof Error ? err.message : "Failed to save supplier configuration.");
       setTimeout(() => setErrorMsg(null), 5000);
       handleFirestoreError(err, OperationType.WRITE, `supplierSources/${code}`);
     } finally {
@@ -1274,7 +1377,9 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
         }
       };
       
-      await setDoc(doc(db, "supplierSources", sourceId), updatedData, { merge: true });
+      const response = await patchSupplierApi(`/api/supplier-sources/${encodeURIComponent(sourceId)}`, { source: updatedData });
+      const result = await response.json().catch(() => ({})) as { success?: boolean; error?: string };
+      if (!response.ok || result.success !== true) throw new Error(result.error || 'Supplier source could not be updated.');
       
       setSuccessMsg("Supplier settings successfully saved and persisted!");
       setTimeout(() => setSuccessMsg(null), 3000);
@@ -1292,16 +1397,15 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
   const handleApprovePendingChange = async (change: any) => {
     setProcessingChangeId(change.id);
     try {
-      const linkedReviewItem = reviewQueue.find(item => item.id === change.reviewQueueItemId);
-      const queueDecisionItem = {
-        ...linkedReviewItem,
-        ...change,
-        id: change.id,
-        productPayload: change.productPayload || linkedReviewItem?.productPayload,
-        reviewQueueItemId: change.reviewQueueItemId || linkedReviewItem?.id
-      };
-
-      await approveSupplierQueueItem(queueDecisionItem, validCategoryIds);
+      const result = await decideSupplierReviewQueueItem(change.id, 'approve', {
+        resolveConflict: change.queueState === 'conflict' || change.status === 'CONFLICT',
+      });
+      if (result.success !== true && result.status === 'conflict') {
+        setProcessingChangeId(null);
+        setErrorMsg(result.error || 'The live product changed. Review the conflict before publishing.');
+        setTimeout(() => setErrorMsg(null), 6000);
+        return;
+      }
 
       setProcessingChangeId(null);
       setSuccessMsg(`Change for "${change.productName}" approved successfully.`);
@@ -1317,7 +1421,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
   const handleRejectPendingChange = async (change: any) => {
     setProcessingChangeId(change.id);
     try {
-      await rejectSupplierQueueItem(change);
+      await decideSupplierReviewQueueItem(change.id, 'reject', { rejectionReason: 'Change rejected by admin.' });
       setProcessingChangeId(null);
       setSuccessMsg(`Change for "${change.productName}" rejected.`);
       setTimeout(() => setSuccessMsg(null), 3000);
@@ -1330,31 +1434,24 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
   };
 
   // --- REVIEW QUEUE APPROVAL HANDLERS ---
-  const getReviewCategoryMappingKey = (item: ReviewQueueItem): string => {
-    const supplierCategory = Array.isArray(item.supplierSnapshot?.categoryHierarchy)
-      ? String(item.supplierSnapshot?.categoryHierarchy[0] || '').trim()
-      : '';
-    return normalizeSupplierCategory(supplierCategory);
-  };
-
-  const persistReviewCategoryMapping = async (item: ReviewQueueItem, categoryId: string) => {
-    const normalized = getReviewCategoryMappingKey(item);
-    if (!normalized || !categoryId || supplierSettings.categoryMappings?.[normalized] === categoryId) return;
-
-    const categoryMappings = {
-      ...(supplierSettings.categoryMappings || {}),
-      [normalized]: categoryId,
-    };
-    await setDoc(doc(db, "supplier_settings", "config"), { categoryMappings }, { merge: true });
-    setSupplierSettings((current: any) => ({ ...current, categoryMappings }));
-  };
-
   const handleApproveReviewItem = async (item: ReviewQueueItem, draft: SupplierReviewDraft) => {
     setProcessingChangeId(item.id);
     try {
-      const approvalItem = buildSupplierApprovalItem(item, draft, validCategoryIds);
-      await persistReviewCategoryMapping(item, draft.category.trim());
-      await approveSupplierQueueItem(approvalItem, validCategoryIds);
+      const result = await decideSupplierReviewQueueItem(item.id, 'approve', {
+        draft,
+        resolveConflict: item.queueState === 'conflict' || item.status === 'CONFLICT',
+      });
+      if (result.success !== true && result.status === 'conflict') {
+        setEditingReviewItem({
+          ...item,
+          status: 'CONFLICT',
+          queueState: 'conflict',
+          approvalConflict: result.conflict,
+        });
+        setErrorMsg(result.error || 'The live product changed. Review the conflict before publishing.');
+        setTimeout(() => setErrorMsg(null), 6000);
+        return;
+      }
 
       setEditingReviewItem(null);
       setSuccessMsg(`Product "${draft.productName.trim()}" approved and published successfully.`);
@@ -1371,7 +1468,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
   const handleRejectReviewItem = async (item: ReviewQueueItem, rejectionReason: string) => {
     setProcessingChangeId(item.id);
     try {
-      await rejectSupplierQueueItem({ ...item, rejectionReason: rejectionReason.trim() });
+      await decideSupplierReviewQueueItem(item.id, 'reject', { rejectionReason: rejectionReason.trim() });
       setProcessingChangeId(null);
       setRejectingReviewItem(null);
       setRejectionReasonDraft('');
@@ -1405,25 +1502,12 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
     setErrorMsg(null);
     try {
       const approvals = selectedReviewItems.map((item) => ({
-        item,
+        queueItemId: item.id,
         draft: createSupplierReviewDraft(item),
-      })).map(({ item, draft }) => ({
-        item,
-        draft,
-        approvalItem: buildSupplierApprovalItem(item, draft, validCategoryIds),
       }));
-
-      const categoryMappings = approvals.reduce((mappings, { item, draft }) => {
-        const mappingKey = getReviewCategoryMappingKey(item);
-        if (mappingKey) mappings[mappingKey] = draft.category.trim();
-        return mappings;
-      }, { ...(supplierSettings.categoryMappings || {}) } as Record<string, string>);
-      await setDoc(doc(db, "supplier_settings", "config"), { categoryMappings }, { merge: true });
-      setSupplierSettings((current: any) => ({ ...current, categoryMappings }));
-
-      for (const { approvalItem } of approvals) {
-        await approveSupplierQueueItem(approvalItem, validCategoryIds);
-      }
+      const response = await postSupplierApi('/api/supplier-review-queue/bulk-approve', { items: approvals });
+      const result = await response.json().catch(() => ({})) as { success?: boolean; error?: string };
+      if (!response.ok || result.success !== true) throw new Error(result.error || 'Bulk supplier approval could not be completed.');
 
       setSelectedReviewIds([]);
       setSuccessMsg(`${approvals.length} products approved and published successfully.`);
@@ -1441,9 +1525,12 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
     setBulkAction('reject');
     setErrorMsg(null);
     try {
-      for (const item of selectedReviewItems) {
-        await rejectSupplierQueueItem({ ...item, rejectionReason: 'Bulk rejected by admin.' });
-      }
+      const response = await postSupplierApi('/api/supplier-review-queue/bulk-reject', {
+        queueItemIds: selectedReviewItems.map((item) => item.id),
+        rejectionReason: 'Bulk rejected by admin.',
+      });
+      const result = await response.json().catch(() => ({})) as { success?: boolean; error?: string };
+      if (!response.ok || result.success !== true) throw new Error(result.error || 'Bulk supplier rejection could not be completed.');
       setSelectedReviewIds([]);
       setSuccessMsg(`${selectedReviewItems.length} products rejected with audit records.`);
       setTimeout(() => setSuccessMsg(null), 3000);
@@ -1461,7 +1548,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
     setErrorMsg(null);
     try {
       for (const item of selectedReviewItems) {
-        await deleteSupplierQueueItem({ ...item, deletionReason: 'Bulk deleted by admin.' });
+        await decideSupplierReviewQueueItem(item.id, 'delete', { deletionReason: 'Bulk deleted by admin.' });
       }
       setSelectedReviewIds([]);
       setSuccessMsg(`${selectedReviewItems.length} queue items deleted with audit records.`);
@@ -1496,7 +1583,6 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
         throw new Error('Default Profit Margin must be between 0 and 100%.');
       }
 
-      const email = auth.currentUser?.email || "Admin";
       const payload = {
         ...supplierSettings,
         maxProducts,
@@ -1510,10 +1596,10 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
               ),
             )
           : supplierSettings.categoryMappings || {},
-        lastUpdated: new Date().toISOString(),
-        updatedBy: email
       };
-      await setDoc(doc(db, "supplier_settings", "config"), payload, { merge: true });
+      const response = await postSupplierApi('/api/supplier-settings', { settings: payload });
+      const result = await response.json().catch(() => ({})) as { success?: boolean; error?: string };
+      if (!response.ok || result.success !== true) throw new Error(result.error || 'Supplier Hub settings could not be saved.');
       setSavingSupplierSettings(false);
       setSuccessMsg("Supplier Hub control settings saved successfully.");
       setTimeout(() => setSuccessMsg(null), 3000);
@@ -1544,7 +1630,9 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
     };
 
     try {
-      await setDoc(doc(db, "supplier_settings", "config"), defaults, { merge: true });
+      const response = await postSupplierApi('/api/supplier-settings', { settings: defaults });
+      const result = await response.json().catch(() => ({})) as { success?: boolean; error?: string };
+      if (!response.ok || result.success !== true) throw new Error(result.error || 'Supplier Hub settings could not be reset.');
       setSupplierSettings(defaults);
       setShowResetSettingsConfirm(false);
       setSuccessMsg("Supplier Hub control settings reset to system defaults.");
@@ -1633,6 +1721,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
       {/* WORKFLOW SUB-TABS NAVIGATION BAR */}
       <div className="flex flex-wrap items-center gap-1.5 border-b border-slate-100 dark:border-slate-800 pb-1.5 overflow-x-auto">
         {[
+          { id: 'operations', label: 'Operations', badge: null, icon: Activity },
           { id: 'review', label: 'Review Queue & Ingestion', badge: reviewQueue.length, icon: UserCheck, badgeColor: 'bg-blue-500 text-white animate-pulse' },
           { id: 'import_queue', label: 'Import Queue', badge: importQueue.length, icon: FileText, badgeColor: 'bg-slate-500 text-white' },
           { id: 'sources', label: 'Supplier Sources', badge: supplierSources.length, icon: Globe },
@@ -1665,6 +1754,10 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
 
       {/* SUB-TAB CONTENTS */}
       <div className="min-h-[400px]">
+
+        {activeSubTab === 'operations' && (
+          <SupplierOperationsDashboard requestApi={requestSupplierApi} />
+        )}
 
         {/* VIEW 1: REVIEW QUEUE & INGESTION (Existing view) */}
         {activeSubTab === 'review' && (
@@ -1818,6 +1911,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
                         <th className="py-3 px-3 text-right">Profit</th>
                         <th className="py-3 px-3 text-right">Margin</th>
                         <th className="py-3 px-4 text-right">Stock</th>
+                        <th className="py-3 px-4">Catalog readiness</th>
                         <th className="py-3 px-4 text-right">Comparison</th>
                         <th className="py-3 px-4 text-right">Status</th>
                         <th className="py-3 px-4 text-right">Edit Action</th>
@@ -1859,6 +1953,16 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
                           </td>
                           <td className="py-3 px-4 text-right font-semibold text-slate-600 dark:text-slate-400">
                             {item.stock} units
+                          </td>
+                          <td className="py-3 px-4">
+                            <div className="min-w-44 space-y-1 text-[9px]">
+                              <p><span className="font-black uppercase text-slate-400">Supplier category:</span> {item.categoryMapping?.supplierCategory || 'Not supplied'}</p>
+                              <p><span className="font-black uppercase text-slate-400">Suggested:</span> {item.categoryMapping?.targetCategoryId || 'Manual selection'} ({Math.round(Number(item.categoryMapping?.confidence || 0))}%)</p>
+                              <p><span className="font-black uppercase text-slate-400">Brand:</span> {item.brandMapping?.mappedBrandId || 'Manual selection'}</p>
+                              <p className={item.productValidation?.readyToPublish ? 'font-black text-emerald-600' : 'font-black text-amber-600'}>
+                                {item.productValidation?.readyToPublish ? 'Ready to publish' : `Missing: ${(item.productValidation?.missingFields || ['Review required']).join(', ')}`}
+                              </p>
+                            </div>
                           </td>
                           <td className="py-3 px-4 text-right">
                             {item.comparison ? (
@@ -1915,12 +2019,17 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
                             )}
                           </td>
                           <td className="py-3 px-4 text-right">
-                            <span className="px-2.5 py-1 bg-amber-500/10 text-amber-500 rounded-md text-[11px] font-bold">
+                            <span className={`px-2.5 py-1 rounded-md text-[11px] font-bold ${item.status === 'CONFLICT' ? 'bg-red-500/10 text-red-500' : 'bg-amber-500/10 text-amber-500'}`}>
                               {item.status}
                             </span>
+                            {item.status === 'CONFLICT' && item.approvalConflict?.changedFields?.length ? (
+                              <p className="mt-1 max-w-48 text-[9px] font-semibold text-red-500" title={item.approvalConflict.reason}>
+                                Changed: {item.approvalConflict.changedFields.join(', ')}
+                              </p>
+                            ) : null}
                           </td>
                           <td className="py-3 px-4 text-right">
-                            {item.status === 'Pending' && (
+                            {(item.status === 'Pending' || item.status === 'CONFLICT') && (
                               <div className="flex items-center justify-end gap-2">
                                 <button
                                   onClick={() => setEditingReviewItem(item)}
@@ -1928,7 +2037,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
                                   className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-700 text-white font-bold rounded-lg text-[10px] transition-colors flex items-center gap-1 cursor-pointer"
                                 >
                                   <Check className="h-3 w-3" />
-                                  Edit & Publish
+                                  {item.status === 'CONFLICT' ? 'Review Conflict' : 'Edit & Publish'}
                                 </button>
                                 <button
                                   onClick={() => {
@@ -2673,7 +2782,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
                           Compare
                         </button>
 
-                        {change.status === 'Pending' ? (
+                        {(change.status === 'Pending' || change.status === 'CONFLICT') ? (
                           <>
                             <button
                               onClick={() => handleRejectPendingChange(change)}
@@ -3101,34 +3210,39 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
                 <select 
                   value={newSupplierType}
                   onChange={(e) => {
-                    setNewSupplierType(e.target.value);
+                    setNewSupplierType(e.target.value as SupplierOnboardingType);
                     setNewSupplierUrl("");
                     setApiEndpoint("");
+                    setModalTestStatus('idle');
+                    setModalTestError(null);
+                    setModalTestProductsCount(null);
                   }}
                   className="w-full px-3 py-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-850 rounded-xl focus:outline-hidden focus:border-emerald-500 transition-colors text-xs dark:text-white font-bold cursor-pointer"
                 >
-                  <option value="website">Website (HTML / Scraper Target)</option>
-                  <option value="api">API Feed (REST / JSON Endpoint)</option>
-                  <option value="whatsapp">WhatsApp (Automated Messaging Feed)</option>
+                  <option value="a2z">A2Z (Firebase Secret Manager)</option>
+                  <option value="website">Generic HTTP JSON Feed</option>
+                  <option value="api">REST / JSON Endpoint</option>
                 </select>
               </div>
 
               {/* Dynamic Type Specific Fields */}
-              {newSupplierType === 'website' && (
+              {(newSupplierType === 'website' || newSupplierType === 'a2z') && (
                 <div className="space-y-3.5 p-4 rounded-2xl bg-amber-500/5 border border-amber-500/10">
                   <div className="space-y-1">
-                    <label className="text-amber-600 dark:text-amber-500 font-black block text-[9px] uppercase tracking-wider">Website URL</label>
+                    <label className="text-amber-600 dark:text-amber-500 font-black block text-[9px] uppercase tracking-wider">
+                      {newSupplierType === 'a2z' ? 'A2Z Base URL' : 'JSON Feed Base URL'}
+                    </label>
                     <input 
                       type="url" 
                       required
-                      placeholder="https://example-supplier.com"
+                      placeholder={newSupplierType === 'a2z' ? 'https://supplier.example.com' : 'https://supplier.example.com/catalog/'}
                       value={newSupplierUrl}
                       onChange={(e) => setNewSupplierUrl(e.target.value)}
                       className="w-full px-3 py-2.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl focus:outline-hidden focus:border-amber-500 transition-colors text-xs dark:text-white"
                     />
                   </div>
 
-                  <div className="space-y-1">
+                  {newSupplierType === 'website' && <div className="space-y-1">
                     <label className="text-amber-600 dark:text-amber-500 font-black block text-[9px] uppercase tracking-wider">Product Endpoint</label>
                     <input 
                       type="text" 
@@ -3138,7 +3252,12 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
                       onChange={(e) => setApiEndpoint(e.target.value)}
                       className="w-full px-3 py-2.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl focus:outline-hidden focus:border-amber-500 transition-colors text-xs dark:text-white font-mono"
                     />
-                  </div>
+                  </div>}
+                  {newSupplierType === 'a2z' && (
+                    <p className="text-[10px] font-semibold leading-relaxed text-amber-700/80 dark:text-amber-400/80">
+                      Credentials are resolved only from the Firebase Functions A2Z Secret Manager profile; no credential values are sent by this form.
+                    </p>
+                  )}
                 </div>
               )}
 
@@ -3165,47 +3284,6 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
                       value={apiDataPath}
                       onChange={(e) => setApiDataPath(e.target.value)}
                       className="w-full px-3 py-2.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl focus:outline-hidden focus:border-blue-500 transition-colors text-xs dark:text-white font-mono"
-                    />
-                  </div>
-                </div>
-              )}
-
-              {newSupplierType === 'whatsapp' && (
-                <div className="space-y-3.5 p-4 rounded-2xl bg-emerald-500/5 border border-emerald-500/10">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div className="space-y-1">
-                      <label className="text-emerald-500 font-black block text-[9px] uppercase tracking-wider">WhatsApp Phone Number</label>
-                      <input 
-                        type="text" 
-                        required
-                        placeholder="+94 77 123 4567"
-                        value={whatsappNumber}
-                        onChange={(e) => setWhatsappNumber(e.target.value)}
-                        className="w-full px-3 py-2.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl focus:outline-hidden focus:border-emerald-500"
-                      />
-                    </div>
-
-                    <div className="space-y-1">
-                      <label className="text-emerald-500 font-black block text-[9px] uppercase tracking-wider">Trusted Sender Name</label>
-                      <input 
-                        type="text" 
-                        required
-                        placeholder="Admin Bot"
-                        value={whatsappSender}
-                        onChange={(e) => setWhatsappSender(e.target.value)}
-                        className="w-full px-3 py-2.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl focus:outline-hidden focus:border-emerald-500"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="text-emerald-500 font-black block text-[9px] uppercase tracking-wider">Message Parsing Template</label>
-                    <input 
-                      type="text" 
-                      required
-                      value={whatsappFormat}
-                      onChange={(e) => setWhatsappFormat(e.target.value)}
-                      className="w-full px-3 py-2.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl focus:outline-hidden focus:border-emerald-500 font-mono"
                     />
                   </div>
                 </div>
@@ -3325,7 +3403,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
                 >
                   Close
                 </button>
-                {comparingChange.status === 'Pending' && (
+                {(comparingChange.status === 'Pending' || comparingChange.status === 'CONFLICT') && (
                   <>
                     <button 
                       type="button"
@@ -3361,6 +3439,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
           item={editingReviewItem}
           initialDraft={createSupplierReviewDraft(editingReviewItem)}
           categories={categories}
+          brands={brands}
           validCategoryIds={validCategoryIds}
           isPublishing={processingChangeId === editingReviewItem.id}
           onClose={() => {

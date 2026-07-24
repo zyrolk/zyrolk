@@ -12,6 +12,12 @@
     "catalog:foundation:apply": "tsx scripts/catalogFoundation.ts --apply",
     "security:products:dry-run": "tsx scripts/migrateProductCommercialData.ts",
     "security:products:apply": "tsx scripts/migrateProductCommercialData.ts --apply",
+    "security:supplier-credentials:dry-run": "tsx scripts/migrateSupplierSourceCredentials.ts",
+    "security:supplier-credentials:apply": "tsx scripts/migrateSupplierSourceCredentials.ts --apply",
+    "supplier:registry:sprint7:dry-run": "tsx scripts/migrateSupplierSourcesSprint7.ts",
+    "supplier:registry:sprint7:apply": "tsx scripts/migrateSupplierSourcesSprint7.ts --apply",
+    "security:admin-claims:dry-run": "tsx scripts/grantAdminClaims.ts",
+    "security:admin-claims:apply": "tsx scripts/grantAdminClaims.ts --apply",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
     "test": "node --import tsx --test \"tests/**/*.test.ts\""
@@ -24,6 +30,7 @@
     "express": "^4.21.2",
     "firebase": "^12.15.0",
     "firebase-admin": "^14.1.0",
+    "firebase-functions": "^7.3.0",
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
     "react": "^19.0.1",
@@ -33,6 +40,7 @@
     "vite": "^6.2.3"
   },
   "devDependencies": {
+    "@firebase/rules-unit-testing": "^5.0.1",
     "@types/express": "^4.17.21",
     "@types/node": "^22.14.0",
     "autoprefixer": "^10.4.21",

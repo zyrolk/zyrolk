@@ -45,7 +45,7 @@ import {
   normalizeSubcategories,
 } from '../services/products/productBlueprint';
 import { Product, Category, Brand, Order, WebsiteSettings, SupplierReviewQueueItem } from '../types';
-import { isProductionAdminEmail, PRODUCTION_ADMIN_EMAIL } from '../config/admin';
+import { PRODUCTION_ADMIN_EMAIL } from '../config/admin';
 import { CloudinaryUpload } from './CloudinaryUpload';
 import HeroSliderEditor from './HeroSliderEditor';
 import BusinessConfigurationEditor from './admin/BusinessConfigurationEditor';
@@ -67,7 +67,6 @@ import {
   CartesianGrid, Tooltip, PieChart, Pie, Cell, BarChart, Bar, Legend
 } from 'recharts';
 import { motion, AnimatePresence } from 'motion/react';
-import { approveSupplierQueueItem, rejectSupplierQueueItem } from '../services/supplierQueueService';
 
 const SupplierHubFiveStars = lazy(() => import('./SupplierHubFiveStars'));
 const AIManagerPanel = lazy(() => import('../features/ai-manager'));
@@ -1080,10 +1079,31 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
   };
 
   // 1. Review Queue: Approve & Save Review Metadata
+  const decideSupplierQueueItem = async (
+    queueItemId: string,
+    action: 'approve' | 'reject',
+    body: Record<string, unknown> = {},
+  ) => {
+    const [token, appCheckHeaders] = await Promise.all([
+      auth.currentUser?.getIdToken(),
+      getAppCheckRequestHeaders(),
+    ]);
+    if (!token) throw new Error('Admin authentication is required. Please sign in again.');
+    const response = await fetch(`/api/supplier-review-queue/${encodeURIComponent(queueItemId)}/${action}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...appCheckHeaders },
+      body: JSON.stringify(body),
+    });
+    const result = await response.json().catch(() => ({})) as { success?: boolean; error?: string };
+    if (!response.ok || result.success !== true) throw new Error(result.error || 'Supplier review action could not be completed.');
+  };
+
   const handleApproveReview = async (item: SupplierReviewQueueItem) => {
     setProcessingReviewId(item.id);
     try {
-      await approveSupplierQueueItem(item);
+      await decideSupplierQueueItem(item.id, 'approve', {
+        resolveConflict: item.queueState === 'conflict' || item.status === 'CONFLICT',
+      });
       
       showSettingsToast("success", `Approved change for "${item.productName}".`);
       playNotificationSound();
@@ -1099,7 +1119,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
   const handleRejectReview = async (item: SupplierReviewQueueItem) => {
     setProcessingReviewId(item.id);
     try {
-      await rejectSupplierQueueItem(item);
+      await decideSupplierQueueItem(item.id, 'reject', { rejectionReason: 'Rejected by admin.' });
       
       showSettingsToast("success", `Rejected change for "${item.productName}".`);
     } catch (err: any) {
@@ -1114,13 +1134,8 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
   const handleApprovePendingChange = async (change: any) => {
     setProcessingChangeId(change.id);
     try {
-      const linkedReviewItem = supplierReviewQueue.find(item => item.id === change.reviewQueueItemId);
-      await approveSupplierQueueItem({
-        ...linkedReviewItem,
-        ...change,
-        id: change.id,
-        productPayload: change.productPayload || linkedReviewItem?.productPayload,
-        reviewQueueItemId: change.reviewQueueItemId || linkedReviewItem?.id
+      await decideSupplierQueueItem(change.id, 'approve', {
+        resolveConflict: change.queueState === 'conflict' || change.status === 'CONFLICT',
       });
       
       showSettingsToast("success", `Approved supplier change for "${change.productName}".`);
@@ -1137,7 +1152,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
   const handleRejectPendingChange = async (change: any) => {
     setProcessingChangeId(change.id);
     try {
-      await rejectSupplierQueueItem(change);
+      await decideSupplierQueueItem(change.id, 'reject', { rejectionReason: 'Change rejected by admin.' });
       
       showSettingsToast("success", `Rejected supplier change for "${change.productName}".`);
       playNotificationSound();
@@ -1328,7 +1343,8 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
         return;
       }
       try {
-        if (isProductionAdminEmail(currentUser.email)) {
+        const tokenResult = await currentUser.getIdTokenResult(true);
+        if (tokenResult.claims.admin === true || tokenResult.claims.role === 'admin') {
           setAuthorized(true);
         } else {
           setAuthorized(false);
@@ -1416,7 +1432,8 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
     const unsubscribeReviewQueue = onSnapshot(collection(db, "supplier_review_queue"), (snapshot) => {
       const list: SupplierReviewQueueItem[] = [];
       snapshot.forEach((d) => {
-        list.push({ id: d.id, ...d.data() } as SupplierReviewQueueItem);
+        const queueItem = { id: d.id, ...d.data() } as SupplierReviewQueueItem & { queueState?: string };
+        if (!queueItem.queueState || ['review_pending', 'conflict'].includes(queueItem.queueState)) list.push(queueItem);
       });
       list.sort((a, b) => {
         const tA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
@@ -5615,7 +5632,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                                     <span>Compare</span>
                                   </button>
 
-                                  {item.status === 'Pending' && (
+                                  {(item.status === 'Pending' || item.status === 'CONFLICT') && (
                                     <>
                                       <button
                                         onClick={() => handleRejectReview(item)}
@@ -6051,7 +6068,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                                   Compare
                                 </button>
 
-                                {change.status === 'Pending' ? (
+                                {(change.status === 'Pending' || change.status === 'CONFLICT') ? (
                                   <>
                                     <button
                                       onClick={() => handleRejectPendingChange(change)}
@@ -7561,7 +7578,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                   Close
                 </button>
 
-                {comparingItem.status === 'Pending' ? (
+                {(comparingItem.status === 'Pending' || comparingItem.status === 'CONFLICT') ? (
                   <>
                     <button
                       onClick={async () => {
@@ -7839,7 +7856,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
               )}
 
               {/* Display reviewed details if approved or rejected */}
-              {comparingChange.status !== 'Pending' && (
+              {comparingChange.status !== 'Pending' && comparingChange.status !== 'CONFLICT' && (
                 <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800 text-left space-y-1 mt-4">
                   <span className="text-[10px] font-bold uppercase text-slate-400 block">Review Metadata</span>
                   <div className="grid grid-cols-2 gap-2 text-[11px]">
@@ -7872,7 +7889,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                   Close
                 </button>
 
-                {comparingChange.status === 'Pending' ? (
+                {(comparingChange.status === 'Pending' || comparingChange.status === 'CONFLICT') ? (
                   <>
                     <button
                       onClick={async () => {

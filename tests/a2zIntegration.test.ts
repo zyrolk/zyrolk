@@ -210,7 +210,7 @@ test("A2Z credential resolution emits redacted forensics for every connection te
   )?.[1] || "";
 
   assert.match(testConnectionBody, /await this\.fetchProducts\(\)/);
-  assert.match(fetchProductsBody, /await getA2ZCredentials\(\)/);
+  assert.match(fetchProductsBody, /await getA2ZCredentials\(this\.id\)/);
 });
 
 test("A2Z credentials reject BOM, CRLF, newlines, and boundary whitespace without normalization", () => {

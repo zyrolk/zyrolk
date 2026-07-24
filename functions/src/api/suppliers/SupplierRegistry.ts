@@ -1,28 +1,90 @@
 import { adminDb } from "../firebase";
-import { getApprovedSupplierHosts, validateSupplierRequestTarget } from "../security/supplierUrlProtection";
+import { buildSupplierTargetUrl, getApprovedSupplierHosts, validateSupplierRequestTarget } from "../security/supplierUrlProtection";
+import { SupplierOutboundPolicy } from "../security/supplierOutboundRequest";
 import { A2ZSupplierConnector } from "./a2z/A2ZSupplierConnector";
 import { HttpSupplierConnector } from "./HttpSupplierConnector";
-import { SupplierConnector, SupplierSourceConfig } from "./types";
+import { normalizeSupplierSourceConfig } from "./supplierSourceCompatibility";
+import {
+  SupplierConnector,
+  SupplierConnectorType,
+  SupplierSourceConfig,
+} from "./types";
 
+type SupplierConnectorFactory = (targetUrl: string, source: SupplierSourceConfig, approvedHosts: string[]) => SupplierConnector;
+
+const normalizePriority = (value: unknown): number => {
+  const priority = Number(value);
+  return Number.isFinite(priority) ? Math.max(0, Math.min(Math.floor(priority), 10_000)) : 100;
+};
+
+/**
+ * First-class server-side supplier registry. New connectors register a factory;
+ * the sync worker never needs connector-specific branching.
+ */
 export class SupplierRegistry {
+  private static readonly connectorFactories = new Map<SupplierConnectorType, SupplierConnectorFactory>();
+
+  public static registerConnectorFactory(type: SupplierConnectorType, factory: SupplierConnectorFactory): void {
+    const normalized = String(type).trim().toLowerCase();
+    if (!normalized) throw new Error("Supplier connector type is required.");
+    if (this.connectorFactories.has(normalized)) throw new Error(`Supplier connector type "${normalized}" is already registered.`);
+    this.connectorFactories.set(normalized, factory);
+  }
+
+  public static supportedConnectorTypes(): string[] {
+    return [...this.connectorFactories.keys()].sort();
+  }
+
+  public static toSupplierSourceConfig(id: string, data: FirebaseFirestore.DocumentData): SupplierSourceConfig {
+    return normalizeSupplierSourceConfig(id, data);
+  }
+
+  /** Canonical additive source record for admin provisioning and future connectors. */
+  public static createRegistryRecord(source: Pick<SupplierSourceConfig,
+    "supplierId" | "name" | "connectorType" | "enabled" | "priority" | "currency" | "timezone" | "syncSchedule" | "authentication" | "capabilities" | "websiteUrl" | "endpoint"
+  >, nowIso = new Date().toISOString()): Record<string, unknown> {
+    return {
+      supplierId: source.supplierId,
+      supplierName: source.name,
+      connectorType: source.connectorType,
+      sourceStatus: source.enabled ? "active" : "inactive",
+      enabled: source.enabled,
+      priority: normalizePriority(source.priority),
+      currency: source.currency || "LKR",
+      timezone: source.timezone || "Asia/Colombo",
+      syncSchedule: source.syncSchedule || "Off",
+      authentication: source.authentication,
+      capabilities: [...new Set(source.capabilities)],
+      websiteUrl: source.websiteUrl,
+      endpoint: source.endpoint,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    };
+  }
+
   public static async loadEnabledConnectors(enabledSupplierIds: string[] = []): Promise<SupplierConnector[]> {
     const sourcesSnap = await adminDb.collection("supplierSources").get();
+    return this.createConnectorsForSources(sourcesSnap.docs.map((sourceDoc) => ({ id: sourceDoc.id, data: sourceDoc.data() })), enabledSupplierIds);
+  }
+
+  /** Builds connectors from the scheduler's already-paginated source page. */
+  public static async createConnectorsForSources(
+    records: ReadonlyArray<{ id: string; data: FirebaseFirestore.DocumentData }>,
+    enabledSupplierIds: string[] = [],
+  ): Promise<SupplierConnector[]> {
     const approvedHosts = await getApprovedSupplierHosts();
     const connectors: SupplierConnector[] = [];
-
-    for (const sourceDoc of sourcesSnap.docs) {
-      const data = sourceDoc.data();
-      const source = this.mapSource(sourceDoc.id, data);
-
-      if (!source.enabled || !source.websiteUrl || (enabledSupplierIds.length > 0 && !enabledSupplierIds.includes(source.id))) {
-        continue;
+    for (const record of records) {
+      const source = this.toSupplierSourceConfig(record.id, record.data);
+      if (!source.enabled || !source.websiteUrl || (enabledSupplierIds.length > 0 && !enabledSupplierIds.includes(source.id))) continue;
+      try {
+        const validatedTarget = await validateSupplierRequestTarget(source.websiteUrl, source.endpoint, approvedHosts);
+        connectors.push(this.createConnector(validatedTarget.targetUrl, source, approvedHosts));
+      } catch {
+        // The scheduler persists this source's independently classified failure.
       }
-
-      const validatedTarget = await validateSupplierRequestTarget(source.websiteUrl, source.endpoint, approvedHosts);
-      connectors.push(this.createConnector(validatedTarget.targetUrl, source));
     }
-
-    return connectors.sort((a, b) => a.priority - b.priority);
+    return connectors.sort((left, right) => right.priority - left.priority || left.id.localeCompare(right.id));
   }
 
   public static async createConnectorForTarget(
@@ -30,55 +92,73 @@ export class SupplierRegistry {
     endpoint = "",
     options: Partial<SupplierSourceConfig> = {},
   ): Promise<SupplierConnector> {
-    const validatedTarget = await validateSupplierRequestTarget(
-      websiteUrl,
-      endpoint,
-      await getApprovedSupplierHosts(),
-    );
-
-    return this.createConnector(validatedTarget.targetUrl, {
-      id: options.id || "request-supplier",
-      name: options.name || "Requested Supplier",
+    const approvedHosts = await getApprovedSupplierHosts();
+    const validatedTarget = await validateSupplierRequestTarget(websiteUrl, endpoint, approvedHosts);
+    const source = this.toSupplierSourceConfig(options.id || "request-supplier", {
+      supplierId: options.supplierId || options.id || "request-supplier",
+      supplierName: options.name || "Requested Supplier",
+      connectorType: options.connectorType,
       enabled: options.enabled !== false,
-      priority: options.priority || 100,
+      priority: options.priority ?? 100,
+      currency: options.currency || "LKR",
+      timezone: options.timezone || "Asia/Colombo",
+      syncSchedule: options.syncSchedule || "Off",
+      authentication: options.authentication || { mode: "none" },
+      capabilities: options.capabilities || ["catalog.fetch", "connection.test"],
       websiteUrl,
       endpoint,
-      raw: options.raw || {},
+      ...(options.raw || {}),
     });
+    return this.createConnector(validatedTarget.targetUrl, source, approvedHosts);
   }
 
-  private static mapSource(id: string, data: FirebaseFirestore.DocumentData): SupplierSourceConfig {
-    const type = data.supplierType || data.type || "website";
-    const sourceStatus = data.sourceStatus || "active";
-    const priority = Number(data.priority || data.settings?.priority || 100);
-
-    return {
-      id,
-      name: data.supplierName || data.name || id,
-      enabled: sourceStatus === "active" && String(type).toLowerCase() === "website",
-      priority: Number.isFinite(priority) ? priority : 100,
-      websiteUrl: data.websiteUrl || data.config?.targetUrl || "",
-      endpoint: data.endpoint || data.config?.apiEndpoint || "",
-      raw: data,
-    };
-  }
-
-  private static createConnector(targetUrl: string, source: SupplierSourceConfig): SupplierConnector {
-    const isA2Z = targetUrl.toLowerCase().includes("a2z") ||
-      source.name.toLowerCase().includes("a2z") ||
-      source.id.toLowerCase().includes("a2z");
-
-    const options = {
-      id: source.id,
-      name: source.name,
-      enabled: source.enabled,
-      priority: source.priority,
-    };
-
-    if (isA2Z) {
-      return new A2ZSupplierConnector(targetUrl, options);
+  /** Builds a connector from an exact registry/source document without URL-based inference. */
+  public static async createConnectorForSourceRecord(
+    id: string,
+    data: FirebaseFirestore.DocumentData,
+    options: { allowProposedHost?: boolean } = {},
+  ): Promise<SupplierConnector> {
+    const source = this.toSupplierSourceConfig(id, data);
+    if (!source.enabled) throw new Error("Supplier source is disabled.");
+    if (!source.websiteUrl) throw new Error("Supplier source website URL is required.");
+    const approvedHosts = await getApprovedSupplierHosts();
+    if (options.allowProposedHost) {
+      // The caller is an authenticated admin submitting the same validated
+      // source contract accepted by source creation. Add only this exact
+      // destination host; DNS/IP/redirect SSRF checks remain fully enforced.
+      const proposedHostname = new URL(buildSupplierTargetUrl(source.websiteUrl, source.endpoint)).hostname;
+      approvedHosts.push(proposedHostname);
     }
+    const validatedTarget = await validateSupplierRequestTarget(source.websiteUrl, source.endpoint, approvedHosts);
+    return this.createConnector(validatedTarget.targetUrl, source, approvedHosts);
+  }
 
-    return new HttpSupplierConnector(targetUrl, options);
+  private static createConnector(targetUrl: string, source: SupplierSourceConfig, approvedHosts: string[]): SupplierConnector {
+    const factory = this.connectorFactories.get(source.connectorType);
+    if (!factory) throw new Error(`Supplier connector type "${source.connectorType}" is not registered.`);
+    return factory(targetUrl, source, approvedHosts);
   }
 }
+
+const createHttpConnector: SupplierConnectorFactory = (targetUrl, source, approvedHosts) => new HttpSupplierConnector(targetUrl, {
+  id: source.id,
+  name: source.name,
+  connectorType: source.connectorType,
+  enabled: source.enabled,
+  priority: source.priority,
+  capabilities: source.capabilities,
+  dataPath: typeof source.raw?.config?.apiDataPath === "string" ? source.raw.config.apiDataPath : "",
+  outboundPolicy: { approvedHosts, connector: "http", sourceId: source.id } satisfies SupplierOutboundPolicy,
+});
+
+SupplierRegistry.registerConnectorFactory("http", createHttpConnector);
+SupplierRegistry.registerConnectorFactory("rest", createHttpConnector);
+SupplierRegistry.registerConnectorFactory("a2z", (targetUrl, source, approvedHosts) => new A2ZSupplierConnector(targetUrl, {
+  id: source.id,
+  name: source.name,
+  connectorType: source.connectorType,
+  enabled: source.enabled,
+  priority: source.priority,
+  capabilities: source.capabilities,
+  outboundPolicy: { approvedHosts, connector: "a2z", sourceId: source.id } satisfies SupplierOutboundPolicy,
+}));

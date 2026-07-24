@@ -47,7 +47,7 @@ test('business configuration validation rejects unsafe or ambiguous settings', (
   assert.ok(result.errors.some((error) => error.includes('non-negative')));
 });
 
-test('Admin and storefront wire the launch configuration without exposing a merchant secret', () => {
+test('Admin and storefront keep payment configuration disabled without requiring a merchant secret', () => {
   const admin = readFileSync(new URL('../src/components/AdminDashboard.tsx', import.meta.url), 'utf8');
   const businessEditor = readFileSync(new URL('../src/components/admin/BusinessConfigurationEditor.tsx', import.meta.url), 'utf8');
   const paymentRoute = readFileSync(new URL('../functions/src/api/routes/adminConfiguration.ts', import.meta.url), 'utf8');
@@ -60,8 +60,9 @@ test('Admin and storefront wire the launch configuration without exposing a merc
   assert.match(app, /StorefrontMaintenance/);
   assert.match(app, /registrationEnabled/);
   assert.match(home, /homepageSections\.bestSellers\.enabled/);
-  assert.match(paymentRoute, /Firebase Secret Manager/);
-  assert.doesNotMatch(paymentRoute, /merchantSecret:\s*merchantSecret/);
+  assert.match(paymentRoute, /temporarily_disabled/);
+  assert.match(paymentRoute, /Cash on Delivery is the only available payment method/);
+  assert.doesNotMatch(paymentRoute, /PAYHERE_MERCHANT_SECRET/);
 });
 
 test('warranty CMS and notification controls are connected', () => {

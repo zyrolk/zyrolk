@@ -52,7 +52,7 @@ export default function StorefrontProductShelf({
   const showWishlist = settings?.enableWishlist !== false;
 
   return (
-    <section className={`zy-storefront-product-shelf is-${tone}`} aria-labelledby={titleId}>
+    <section className={`zy-storefront-product-shelf is-${tone}`} data-zy-reveal aria-labelledby={titleId}>
       <header className="zy-storefront-product-shelf-header">
         <div className="zy-storefront-product-shelf-heading">
           <span className="zy-storefront-product-shelf-eyebrow">

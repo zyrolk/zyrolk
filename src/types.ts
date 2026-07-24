@@ -252,7 +252,14 @@ export interface SupplierReviewQueueItem {
   changeType: 'NEW_PRODUCT' | 'PRICE_CHANGED' | 'STOCK_CHANGED' | 'IMAGE_CHANGED' | 'DESCRIPTION_CHANGED';
   oldValue: string;
   newValue: string;
-  status: 'Pending' | 'Approved' | 'Rejected';
+  status: 'Pending' | 'CONFLICT' | 'Approved' | 'Rejected';
+  queueState?: string;
+  approvalConflict?: {
+    reason?: string;
+    changedFields?: string[];
+    previousVersion?: string;
+    currentVersion?: string;
+  };
   createdAt: string; // or any string-based timestamp/ISO string
   reviewedAt?: string;
   reviewedBy?: string;

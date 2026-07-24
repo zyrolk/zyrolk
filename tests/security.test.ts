@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
-import { hasSupplierAdminAccess } from "../functions/src/api/middleware/adminAuth";
+import { hasAdminAccess } from "../functions/src/api/middleware/adminAuth";
 import { validateSupplierRequestTarget } from "../functions/src/api/security/supplierUrlProtection";
 
-test("admin decision requires the single production admin email", () => {
-  assert.equal(hasSupplierAdminAccess("zyrolkofficial@gmail.com"), true);
-  assert.equal(hasSupplierAdminAccess("manager@example.com"), false);
-  assert.equal(hasSupplierAdminAccess("customer@example.com"), false);
-  assert.equal(hasSupplierAdminAccess(undefined), false);
+test("admin decisions require a trusted Firebase custom claim", () => {
+  assert.equal(hasAdminAccess({ admin: true }), true);
+  assert.equal(hasAdminAccess({ role: "admin" }), true);
+  assert.equal(hasAdminAccess({ email: "zyrolkofficial@gmail.com" }), false);
+  assert.equal(hasAdminAccess({ role: "customer" }), false);
 });
 
 test("SSRF protection blocks localhost and private IPs", async () => {
@@ -49,9 +49,10 @@ test("Firestore rules reserve order writes for trusted backend code", () => {
   assert.doesNotMatch(orderRules, /customerUid == 'guest'/);
 });
 
-test("admin rules use only the production admin email", () => {
+test("admin rules use trusted Firebase custom claims rather than email identity", () => {
   const rules = readFileSync(new URL('../firestore.rules', import.meta.url), 'utf8');
   const adminHelper = rules.slice(rules.indexOf('function isAdmin'), rules.indexOf('function isOwner'));
-  assert.match(adminHelper, /zyrolkofficial@gmail\.com/);
-  assert.doesNotMatch(adminHelper, /role/);
+  assert.match(adminHelper, /request\.auth\.token\.admin == true/);
+  assert.match(adminHelper, /request\.auth\.token\.role == 'admin'/);
+  assert.doesNotMatch(adminHelper, /zyrolkofficial@gmail\.com/);
 });

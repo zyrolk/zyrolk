@@ -24,6 +24,7 @@ function ProductCard({
   settings
 }: ProductCardProps) {
   const [isAdded, setIsAdded] = useState(false);
+  const [isImageLoaded, setIsImageLoaded] = useState(false);
   const addedTimerRef = useRef<number | null>(null);
   const stockLabel = product.stock <= 0
     ? 'Out of stock'
@@ -34,6 +35,10 @@ function ProductCard({
   useEffect(() => () => {
     if (addedTimerRef.current !== null) window.clearTimeout(addedTimerRef.current);
   }, []);
+
+  useEffect(() => {
+    setIsImageLoaded(false);
+  }, [product.id, product.imageUrl]);
 
   const handleCardAddToCart = (event: React.MouseEvent) => {
     event.stopPropagation();
@@ -94,7 +99,11 @@ function ProductCard({
   };
 
   return (
-    <article className="zy-product-card group" aria-label={product.name}>
+    <article
+      className={`zy-product-card group ${isAdded ? 'is-added' : ''} ${isWishlisted ? 'is-wishlisted' : ''}`}
+      data-zy-reveal
+      aria-label={product.name}
+    >
       {/* Badges Overlay */}
       <div className="zy-product-card-badges" aria-label="Product highlights">
         {product.discount && product.discount > 0 ? (
@@ -149,10 +158,12 @@ function ProductCard({
           decoding="async"
           width="600"
           height="600"
-          className="zy-product-card-image"
+          className={`zy-product-card-image ${isImageLoaded ? 'is-loaded' : 'is-loading'}`}
+          onLoad={() => setIsImageLoaded(true)}
           onError={(e) => {
             e.currentTarget.onerror = null;
             e.currentTarget.src = PRODUCT_IMAGE_FALLBACK;
+            setIsImageLoaded(true);
           }}
         />
         {/* Out of Stock overlay */}

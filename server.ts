@@ -16,7 +16,6 @@ import {
   buildInitialPayHereOrderFields,
   createPayHereSessionForOrder,
   getPayHereAvailability,
-  registerPaymentRoutes,
 } from "./functions/src/api/routes/payments";
 import {
   CHECKOUT_ABUSE_COLLECTION,
@@ -30,6 +29,7 @@ import {
   resolveCouponDiscount,
 } from "./functions/src/api/checkout/checkoutLogic";
 import { appendPaymentTimeline, createPaymentTimelineEvent } from "./functions/src/api/payments/payhereLogic";
+import { registerSupplierRoutes } from "./functions/src/api/routes/supplier";
 import { registerSupplierPortalRoutes } from "./functions/src/api/routes/supplierPortal";
 import { registerAdminConfigurationRoutes } from "./functions/src/api/routes/adminConfiguration";
 
@@ -47,7 +47,7 @@ app.use((req, res, next) => {
   res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
   if (process.env.NODE_ENV === "production") {
     res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload");
-    res.setHeader("Content-Security-Policy", "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self' https://sandbox.payhere.lk https://www.payhere.lk; script-src 'self' https://www.google.com https://www.gstatic.com https://www.googletagmanager.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.googleapis.com https://*.google.com https://*.gstatic.com https://*.googletagmanager.com https://*.google-analytics.com https://*.firebaseio.com wss://*.firebaseio.com; frame-src https://www.google.com https://www.gstatic.com; upgrade-insecure-requests");
+    res.setHeader("Content-Security-Policy", "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' https://www.google.com https://www.gstatic.com https://www.googletagmanager.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.googleapis.com https://*.google.com https://*.gstatic.com https://*.googletagmanager.com https://*.google-analytics.com https://*.firebaseio.com wss://*.firebaseio.com; frame-src https://www.google.com https://www.gstatic.com; upgrade-insecure-requests");
   }
   if (req.path.startsWith("/api/")) res.setHeader("Cache-Control", "no-store");
   next();
@@ -81,10 +81,30 @@ const CHECKOUT_IDEMPOTENCY_COLLECTION = "checkout_idempotency";
 const ALLOWED_PAYMENT_METHODS = new Set(["cod", "whatsapp_confirm", "payhere"]);
 const ADMIN_EMAIL = "zyrolkofficial@gmail.com";
 const DEFAULT_ALLOWED_ORIGINS = ["https://zyro.lk", "https://www.zyro.lk", "https://zyrolk-e0164.web.app"];
+const LOCAL_EXPRESS_ALLOWED_ORIGINS = ["http://localhost:3000", "http://127.0.0.1:3000"];
+const isLocalSupplierApiRuntime = process.env.NODE_ENV !== "production";
+const isExactLocalhost = (hostname: string): boolean => {
+  const host = hostname.trim().toLowerCase();
+  return ["localhost", "127.0.0.1", "::1", "[::1]"].includes(host)
+    || /^localhost:\d+$/u.test(host)
+    || /^127\.0\.0\.1:\d+$/u.test(host)
+    || /^\[::1\](?::\d+)?$/u.test(host);
+};
 
 app.use(async (req, res, next) => {
+  // Firebase Hosting serves the storefront before forwarding only /api/** to this runtime.
+  // Mirror that boundary in the local Express preview: public HTML and assets must not require App Check.
+  const isApiRequest = req.path === "/api" || req.path.startsWith("/api/");
+  if (!isApiRequest) {
+    next();
+    return;
+  }
+
   const configuredOrigins = (process.env.API_ALLOWED_ORIGINS || "").split(",").map((origin) => origin.trim()).filter(Boolean);
-  const allowedOrigins = configuredOrigins.length > 0 ? configuredOrigins : DEFAULT_ALLOWED_ORIGINS;
+  const productionAllowedOrigins = configuredOrigins.length > 0 ? configuredOrigins : DEFAULT_ALLOWED_ORIGINS;
+  const allowedOrigins = isLocalSupplierApiRuntime
+    ? [...new Set([...productionAllowedOrigins, ...LOCAL_EXPRESS_ALLOWED_ORIGINS])]
+    : productionAllowedOrigins;
   const origin = req.header("Origin");
   if (origin && !allowedOrigins.includes(origin)) {
     res.status(403).json({ error: "Origin is not allowed" });
@@ -100,7 +120,14 @@ app.use(async (req, res, next) => {
     res.status(204).send("");
     return;
   }
-  if (process.env.REQUIRE_APP_CHECK === "false" || req.path === "/api/payments/payhere/notify" || req.path === "/sitemap.xml") {
+  // server.ts is a local preview/development runtime only. Its bypass remains
+  // constrained to exact loopback hosts; deployed Functions enforce App Check.
+  const isLocalDevelopmentRequest = isLocalSupplierApiRuntime && isExactLocalhost(req.hostname || "");
+  // This value is server-owned and cannot be supplied by the browser. The
+  // shared Supplier Hub auth middleware uses it to avoid the Admin SDK's
+  // credential-backed revocation lookup only in the local Express preview.
+  res.locals.supplierHubLocalExpressPreview = isLocalDevelopmentRequest;
+  if (isLocalDevelopmentRequest || process.env.REQUIRE_APP_CHECK === "false" || req.path === "/sitemap.xml") {
     next();
     return;
   }
@@ -122,9 +149,14 @@ registerReviewSystemRoutes(app, {
   verifyIdToken: (token) => adminAuth.verifyIdToken(token),
   isAdminEmail: (email) => (email || "").toLowerCase() === ADMIN_EMAIL,
 });
-registerPaymentRoutes(app, { db: adminDb, auth: adminAuth });
-registerSupplierPortalRoutes(app, { db: adminDb, auth: adminAuth });
-registerAdminConfigurationRoutes(app, { auth: adminAuth, adminEmail: ADMIN_EMAIL });
+// PayHere routes are intentionally not registered while the storefront is COD-only.
+// Firebase Hosting routes production Supplier Hub traffic directly to the Functions API.
+// The local server intentionally exposes the same canonical route modules only for development.
+if (isLocalSupplierApiRuntime) {
+  registerSupplierRoutes(app);
+  registerSupplierPortalRoutes(app, { db: adminDb, auth: adminAuth });
+}
+registerAdminConfigurationRoutes(app, { auth: adminAuth });
 
 app.post("/api/monitoring/client-error", (req, res) => {
   const context = typeof req.body?.context === "string" ? req.body.context.trim().slice(0, 100) : "client-error";
@@ -412,9 +444,7 @@ app.post("/api/checkout", async (req, res) => {
     validatedCartItems = validateCheckoutCartItems(cartItems);
     idempotencyKey = getIdempotencyKey(req);
     requestHash = createCheckoutRequestHash(req.body, validatedCartItems);
-    if (validatedPaymentMethod === "payhere" && !getPayHereAvailability().enabled) {
-      throw new CheckoutError("Online payments are not configured", 503);
-    }
+    if (paymentMethod && paymentMethod !== "cod") throw new CheckoutError("Only Cash on Delivery is currently available", 400);
   } catch (error: any) {
     return res.status(error.statusCode || 400).json({ error: error.message || "Invalid checkout request" });
   }
@@ -854,6 +884,9 @@ app.post("/api/orders/:orderId/status", requireSupplierAdminAuth, async (req, re
   }
 });
 
+// Retained only for explicit local diagnostics during the transition to the canonical
+// Functions Supplier API. It can never register in a production server runtime.
+if (isLocalSupplierApiRuntime && process.env.USE_LEGACY_SUPPLIER_SERVER === "true") {
 // Server-side proxy for testing supplier connections securely (bypasses CORS)
 app.post("/api/test-supplier", requireSupplierAdminAuth, async (req, res) => {
   const { websiteUrl, endpoint } = req.body;
@@ -1027,6 +1060,7 @@ app.post("/api/fetch-supplier", requireSupplierAdminAuth, async (req, res) => {
     });
   }
 });
+}
 
 // Configure Vite integration or asset serving based on the environment
 async function initServer() {
