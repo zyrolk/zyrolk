@@ -9,6 +9,11 @@ import {
   SupplierMediaFailure,
   supplierMediaRetryDelayMs,
 } from "../api/suppliers/supplierMediaPipeline";
+import {
+  buildSupplierQueueIdentityProjection,
+  getSupplierQueueIdentityCandidate,
+  resolveSupplierQueueIdentity,
+} from "../api/suppliers/supplierQueueIdentity";
 
 export const SUPPLIER_QUEUE_STATES = [
   "queued",
@@ -676,7 +681,16 @@ export async function retryDeadLetterSupplierReviewQueueItem(
     const snapshot = await transaction.get(reference);
     const record = snapshot.exists ? snapshot.data() as SupplierQueueRecord : null;
     if (!record || !["dead_letter", "suppressed"].includes(stateFor(record))) return false;
+    const queueIdentityCandidate = getSupplierQueueIdentityCandidate(record);
+    const queueIdentityProjection = queueIdentityCandidate.claimedProductId
+      || queueIdentityCandidate.claimedOfferId
+      ? buildSupplierQueueIdentityProjection(
+        record,
+        await resolveSupplierQueueIdentity(db, transaction, record),
+      )
+      : {};
     transaction.set(reference, {
+      ...queueIdentityProjection,
       queueState: "queued" satisfies SupplierQueueState,
       status: "Pending",
       retryCount: 0,
@@ -690,7 +704,7 @@ export async function retryDeadLetterSupplierReviewQueueItem(
     }, { merge: true });
     createSupplierAuditEvent(db, transaction, {
       queueItemId,
-      queueItem: { ...record, queueState: "queued", retryCount: 0 },
+      queueItem: { ...record, ...queueIdentityProjection, queueState: "queued", retryCount: 0 },
       action: "retry",
       previousState: stateFor(record),
       newState: "queued",

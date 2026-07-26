@@ -36,6 +36,10 @@ import {
   SupplierProductOffer,
   SUPPLIER_PRODUCT_OFFERS_COLLECTION,
 } from "./supplierOfferEngine";
+import {
+  buildSupplierQueueIdentityProjection,
+  resolveSupplierQueueIdentity,
+} from "./supplierQueueIdentity";
 
 // Every decision transaction appends an immutable supplier_approval_audit event
 // through the shared server-only audit trail helper.
@@ -412,12 +416,15 @@ export async function decideSupplierQueueItem(
       throw new ApiError("This supplier update has an approval conflict and requires explicit administrator resolution.", 409);
     }
 
-    const queueItem: QueueItemRecord = {
+    let queueItem: QueueItemRecord = {
       ...(reviewSnapshot.exists ? reviewSnapshot.data() : {}),
       ...(pendingSnapshot.exists ? pendingSnapshot.data() : {}),
       id: requestedQueueItemId,
       reviewQueueItemId,
     };
+    const resolvedQueueIdentity = await resolveSupplierQueueIdentity(db, transaction, queueItem);
+    const queueIdentityProjection = buildSupplierQueueIdentityProjection(queueItem, resolvedQueueIdentity);
+    queueItem = { ...queueItem, ...queueIdentityProjection };
     const isSupplierOfferRemoval = action === "approved"
       && stringValue(queueItem.reconciliationAction) === "supplier_offer_unavailable";
     let approvedPayload = action === "approved" ? toPublicProductPayload(queueItem, effectiveDraft) : undefined;
@@ -427,10 +434,8 @@ export async function decideSupplierQueueItem(
     const needsCategoryMapping = Boolean(approvedPayload && Array.isArray(record(queueItem.supplierSnapshot).categoryHierarchy));
     const productReference = approvedPayload ? db.collection("products").doc(String(approvedPayload.id)) : null;
     const privateProductReference = approvedPayload ? db.collection(PRODUCT_PRIVATE_COLLECTION).doc(String(approvedPayload.id)) : null;
-    const supplierOfferId = stringValue(queueItem.supplierOfferId);
-    const supplierOfferReference = supplierOfferId
-      ? db.collection(SUPPLIER_PRODUCT_OFFERS_COLLECTION).doc(supplierOfferId)
-      : null;
+    const approvedSupplierOffer = resolvedQueueIdentity.offer;
+    const supplierOfferReference = resolvedQueueIdentity.offerReference;
     const supplierSnapshot = record(queueItem.supplierSnapshot);
     const categoryHierarchy = supplierSnapshot.categoryHierarchy;
     const supplierCategory = Array.isArray(categoryHierarchy) ? stringValue(categoryHierarchy[0]) : "";
@@ -453,7 +458,6 @@ export async function decideSupplierQueueItem(
       existingPrivateProductSnapshot,
       existingCategoryMappingSnapshot,
       existingBrandMappingSnapshot,
-      supplierOfferSnapshot,
       productOffersSnapshot,
     ] = await Promise.all([
       categoryReference ? transaction.get(categoryReference) : Promise.resolve(null),
@@ -463,7 +467,6 @@ export async function decideSupplierQueueItem(
       privateProductReference ? transaction.get(privateProductReference) : Promise.resolve(null),
       categoryMappingReference ? transaction.get(categoryMappingReference) : Promise.resolve(null),
       brandMappingReference ? transaction.get(brandMappingReference) : Promise.resolve(null),
-      supplierOfferReference ? transaction.get(supplierOfferReference) : Promise.resolve(null),
       approvedPayload
         ? transaction.get(db.collection(SUPPLIER_PRODUCT_OFFERS_COLLECTION).where("productId", "==", String(approvedPayload.id)).limit(100))
         : Promise.resolve(null),
@@ -506,6 +509,7 @@ export async function decideSupplierQueueItem(
           timestamp: now,
         });
         const conflictUpdate = {
+          ...queueIdentityProjection,
           queueState: "conflict",
           status: "CONFLICT",
           approvalConflict: conflictRecord,
@@ -521,15 +525,6 @@ export async function decideSupplierQueueItem(
     }
 
     const currentOfferSelection = parseSupplierOfferSelection(existingPrivateProductSnapshot?.data()?.supplierOfferSelection);
-    const approvedSupplierOffer = supplierOfferSnapshot?.exists
-      ? projectSupplierOfferForAdmin({ id: supplierOfferSnapshot.id, ...supplierOfferSnapshot.data() })
-      : null;
-    const offerBelongsToProduct = Boolean(approvedPayload && approvedSupplierOffer && (
-      !approvedSupplierOffer.productId || approvedSupplierOffer.productId === String(approvedPayload.id)
-    ));
-    if (approvedSupplierOffer && !offerBelongsToProduct) {
-      throw new ApiError("Supplier offer does not belong to the reviewed product.", 409);
-    }
     const approvedOffers = (productOffersSnapshot?.docs || [])
       .map((document) => projectSupplierOfferForAdmin({ id: document.id, ...document.data() }))
       .filter((offer): offer is SupplierProductOffer => Boolean(offer))
@@ -822,7 +817,7 @@ export async function decideSupplierQueueItem(
     }
 
     const terminalState = action === "approved" ? "approved" : action === "rejected" ? "rejected" : "suppressed";
-    if (action !== "approved" && supplierOfferReference && supplierOfferSnapshot?.exists) {
+    if (action !== "approved" && supplierOfferReference && approvedSupplierOffer) {
       transaction.set(supplierOfferReference, {
         reviewStatus: terminalState,
         reviewedAt: now,
@@ -846,6 +841,7 @@ export async function decideSupplierQueueItem(
       timestamp: now,
     });
     transaction.set(reviewReference, {
+      ...queueIdentityProjection,
       queueState: terminalState,
       status: action === "approved" ? "Approved" : "Rejected",
       decisionAction: action,

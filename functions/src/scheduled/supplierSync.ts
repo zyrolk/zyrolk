@@ -418,7 +418,7 @@ interface SupplierQueueCandidateSnapshot {
 async function loadSupplierQueueCandidates(products: readonly RawA2ZProduct[]): Promise<SupplierQueueCandidateSnapshot> {
   const supplierCodes = [...new Set(products.map((product) => product.sku.trim()).filter(Boolean))];
   const snapshots = await Promise.all(chunkValues(supplierCodes).flatMap((codes) => [
-    adminDb.collection("supplier_review_queue").select("supplierCode", "barcode", "sourceId", "supplierId", "supplierPriority", "queueState", "status", "matchedProductId", "productPayload").where("supplierCode", "in", codes).get(),
+    adminDb.collection("supplier_review_queue").select("supplierCode", "barcode", "sourceId", "supplierId", "supplierPriority", "queueState", "status", "canonicalProductId", "productId", "matchedProductId", "supplierOfferId", "productPayload", "supplierSnapshot").where("supplierCode", "in", codes).get(),
     adminDb.collection("supplier_import_queue").select("supplierCode", "sku").where("supplierCode", "in", codes).get(),
     adminDb.collection("supplier_import_queue").select("supplierCode", "sku").where("sku", "in", codes).get(),
   ]));
@@ -605,6 +605,9 @@ function buildPendingChange(
     status: "Pending",
     productPayload: queueItem.productPayload,
     supplierSnapshot: queueItem.supplierSnapshot,
+    canonicalProductId: queueItem.canonicalProductId,
+    productId: queueItem.productId,
+    supplierOfferId: queueItem.supplierOfferId,
     matchedProductId: queueItem.matchedProductId,
     approvalBaseline: queueItem.approvalBaseline,
   };
@@ -866,26 +869,32 @@ async function commitQueuedItems(items: SupplierSyncWrite[]): Promise<void> {
   let batch = adminDb.batch();
   let operationCount = 0;
 
-  for (let index = 0; index < items.length; index += 1) {
-    const item = items[index];
-    const nextItem = items[index + 1];
-    // Keep an adjacent queue/audit pair in the same Firestore batch even when
-    // the preceding source-setting write left only one operation available.
-    if (operationCount > 0 && operationCount >= 449 && item.atomicGroup && nextItem?.atomicGroup === item.atomicGroup) {
+  for (let index = 0; index < items.length;) {
+    const firstItem = items[index];
+    let groupEnd = index + 1;
+    if (firstItem.atomicGroup) {
+      while (groupEnd < items.length && items[groupEnd].atomicGroup === firstItem.atomicGroup) groupEnd += 1;
+    }
+    const group = items.slice(index, groupEnd);
+    if (group.length > 450) throw new Error("A supplier synchronization atomic write group exceeds the Firestore batch limit.");
+    if (operationCount > 0 && operationCount + group.length > 450) {
       await batch.commit();
       batch = adminDb.batch();
       operationCount = 0;
     }
-    const reference = adminDb.collection(item.collection).doc(item.id);
-    if (item.create) batch.create(reference, item.data);
-    else batch.set(reference, item.data, { merge: true });
-    operationCount++;
+    for (const item of group) {
+      const reference = adminDb.collection(item.collection).doc(item.id);
+      if (item.create) batch.create(reference, item.data);
+      else batch.set(reference, item.data, { merge: true });
+      operationCount++;
+    }
 
     if (operationCount >= 450) {
       await batch.commit();
       batch = adminDb.batch();
       operationCount = 0;
     }
+    index = groupEnd;
   }
 
   if (operationCount > 0) {
@@ -1000,6 +1009,7 @@ async function queueMissingSupplierOffersForReview(
         writes.push({
           collection: SUPPLIER_PRODUCT_OFFERS_COLLECTION,
           id: offer.id,
+          atomicGroup: queueItemId,
           data: {
             stock: 0,
             availability: "unavailable",
@@ -1037,6 +1047,8 @@ async function queueMissingSupplierOffersForReview(
           supplierId: offer.supplierId,
           supplierPriority: offer.priority,
           supplierOfferId: offer.id,
+          canonicalProductId: offer.productId,
+          productId: offer.productId,
           batchId,
           productName: String(currentProduct.name || offer.productId),
           costPrice: offer.cost,
@@ -1167,6 +1179,8 @@ async function queueMissingSupplierProductsForReview(
           productPayload,
           supplierSnapshot,
           matchedProductId: productSnapshot.id,
+          canonicalProductId: productSnapshot.id,
+          productId: productSnapshot.id,
           approvalBaseline: buildSupplierProductApprovalBaseline(productSnapshot.id, currentProduct, createdAt),
           ...buildSupplierQueueLifecycle(createdAt),
           correlationId: queueItemId,
@@ -1580,7 +1594,8 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
             sourceId: String(data.sourceId || "unknown"),
             priority: Number.isFinite(Number(data.supplierPriority)) ? Number(data.supplierPriority) : 10_000,
             queueItemId: queueDoc.id,
-            productId: String(data.matchedProductId || (data.productPayload as Record<string, unknown> | undefined)?.id || "") || undefined,
+            productId: String(data.canonicalProductId || data.productId || data.matchedProductId || (data.productPayload as Record<string, unknown> | undefined)?.id || "") || undefined,
+            offerId: String(data.supplierOfferId || "") || undefined,
           };
           if (sku) {
             const existing = existingQueueWinnerBySku.get(sku);
@@ -1631,8 +1646,8 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
             ))
             .sort((left, right) => right.priority - left.priority || left.id.localeCompare(right.id))[0];
           const directMatch = findMatchingProduct(product, existingProducts);
-          const targetProductId = directMatch?.id
-            || ownOffer?.productId
+          const targetProductId = ownOffer?.productId
+            || directMatch?.id
             || duplicateOffer?.productId
             || skuWinner?.productId
             || barcodeWinner?.productId
@@ -1792,6 +1807,7 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
           queuedWrites.push({
             collection: SUPPLIER_PRODUCT_OFFERS_COLLECTION,
             id: supplierOffer.id,
+            atomicGroup: queueItemId,
             data: {
               ...supplierOffer,
               supplierCatalogTraversalId: traversalCheckpoint.traversalId,
@@ -1809,6 +1825,8 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
             supplierId: source.supplierId || source.id,
             supplierPriority: supplierPriority(source),
             supplierOfferId: supplierOffer.id,
+            canonicalProductId: targetProductId,
+            productId: targetProductId,
             batchId,
             productName: product.title,
             costPrice: product.wholesalePrice,
