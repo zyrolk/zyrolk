@@ -1,13 +1,24 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, ArrowDown, ArrowUp, Check, Image, Package, Plus, Sparkles, Trash2, X } from 'lucide-react';
+import { AlertTriangle, ArrowDown, ArrowUp, Check, Image, LockKeyhole, Package, Plus, RefreshCw, Sparkles, Trash2, X } from 'lucide-react';
 import {
   buildSupplierReviewMetadataSections,
+  buildSupplierReviewFieldChanges,
   calculateSupplierProfit,
+  setSupplierReviewDraftFieldOwner,
   SupplierReviewDraft,
+  SupplierReviewEditableField,
   SupplierReviewSourceItem,
+  SUPPLIER_REVIEW_EDITABLE_FIELDS,
+  updateSupplierReviewDraftField,
   validateSupplierReviewDraft,
 } from '../services/supplierReviewEditor';
 import { isValidSupplierImageUrl } from '../services/connectors/a2z-website/productImages';
+import {
+  SupplierOfferSelectionView,
+  SupplierOfferView,
+  supplierOfferIsActive,
+  supplierOfferIsLocked,
+} from '../services/supplierOffers';
 
 interface SupplierReviewEditorModalProps {
   item: SupplierReviewSourceItem;
@@ -24,10 +35,28 @@ interface SupplierReviewEditorModalProps {
   isPublishing: boolean;
   onClose: () => void;
   onPublish: (draft: SupplierReviewDraft) => Promise<void>;
+  offers: SupplierOfferView[];
+  offerSelection: SupplierOfferSelectionView;
+  offersLoading: boolean;
+  offerActionId: string | null;
+  offerError: string | null;
+  onRefreshOffers: () => Promise<void>;
+  onConfigureOffer: (offerId: string, patch: { priority?: number; enabled?: boolean }) => Promise<void>;
+  onSelectOffer: (offerId: string, options: { locked: boolean; failoverEnabled: boolean }) => Promise<void>;
 }
 
 const money = (value: number): string => `LKR ${value.toLocaleString('en-LK', { maximumFractionDigits: 2 })}`;
 const MAX_MANAGED_MEDIA_IMAGES = 20;
+const OWNERSHIP_LABELS: Record<SupplierReviewEditableField, string> = {
+  name: 'Product name', shortDescription: 'Short description', description: 'Description', model: 'Model',
+  barcode: 'Barcode', productType: 'Product type', tags: 'Tags', keyFeatures: 'Key features',
+  whatsIncluded: "What's included", slug: 'SEO slug', price: 'Selling price', originalPrice: 'Compare price',
+  stock: 'Stock', category: 'Category', subcategory: 'Subcategory', brand: 'Brand', specs: 'Specifications',
+  isActive: 'Storefront status', isNew: 'New arrival', isFeatured: 'Featured', isBestSeller: 'Best seller',
+  imageUrl: 'Primary image', imageUrls: 'Gallery images',
+};
+
+const commaList = (value: string): string[] => value.split(',').map((entry) => entry.trim()).filter(Boolean);
 
 const metadataText = (value: unknown): string => {
   if (typeof value === 'string') return value;
@@ -48,11 +77,21 @@ export default function SupplierReviewEditorModal({
   isPublishing,
   onClose,
   onPublish,
+  offers,
+  offerSelection,
+  offersLoading,
+  offerActionId,
+  offerError,
+  onRefreshOffers,
+  onConfigureOffer,
+  onSelectOffer,
 }: SupplierReviewEditorModalProps) {
   const [draft, setDraft] = useState(initialDraft);
   const [submitted, setSubmitted] = useState(false);
   const [galleryInput, setGalleryInput] = useState('');
   const [galleryInputError, setGalleryInputError] = useState('');
+  const [specificationName, setSpecificationName] = useState('');
+  const [specificationValue, setSpecificationValue] = useState('');
   const [failedMediaUrls, setFailedMediaUrls] = useState<Set<string>>(() => new Set());
   const firstInputRef = useRef<HTMLInputElement>(null);
   const validationErrors = useMemo(
@@ -69,6 +108,7 @@ export default function SupplierReviewEditorModal({
     [draft.sellingPrice, item.costPrice],
   );
   const metadataSections = useMemo(() => buildSupplierReviewMetadataSections(item), [item]);
+  const fieldChanges = useMemo(() => buildSupplierReviewFieldChanges(item), [item]);
   const importWarnings = [
     ...(item.productValidation?.errors || []),
     ...(item.productValidation?.warnings || []),
@@ -99,7 +139,12 @@ export default function SupplierReviewEditorModal({
   }, [isPublishing, onClose]);
 
   const setNumber = (field: 'sellingPrice' | 'comparePrice' | 'stock', value: string) => {
-    setDraft((current) => ({ ...current, [field]: value === '' ? Number.NaN : Number(value) }));
+    const ownershipField = field === 'sellingPrice' ? 'price' : field === 'comparePrice' ? 'originalPrice' : 'stock';
+    setDraft((current) => updateSupplierReviewDraftField(current, ownershipField, { [field]: value === '' ? Number.NaN : Number(value) }));
+  };
+
+  const editDraft = (field: SupplierReviewEditableField, patch: Partial<SupplierReviewDraft>) => {
+    setDraft((current) => updateSupplierReviewDraftField(current, field, patch));
   };
 
   const handleSubmit = async (event: React.FormEvent) => {
@@ -107,6 +152,28 @@ export default function SupplierReviewEditorModal({
     setSubmitted(true);
     if (Object.keys(validationErrors).length > 0 || isPublishing) return;
     await onPublish(draft);
+  };
+
+  const setSpecification = (name: string, value: string) => {
+    setDraft((current) => updateSupplierReviewDraftField(current, 'specs', {
+      specifications: { ...(current.specifications || {}), [name]: value },
+    }));
+  };
+
+  const removeSpecification = (name: string) => {
+    setDraft((current) => {
+      const specifications = { ...(current.specifications || {}) };
+      delete specifications[name];
+      return updateSupplierReviewDraftField(current, 'specs', { specifications });
+    });
+  };
+
+  const addSpecification = () => {
+    const name = specificationName.normalize('NFKC').trim();
+    if (!name || Object.keys(draft.specifications || {}).some((key) => key.toLocaleLowerCase() === name.toLocaleLowerCase())) return;
+    setSpecification(name, specificationValue.trim());
+    setSpecificationName('');
+    setSpecificationValue('');
   };
 
   const addGalleryImage = () => {
@@ -127,14 +194,13 @@ export default function SupplierReviewEditorModal({
       setGalleryInputError('This image URL is already in the product gallery.');
       return;
     }
-    setDraft((current) => ({ ...current, galleryImageUrls: [...current.galleryImageUrls, imageUrl] }));
+    setDraft((current) => updateSupplierReviewDraftField(current, 'imageUrls', { galleryImageUrls: [...current.galleryImageUrls, imageUrl] }));
     setGalleryInput('');
     setGalleryInputError('');
   };
 
   const removeGalleryImage = (index: number) => {
-    setDraft((current) => ({
-      ...current,
+    setDraft((current) => updateSupplierReviewDraftField(current, 'imageUrls', {
       galleryImageUrls: current.galleryImageUrls.filter((_, imageIndex) => imageIndex !== index),
     }));
   };
@@ -145,7 +211,7 @@ export default function SupplierReviewEditorModal({
       if (destination < 0 || destination >= current.galleryImageUrls.length) return current;
       const galleryImageUrls = [...current.galleryImageUrls];
       [galleryImageUrls[index], galleryImageUrls[destination]] = [galleryImageUrls[destination], galleryImageUrls[index]];
-      return { ...current, galleryImageUrls };
+      return updateSupplierReviewDraftField(current, 'imageUrls', { galleryImageUrls });
     });
   };
 
@@ -212,6 +278,33 @@ export default function SupplierReviewEditorModal({
             </section>
           )}
 
+          {fieldChanges.length > 0 && (
+            <section className="rounded-2xl border border-blue-500/20 bg-blue-500/5 p-4" aria-labelledby="supplier-proposed-changes-title">
+              <h4 id="supplier-proposed-changes-title" className="text-xs font-black uppercase tracking-wider text-blue-700 dark:text-blue-300">Supplier proposed changes</h4>
+              <p className="mt-1 text-[10px] text-slate-500 dark:text-slate-400">Every connector field change captured for this review item is listed with its previous and proposed value.</p>
+              <dl className="mt-3 space-y-2">
+                {fieldChanges.map((change) => (
+                  <div key={`${change.field}-${change.auditKey || change.label}`} className="rounded-xl border border-blue-500/10 bg-white p-3 dark:bg-slate-950/60">
+                    <dt className="flex flex-wrap items-center justify-between gap-2 text-[10px] font-black uppercase tracking-wide text-slate-700 dark:text-slate-200">
+                      <span>{change.label}</span>
+                      <span className="rounded-full bg-blue-500/10 px-2 py-1 text-[8px] font-black uppercase tracking-wider text-blue-600 dark:text-blue-300">{change.changeType || 'changed'}</span>
+                    </dt>
+                    <dd className="mt-2 grid gap-2 sm:grid-cols-2">
+                      <div>
+                        <span className="text-[8px] font-black uppercase tracking-wide text-slate-400">Previous</span>
+                        <p className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-words text-[10px] font-semibold text-slate-600 dark:text-slate-300">{metadataText(change.before)}</p>
+                      </div>
+                      <div>
+                        <span className="text-[8px] font-black uppercase tracking-wide text-slate-400">Supplier value</span>
+                        <p className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-words text-[10px] font-semibold text-blue-700 dark:text-blue-200">{metadataText(change.after)}</p>
+                      </div>
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            </section>
+          )}
+
           <section aria-labelledby="supplier-imported-data-title" className="space-y-3">
             <div>
               <h4 id="supplier-imported-data-title" className="text-xs font-black uppercase tracking-wider text-slate-700 dark:text-slate-200">Complete imported supplier data</h4>
@@ -243,7 +336,7 @@ export default function SupplierReviewEditorModal({
           <div className="grid gap-4 sm:grid-cols-2">
             <label className="space-y-1.5 text-xs sm:col-span-2">
               <span className="font-bold text-slate-600 dark:text-slate-300">Product Name</span>
-              <input ref={firstInputRef} value={draft.productName} onChange={(event) => setDraft((current) => ({ ...current, productName: event.target.value }))} aria-invalid={Boolean(errorFor('productName'))} className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 dark:border-slate-700 dark:bg-slate-900" />
+              <input ref={firstInputRef} value={draft.productName} onChange={(event) => editDraft('name', { productName: event.target.value })} aria-invalid={Boolean(errorFor('productName'))} className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 dark:border-slate-700 dark:bg-slate-900" />
               {errorFor('productName') && <span className="text-[10px] font-semibold text-red-500">{errorFor('productName')}</span>}
             </label>
 
@@ -267,7 +360,7 @@ export default function SupplierReviewEditorModal({
 
             <label className="space-y-1.5 text-xs">
               <span className="font-bold text-slate-600 dark:text-slate-300">Category</span>
-              <select value={draft.category} onChange={(event) => setDraft((current) => ({ ...current, category: event.target.value, subcategory: '' }))} aria-invalid={Boolean(errorFor('category'))} className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 dark:border-slate-700 dark:bg-slate-900">
+              <select value={draft.category} onChange={(event) => setDraft((current) => updateSupplierReviewDraftField(updateSupplierReviewDraftField(current, 'category', { category: event.target.value, subcategory: '' }), 'subcategory', {}))} aria-invalid={Boolean(errorFor('category'))} className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 dark:border-slate-700 dark:bg-slate-900">
                 <option value="">Select category</option>
                 {categories.filter((category) => category.isActive !== false).map((category) => <option key={category.id} value={category.id}>{category.name || category.id}</option>)}
               </select>
@@ -276,7 +369,7 @@ export default function SupplierReviewEditorModal({
 
             <label className="space-y-1.5 text-xs">
               <span className="font-bold text-slate-600 dark:text-slate-300">Subcategory</span>
-              <select value={draft.subcategory} onChange={(event) => setDraft((current) => ({ ...current, subcategory: event.target.value }))} aria-invalid={Boolean(errorFor('subcategory'))} className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 dark:border-slate-700 dark:bg-slate-900">
+              <select value={draft.subcategory} onChange={(event) => editDraft('subcategory', { subcategory: event.target.value })} aria-invalid={Boolean(errorFor('subcategory'))} className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 dark:border-slate-700 dark:bg-slate-900">
                 <option value="">Select subcategory</option>
                 {(selectedCategory?.subcategories || []).filter((subcategory) => subcategory.isActive !== false).map((subcategory) => <option key={subcategory.id} value={subcategory.id}>{subcategory.name}</option>)}
               </select>
@@ -285,7 +378,7 @@ export default function SupplierReviewEditorModal({
 
             <label className="space-y-1.5 text-xs">
               <span className="font-bold text-slate-600 dark:text-slate-300">Registered brand</span>
-              <select value={draft.brand} onChange={(event) => setDraft((current) => ({ ...current, brand: event.target.value }))} aria-invalid={Boolean(errorFor('brand'))} className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 dark:border-slate-700 dark:bg-slate-900">
+              <select value={draft.brand} onChange={(event) => editDraft('brand', { brand: event.target.value })} aria-invalid={Boolean(errorFor('brand'))} className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 dark:border-slate-700 dark:bg-slate-900">
                 <option value="">Select brand</option>
                 {brands.filter((brand) => brand.isActive !== false).map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}
               </select>
@@ -294,22 +387,130 @@ export default function SupplierReviewEditorModal({
 
             <label className="flex min-h-11 items-center justify-between rounded-xl border border-slate-200 px-3 text-xs dark:border-slate-700">
               <span className="font-bold text-slate-600 dark:text-slate-300">Storefront status</span>
-              <span className="flex items-center gap-2"><input type="checkbox" checked={draft.isActive} onChange={(event) => setDraft((current) => ({ ...current, isActive: event.target.checked }))} />{draft.isActive ? 'Active' : 'Inactive'}</span>
+              <span className="flex items-center gap-2"><input type="checkbox" checked={draft.isActive} onChange={(event) => editDraft('isActive', { isActive: event.target.checked })} />{draft.isActive ? 'Active' : 'Inactive'}</span>
             </label>
           </div>
 
-          {(selectedCategory?.specificationTemplate || []).length > 0 && (
-            <fieldset className="grid gap-4 rounded-2xl border border-slate-200 p-4 dark:border-slate-800 sm:grid-cols-2">
+          <section className="space-y-3 rounded-2xl border border-blue-500/20 bg-blue-500/5 p-4" aria-labelledby="supplier-offers-title">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h4 id="supplier-offers-title" className="text-xs font-black uppercase tracking-wider text-blue-700 dark:text-blue-200">Supplier offers</h4>
+                <p className="mt-1 text-[10px] text-slate-500">Compare independent supplier terms. Changing the active supplier does not bypass product review.</p>
+              </div>
+              <button type="button" onClick={() => void onRefreshOffers()} disabled={offersLoading} className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-blue-500/20 bg-white px-3 text-[10px] font-black text-blue-700 disabled:opacity-50 dark:bg-slate-900 dark:text-blue-200">
+                <RefreshCw className={`h-3.5 w-3.5 ${offersLoading ? 'animate-spin' : ''}`} aria-hidden="true" />Refresh
+              </button>
+            </div>
+            {offerError && <p role="alert" className="rounded-lg bg-red-500/10 px-3 py-2 text-[10px] font-semibold text-red-600">{offerError}</p>}
+            {offersLoading ? (
+              <div className="h-24 animate-pulse rounded-xl bg-slate-200/70 dark:bg-slate-800" aria-label="Loading supplier offers" />
+            ) : offers.length === 0 ? (
+              <p className="rounded-xl border border-dashed border-blue-500/20 px-4 py-5 text-center text-[10px] font-semibold text-slate-500">This legacy product has no materialized supplier offers yet. Its first approved supplier sync will create one automatically.</p>
+            ) : (
+              <div className="grid gap-3">
+                {offers.map((offer) => {
+                  const active = supplierOfferIsActive(offer, offerSelection);
+                  const locked = supplierOfferIsLocked(offer, offerSelection);
+                  const busy = offerActionId === offer.id;
+                  return (
+                    <article key={offer.id} className={`rounded-xl border bg-white p-3 dark:bg-slate-900 ${active ? 'border-emerald-500/40 ring-1 ring-emerald-500/20' : 'border-slate-200 dark:border-slate-700'}`}>
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <strong className="text-xs text-slate-900 dark:text-white">{offer.supplierId || offer.sourceId}</strong>
+                            {active && <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[9px] font-black text-emerald-600">Active</span>}
+                            {locked && <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-[9px] font-black text-amber-600"><LockKeyhole className="h-3 w-3" />Locked</span>}
+                            {!offer.enabled && <span className="rounded-full bg-slate-500/10 px-2 py-0.5 text-[9px] font-black text-slate-500">Disabled</span>}
+                          </div>
+                          <p className="mt-1 text-[9px] text-slate-400">{offer.sourceId} · SKU {offer.sku || '—'} · {offer.reviewStatus.replaceAll('_', ' ')}</p>
+                        </div>
+                        <span className={`rounded-full px-2 py-1 text-[9px] font-black ${offer.availability === 'in_stock' ? 'bg-emerald-500/10 text-emerald-600' : 'bg-amber-500/10 text-amber-600'}`}>{offer.availability.replaceAll('_', ' ')}</span>
+                      </div>
+                      <dl className="mt-3 grid grid-cols-2 gap-2 text-[10px] sm:grid-cols-4">
+                        <div><dt className="text-slate-400">Price</dt><dd className="font-black">{money(offer.price)}</dd></div>
+                        <div><dt className="text-slate-400">Cost</dt><dd className="font-black">{money(offer.cost)}</dd></div>
+                        <div><dt className="text-slate-400">Stock</dt><dd className="font-black">{offer.stock}</dd></div>
+                        <div><dt className="text-slate-400">Last sync</dt><dd className="truncate font-bold" title={offer.lastSyncAt}>{offer.lastSyncAt ? new Date(offer.lastSyncAt).toLocaleString() : '—'}</dd></div>
+                      </dl>
+                      <div className="mt-3 flex flex-wrap items-end gap-2 border-t border-slate-100 pt-3 dark:border-slate-800">
+                        <label className="text-[9px] font-bold text-slate-500">Priority<input type="number" min="0" max="10000" defaultValue={offer.priority} disabled={busy} onBlur={(event) => { const priority = Number(event.target.value); if (Number.isInteger(priority) && priority !== offer.priority) void onConfigureOffer(offer.id, { priority }); }} className="mt-1 block h-9 w-24 rounded-lg border border-slate-200 bg-white px-2 text-xs dark:border-slate-700 dark:bg-slate-950" /></label>
+                        <label className="flex min-h-9 items-center gap-2 rounded-lg border border-slate-200 px-3 text-[10px] font-bold dark:border-slate-700"><input type="checkbox" checked={offer.enabled} disabled={busy} onChange={(event) => void onConfigureOffer(offer.id, { enabled: event.target.checked })} />Enabled</label>
+                        <button type="button" disabled={busy || !offer.enabled || active} onClick={() => void onSelectOffer(offer.id, { locked: false, failoverEnabled: offerSelection.failoverEnabled })} className="min-h-9 rounded-lg bg-blue-600 px-3 text-[10px] font-black text-white disabled:opacity-40">Use supplier</button>
+                        <button type="button" disabled={busy || !offer.enabled} onClick={() => void onSelectOffer(offer.id, { locked: !locked, failoverEnabled: offerSelection.failoverEnabled })} className="inline-flex min-h-9 items-center gap-1 rounded-lg border border-amber-500/20 px-3 text-[10px] font-black text-amber-600 disabled:opacity-40"><LockKeyhole className="h-3.5 w-3.5" />{locked ? 'Unlock' : 'Lock'}</button>
+                      </div>
+                    </article>
+                  );
+                })}
+                <label className="flex min-h-11 items-center justify-between rounded-xl border border-blue-500/15 bg-white px-3 text-xs font-bold dark:bg-slate-900">
+                  Automatic failover
+                  <input type="checkbox" checked={offerSelection.failoverEnabled} disabled={!offerSelection.activeOfferId || Boolean(offerActionId)} onChange={(event) => { if (offerSelection.activeOfferId) void onSelectOffer(offerSelection.activeOfferId, { locked: Boolean(offerSelection.lockedOfferId), failoverEnabled: event.target.checked }); }} />
+                </label>
+              </div>
+            )}
+          </section>
+
+          <section className="space-y-4 rounded-2xl border border-slate-200 p-4 dark:border-slate-800" aria-labelledby="supplier-review-content-title">
+            <div>
+              <h4 id="supplier-review-content-title" className="text-xs font-black uppercase tracking-wider text-slate-700 dark:text-slate-200">Content, identity & merchandising</h4>
+              <p className="mt-1 text-[10px] text-slate-400">These are the same customer-facing controls available for manually managed products.</p>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <label className="space-y-1.5 text-xs sm:col-span-2"><span className="font-bold text-slate-600 dark:text-slate-300">Short description</span><textarea rows={2} value={draft.shortDescription} onChange={(event) => editDraft('shortDescription', { shortDescription: event.target.value })} aria-invalid={Boolean(errorFor('shortDescription'))} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900" />{errorFor('shortDescription') && <span className="text-[10px] font-semibold text-red-500">{errorFor('shortDescription')}</span>}</label>
+              <label className="space-y-1.5 text-xs sm:col-span-2"><span className="font-bold text-slate-600 dark:text-slate-300">Full description</span><textarea rows={5} value={draft.description} onChange={(event) => editDraft('description', { description: event.target.value })} aria-invalid={Boolean(errorFor('description'))} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900" />{errorFor('description') && <span className="text-[10px] font-semibold text-red-500">{errorFor('description')}</span>}</label>
+              <label className="space-y-1.5 text-xs"><span className="font-bold text-slate-600 dark:text-slate-300">Model</span><input value={draft.model} onChange={(event) => editDraft('model', { model: event.target.value })} aria-invalid={Boolean(errorFor('model'))} className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 dark:border-slate-700 dark:bg-slate-900" /></label>
+              <label className="space-y-1.5 text-xs"><span className="font-bold text-slate-600 dark:text-slate-300">Barcode</span><input value={draft.barcode} onChange={(event) => editDraft('barcode', { barcode: event.target.value })} aria-invalid={Boolean(errorFor('barcode'))} className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 dark:border-slate-700 dark:bg-slate-900" /></label>
+              <label className="space-y-1.5 text-xs"><span className="font-bold text-slate-600 dark:text-slate-300">Product type</span><input value={draft.productType} onChange={(event) => editDraft('productType', { productType: event.target.value })} aria-invalid={Boolean(errorFor('productType'))} className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 dark:border-slate-700 dark:bg-slate-900" /></label>
+              <label className="space-y-1.5 text-xs"><span className="font-bold text-slate-600 dark:text-slate-300">SEO slug</span><input value={draft.slug} onChange={(event) => editDraft('slug', { slug: event.target.value })} aria-invalid={Boolean(errorFor('slug'))} className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 dark:border-slate-700 dark:bg-slate-900" /></label>
+              <label className="space-y-1.5 text-xs sm:col-span-2"><span className="font-bold text-slate-600 dark:text-slate-300">Tags</span><input value={draft.tags.join(', ')} onChange={(event) => editDraft('tags', { tags: commaList(event.target.value) })} className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 dark:border-slate-700 dark:bg-slate-900" /></label>
+              <label className="space-y-1.5 text-xs"><span className="font-bold text-slate-600 dark:text-slate-300">Key features</span><textarea rows={3} value={draft.keyFeatures.join(', ')} onChange={(event) => editDraft('keyFeatures', { keyFeatures: commaList(event.target.value) })} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900" /></label>
+              <label className="space-y-1.5 text-xs"><span className="font-bold text-slate-600 dark:text-slate-300">What's included</span><textarea rows={3} value={draft.whatsIncluded.join(', ')} onChange={(event) => editDraft('whatsIncluded', { whatsIncluded: commaList(event.target.value) })} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900" /></label>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-3">
+              {([['isNew', 'New arrival'], ['isFeatured', 'Featured'], ['isBestSeller', 'Best seller']] as const).map(([field, label]) => (
+                <label key={field} className="flex min-h-11 items-center justify-between rounded-xl border border-slate-200 px-3 text-xs dark:border-slate-700"><span className="font-bold">{label}</span><input type="checkbox" checked={draft[field]} onChange={(event) => editDraft(field, { [field]: event.target.checked })} /></label>
+              ))}
+            </div>
+          </section>
+
+          <fieldset className="grid gap-4 rounded-2xl border border-slate-200 p-4 dark:border-slate-800 sm:grid-cols-2">
               <legend className="px-2 text-xs font-black text-slate-700 dark:text-slate-200">Category specifications</legend>
               {(selectedCategory?.specificationTemplate || []).map((field) => (
                 <label key={field.name} className="space-y-1.5 text-xs">
                   <span className="font-bold text-slate-600 dark:text-slate-300">{field.name}{field.required ? ' *' : ''}</span>
-                  <input value={(draft.specifications || {})[field.name] || ''} onChange={(event) => setDraft((current) => ({ ...current, specifications: { ...(current.specifications || {}), [field.name]: event.target.value } }))} className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 dark:border-slate-700 dark:bg-slate-900" />
+                  <input value={(draft.specifications || {})[field.name] || ''} onChange={(event) => setSpecification(field.name, event.target.value)} className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 dark:border-slate-700 dark:bg-slate-900" />
                 </label>
               ))}
+              {Object.entries(draft.specifications || {}).filter(([name]) => !(selectedCategory?.specificationTemplate || []).some((field) => field.name === name)).map(([name, value]) => (
+                <label key={name} className="space-y-1.5 text-xs">
+                  <span className="flex items-center justify-between gap-2 font-bold text-slate-600 dark:text-slate-300">{name}<button type="button" onClick={() => removeSpecification(name)} aria-label={`Remove ${name} specification`} className="rounded-md p-1 text-red-500"><Trash2 className="h-3.5 w-3.5" /></button></span>
+                  <input value={value} onChange={(event) => setSpecification(name, event.target.value)} className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 dark:border-slate-700 dark:bg-slate-900" />
+                </label>
+              ))}
+              <div className="grid gap-2 sm:col-span-2 sm:grid-cols-[1fr_1fr_auto]">
+                <input value={specificationName} onChange={(event) => setSpecificationName(event.target.value)} placeholder="Specification name" aria-label="New specification name" className="min-h-11 rounded-xl border border-slate-200 bg-white px-3 text-xs dark:border-slate-700 dark:bg-slate-900" />
+                <input value={specificationValue} onChange={(event) => setSpecificationValue(event.target.value)} placeholder="Value" aria-label="New specification value" className="min-h-11 rounded-xl border border-slate-200 bg-white px-3 text-xs dark:border-slate-700 dark:bg-slate-900" />
+                <button type="button" onClick={addSpecification} disabled={!specificationName.trim()} className="inline-flex min-h-11 items-center justify-center gap-1 rounded-xl bg-slate-900 px-4 text-xs font-black text-white disabled:opacity-40 dark:bg-white dark:text-slate-900"><Plus className="h-4 w-4" />Add</button>
+              </div>
               {errorFor('specifications') && <span className="text-[10px] font-semibold text-red-500 sm:col-span-2">{errorFor('specifications')}</span>}
-            </fieldset>
-          )}
+          </fieldset>
+
+          <section className="space-y-3 rounded-2xl border border-violet-500/20 bg-violet-500/5 p-4" aria-labelledby="supplier-field-ownership-title">
+            <div>
+              <h4 id="supplier-field-ownership-title" className="text-xs font-black uppercase tracking-wider text-violet-700 dark:text-violet-200">Field ownership</h4>
+              <p className="mt-1 text-[10px] text-slate-500">Admin-owned values remain protected during later supplier approvals. Supplier-owned values may follow approved supplier updates.</p>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {SUPPLIER_REVIEW_EDITABLE_FIELDS.map((field) => (
+                <label key={field} className="flex min-h-11 items-center justify-between gap-3 rounded-xl border border-violet-500/15 bg-white px-3 text-xs dark:bg-slate-900">
+                  <span className="font-bold text-slate-700 dark:text-slate-200">{OWNERSHIP_LABELS[field]}</span>
+                  <select value={draft.fieldOwnership[field]} onChange={(event) => setDraft((current) => setSupplierReviewDraftFieldOwner(current, field, event.target.value as 'admin' | 'supplier'))} aria-label={`${OWNERSHIP_LABELS[field]} ownership`} className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[10px] font-black dark:border-slate-700 dark:bg-slate-950">
+                    <option value="admin">Admin</option>
+                    <option value="supplier">Supplier</option>
+                  </select>
+                </label>
+              ))}
+            </div>
+          </section>
 
           <section className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-900/40" aria-labelledby="supplier-product-images-title">
             <div>
@@ -324,7 +525,7 @@ export default function SupplierReviewEditorModal({
                 <input
                   type="url"
                   value={draft.primaryImageUrl}
-                  onChange={(event) => setDraft((current) => ({ ...current, primaryImageUrl: event.target.value }))}
+                  onChange={(event) => editDraft('imageUrl', { primaryImageUrl: event.target.value })}
                   aria-invalid={Boolean(errorFor('primaryImageUrl'))}
                   placeholder="https://supplier.example/product.jpg"
                   className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 dark:border-slate-700 dark:bg-slate-900"

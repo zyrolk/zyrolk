@@ -1,5 +1,6 @@
 import { Product } from '../types';
 import { isValidSupplierImageUrl, normalizeSupplierProductImages } from './connectors/a2z-website/productImages';
+import { parseSupplierProductFieldOwnership, SupplierProductFieldOwner } from './products/supplierFieldOwnership';
 
 export interface SupplierReviewSourceItem {
   id: string;
@@ -40,6 +41,23 @@ export interface SupplierReviewSourceItem {
     errors?: Array<{ field: string; code: string; message: string }>;
     warnings?: Array<{ field: string; code: string; message: string; severity?: string }>;
   };
+  comparison?: {
+    comparisonStatus?: string;
+    fieldChanges?: SupplierReviewFieldChange[];
+  };
+}
+
+export interface SupplierReviewFieldChange {
+  field: string;
+  label: string;
+  auditKey?: string;
+  auditRepresentation?: string;
+  before: unknown;
+  after: unknown;
+  changeType?: 'added' | 'changed' | 'invalid_removal';
+  syncGroup?: string;
+  emptyBehavior?: string;
+  adminEditable?: boolean;
 }
 
 export interface SupplierReviewMetadataField {
@@ -56,6 +74,15 @@ export interface SupplierReviewMetadataSection {
 
 export interface SupplierReviewDraft {
   productName: string;
+  shortDescription: string;
+  description: string;
+  model: string;
+  barcode: string;
+  productType: string;
+  tags: string[];
+  keyFeatures: string[];
+  whatsIncluded: string[];
+  slug: string;
   sellingPrice: number;
   comparePrice: number;
   stock: number;
@@ -64,9 +91,24 @@ export interface SupplierReviewDraft {
   brand: string;
   specifications?: Record<string, string>;
   isActive: boolean;
+  isNew: boolean;
+  isFeatured: boolean;
+  isBestSeller: boolean;
   primaryImageUrl: string;
   galleryImageUrls: string[];
+  fieldOwnership: Record<string, SupplierProductFieldOwner>;
+  editedFields: string[];
 }
+
+export const SUPPLIER_REVIEW_EDITABLE_FIELDS = [
+  'name', 'shortDescription', 'description', 'model', 'barcode', 'productType', 'tags', 'keyFeatures',
+  'whatsIncluded', 'slug', 'price', 'originalPrice', 'stock', 'category', 'subcategory', 'brand', 'specs',
+  'isActive', 'isNew', 'isFeatured', 'isBestSeller', 'imageUrl', 'imageUrls',
+] as const;
+
+export type SupplierReviewEditableField = typeof SUPPLIER_REVIEW_EDITABLE_FIELDS[number];
+
+const ADMIN_ONLY_REVIEW_FIELDS = new Set<SupplierReviewEditableField>(['keyFeatures', 'whatsIncluded', 'isNew', 'isFeatured', 'isBestSeller']);
 
 export interface SupplierProfitMetrics {
   profit: number;
@@ -75,6 +117,12 @@ export interface SupplierProfitMetrics {
 
 export interface SupplierReviewValidationErrors {
   productName?: string;
+  shortDescription?: string;
+  description?: string;
+  model?: string;
+  barcode?: string;
+  productType?: string;
+  slug?: string;
   sellingPrice?: string;
   comparePrice?: string;
   stock?: string;
@@ -110,6 +158,10 @@ const recordValue = (value: unknown): Record<string, unknown> => value && typeof
   ? value as Record<string, unknown>
   : {};
 
+const textList = (value: unknown): string[] => Array.isArray(value)
+  ? [...new Set(value.filter((entry): entry is string => typeof entry === 'string').map((entry) => entry.trim()).filter(Boolean))]
+  : [];
+
 const isHttpsSupplierImageUrl = (value: unknown): value is string => {
   if (!isValidSupplierImageUrl(value)) return false;
   try {
@@ -118,6 +170,17 @@ const isHttpsSupplierImageUrl = (value: unknown): value is string => {
     return false;
   }
 };
+
+export function buildSupplierReviewFieldChanges(item: SupplierReviewSourceItem): SupplierReviewFieldChange[] {
+  const changes = item.comparison?.fieldChanges;
+  if (!Array.isArray(changes)) return [];
+  return changes.filter((change) => (
+    change
+    && typeof change === 'object'
+    && typeof change.field === 'string'
+    && typeof change.label === 'string'
+  ));
+}
 
 export function buildSupplierReviewMetadataSections(item: SupplierReviewSourceItem): SupplierReviewMetadataSection[] {
   const snapshot: Record<string, unknown> = item.supplierSnapshot || {};
@@ -213,9 +276,24 @@ export function createSupplierReviewDraft(item: SupplierReviewSourceItem): Suppl
       .map((value) => value.trim())
       .filter((value) => Boolean(value) && value !== primaryImageUrl),
   )];
+  const storedOwnership = parseSupplierProductFieldOwnership(payload?.supplierFieldOwnership);
+  const isNewProduct = item.comparison?.comparisonStatus === 'NEW_PRODUCT';
+  const fieldOwnership = Object.fromEntries(SUPPLIER_REVIEW_EDITABLE_FIELDS.map((field) => [
+    field,
+    storedOwnership[field]?.owner || (isNewProduct && !ADMIN_ONLY_REVIEW_FIELDS.has(field) ? 'supplier' : 'admin'),
+  ])) as Record<string, SupplierProductFieldOwner>;
 
   return {
     productName: String(payload?.name || item.productName || ''),
+    shortDescription: String(payload?.shortDescription || ''),
+    description: String(payload?.description || ''),
+    model: String(payload?.model || ''),
+    barcode: String(payload?.barcode || ''),
+    productType: String(payload?.productType || ''),
+    tags: textList(payload?.tags),
+    keyFeatures: textList(payload?.keyFeatures || payload?.features),
+    whatsIncluded: textList(payload?.whatsIncluded),
+    slug: String(payload?.slug || ''),
     sellingPrice: finiteNumber(payload?.price, finiteNumber(item.marketPrice)),
     comparePrice: finiteNumber(payload?.originalPrice, finiteNumber(item.marketPrice)),
     stock: Math.max(0, Math.floor(finiteNumber(payload?.stock, finiteNumber(item.stock)))),
@@ -224,9 +302,35 @@ export function createSupplierReviewDraft(item: SupplierReviewSourceItem): Suppl
     brand: String(payload?.brand || (item.brandMapping?.autoSelected ? item.brandMapping.mappedBrandId : '') || specs.brand || specs.Brand || ''),
     specifications: Object.fromEntries(Object.entries(specs).map(([key, value]) => [key, String(value || '')])),
     isActive: payload?.isActive !== false,
+    isNew: payload?.isNew === true,
+    isFeatured: payload?.isFeatured === true,
+    isBestSeller: payload?.isBestSeller === true,
     primaryImageUrl,
     galleryImageUrls,
+    fieldOwnership,
+    editedFields: [],
   };
+}
+
+export function updateSupplierReviewDraftField(
+  draft: SupplierReviewDraft,
+  field: SupplierReviewEditableField,
+  patch: Partial<SupplierReviewDraft>,
+): SupplierReviewDraft {
+  return {
+    ...draft,
+    ...patch,
+    fieldOwnership: { ...draft.fieldOwnership, [field]: 'admin' },
+    editedFields: [...new Set([...draft.editedFields, field])],
+  };
+}
+
+export function setSupplierReviewDraftFieldOwner(
+  draft: SupplierReviewDraft,
+  field: SupplierReviewEditableField,
+  owner: SupplierProductFieldOwner,
+): SupplierReviewDraft {
+  return { ...draft, fieldOwnership: { ...draft.fieldOwnership, [field]: owner } };
 }
 
 export function calculateSupplierProfit(sellingPrice: number, wholesalePrice: number): SupplierProfitMetrics {
@@ -254,6 +358,12 @@ export function validateSupplierReviewDraft(
   const errors: SupplierReviewValidationErrors = {};
 
   if (!draft.productName.trim()) errors.productName = 'Product name is required.';
+  if ((draft.shortDescription || '').length > 500) errors.shortDescription = 'Short description must contain 500 characters or fewer.';
+  if ((draft.description || '').length > 20_000) errors.description = 'Description must contain 20,000 characters or fewer.';
+  if ((draft.model || '').length > 160) errors.model = 'Model must contain 160 characters or fewer.';
+  if ((draft.barcode || '').length > 64) errors.barcode = 'Barcode must contain 64 characters or fewer.';
+  if ((draft.productType || '').length > 160) errors.productType = 'Product type must contain 160 characters or fewer.';
+  if ((draft.slug || '').length > 160) errors.slug = 'SEO slug must contain 160 characters or fewer.';
   if (!Number.isFinite(draft.sellingPrice) || draft.sellingPrice <= 0) errors.sellingPrice = 'Selling price must be greater than zero.';
   if (!Number.isFinite(draft.comparePrice) || draft.comparePrice < 0) errors.comparePrice = 'Compare price cannot be negative.';
   if (draft.comparePrice > 0 && draft.comparePrice < draft.sellingPrice) errors.comparePrice = 'Compare price must be at least the selling price.';
@@ -365,6 +475,15 @@ export function buildSupplierApprovalItem(
       imageUrl: primaryImageUrl,
       imageUrls: normalizedImages,
       name: draft.productName.trim(),
+      shortDescription: String(draft.shortDescription || '').trim(),
+      description: String(draft.description || '').trim(),
+      model: String(draft.model || '').trim(),
+      barcode: String(draft.barcode || '').trim(),
+      productType: String(draft.productType || '').trim(),
+      tags: textList(draft.tags),
+      keyFeatures: textList(draft.keyFeatures),
+      whatsIncluded: textList(draft.whatsIncluded),
+      slug: String(draft.slug || '').trim(),
       price: sellingPrice,
       originalPrice: normalizedComparePrice,
       discount,
@@ -378,10 +497,14 @@ export function buildSupplierApprovalItem(
         brand,
       },
       isActive: draft.isActive,
+      isNew: draft.isNew,
+      isFeatured: draft.isFeatured,
+      isBestSeller: draft.isBestSeller,
       active: draft.isActive,
       visible: draft.isActive,
       approved: true,
       published: true,
+      ...(draft.fieldOwnership ? { supplierFieldOwnership: draft.fieldOwnership } : {}),
     },
   };
 }

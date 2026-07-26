@@ -142,9 +142,11 @@ test('scheduled sync, admin recovery, and approval paths preserve the durable re
   const portal = readFileSync('functions/src/api/routes/supplierPortal.ts', 'utf8');
 
   assert.match(scheduled, /buildSupplierQueueLifecycle/);
-  assert.match(scheduled, /processSupplierReviewQueueItem/);
+  assert.doesNotMatch(scheduled, /processSupplierReviewQueueItem/);
   assert.doesNotMatch(scheduled, /recoverExpiredSupplierReviewQueueLeases/);
-  assert.match(readFileSync('functions/src/scheduled/supplierQueueWorker.ts', 'utf8'), /recoverExpiredSupplierReviewQueueLeases/);
+  const queueWorker = readFileSync('functions/src/scheduled/supplierQueueWorker.ts', 'utf8');
+  assert.match(queueWorker, /recoverExpiredSupplierReviewQueueLeases/);
+  assert.match(queueWorker, /processDueSupplierReviewQueueItems/);
   assert.match(routes, /supplier-review-queue\/:queueItemId\/retry", requireSupplierHubAdmin/);
   assert.match(routes, /supplier-review-queue\/resume", requireSupplierHubAdmin/);
   assert.match(approval, /const terminalState = action === "approved" \? "approved"/);

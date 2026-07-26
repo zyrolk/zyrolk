@@ -56,7 +56,7 @@ service cloud.firestore {
         'recommendedRetailPrice', 'supplierCode', 'supplierSku', 'supplierSKU',
         'supplierCost', 'internalCost', 'margin', 'profit',
         'supplierSourceId', 'supplierSource', 'supplierLeadTime',
-        'supplierMoq', 'supplierMOQ'
+        'supplierMoq', 'supplierMOQ', 'supplierFieldOwnership', 'supplierOfferSelection'
       ]);
     }
 
@@ -205,6 +205,12 @@ service cloud.firestore {
       allow create, update, delete: if false;
     }
 
+    // Supplier offers contain private costs, stock feeds, and supplier metadata.
+    // They are projected through authenticated Functions and never browser-written.
+    match /supplier_product_offers/{docId} {
+      allow read, create, update, delete: if false;
+    }
+
     // Supplier catalog mappings are learned and versioned only by trusted
     // approval Functions. Browsers may inspect suggestions through queue data,
     // but cannot train or override the mapping engine directly.
@@ -251,6 +257,13 @@ service cloud.firestore {
     match /supplier_sync_locks/{docId} {
       allow read: if isSupplierHubAdmin();
       allow create, update, delete: if false;
+    }
+
+    // Durable sync jobs contain worker leases, cancellation markers, and
+    // operational failure data. Administrators use the authenticated API
+    // projection; no browser may read or mutate worker state directly.
+    match /supplier_sync_jobs/{docId} {
+      allow read, create, update, delete: if false;
     }
 
     // Settings are edited through the validated Supplier Hub configuration API.

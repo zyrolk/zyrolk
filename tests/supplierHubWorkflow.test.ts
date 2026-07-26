@@ -41,7 +41,7 @@ test("visible supplier sync controls invoke the real queue synchronization pipel
 
 test("A2Z secrets are bound to both HTTPS and scheduled Functions", () => {
   const apiEntry = readFileSync("functions/src/index.ts", "utf8");
-  const scheduledSync = readFileSync("functions/src/scheduled/supplierSync.ts", "utf8");
+  const scheduledSyncWorker = readFileSync("functions/src/scheduled/supplierSyncWorker.ts", "utf8");
   const secrets = readFileSync("functions/src/config/secrets.ts", "utf8");
 
   assert.match(secrets, /defineSecret\("A2Z_USERNAME"\)/);
@@ -49,7 +49,7 @@ test("A2Z secrets are bound to both HTTPS and scheduled Functions", () => {
   assert.match(apiEntry, /secrets:\s*API_SECRETS/);
   assert.match(secrets, /API_SECRETS\s*=\s*\[\.\.\.A2Z_SECRETS\]/);
   assert.doesNotMatch(secrets, /PAYHERE_MERCHANT_SECRET/);
-  assert.match(scheduledSync, /secrets:\s*A2Z_SECRETS/);
+  assert.match(scheduledSyncWorker, /secrets:\s*A2Z_SECRETS/);
 });
 
 test("supplier test and fetch routes share the connector registry", () => {

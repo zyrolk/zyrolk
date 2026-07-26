@@ -16,12 +16,21 @@ const firebaseConfig = {
     || (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env?.VITE_FIREBASE_MEASUREMENT_ID,
 };
 
+// A reCAPTCHA Enterprise site key is public, domain-restricted configuration.
+// Keep the checked-in production value as the Firebase Hosting default while
+// allowing staging builds to override it explicitly.
+const appCheckSiteKey = String(
+  (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env?.VITE_FIREBASE_APP_CHECK_SITE_KEY
+  || appletConfig.appCheckSiteKey
+  || '',
+).trim();
+
 // Reuse the initialized app during development refreshes and production module reuse.
 const app = getApps()[0] || initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-export { app, db, auth, firebaseConfig };
+export { app, db, auth, firebaseConfig, appCheckSiteKey };
 
 export enum OperationType {
   CREATE = 'create',

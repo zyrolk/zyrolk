@@ -47,6 +47,7 @@ interface SupplierQueueRecord extends Record<string, unknown> {
   retryLimit?: unknown;
   nextRetryAt?: unknown;
   leaseOwner?: unknown;
+  leaseId?: unknown;
   leaseExpiresAt?: unknown;
   importPayload?: unknown;
   pendingChangePayload?: unknown;
@@ -60,6 +61,7 @@ interface SupplierQueueRecord extends Record<string, unknown> {
 
 const DEFAULT_RETRY_LIMIT = 5;
 const DEFAULT_LEASE_MS = 5 * 60 * 1000;
+const LEASE_HEARTBEAT_INTERVAL_MS = 60 * 1000;
 
 const asRecord = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value)
   ? value as Record<string, unknown>
@@ -211,7 +213,12 @@ const stateFor = (record: SupplierQueueRecord): SupplierQueueState => {
   const state = asString(record.queueState) as SupplierQueueState;
   if ((SUPPLIER_QUEUE_STATES as readonly string[]).includes(state)) return state;
   // Existing review records were created before lifecycle metadata existed.
-  return String(record.status || "").toLowerCase() === "pending" ? "review_pending" : "queued";
+  const legacyStatus = String(record.status || "").toLowerCase();
+  if (legacyStatus === "pending") return "review_pending";
+  if (legacyStatus === "conflict") return "conflict";
+  if (legacyStatus === "approved") return "approved";
+  if (legacyStatus === "rejected") return "rejected";
+  return "queued";
 };
 
 const nextRetryAt = (attempt: number, now: number): string => new Date(now + supplierMediaRetryDelayMs(attempt)).toISOString();
@@ -333,6 +340,35 @@ export async function leaseSupplierReviewQueueItem(
   });
 }
 
+export async function heartbeatSupplierReviewQueueLease(
+  db: Firestore,
+  queueItemId: string,
+  workerId: string,
+  leaseId: string,
+  now = Date.now(),
+  leaseMs = DEFAULT_LEASE_MS,
+): Promise<boolean> {
+  const reference = db.collection("supplier_review_queue").doc(queueItemId);
+  return db.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(reference);
+    const record = snapshot.exists ? snapshot.data() as SupplierQueueRecord : null;
+    const state = record ? stateFor(record) : null;
+    if (
+      !record
+      || (state !== "leased" && state !== "processing")
+      || asString(record.leaseOwner) !== workerId
+      || asString(record.leaseId) !== leaseId
+      || isSupplierQueueLeaseExpired(record, now)
+    ) return false;
+    transaction.set(reference, {
+      leaseExpiresAt: new Date(now + leaseMs).toISOString(),
+      leaseHeartbeatAt: new Date(now).toISOString(),
+      leaseHeartbeatCount: Number(record.leaseHeartbeatCount || 0) + 1,
+    }, { merge: true });
+    return true;
+  });
+}
+
 async function markSupplierQueueProcessing(db: Firestore, queueItemId: string, workerId: string, now: number): Promise<SupplierQueueRecord> {
   const reference = db.collection("supplier_review_queue").doc(queueItemId);
   return db.runTransaction(async (transaction) => {
@@ -344,6 +380,8 @@ async function markSupplierQueueProcessing(db: Firestore, queueItemId: string, w
     transaction.set(reference, {
       queueState: "processing" satisfies SupplierQueueState,
       processingStartedAt: new Date(now).toISOString(),
+      leaseExpiresAt: new Date(now + DEFAULT_LEASE_MS).toISOString(),
+      leaseHeartbeatAt: new Date(now).toISOString(),
     }, { merge: true });
     createSupplierAuditEvent(db, transaction, {
       queueItemId,
@@ -411,6 +449,10 @@ async function recordSupplierQueueFailure(
     const record = snapshot.exists ? snapshot.data() as SupplierQueueRecord : null;
     if (!record) return "dead_letter";
     const state = stateFor(record);
+    if (recoveredLease && (
+      (state !== "leased" && state !== "processing")
+      || !isSupplierQueueLeaseExpired(record, now)
+    )) return state;
     if (!recoveredLease && (!((state === "leased") || (state === "processing")) || asString(record.leaseOwner) !== workerId || isSupplierQueueLeaseExpired(record, now))) {
       return state;
     }
@@ -439,17 +481,37 @@ export async function processSupplierReviewQueueItem(
 ): Promise<SupplierQueueProcessResult> {
   const leased = await leaseSupplierReviewQueueItem(db, queueItemId, workerId, now);
   if (!leased) return { queueItemId, outcome: "skipped", state: stateFor({}) };
+  const wallClockStartedAt = Date.now();
+  const currentTime = (): number => now + Math.max(0, Date.now() - wallClockStartedAt);
+  let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  let heartbeatInFlight: Promise<void> = Promise.resolve();
+  let leaseLost = false;
   try {
     const processingRecord = await markSupplierQueueProcessing(db, queueItemId, workerId, now);
+    const leaseId = asString(processingRecord.leaseId);
+    const sendHeartbeat = (): void => {
+      if (leaseLost) return;
+      heartbeatInFlight = heartbeatInFlight.then(async () => {
+        const renewed = await heartbeatSupplierReviewQueueLease(db, queueItemId, workerId, leaseId, currentTime());
+        if (!renewed) leaseLost = true;
+      }).catch(() => { leaseLost = true; });
+    };
+    heartbeatTimer = setInterval(sendHeartbeat, LEASE_HEARTBEAT_INTERVAL_MS);
     if (sourceImageUrls(processingRecord).length > 0 || extractSupplierMediaFromRecord(processingRecord.managedMedia).length > 0) {
       await ensureSupplierReviewQueueManagedMedia(db, queueItemId);
     }
-    await completeSupplierQueueItem(db, queueItemId, workerId, now);
+    sendHeartbeat();
+    await heartbeatInFlight;
+    if (leaseLost) throw new Error("Supplier queue lease was lost during processing.");
+    await completeSupplierQueueItem(db, queueItemId, workerId, currentTime());
     return { queueItemId, outcome: "completed", state: "review_pending" };
   } catch (error) {
-    const state = await recordSupplierQueueFailure(db, queueItemId, workerId, error, now);
+    const state = await recordSupplierQueueFailure(db, queueItemId, workerId, error, currentTime());
     if (state === "leased" || state === "processing") return { queueItemId, outcome: "skipped", state };
     return { queueItemId, outcome: state === "dead_letter" ? "dead_letter" : "retryable_failure", state };
+  } finally {
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
+    await heartbeatInFlight;
   }
 }
 
@@ -527,6 +589,79 @@ export async function getSupplierReviewQueueMetrics(db: Firestore, now = Date.no
     averageProcessingLatencyMs: durations.length
       ? Math.round(durations.reduce((sum, duration) => sum + duration, 0) / durations.length)
       : null,
+  };
+}
+
+export type SupplierQueuePageView = "review" | "import" | "changes";
+export type SupplierReviewQueuePageState = "active" | "review_pending" | "conflict" | "approved" | "rejected";
+
+export interface SupplierQueuePageResult {
+  view: SupplierQueuePageView;
+  state: string;
+  items: Array<Record<string, unknown> & { id: string }>;
+  nextCursor: string | null;
+}
+
+const reviewStatusValues = (state: SupplierReviewQueuePageState): string[] => {
+  if (state === "conflict") return ["CONFLICT"];
+  if (state === "approved") return ["Approved"];
+  if (state === "rejected") return ["Rejected"];
+  if (state === "review_pending") return ["Pending"];
+  return ["Pending", "CONFLICT"];
+};
+
+const reviewRecordMatchesState = (record: SupplierQueueRecord, state: SupplierReviewQueuePageState): boolean => {
+  const queueState = stateFor(record);
+  if (state === "active") return queueState === "review_pending" || queueState === "conflict";
+  return queueState === state;
+};
+
+/**
+ * Bounded, server-authoritative pagination for the three Supplier Hub queue
+ * views. Review status filtering is index-backed; client collection listeners
+ * are deliberately not part of this path.
+ */
+export async function listSupplierQueuePage(
+  db: Firestore,
+  options: {
+    view: SupplierQueuePageView;
+    state?: SupplierReviewQueuePageState;
+    after?: string;
+    limit?: number;
+  },
+): Promise<SupplierQueuePageResult> {
+  const pageLimit = Number.isInteger(options.limit) ? Math.max(1, Math.min(100, Number(options.limit))) : 50;
+  const state = options.view === "review" ? options.state || "active" : "active";
+  const collectionName = options.view === "review"
+    ? "supplier_review_queue"
+    : options.view === "import" ? "supplier_import_queue" : "supplier_pending_changes";
+  const collection = db.collection(collectionName);
+  const scanLimit = options.view === "review" ? Math.min(300, pageLimit * 3) : pageLimit;
+  let query: FirebaseFirestore.Query = collection;
+  if (options.view === "review") {
+    const statuses = reviewStatusValues(state as SupplierReviewQueuePageState);
+    query = statuses.length === 1
+      ? query.where("status", "==", statuses[0])
+      : query.where("status", "in", statuses);
+  }
+  query = query.orderBy("createdAt", "desc");
+  if (options.after) {
+    const cursor = await collection.doc(options.after).get();
+    if (!cursor.exists) throw new Error("Supplier queue cursor is invalid.");
+    query = query.startAfter(cursor);
+  }
+  const snapshot = await query.limit(scanLimit).get();
+  const matched = snapshot.docs.filter((document) => options.view !== "review"
+    || reviewRecordMatchesState(document.data() as SupplierQueueRecord, state as SupplierReviewQueuePageState));
+  const pageDocuments = matched.slice(0, pageLimit);
+  const cursorDocument = pageDocuments.length === pageLimit
+    ? pageDocuments.at(-1)
+    : snapshot.size === scanLimit ? snapshot.docs.at(-1) : null;
+  return {
+    view: options.view,
+    state,
+    items: pageDocuments.map((document) => ({ id: document.id, ...document.data() })),
+    nextCursor: cursorDocument?.id || null,
   };
 }
 

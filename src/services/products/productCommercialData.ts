@@ -31,6 +31,8 @@ export const COMMERCIAL_PRODUCT_FIELDS = [
   'supplierLeadTime',
   'supplierMoq',
   'supplierMOQ',
+  'supplierFieldOwnership',
+  'supplierOfferSelection',
 ] as const;
 
 export type CommercialProductField = typeof COMMERCIAL_PRODUCT_FIELDS[number];

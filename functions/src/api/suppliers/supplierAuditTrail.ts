@@ -82,6 +82,37 @@ const importantValue = (
 
 const equal = (left: unknown, right: unknown): boolean => JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
 
+interface SupplierAuditFieldChange {
+  field: string;
+  label: string;
+  auditKey: string;
+  auditRepresentation: string;
+  before: unknown;
+  after: unknown;
+  changeType: string;
+}
+
+const supplierFieldChanges = (queueItem: Record<string, unknown>): SupplierAuditFieldChange[] => {
+  const comparison = asRecord(queueItem.comparison);
+  const candidates = Array.isArray(comparison.fieldChanges) ? comparison.fieldChanges : [];
+  return candidates.flatMap((candidate) => {
+    const change = asRecord(candidate);
+    const field = asString(change.field);
+    const label = asString(change.label);
+    const auditKey = asString(change.auditKey);
+    if (!field || !label || !auditKey) return [];
+    return [{
+      field: field.slice(0, 100),
+      label: label.slice(0, 160),
+      auditKey: auditKey.slice(0, 100),
+      auditRepresentation: asString(change.auditRepresentation).slice(0, 40) || "json",
+      before: change.before ?? null,
+      after: change.after ?? null,
+      changeType: asString(change.changeType).slice(0, 40) || "changed",
+    }];
+  });
+};
+
 /** Returns a compact, allowlisted change set; no whole product diff is stored. */
 export function buildSupplierImportantFieldChanges(input: Pick<SupplierAuditEventInput,
   "queueItem" | "beforePublicProduct" | "afterPublicProduct" | "beforePrivateProduct" | "afterPrivateProduct" | "previousState" | "newState"
@@ -101,6 +132,18 @@ export function buildSupplierImportantFieldChanges(input: Pick<SupplierAuditEven
   if (!changed.status && input.previousState !== input.newState) {
     changed.status = { before: input.previousState, after: input.newState };
   }
+  if (!equal(beforePrivate.supplierFieldOwnership, afterPrivate.supplierFieldOwnership)) {
+    changed.supplierFieldOwnership = {
+      before: beforePrivate.supplierFieldOwnership ?? null,
+      after: afterPrivate.supplierFieldOwnership ?? null,
+    };
+  }
+  if (!equal(beforePrivate.supplierOfferSelection, afterPrivate.supplierOfferSelection)) {
+    changed.supplierOfferSelection = {
+      before: beforePrivate.supplierOfferSelection ?? null,
+      after: afterPrivate.supplierOfferSelection ?? null,
+    };
+  }
   return changed;
 }
 
@@ -118,6 +161,12 @@ export function buildSupplierAuditEvent(input: SupplierAuditEventInput, eventId:
   const queueCreatedAt = toMillis(queueItem.queueCreatedAt);
   const processingStartedAt = toMillis(queueItem.processingStartedAt);
   const changes = buildSupplierImportantFieldChanges(input);
+  const canonicalFieldChanges = supplierFieldChanges(queueItem);
+  for (const change of canonicalFieldChanges) {
+    if (!changes[change.auditKey]) {
+      changes[change.auditKey] = { before: change.before, after: change.after };
+    }
+  }
   if (input.conflict) {
     for (const field of input.conflict.changedFields) {
       changes[field] = {
@@ -132,6 +181,7 @@ export function buildSupplierAuditEvent(input: SupplierAuditEventInput, eventId:
     queueItemId: input.queueItemId,
     supplierId,
     sourceId,
+    supplierOfferId: asString(queueItem.supplierOfferId) || null,
     productId: productId || null,
     action: input.action,
     previousState: input.previousState,
@@ -149,6 +199,7 @@ export function buildSupplierAuditEvent(input: SupplierAuditEventInput, eventId:
     ...(processingStartedAt > 0 ? { processingDurationMs: Math.max(0, now - processingStartedAt) } : {}),
     ...(input.reason ? { reason: input.reason.slice(0, 1_000) } : {}),
     ...(Object.keys(changes).length > 0 ? { changedFields: changes } : {}),
+    ...(canonicalFieldChanges.length > 0 ? { supplierFieldChanges: canonicalFieldChanges } : {}),
     ...(input.conflict ? {
       approvalConflict: {
         reason: input.conflict.reason,

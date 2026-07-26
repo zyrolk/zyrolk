@@ -1,7 +1,6 @@
 import { logger } from "firebase-functions";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { FieldPath, FieldValue } from "firebase-admin/firestore";
-import { A2Z_SECRETS } from "../config/secrets";
 import { adminDb } from "../api/firebase";
 import { appLogger } from "../api/logging";
 import { COMMERCIAL_PRODUCT_FIELDS, mergeProductData, PRODUCT_PRIVATE_COLLECTION } from "../api/products/productCommercialData";
@@ -10,13 +9,24 @@ import { isValidSupplierImageUrl, ProductParser } from "../api/suppliers/a2z/Pro
 import { RawA2ZProduct } from "../api/suppliers/a2z/types";
 import {
   buildSupplierImportWarnings,
-  detectSupplierProductDetailChanges,
+  buildSupplierProductComparison,
   mergeSupplierCatalogDetails,
   mergeSupplierProductMetadata,
+  SupplierFieldChange,
+  SupplierProductComparisonStatus,
 } from "../api/suppliers/supplierProductImport";
 import { buildSupplierAuditEvent } from "../api/suppliers/supplierAuditTrail";
 import { buildSupplierProductApprovalBaseline } from "../api/suppliers/supplierApprovalConcurrency";
 import { buildSupplierHealth, resolveSupplierPriority, SupplierPriorityCandidate } from "../api/suppliers/multiSupplier";
+import { createSupplierSyncJob, SupplierSyncJobProgressInput } from "../api/suppliers/supplierSyncJobs";
+import {
+  buildSupplierOfferId,
+  buildSupplierProductOffer,
+  normalizeSupplierOfferIdentity,
+  projectSupplierOfferForAdmin,
+  SupplierProductOffer,
+  SUPPLIER_PRODUCT_OFFERS_COLLECTION,
+} from "../api/suppliers/supplierOfferEngine";
 import {
   StoreBrandMappingCandidate,
   StoreCategoryMappingCandidate,
@@ -41,7 +51,6 @@ import {
 import {
   buildSupplierQueueLifecycle,
   classifySupplierQueueFailure,
-  processSupplierReviewQueueItem,
 } from "./supplierReviewQueue";
 import {
   normalizeSupplierCatalogPageSize,
@@ -50,7 +59,6 @@ import {
 } from "./supplierCatalogTraversal";
 
 type SyncStatus = "Success" | "Failed" | "Partial" | "Skipped";
-type ComparisonStatus = "NEW_PRODUCT" | "PRICE_CHANGED" | "STOCK_CHANGED" | "DESCRIPTION_CHANGED" | "IMAGE_CHANGED" | "UNCHANGED";
 
 interface SupplierSettings {
   websiteSyncEnabled?: boolean;
@@ -105,6 +113,7 @@ interface ExistingProduct {
   name?: string;
   description?: string;
   sku?: string;
+  barcode?: string;
   supplierItemCode?: string;
   costPrice?: number;
   marketPrice?: number;
@@ -134,6 +143,10 @@ interface ExistingProduct {
   brand?: string;
   supplierMetadata?: Record<string, unknown>;
   supplierMedia?: unknown[];
+  supplierLeadTime?: unknown;
+  supplierMoq?: unknown;
+  supplierFieldOwnership?: Record<string, unknown>;
+  supplierOfferSelection?: Record<string, unknown>;
 }
 
 interface SyncMetrics {
@@ -159,6 +172,11 @@ export interface SupplierSyncRunOptions {
   trigger?: "scheduled" | "manual";
   sourceIds?: string[];
   maxRuntimeMs?: number;
+  batchId?: string;
+  control?: {
+    reportProgress(progress: SupplierSyncJobProgressInput): Promise<void>;
+    shouldCancel(): boolean;
+  };
 }
 
 export interface SupplierSyncRunResult {
@@ -181,6 +199,7 @@ export interface SupplierSyncRunResult {
   sourceCursors: Record<string, string | null>;
   lastCompletedTraversals: Record<string, string>;
   elapsedTimeMs: number;
+  waitingRecommended?: boolean;
 }
 
 const LOCK_ID = "scheduled_supplier_sync";
@@ -348,13 +367,30 @@ const chunkValues = <T>(values: readonly T[], size = 30): T[][] => {
 };
 
 /** Loads only products that can match the supplier batch; it never scans the catalog. */
-async function loadExistingProductsForSupplierBatch(products: readonly RawA2ZProduct[]): Promise<ExistingProduct[]> {
+async function loadExistingProductsForSupplierBatch(
+  products: readonly RawA2ZProduct[],
+  offerCandidates: readonly SupplierProductOffer[] = [],
+): Promise<ExistingProduct[]> {
   const supplierCodes = [...new Set(products.map((product) => product.sku.trim()).filter(Boolean))];
-  const candidateIds = [...new Set(products.flatMap((product) => [product.sku.trim(), generateSlug(product.title)]).filter(Boolean))];
-  const privateSnapshots = await Promise.all(chunkValues(supplierCodes).map((codes) => adminDb.collection(PRODUCT_PRIVATE_COLLECTION)
-    .where("supplierItemCode", "in", codes)
-    .get()));
+  const barcodes = [...new Set(products.map((product) => String(product.barcode || "").trim()).filter(Boolean))];
+  const candidateIds = [...new Set([
+    ...products.flatMap((product) => [product.sku.trim(), generateSlug(product.title)]),
+    ...offerCandidates.map((offer) => offer.productId || ""),
+  ].filter(Boolean))];
+  const privateSnapshots = await Promise.all([
+    ...chunkValues(supplierCodes).map((codes) => adminDb.collection(PRODUCT_PRIVATE_COLLECTION)
+      .where("supplierItemCode", "in", codes)
+      .get()),
+    ...chunkValues(supplierCodes.map((code) => code.toLocaleLowerCase())).map((codes) => adminDb.collection(PRODUCT_PRIVATE_COLLECTION)
+      .where("supplierItemCodeNormalized", "in", codes)
+      .get()),
+  ]);
+  const publicIdentitySnapshots = await Promise.all([
+    ...chunkValues(supplierCodes).map((codes) => adminDb.collection("products").where("sku", "in", codes).get()),
+    ...chunkValues(barcodes).map((values) => adminDb.collection("products").where("barcode", "in", values).get()),
+  ]);
   const productById = new Map<string, FirebaseFirestore.DocumentSnapshot>();
+  publicIdentitySnapshots.flatMap((snapshot) => snapshot.docs).forEach((document) => productById.set(document.id, document));
   const directReferences = candidateIds.map((id) => adminDb.collection("products").doc(id));
   if (directReferences.length > 0) {
     const documents = await adminDb.getAll(...directReferences);
@@ -382,13 +418,37 @@ interface SupplierQueueCandidateSnapshot {
 async function loadSupplierQueueCandidates(products: readonly RawA2ZProduct[]): Promise<SupplierQueueCandidateSnapshot> {
   const supplierCodes = [...new Set(products.map((product) => product.sku.trim()).filter(Boolean))];
   const snapshots = await Promise.all(chunkValues(supplierCodes).flatMap((codes) => [
-    adminDb.collection("supplier_review_queue").select("supplierCode", "barcode", "sourceId", "supplierId", "supplierPriority", "queueState", "status").where("supplierCode", "in", codes).get(),
+    adminDb.collection("supplier_review_queue").select("supplierCode", "barcode", "sourceId", "supplierId", "supplierPriority", "queueState", "status", "matchedProductId", "productPayload").where("supplierCode", "in", codes).get(),
     adminDb.collection("supplier_import_queue").select("supplierCode", "sku").where("supplierCode", "in", codes).get(),
     adminDb.collection("supplier_import_queue").select("supplierCode", "sku").where("sku", "in", codes).get(),
   ]));
   const review = snapshots.filter((_, index) => index % 3 === 0).flatMap((snapshot) => snapshot.docs);
   const imported = snapshots.filter((_, index) => index % 3 !== 0).flatMap((snapshot) => snapshot.docs);
   return { review, imported };
+}
+
+/** Loads exact offer identities plus duplicate SKU/barcode candidates without scanning offers. */
+async function loadSupplierOffersForBatch(sourceId: string, products: readonly RawA2ZProduct[]): Promise<SupplierProductOffer[]> {
+  const ownOfferIds = [...new Set(products.map((product) => buildSupplierOfferId(
+    sourceId,
+    product.supplierProductId || product.sku,
+    product.sku,
+  )))];
+  const skuValues = [...new Set(products.map((product) => normalizeSupplierOfferIdentity(product.sku)).filter(Boolean))];
+  const barcodeValues = [...new Set(products.map((product) => normalizeSupplierOfferIdentity(product.barcode)).filter(Boolean))];
+  const snapshots = await Promise.all([
+    ...(ownOfferIds.length > 0 ? [adminDb.getAll(...ownOfferIds.map((id) => adminDb.collection(SUPPLIER_PRODUCT_OFFERS_COLLECTION).doc(id)))] : []),
+    ...chunkValues(skuValues).map((values) => adminDb.collection(SUPPLIER_PRODUCT_OFFERS_COLLECTION).where("skuNormalized", "in", values).get()),
+    ...chunkValues(barcodeValues).map((values) => adminDb.collection(SUPPLIER_PRODUCT_OFFERS_COLLECTION).where("barcodeNormalized", "in", values).get()),
+  ]);
+  const documents = snapshots.flatMap((snapshot) => "docs" in snapshot ? snapshot.docs : snapshot);
+  const unique = new Map<string, SupplierProductOffer>();
+  documents.forEach((document) => {
+    if (!document.exists) return;
+    const offer = projectSupplierOfferForAdmin({ id: document.id, ...document.data() });
+    if (offer) unique.set(offer.id, offer);
+  });
+  return [...unique.values()];
 }
 
 /** Sources are read in deterministic cursor pages so a large registry stays bounded in memory. */
@@ -425,51 +485,18 @@ async function loadSupplierProductMappings(sourceId: string): Promise<{
   };
 }
 
-function compareProduct(product: RawA2ZProduct, match: ExistingProduct | undefined): { status: ComparisonStatus; changedFields: string[] } {
-  if (!match) {
-    return { status: "NEW_PRODUCT", changedFields: [] };
-  }
-
-  const changedFields: string[] = [];
-
-  if (product.title !== match.name) changedFields.push("Product Name");
-  if (product.wholesalePrice !== match.costPrice) changedFields.push("Cost Price");
-  if (product.recommendedRetailPrice !== match.marketPrice) changedFields.push("Market Price");
-  if (product.inventoryLevel !== match.stock) changedFields.push("Stock");
-  if (product.longDescription !== match.description) changedFields.push("Description");
-  changedFields.push(...detectSupplierProductDetailChanges(product, { ...match }));
-
-  const supplierImages = [...new Set(product.mediaGallery || [])];
-  const auditedSupplierImages = Array.isArray(match.supplierMetadata?.mediaGallery)
-    ? match.supplierMetadata.mediaGallery.filter((value): value is string => typeof value === "string")
-    : [];
-  const existingImages = [...new Set(auditedSupplierImages.length
-    ? auditedSupplierImages
-    : (match.imageUrls || (match.imageUrl ? [match.imageUrl] : [])))];
-  const imagesMatch = supplierImages.length === existingImages.length &&
-    supplierImages.every((value, index) => value === existingImages[index]);
-  if (!imagesMatch) {
-    changedFields.push(supplierImages[0] !== (match.imageUrl || "") ? "Primary Image" : "Images");
-  }
-
-  if (changedFields.length === 0) return { status: "UNCHANGED", changedFields };
-  if (changedFields.includes("Cost Price") || changedFields.includes("Market Price")) return { status: "PRICE_CHANGED", changedFields };
-  if (changedFields.includes("Stock")) return { status: "STOCK_CHANGED", changedFields };
-  if (changedFields.includes("Primary Image")) return { status: "IMAGE_CHANGED", changedFields };
-  return { status: "DESCRIPTION_CHANGED", changedFields };
-}
-
 function buildProductPayload(
   product: RawA2ZProduct,
   match: ExistingProduct | undefined,
   categorySuggestion: SupplierCategorySuggestion,
   brandSuggestion: SupplierBrandSuggestion,
   storeBrands: readonly StoreBrandMappingCandidate[],
-  comparison: { status: ComparisonStatus; changedFields: string[] },
+  comparison: { status: SupplierProductComparisonStatus; changedFields: string[]; fieldChanges?: SupplierFieldChange[] },
   settings: SupplierSettings,
   source: SupplierSource,
+  targetProductId?: string,
 ): Record<string, unknown> {
-  const docId = match ? match.id : (generateSlug(product.title) || product.sku);
+  const docId = match?.id || targetProductId || generateSlug(product.title) || product.sku;
   const wholesale = product.wholesalePrice || 0;
   const pricing = calculateSupplierInitialPricing(
     wholesale,
@@ -483,12 +510,13 @@ function buildProductPayload(
   const imageUrls = [...new Set((product.mediaGallery || []).filter(isValidSupplierImageUrl).map((url) => url.trim()))].slice(0, imageLimit);
   const supplierImageUrl = imageUrls[0] || "";
   const isNewProduct = !match;
-  const priceUpdateEnabled = isNewProduct || comparison.changedFields.some((field) => field === "Cost Price" || field === "Market Price");
-  const stockUpdateEnabled = isNewProduct || comparison.changedFields.includes("Stock");
-  const descriptionUpdateEnabled = isNewProduct || comparison.changedFields.some((field) => ![
-    "Cost Price", "Market Price", "Stock", "Primary Image", "Images",
-  ].includes(field));
-  const imageUpdateEnabled = isNewProduct || comparison.changedFields.some((field) => field === "Primary Image" || field === "Images");
+  const acceptedSupplierFieldIds = new Set(comparison.fieldChanges?.map((change) => change.field) || []);
+  const acceptsField = (field: SupplierFieldChange["field"]): boolean => isNewProduct || acceptedSupplierFieldIds.has(field);
+  const priceUpdateEnabled = isNewProduct || (["costPrice", "price", "comparePrice"] as const).some(acceptsField);
+  const stockUpdateEnabled = acceptsField("stock");
+  const titleUpdateEnabled = acceptsField("title");
+  const descriptionUpdateEnabled = acceptsField("longDescription");
+  const imageUpdateEnabled = acceptsField("mediaGallery");
   const imageUrl = imageUpdateEnabled ? supplierImageUrl : (match?.imageUrl || "");
   const effectiveImageUrls = imageUpdateEnabled ? imageUrls : (match?.imageUrls || (imageUrl ? [imageUrl] : []));
   const existingIsActive = match
@@ -498,14 +526,15 @@ function buildProductPayload(
     ? (brandSuggestion.autoSelected ? brandSuggestion.mappedBrandId : "")
     : (match?.brand || "");
   const selectedBrandName = storeBrands.find((brand) => brand.id === selectedBrandId)?.name || "";
-  const baseSpecs = descriptionUpdateEnabled ? (product.specifications || {}) : (match?.specs || {});
-  const supplierCatalogDetails = mergeSupplierCatalogDetails(product, { ...(match || {}) }, isNewProduct || descriptionUpdateEnabled || imageUpdateEnabled);
-  const supplierMetadata = mergeSupplierProductMetadata(product, match?.supplierMetadata || {});
+  const baseSpecs = acceptsField("specifications") ? (product.specifications || {}) : (match?.specs || {});
+  const acceptedFields = isNewProduct ? true : acceptedSupplierFieldIds;
+  const supplierCatalogDetails = mergeSupplierCatalogDetails(product, { ...(match || {}) }, acceptedFields);
+  const supplierMetadata = mergeSupplierProductMetadata(product, match?.supplierMetadata || {}, acceptedFields);
 
   return {
     ...supplierCatalogDetails,
     id: docId,
-    name: descriptionUpdateEnabled ? product.title : (match?.name || product.title),
+    name: titleUpdateEnabled ? product.title : (match?.name || product.title),
     description: descriptionUpdateEnabled ? (product.longDescription || "") : (match?.description || ""),
     price: priceUpdateEnabled ? price : (match?.price || price),
     originalPrice: priceUpdateEnabled ? originalPrice : (match?.originalPrice || match?.price || originalPrice),
@@ -526,13 +555,20 @@ function buildProductPayload(
     approved: isNewProduct ? true : match?.approved !== false,
     visible: isNewProduct ? true : match?.visible !== false,
     sku: product.sku,
-    ...(product.barcode ? { barcode: product.barcode } : {}),
+    ...(acceptsField("barcode") && product.barcode ? { barcode: product.barcode } : match?.barcode ? { barcode: match.barcode } : {}),
     supplierId: source.supplierId || source.id,
     supplierSourceId: source.id,
     supplierPriority: supplierPriority(source),
     supplierItemCode: product.sku,
     supplierMetadata,
+    ...(match?.supplierFieldOwnership ? { supplierFieldOwnership: match.supplierFieldOwnership } : {}),
     supplierMedia: imageUpdateEnabled ? [] : (match?.supplierMedia || []),
+    ...(acceptsField("leadTime") && product.leadTime !== undefined
+      ? { supplierLeadTime: product.leadTime }
+      : match?.supplierLeadTime !== undefined ? { supplierLeadTime: match.supplierLeadTime } : {}),
+    ...(acceptsField("minimumOrderQuantity") && product.minimumOrderQuantity !== undefined
+      ? { supplierMoq: product.minimumOrderQuantity }
+      : match?.supplierMoq !== undefined ? { supplierMoq: match.supplierMoq } : {}),
     costPrice: priceUpdateEnabled ? wholesale : (match?.costPrice || 0),
     marketPrice: priceUpdateEnabled ? (product.recommendedRetailPrice || 0) : (match?.marketPrice || 0),
     rating: match?.rating ?? 0,
@@ -543,30 +579,13 @@ function buildProductPayload(
 
 function buildPendingChange(
   queueItem: Record<string, unknown>,
-  product: RawA2ZProduct,
-  match: ExistingProduct | undefined,
-  comparisonStatus: ComparisonStatus,
+  comparison: { status: SupplierProductComparisonStatus; fieldChanges?: SupplierFieldChange[] },
 ): Record<string, unknown> | null {
+  const comparisonStatus = comparison.status;
   if (comparisonStatus === "UNCHANGED" || comparisonStatus === "NEW_PRODUCT") {
     return null;
   }
-
-  let oldValue = "";
-  let newValue = "";
-
-  if (comparisonStatus === "PRICE_CHANGED") {
-    oldValue = match ? `LKR ${(match.costPrice || 0).toLocaleString()}` : "Unknown";
-    newValue = `LKR ${(product.wholesalePrice || 0).toLocaleString()}`;
-  } else if (comparisonStatus === "STOCK_CHANGED") {
-    oldValue = match ? `${match.stock || 0} units` : "Unknown";
-    newValue = `${product.inventoryLevel || 0} units`;
-  } else if (comparisonStatus === "IMAGE_CHANGED") {
-    oldValue = match?.imageUrl || "";
-    newValue = product.mediaGallery?.[0] || "";
-  } else {
-    oldValue = "Previous description";
-    newValue = "Updated description";
-  }
+  const primaryChange = comparison.fieldChanges?.[0];
 
   return {
     id: `change-${queueItem.id}`,
@@ -580,8 +599,9 @@ function buildPendingChange(
     batchId: queueItem.batchId,
     detectedAt: new Date().toISOString(),
     createdAt: queueItem.createdAt,
-    oldValue,
-    newValue,
+    oldValue: primaryChange?.before ?? "",
+    newValue: primaryChange?.after ?? "",
+    fieldChanges: comparison.fieldChanges || [],
     status: "Pending",
     productPayload: queueItem.productPayload,
     supplierSnapshot: queueItem.supplierSnapshot,
@@ -592,6 +612,8 @@ function buildPendingChange(
 
 interface SupplierSyncConflictWinner extends SupplierPriorityCandidate {
   queueItemId: string;
+  productId?: string;
+  offerId?: string;
 }
 
 function buildSupplierConflictRecord(
@@ -619,8 +641,10 @@ function buildSupplierConflictRecord(
       conflictingSupplierId: winner.supplierId,
       conflictingSourceId: winner.sourceId,
       conflictingQueueItemId: winner.queueItemId,
+      productId: winner.productId || null,
+      supplierOfferId: winner.offerId || null,
       winningPriority: winner.priority,
-      resolution: "higher_priority_supplier_retained",
+      resolution: "supplier_offer_attached_to_canonical_product",
       detectedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     },
@@ -654,13 +678,19 @@ async function acquireSyncLock(startedAt: Date, batchId: string, trigger: "sched
   });
 }
 
-async function releaseSyncLock(finishedAt: Date): Promise<void> {
-  await adminDb.collection("supplier_sync_locks").doc(LOCK_ID).set({
-    status: "idle",
-    activeSyncCount: 0,
-    finishedAt: finishedAt.toISOString(),
-    updatedAt: finishedAt.toISOString(),
-  }, { merge: true });
+async function releaseSyncLock(finishedAt: Date, batchId: string): Promise<void> {
+  const reference = adminDb.collection("supplier_sync_locks").doc(LOCK_ID);
+  await adminDb.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(reference);
+    if (snapshot.data()?.owner !== batchId) return;
+    transaction.set(reference, {
+      status: "idle",
+      activeSyncCount: 0,
+      finishedAt: finishedAt.toISOString(),
+      updatedAt: finishedAt.toISOString(),
+      lockedUntil: FieldValue.delete(),
+    }, { merge: true });
+  });
 }
 
 async function recoverStaleSourceSyncLeases(nowMs: number): Promise<number> {
@@ -863,17 +893,6 @@ async function commitQueuedItems(items: SupplierSyncWrite[]): Promise<void> {
   }
 }
 
-async function processSupplierQueueItemsBounded(queueItemIds: readonly string[], workerId: string, concurrency = 5) {
-  const results = [];
-  const safeConcurrency = Math.max(1, Math.min(Math.floor(concurrency), 10));
-  for (let offset = 0; offset < queueItemIds.length; offset += safeConcurrency) {
-    results.push(...await Promise.all(queueItemIds.slice(offset, offset + safeConcurrency).map((queueItemId) => (
-      processSupplierReviewQueueItem(adminDb, queueItemId, workerId)
-    ))));
-  }
-  return results;
-}
-
 export function isSupplierProductEligibleForRemovalReview(product: Record<string, unknown>): boolean {
   return product.isActive !== false && product.active !== false && product.visible !== false;
 }
@@ -897,14 +916,185 @@ export function buildSupplierRemovalProductPayload(
   };
 }
 
+async function heartbeatSyncExecutionLocks(sources: readonly SupplierSource[], batchId: string, now = Date.now()): Promise<void> {
+  const globalReference = adminDb.collection("supplier_sync_locks").doc(LOCK_ID);
+  await adminDb.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(globalReference);
+    if (snapshot.data()?.owner !== batchId || snapshot.data()?.status !== "running") return;
+    transaction.set(globalReference, {
+      lockedUntil: new Date(now + LOCK_TTL_MS).toISOString(),
+      lastHeartbeatAt: new Date(now).toISOString(),
+      updatedAt: new Date(now).toISOString(),
+    }, { merge: true });
+  });
+  for (const source of sources) {
+    const sourceReference = adminDb.collection("supplierSources").doc(source.id);
+    const lockReference = adminDb.collection("supplier_sync_locks").doc(`source-${source.id}`);
+    await adminDb.runTransaction(async (transaction) => {
+      const [sourceSnapshot, lockSnapshot] = await Promise.all([
+        transaction.get(sourceReference),
+        transaction.get(lockReference),
+      ]);
+      if (sourceSnapshot.data()?.syncBatchId !== batchId || lockSnapshot.data()?.owner !== batchId) return;
+      const leaseExpiresAt = new Date(now + LOCK_TTL_MS).toISOString();
+      transaction.set(sourceReference, {
+        syncLeaseExpiresAt: leaseExpiresAt,
+        syncLastHeartbeatAt: new Date(now).toISOString(),
+      }, { merge: true });
+      transaction.set(lockReference, {
+        lockedUntil: leaseExpiresAt,
+        lastHeartbeatAt: new Date(now).toISOString(),
+        updatedAt: new Date(now).toISOString(),
+      }, { merge: true });
+    });
+  }
+}
+
+async function queueMissingSupplierOffersForReview(
+  source: SupplierSource,
+  traversal: SupplierCatalogTraversalCheckpoint,
+  batchId: string,
+): Promise<{ queued: number; queueItemIds: string[]; materializedProductIds: Set<string> }> {
+  let cursor: FirebaseFirestore.QueryDocumentSnapshot | undefined;
+  let queued = 0;
+  const queueItemIds: string[] = [];
+  const materializedProductIds = new Set<string>();
+  do {
+    let query = adminDb.collection(SUPPLIER_PRODUCT_OFFERS_COLLECTION)
+      .where("sourceId", "==", source.id)
+      .limit(100);
+    if (cursor) query = query.startAfter(cursor);
+    const snapshot = await query.get();
+    cursor = snapshot.docs.at(-1);
+    const offers = snapshot.docs
+      .map((document) => projectSupplierOfferForAdmin({ id: document.id, ...document.data() }))
+      .filter((offer): offer is SupplierProductOffer => Boolean(offer));
+    offers.forEach((offer) => { if (offer.productId) materializedProductIds.add(offer.productId); });
+    const missing = offers.filter((offer) => (
+      snapshot.docs.find((document) => document.id === offer.id)?.data().supplierCatalogTraversalId !== traversal.traversalId
+      && offer.availability !== "unavailable"
+    ));
+    if (missing.length > 0) {
+      const productIds = [...new Set(missing.map((offer) => offer.productId).filter((value): value is string => Boolean(value)))];
+      const [productSnapshots, privateSnapshots] = await Promise.all([
+        productIds.length > 0 ? adminDb.getAll(...productIds.map((id) => adminDb.collection("products").doc(id))) : [],
+        productIds.length > 0 ? adminDb.getAll(...productIds.map((id) => adminDb.collection(PRODUCT_PRIVATE_COLLECTION).doc(id))) : [],
+      ]);
+      const products = new Map<string, FirebaseFirestore.DocumentSnapshot>(
+        productSnapshots.map((document): [string, FirebaseFirestore.DocumentSnapshot] => [document.id, document]),
+      );
+      const privateProducts = new Map<string, FirebaseFirestore.DocumentData>(
+        privateSnapshots.map((document): [string, FirebaseFirestore.DocumentData] => [document.id, document.data() || {}]),
+      );
+      const candidateQueueIds = missing.map((offer) => (
+        `reconcile-offer-${offer.id}-${generateSlug(traversal.traversalId)}`.slice(0, 180)
+      ));
+      const existingQueueSnapshots = candidateQueueIds.length > 0
+        ? await adminDb.getAll(...candidateQueueIds.map((id) => adminDb.collection("supplier_review_queue").doc(id)))
+        : [];
+      const existingQueueIds = new Set(existingQueueSnapshots.filter((document) => document.exists).map((document) => document.id));
+      const writes: SupplierSyncWrite[] = [];
+      for (let index = 0; index < missing.length; index += 1) {
+        const offer = missing[index];
+        const queueItemId = candidateQueueIds[index];
+        writes.push({
+          collection: SUPPLIER_PRODUCT_OFFERS_COLLECTION,
+          id: offer.id,
+          data: {
+            stock: 0,
+            availability: "unavailable",
+            "health.availability": "unavailable",
+            reviewStatus: "review_pending",
+            missingFromTraversalId: traversal.traversalId,
+            missingDetectedAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          },
+        });
+        if (!offer.productId || existingQueueIds.has(queueItemId)) continue;
+        const productSnapshot = products.get(offer.productId);
+        if (!productSnapshot?.exists) continue;
+        const currentProduct = productSnapshot.data() || {};
+        const privateProduct = privateProducts.get(offer.productId) || {};
+        const productPayload = { ...currentProduct, ...privateProduct, id: offer.productId };
+        const createdAt = new Date().toISOString();
+        const supplierSnapshot = {
+          ...offer.supplierSnapshot,
+          supplierId: offer.supplierId,
+          sourceId: offer.sourceId,
+          supplierSku: offer.sku,
+          supplierProductId: offer.supplierProductId,
+          reconciliationAction: "supplier_offer_unavailable",
+          missingFromTraversalId: traversal.traversalId,
+        };
+        const queueData = {
+          id: queueItemId,
+          status: "Pending",
+          supplierCode: offer.sku,
+          supplierName: source.supplierName || source.name || source.id,
+          source: "Website",
+          connector: String(source.connectorType || source.supplierType || source.type || "website"),
+          sourceId: offer.sourceId,
+          supplierId: offer.supplierId,
+          supplierPriority: offer.priority,
+          supplierOfferId: offer.id,
+          batchId,
+          productName: String(currentProduct.name || offer.productId),
+          costPrice: offer.cost,
+          marketPrice: offer.price,
+          stock: 0,
+          imageUrl: String(currentProduct.imageUrl || ""),
+          comparisonStatus: "SUPPLIER_OFFER_REMOVED",
+          comparison: {
+            matchFound: true,
+            matchedProductId: offer.productId,
+            comparisonStatus: "SUPPLIER_OFFER_REMOVED",
+            changedFields: ["Supplier availability", "Supplier stock"],
+          },
+          reconciliationAction: "supplier_offer_unavailable",
+          productPayload,
+          supplierSnapshot,
+          matchedProductId: offer.productId,
+          approvalBaseline: buildSupplierProductApprovalBaseline(offer.productId, currentProduct, createdAt),
+          ...buildSupplierQueueLifecycle(createdAt),
+          correlationId: queueItemId,
+          createdAt,
+          updatedAt: createdAt,
+        };
+        writes.push({ collection: "supplier_review_queue", id: queueItemId, data: queueData, atomicGroup: queueItemId });
+        const auditReference = adminDb.collection("supplier_approval_audit").doc();
+        writes.push({
+          collection: "supplier_approval_audit",
+          id: auditReference.id,
+          create: true,
+          atomicGroup: queueItemId,
+          data: buildSupplierAuditEvent({
+            queueItemId,
+            queueItem: queueData,
+            action: "queued",
+            previousState: null,
+            newState: "queued",
+            reason: "A supplier offer was absent from a verified complete catalog traversal.",
+          }, auditReference.id),
+        });
+        queueItemIds.push(queueItemId);
+        queued += 1;
+      }
+      await commitQueuedItems(writes);
+    }
+    if (snapshot.size < 100) break;
+  } while (cursor);
+  return { queued, queueItemIds, materializedProductIds };
+}
+
 async function queueMissingSupplierProductsForReview(
   source: SupplierSource,
   traversal: SupplierCatalogTraversalCheckpoint,
   batchId: string,
 ): Promise<{ queued: number; queueItemIds: string[] }> {
+  const offerReconciliation = await queueMissingSupplierOffersForReview(source, traversal, batchId);
   let cursor: FirebaseFirestore.QueryDocumentSnapshot | undefined;
-  let queued = 0;
-  const queueItemIds: string[] = [];
+  let queued = offerReconciliation.queued;
+  const queueItemIds: string[] = [...offerReconciliation.queueItemIds];
   do {
     let query = adminDb.collection(PRODUCT_PRIVATE_COLLECTION)
       .where("supplierSourceId", "==", source.id)
@@ -914,6 +1104,8 @@ async function queueMissingSupplierProductsForReview(
     const privateSnapshot = await query.get();
     cursor = privateSnapshot.docs.at(-1);
     const missingDocuments = privateSnapshot.docs.filter((document) => (
+      !offerReconciliation.materializedProductIds.has(document.id)
+      &&
       document.data().supplierCatalogTraversalId !== traversal.traversalId
     ));
     if (missingDocuments.length > 0) {
@@ -931,7 +1123,6 @@ async function queueMissingSupplierProductsForReview(
         : [];
       const existingQueueIds = new Set(existingQueueSnapshots.filter((snapshot) => snapshot.exists).map((snapshot) => snapshot.id));
       const writes: SupplierSyncWrite[] = [];
-      const pageQueueItemIds: string[] = [];
       for (let index = 0; index < candidates.length; index += 1) {
         const productSnapshot = candidates[index];
         const queueItemId = candidateQueueIds[index];
@@ -999,18 +1190,22 @@ async function queueMissingSupplierProductsForReview(
           }, auditReference.id),
         });
         queueItemIds.push(queueItemId);
-        pageQueueItemIds.push(queueItemId);
         queued += 1;
       }
       await commitQueuedItems(writes);
-      await processSupplierQueueItemsBounded(pageQueueItemIds, `supplier-reconciliation-${batchId}`);
     }
     if (privateSnapshot.size < 100) break;
   } while (cursor);
   return { queued, queueItemIds };
 }
 
-const buildRunResult = (batchId: string, status: SyncStatus, metrics: SyncMetrics): SupplierSyncRunResult => ({
+const buildRunResult = (
+  batchId: string,
+  status: SyncStatus,
+  metrics: SyncMetrics,
+  startedAtMs: number,
+  waitingRecommended = false,
+): SupplierSyncRunResult => ({
   batchId,
   status,
   productsDiscovered: metrics.productsDiscovered,
@@ -1029,7 +1224,8 @@ const buildRunResult = (batchId: string, status: SyncStatus, metrics: SyncMetric
   resumeCount: metrics.resumeCount,
   sourceCursors: { ...metrics.sourceCursors },
   lastCompletedTraversals: { ...metrics.lastCompletedTraversals },
-  elapsedTimeMs: Math.max(0, Date.now() - Number(batchId.split("-").at(-1) || Date.now())),
+  elapsedTimeMs: Math.max(0, Date.now() - startedAtMs),
+  ...(waitingRecommended ? { waitingRecommended: true } : {}),
 });
 
 export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Promise<SupplierSyncRunResult> {
@@ -1040,7 +1236,7 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
     ? Number(options.maxRuntimeMs)
     : DEFAULT_SYNC_RUNTIME_BUDGET_MS;
   const syncDeadlineMs = startedAt.getTime() + runtimeBudgetMs;
-  const batchId = `${trigger}-${startedAt.getTime()}`;
+  const batchId = options.batchId || `${trigger}-${startedAt.getTime()}`;
   const metrics: SyncMetrics = {
     productsDiscovered: 0,
     productsScanned: 0,
@@ -1059,8 +1255,21 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
     sourceCursors: {},
     lastCompletedTraversals: {},
   };
-  const queueWorkerId = `supplier-sync-${trigger}-${batchId}`;
   let incompleteTraversalCount = 0;
+  let completedSourceCount = 0;
+  let cancellationInterrupted = false;
+  const reportProgress = async (progress: SupplierSyncJobProgressInput): Promise<void> => {
+    if (!options.control) return;
+    await options.control.reportProgress({
+      completedSources: completedSourceCount,
+      pagesProcessed: metrics.pagesProcessed,
+      productsDiscovered: metrics.productsDiscovered,
+      productsScanned: metrics.productsScanned,
+      productsQueued: metrics.productsQueued,
+      productsFailed: metrics.productsFailed,
+      ...progress,
+    });
+  };
 
   const settingsSnap = await adminDb.collection("supplier_settings").doc("config").get();
   const settings = (settingsSnap.exists ? settingsSnap.data() : {}) as SupplierSettings;
@@ -1074,13 +1283,13 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
   if (trigger === "scheduled" && !isSyncDue(settings, startedAt.getTime())) {
     appLogger.info("Scheduled supplier sync skipped because it is not due.", { batchId });
     await writeHistory(batchId, trigger, "Skipped", startedAt, new Date(), metrics, "Scheduled supplier sync was not due yet.");
-    return buildRunResult(batchId, "Skipped", metrics);
+    return buildRunResult(batchId, "Skipped", metrics, startedAt.getTime());
   }
 
   if (settings.websiteSyncEnabled === false) {
     appLogger.info("Scheduled supplier sync skipped because the Website Sync Channel is disabled.", { batchId });
     await writeHistory(batchId, trigger, "Skipped", startedAt, new Date(), metrics, "Supplier website sync is disabled.");
-    return buildRunResult(batchId, "Skipped", metrics);
+    return buildRunResult(batchId, "Skipped", metrics, startedAt.getTime());
   }
 
   let sources = (await loadSupplierSources(requestedSourceIds))
@@ -1088,11 +1297,12 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
     .filter((source) => requestedSourceIds.length === 0 || requestedSourceIds.includes(source.id))
     .filter((source) => trigger === "manual" || isSupplierSourceAutoSyncDue(source.settings?.autoSync, sourceLastSuccessfulSync(source), startedAt.getTime()))
     .sort((left, right) => supplierPriority(right) - supplierPriority(left) || left.id.localeCompare(right.id));
+  await reportProgress({ phase: "preparing", totalSources: sources.length, currentSourceId: null });
 
   if (sources.length === 0) {
     appLogger.info("Supplier sync found no enabled sources due for synchronization.", { batchId, trigger, requestedSourceIds });
     await writeHistory(batchId, trigger, "Skipped", startedAt, new Date(), metrics, "No enabled supplier sources were due for synchronization.");
-    return buildRunResult(batchId, "Skipped", metrics);
+    return buildRunResult(batchId, "Skipped", metrics, startedAt.getTime());
   }
 
   const hasWritableSources = sources.some((source) => source.settings?.dryRunMode !== true);
@@ -1102,7 +1312,7 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
     const finishedAt = new Date();
     await writeHistory(batchId, trigger, "Skipped", startedAt, finishedAt, metrics, "Supplier sync skipped because another supplier sync is already running.");
     appLogger.warn("Scheduled supplier sync skipped because lock is already held.", { batchId });
-    return buildRunResult(batchId, "Skipped", metrics);
+    return buildRunResult(batchId, "Skipped", metrics, startedAt.getTime(), true);
   }
 
   try {
@@ -1126,7 +1336,7 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
           schedulerStatus: "idle",
           schedulerActiveSyncCount: 0,
         }, { merge: true });
-        return buildRunResult(batchId, "Skipped", metrics);
+        return buildRunResult(batchId, "Skipped", metrics, startedAt.getTime(), true);
       }
     }
     appLogger.info("Scheduled supplier sync started.", { batchId });
@@ -1150,8 +1360,6 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
       aliases: Array.isArray(brandDoc.data().aliases) ? brandDoc.data().aliases : [],
     }));
 
-    const existingQueueIds = new Set<string>();
-    const queuedSupplierCodes = new Set<string>();
     const existingQueueWinnerBySku = new Map<string, SupplierSyncConflictWinner>();
 
     const maxProducts = getMaxProducts(settings);
@@ -1162,7 +1370,6 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
     );
     const connectorBySourceId = new Map(connectors.map((connector) => [connector.id, connector]));
     const queuedWrites: SupplierSyncWrite[] = [];
-    const stagedReviewQueueIds: string[] = [];
     const seenSupplierProducts = new Map<string, SupplierSyncConflictWinner>();
     const winnerBySku = new Map<string, SupplierSyncConflictWinner>(existingQueueWinnerBySku);
     const winnerByBarcode = new Map<string, SupplierSyncConflictWinner>();
@@ -1170,6 +1377,11 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
     let nonDrySourceCount = 0;
 
     for (const source of sources) {
+      if (options.control?.shouldCancel()) {
+        cancellationInterrupted = true;
+        incompleteTraversalCount += 1;
+        break;
+      }
       const supplierName = source.supplierName || source.name || source.id;
       const websiteUrl = source.websiteUrl || source.config?.targetUrl || "";
       const endpoint = source.endpoint || source.config?.apiEndpoint || "";
@@ -1182,7 +1394,6 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
       let sourceQueueDepth = 0;
       const discoveredCategoryLabels = new Set<string>();
       const sourceWriteOffset = queuedWrites.length;
-      const sourceStagedOffset = stagedReviewQueueIds.length;
       const legacyCategoryMappings: SupplierCategoryMappingRecord[] = Object.entries(settings.categoryMappings || {}).map(([supplierCategory, targetCategoryId]) => ({
         sourceId: "global",
         supplierCategory,
@@ -1195,6 +1406,11 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
         updatedBy: "legacy-settings",
       }));
       if (!dryRunMode) nonDrySourceCount++;
+      await reportProgress({
+        phase: "catalog_traversal",
+        totalSources: sources.length,
+        currentSourceId: source.id,
+      });
 
       if (!websiteUrl) {
         metrics.errors.push(`${supplierName}: [validation] missing website URL`);
@@ -1249,16 +1465,17 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
           connector,
           pageSize: normalizeSupplierCatalogPageSize(sourcePageSize),
           initial: source.catalogSync,
-          shouldPause: () => Date.now() >= syncDeadlineMs,
+          shouldPause: () => Date.now() >= syncDeadlineMs || options.control?.shouldCancel() === true,
           persistCheckpoint: async (checkpoint) => {
-            if (dryRunMode) return;
-            await adminDb.collection("supplierSources").doc(source.id).set({
+            if (!dryRunMode) await adminDb.collection("supplierSources").doc(source.id).set({
               catalogCursor: checkpoint.cursor,
               catalogSync: checkpoint,
               catalogSyncMetrics: {
                 pagesProcessed: checkpoint.pagesProcessed,
                 productsScanned: checkpoint.productsScanned,
                 productsImported: checkpoint.productsImported,
+                invalidProducts: checkpoint.invalidProducts,
+                deletionReconciliationEligible: checkpoint.deletionReconciliationEligible,
                 cursor: checkpoint.cursor,
                 elapsedTimeMs: Math.max(0, Date.now() - new Date(checkpoint.startedAt).getTime()),
                 lastCompletedTraversal: checkpoint.status === "completed" ? checkpoint.traversalId : null,
@@ -1277,6 +1494,15 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
                 },
               } : {}),
             }, { merge: true });
+            if (hasWritableSources) {
+              await heartbeatSyncExecutionLocks(sources.filter((candidate) => candidate.settings?.dryRunMode !== true), batchId);
+            }
+            await reportProgress({
+              phase: checkpoint.status === "reconciling" ? "reconciling" : "catalog_traversal",
+              totalSources: sources.length,
+              currentSourceId: source.id,
+              pagesProcessed: metrics.pagesProcessed + Math.max(0, checkpoint.pagesProcessed - initialTraversalPages),
+            });
           },
           reconcileDeletedProducts: async (checkpoint) => {
             if (dryRunMode) return;
@@ -1287,7 +1513,6 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
           },
           processPage: async (fetched, traversalCheckpoint) => {
             const pageWriteOffset = queuedWrites.length;
-            const pageStagedOffset = stagedReviewQueueIds.length;
             const queuedBeforePage = metrics.productsQueued;
         const normalizedProducts = normalizeSupplierProducts(fetched.products);
         const pageInvalidProducts = normalizedProducts.failed + Math.max(0, Number(fetched.invalidProducts || 0));
@@ -1300,7 +1525,8 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
           mediaGallery: [...new Set((product.mediaGallery || []).filter(isValidSupplierImageUrl))].slice(0, imageLimit),
         }));
         collectDiscoveredSupplierCategories(products).forEach((category) => discoveredCategoryLabels.add(category));
-        const allExistingProducts = await loadExistingProductsForSupplierBatch(products);
+        const existingOffers = await loadSupplierOffersForBatch(source.id, products);
+        const allExistingProducts = await loadExistingProductsForSupplierBatch(products, existingOffers);
         for (const catalogProduct of products) {
           const existing = findMatchingProduct(catalogProduct, allExistingProducts);
           const belongsToSource = Boolean(existing && (
@@ -1346,11 +1572,6 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
           const status = String(queueDoc.data().status || "").toLowerCase();
           return !["approved", "rejected"].includes(state) && !["approved", "rejected"].includes(status);
         });
-        for (const queueDoc of [...activeReviewQueueDocs, ...queueCandidates.imported]) {
-          existingQueueIds.add(queueDoc.id);
-          const supplierCode = normalizeConflictValue(queueDoc.data().supplierCode || queueDoc.data().sku);
-          if (supplierCode) queuedSupplierCodes.add(supplierCode);
-        }
         activeReviewQueueDocs.forEach((queueDoc) => {
           const data = queueDoc.data();
           const sku = normalizeConflictValue(data.supplierCode);
@@ -1359,6 +1580,7 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
             sourceId: String(data.sourceId || "unknown"),
             priority: Number.isFinite(Number(data.supplierPriority)) ? Number(data.supplierPriority) : 10_000,
             queueItemId: queueDoc.id,
+            productId: String(data.matchedProductId || (data.productPayload as Record<string, unknown> | undefined)?.id || "") || undefined,
           };
           if (sku) {
             const existing = existingQueueWinnerBySku.get(sku);
@@ -1400,19 +1622,81 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
           const skuWinner = winnerBySku.get(normalizedSupplierCode);
           const normalizedBarcode = normalizeConflictValue(product.barcode);
           const barcodeWinner = normalizedBarcode ? winnerByBarcode.get(normalizedBarcode) : undefined;
-          const match = findMatchingProduct(product, existingProducts);
+          const ownOfferId = buildSupplierOfferId(source.id, product.supplierProductId || product.sku, product.sku);
+          const ownOffer = existingOffers.find((offer) => offer.id === ownOfferId);
+          const duplicateOffer = existingOffers
+            .filter((offer) => offer.sourceId !== source.id && offer.productId && (
+              offer.skuNormalized === normalizedSupplierCode
+              || Boolean(normalizedBarcode && offer.barcodeNormalized === normalizedBarcode)
+            ))
+            .sort((left, right) => right.priority - left.priority || left.id.localeCompare(right.id))[0];
+          const directMatch = findMatchingProduct(product, existingProducts);
+          const targetProductId = directMatch?.id
+            || ownOffer?.productId
+            || duplicateOffer?.productId
+            || skuWinner?.productId
+            || barcodeWinner?.productId
+            || generateSlug(product.title)
+            || product.sku;
+          const match = directMatch || existingProducts.find((candidate) => candidate.id === targetProductId);
+          currentWinner.productId = targetProductId;
+          currentWinner.offerId = ownOfferId;
+          const competingSkuWinner = skuWinner && (skuWinner.sourceId !== source.id || skuWinner.queueItemId !== queueItemId)
+            ? skuWinner
+            : undefined;
+          const competingBarcodeWinner = barcodeWinner && (barcodeWinner.sourceId !== source.id || barcodeWinner.queueItemId !== queueItemId)
+            ? barcodeWinner
+            : undefined;
           const conflict = priorSupplierProduct
             ? { reason: "duplicate_supplier_product" as const, winner: priorSupplierProduct }
-            : skuWinner
-              ? { reason: skuWinner.sourceId === source.id ? "duplicate_supplier_product" as const : "duplicate_sku" as const, winner: skuWinner }
-              : barcodeWinner
-                ? { reason: "duplicate_barcode" as const, winner: barcodeWinner }
+            : competingSkuWinner
+              ? { reason: "duplicate_sku" as const, winner: competingSkuWinner }
+              : competingBarcodeWinner
+                ? { reason: "duplicate_barcode" as const, winner: competingBarcodeWinner }
                 : null;
-          if (conflict || existingQueueIds.has(queueItemId) || queuedSupplierCodes.has(normalizedSupplierCode)) {
+          const createdAt = new Date().toISOString();
+          const initialOffer = buildSupplierProductOffer({
+            sourceId: source.id,
+            supplierId: source.supplierId || source.id,
+            supplierProductId: product.supplierProductId || product.sku,
+            sku: product.sku,
+            barcode: product.barcode,
+            productId: targetProductId,
+            price: calculateSupplierInitialPricing(
+              product.wholesalePrice || 0,
+              product.recommendedRetailPrice,
+              settings.defaultMarkup,
+              settings.defaultProfitMargin,
+            ).sellingPrice,
+            cost: product.wholesalePrice,
+            stock: product.inventoryLevel,
+            availability: product.availability,
+            priority: supplierPriority(source),
+            health: { ...(source.syncHealth || {}), availability: "available", observedAt: createdAt },
+            lastSyncAt: createdAt,
+            reviewStatus: ownOffer?.reviewStatus,
+            catalogPayload: ownOffer?.catalogPayload || {},
+            supplierSnapshot: product,
+            existing: ownOffer,
+            timestamp: createdAt,
+          });
+          const duplicateFromSameSource = Boolean(priorSupplierProduct);
+          if (conflict) {
             const winner = conflict?.winner || skuWinner || currentWinner;
             const reason = conflict?.reason || "duplicate_supplier_product" as const;
             const record = buildSupplierConflictRecord(source, product, winner, reason, batchId);
             queuedWrites.push({ collection: "supplier_product_conflicts", id: record.id, data: record.data });
+          }
+          if (duplicateFromSameSource) {
+            queuedWrites.push({
+              collection: SUPPLIER_PRODUCT_OFFERS_COLLECTION,
+              id: initialOffer.id,
+              data: {
+                ...initialOffer,
+                supplierCatalogTraversalId: traversalCheckpoint.traversalId,
+                supplierCatalogSeenAt: createdAt,
+              },
+            });
             metrics.productsSkipped += 1;
             sourceRejected += 1;
             continue;
@@ -1420,8 +1704,26 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
           seenSupplierProducts.set(supplierProductKey, currentWinner);
           winnerBySku.set(normalizedSupplierCode, currentWinner);
           if (normalizedBarcode) winnerByBarcode.set(normalizedBarcode, currentWinner);
-          const comparison = filterSupplierComparison(compareProduct(product, match), sourceSettings);
+          const comparisonBaseline = ownOffer ? {
+            ...ownOffer.catalogPayload,
+            ...ownOffer.supplierSnapshot,
+            supplierItemCode: ownOffer.sku,
+            sku: ownOffer.sku,
+            barcode: ownOffer.barcode,
+            costPrice: ownOffer.cost,
+            stock: ownOffer.stock,
+          } : match ? { ...match } : undefined;
+          const comparison = filterSupplierComparison(buildSupplierProductComparison(product, comparisonBaseline), sourceSettings);
           if (!comparison) {
+            queuedWrites.push({
+              collection: SUPPLIER_PRODUCT_OFFERS_COLLECTION,
+              id: initialOffer.id,
+              data: {
+                ...initialOffer,
+                supplierCatalogTraversalId: traversalCheckpoint.traversalId,
+                supplierCatalogSeenAt: createdAt,
+              },
+            });
             metrics.productsSkipped += 1;
             continue;
           }
@@ -1446,10 +1748,9 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
             brands: storeBrands,
             mappings: storedMappings.brandMappings,
           });
-          const productPayload = buildProductPayload(product, match, categoryMapping, brandMapping, storeBrands, comparison, settings, source);
+          const productPayload = buildProductPayload(product, match, categoryMapping, brandMapping, storeBrands, comparison, settings, source, targetProductId);
           const productValidationErrors = validateSupplierProductForApproval(productPayload, storeCategories, storeBrands);
           const productImportWarnings = buildSupplierImportWarnings(product, productPayload);
-          const createdAt = new Date().toISOString();
           const supplierSnapshot = {
             ...product,
             supplierId: source.supplierId || source.id,
@@ -1468,6 +1769,35 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
             specifications: { ...(product.specifications || {}) },
             supplierMetadata: productPayload.supplierMetadata,
           };
+          const supplierOffer = buildSupplierProductOffer({
+            sourceId: source.id,
+            supplierId: source.supplierId || source.id,
+            supplierProductId: product.supplierProductId || product.sku,
+            sku: product.sku,
+            barcode: product.barcode,
+            productId: targetProductId,
+            price: productPayload.price,
+            cost: product.wholesalePrice,
+            stock: product.inventoryLevel,
+            availability: product.availability,
+            priority: supplierPriority(source),
+            health: { ...(source.syncHealth || {}), availability: "available", observedAt: createdAt },
+            lastSyncAt: createdAt,
+            reviewStatus: "review_pending",
+            catalogPayload: productPayload,
+            supplierSnapshot,
+            existing: ownOffer,
+            timestamp: createdAt,
+          });
+          queuedWrites.push({
+            collection: SUPPLIER_PRODUCT_OFFERS_COLLECTION,
+            id: supplierOffer.id,
+            data: {
+              ...supplierOffer,
+              supplierCatalogTraversalId: traversalCheckpoint.traversalId,
+              supplierCatalogSeenAt: createdAt,
+            },
+          });
           const queueItem = {
             id: queueItemId,
             status: "Pending",
@@ -1478,6 +1808,7 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
             sourceId: source.id,
             supplierId: source.supplierId || source.id,
             supplierPriority: supplierPriority(source),
+            supplierOfferId: supplierOffer.id,
             batchId,
             productName: product.title,
             costPrice: product.wholesalePrice,
@@ -1488,9 +1819,10 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
             comparisonStatus: comparison.status,
             comparison: {
               matchFound: !!match,
-              matchedProductId: match?.id || null,
+              matchedProductId: match?.id || ownOffer?.productId || duplicateOffer?.productId || skuWinner?.productId || barcodeWinner?.productId || null,
               comparisonStatus: comparison.status,
               changedFields: comparison.changedFields,
+              fieldChanges: comparison.fieldChanges || [],
             },
             productPayload,
             managedMedia: Array.isArray(productPayload.supplierMedia) ? productPayload.supplierMedia : [],
@@ -1503,7 +1835,7 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
               errors: productValidationErrors,
               warnings: productImportWarnings,
             },
-            matchedProductId: match?.id || null,
+            matchedProductId: match?.id || ownOffer?.productId || duplicateOffer?.productId || skuWinner?.productId || barcodeWinner?.productId || null,
             approvalBaseline: buildSupplierProductApprovalBaseline(
               String(productPayload.id),
               match ? { ...match } : undefined,
@@ -1516,7 +1848,7 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
           if (dryRunMode) {
             dryRunComparisonCount++;
           } else {
-            const pendingChange = buildPendingChange(queueItem, product, match, comparison.status);
+            const pendingChange = buildPendingChange(queueItem, comparison);
             const queueData = {
               ...queueItem,
               ...buildSupplierQueueLifecycle(createdAt),
@@ -1556,9 +1888,6 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
                 newState: "queued",
               }, auditReference.id),
             });
-            stagedReviewQueueIds.push(queueItemId);
-            existingQueueIds.add(queueItemId);
-            queuedSupplierCodes.add(normalizedSupplierCode);
             metrics.productsQueued++;
             if (comparison.status === "NEW_PRODUCT") metrics.productsImported++;
             else metrics.productsUpdated++;
@@ -1567,19 +1896,18 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
 
             sourceQueueDepth += activeReviewQueueDocs.filter((queueDoc) => queueDoc.data().sourceId === source.id).length;
             const pageWrites = queuedWrites.splice(pageWriteOffset);
-            const pageQueueItemIds = stagedReviewQueueIds.splice(pageStagedOffset);
             if (!dryRunMode) {
               await commitQueuedItems(pageWrites);
-              const pageQueueResults = await processSupplierQueueItemsBounded(pageQueueItemIds, queueWorkerId);
-              for (const result of pageQueueResults) {
-                if (result.outcome === "retryable_failure" || result.outcome === "dead_letter") {
-                  metrics.retryCount += 1;
-                  metrics.errors.push(`Supplier review queue item ${result.queueItemId} requires recovery.`);
-                }
-              }
             }
             if (pageInvalidProducts > 0) {
-              throw new Error(`Supplier catalog page contained ${pageInvalidProducts} invalid product record(s); traversal checkpoint and deletion reconciliation were withheld.`);
+              appLogger.warn("Supplier catalog page contained invalid product records; valid writes were committed and deletion reconciliation will be withheld for this traversal.", {
+                event: "supplier_catalog_page_invalid_products",
+                batchId,
+                sourceId: source.id,
+                traversalId: traversalCheckpoint.traversalId,
+                cursor: traversalCheckpoint.cursor,
+                invalidProducts: pageInvalidProducts,
+              });
             }
             const pageImported = metrics.productsQueued - queuedBeforePage;
             appLogger.info("Supplier catalog page committed.", {
@@ -1591,7 +1919,11 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
               productsScanned: productsToProcess.length,
               productsQueued: pageImported,
             });
-            return { productsScanned: productsToProcess.length, productsImported: pageImported };
+            return {
+              productsScanned: productsToProcess.length,
+              productsImported: pageImported,
+              invalidProducts: pageInvalidProducts,
+            };
           },
         });
 
@@ -1646,9 +1978,14 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
             },
           }, { merge: true });
         }
+        completedSourceCount += 1;
+        await reportProgress({
+          phase: traversalResult.complete ? "source_completed" : "waiting",
+          totalSources: sources.length,
+          currentSourceId: null,
+        });
       } catch (error: any) {
         queuedWrites.splice(sourceWriteOffset);
-        stagedReviewQueueIds.splice(sourceStagedOffset);
         const message = error?.message || "Unknown supplier sync error";
         const failureClassification = classifySupplierQueueFailure(error);
         metrics.errors.push(`${supplierName}: [${failureClassification}] ${message}`);
@@ -1683,6 +2020,12 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
             syncHealth: buildSupplierHealth(source.syncHealth || {}, "failure", Math.max(0, Date.now() - sourceStartedAt), new Date().toISOString()),
           }, { merge: true });
         }
+        completedSourceCount += 1;
+        await reportProgress({
+          phase: "source_failed",
+          totalSources: sources.length,
+          currentSourceId: null,
+        });
         // A single connector failure must not prevent remaining suppliers from syncing.
         continue;
       }
@@ -1696,21 +2039,13 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
         productsScanned: metrics.productsScanned,
         comparisons: dryRunComparisonCount,
       });
-      return buildRunResult(batchId, "Success", metrics);
+      return buildRunResult(batchId, "Success", metrics, startedAt.getTime());
     }
 
     await commitQueuedItems(queuedWrites);
-    const stagedResults = await Promise.all(stagedReviewQueueIds.map((queueItemId) => (
-      processSupplierReviewQueueItem(adminDb, queueItemId, queueWorkerId)
-    )));
-    const failedStagedItems = stagedResults.filter((result) => result.outcome === "retryable_failure" || result.outcome === "dead_letter");
-    if (failedStagedItems.length > 0) {
-      metrics.errors.push(`${failedStagedItems.length} supplier review queue item(s) require recovery.`);
-      metrics.retryCount += failedStagedItems.length;
-    }
     const finishedAt = new Date();
     await releaseSourceSyncLeases(sources.filter((source) => source.settings?.dryRunMode !== true), batchId, finishedAt.getTime());
-    const status: SyncStatus = incompleteTraversalCount > 0
+    const status: SyncStatus = cancellationInterrupted || incompleteTraversalCount > 0
       ? "Partial"
       : metrics.errors.length === 0
         ? "Success"
@@ -1763,7 +2098,13 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
       productsQueued: metrics.productsQueued,
       errorCount: metrics.errors.length,
     });
-    return buildRunResult(batchId, status, metrics);
+    return buildRunResult(
+      batchId,
+      status,
+      metrics,
+      startedAt.getTime(),
+      cancellationInterrupted || incompleteTraversalCount > 0,
+    );
   } catch (error: any) {
     const finishedAt = new Date();
     metrics.errors.push(error?.message || "Unknown scheduled sync failure");
@@ -1786,25 +2127,32 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
     }
     throw error;
   } finally {
-    if (syncLockAcquired) await releaseSyncLock(new Date());
+    if (syncLockAcquired) await releaseSyncLock(new Date(), batchId);
   }
 }
 
-export async function runScheduledSupplierSync(): Promise<void> {
-  await runSupplierSync({ trigger: "scheduled" });
+export async function runScheduledSupplierSync(now = Date.now()): Promise<void> {
+  const scheduleBucket = new Date(now).toISOString().slice(0, 16).replace(/[^0-9]/g, "");
+  await createSupplierSyncJob(adminDb, {
+    trigger: "scheduled",
+    requestedBy: { uid: "system", email: "" },
+    dedupeKey: `scheduled-${scheduleBucket}`,
+  }, now);
 }
 
 /** Admin-facing operational snapshot. It reads existing run/source metadata only. */
 export async function getSupplierSyncSchedulerStatus(): Promise<Record<string, unknown>> {
-  const [settingsSnapshot, lockSnapshot, historySnapshot, activeSourcesCount] = await Promise.all([
+  const [settingsSnapshot, lockSnapshot, historySnapshot, activeSourcesCount, latestJobSnapshot] = await Promise.all([
     adminDb.collection("supplier_settings").doc("config").get(),
     adminDb.collection("supplier_sync_locks").doc(LOCK_ID).get(),
     adminDb.collection("supplier_sync_history").orderBy("createdAt", "desc").limit(1).get(),
     adminDb.collection("supplierSources").where("currentlySyncing", "==", true).count().get(),
+    adminDb.collection("supplier_sync_jobs").orderBy("createdAt", "desc").limit(1).get(),
   ]);
   const settings = settingsSnapshot.data() || {};
   const lock = lockSnapshot.data() || {};
   const lastRun = historySnapshot.docs[0];
+  const latestJob = latestJobSnapshot.docs[0];
   return {
     schedule: SUPPLIER_SCHEDULER_SCHEDULE,
     status: settings.schedulerStatus || lock.status || "idle",
@@ -1818,6 +2166,7 @@ export async function getSupplierSyncSchedulerStatus(): Promise<Record<string, u
     queueMetrics: settings.queueMetrics || null,
     queueWorkerStatus: settings.queueWorkerStatus || "idle",
     queueWorkerLastRun: settings.queueWorkerLastRun || null,
+    latestJob: latestJob ? { id: latestJob.id, ...latestJob.data() } : null,
   };
 }
 
@@ -1826,7 +2175,7 @@ export const scheduledSupplierSync = onSchedule({
   timeZone: "Asia/Colombo",
   timeoutSeconds: 540,
   memory: "1GiB",
-  secrets: A2Z_SECRETS,
-}, async () => {
-  await runScheduledSupplierSync();
+}, async (event) => {
+  const scheduledAt = Date.parse(event.scheduleTime);
+  await runScheduledSupplierSync(Number.isFinite(scheduledAt) ? scheduledAt : Date.now());
 });

@@ -2,7 +2,12 @@ import { onRequest } from "firebase-functions/v2/https";
 import { createApiApp } from "./api/app";
 import { API_SECRETS } from "./config/secrets";
 export { syncReviewAggregates } from "./triggers/reviewAggregates";
+export {
+  reconcileSupplierOfferFailover,
+  reconcileSupplierSourceOfferAvailability,
+} from "./triggers/supplierOfferFailover";
 export { scheduledSupplierSync } from "./scheduled/supplierSync";
+export { scheduledSupplierSyncJobDispatcher, supplierSyncJobCreated } from "./scheduled/supplierSyncWorker";
 export { scheduledSupplierQueueWorker } from "./scheduled/supplierQueueWorker";
 export { expirePaymentReservations } from "./scheduled/paymentReservations";
 export { sendOrderNotifications } from "./triggers/orderNotifications";

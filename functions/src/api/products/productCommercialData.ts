@@ -30,6 +30,8 @@ export const COMMERCIAL_PRODUCT_FIELDS = [
   "supplierLeadTime",
   "supplierMoq",
   "supplierMOQ",
+  "supplierFieldOwnership",
+  "supplierOfferSelection",
 ] as const;
 
 const fieldSet = new Set<string>(COMMERCIAL_PRODUCT_FIELDS);

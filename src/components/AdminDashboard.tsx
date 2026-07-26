@@ -39,6 +39,7 @@ import {
   createProductDraft,
   getActiveSubcategories,
   getSelectedCategory,
+  MANUAL_PRODUCT_EDITOR_OWNERSHIP_FIELDS,
   normalizeCategoryBlueprint,
   normalizeProductForEditor,
   normalizeSpecificationTemplate,
@@ -59,6 +60,7 @@ import {
   PRODUCT_PRIVATE_COLLECTION,
   splitProductData,
 } from '../services/products/productCommercialData';
+import { changedProductOwnershipFields, claimAdminProductFieldOwnership } from '../services/products/supplierFieldOwnership';
 import { isHttpUrl, validateStoreSettings } from '../services/settings/storeSettingsValidation';
 import { getAppCheckRequestHeaders } from '../services/security/appCheck';
 import { normalizeWebsiteSettings } from '../services/settings/websiteSettings';
@@ -1624,12 +1626,28 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
     setSavingProduct(true);
     try {
       const selectedBrand = brands.find((brand) => brand.id === newProduct.brand);
-      const payload = sanitizeFirestoreData(buildProductSavePayload({
+      const now = new Date().toISOString();
+      const basePayload = buildProductSavePayload({
         draft: { ...newProduct, sku: finalSku },
         storedProduct: editingProduct,
         selectedBrand,
-        now: new Date().toISOString(),
-      }));
+        now,
+      });
+      const existingOwnership = (editingProduct as (Product & { supplierFieldOwnership?: unknown }) | null)?.supplierFieldOwnership;
+      const adminOwnedFields = changedProductOwnershipFields(
+        editingProduct ? editingProduct as Product & Record<string, unknown> : undefined,
+        basePayload as Record<string, unknown>,
+        MANUAL_PRODUCT_EDITOR_OWNERSHIP_FIELDS,
+      );
+      const payload = sanitizeFirestoreData({
+        ...basePayload,
+        supplierFieldOwnership: claimAdminProductFieldOwnership(
+          existingOwnership,
+          adminOwnedFields,
+          auth.currentUser?.uid || auth.currentUser?.email || 'admin',
+          now,
+        ),
+      });
 
       const productId = editingProduct?.id || newProduct.id!;
       const { publicData, commercialData } = splitProductData(payload as Record<string, unknown>);

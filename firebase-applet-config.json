@@ -6,5 +6,6 @@
   "firestoreDatabaseId": "(default)",
   "storageBucket": "zyrolk-e0164.firebasestorage.app",
   "messagingSenderId": "547024804958",
-  "measurementId": ""
+  "measurementId": "",
+  "appCheckSiteKey": "6Le0-mItAAAAAN7iQ_B8SHI1gn3gGtx7IOtc5NHu"
 }

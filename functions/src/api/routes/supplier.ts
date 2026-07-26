@@ -16,8 +16,19 @@ import {
 } from "../suppliers/supplierOperations";
 import { SupplierRegistry } from "../suppliers/SupplierRegistry";
 import { adminDb } from "../firebase";
-import { getSupplierSyncSchedulerStatus, runSupplierSync } from "../../scheduled/supplierSync";
+import { appLogger } from "../logging";
+import { getSupplierSyncSchedulerStatus } from "../../scheduled/supplierSync";
+import { isLocalSupplierSyncWorkerRuntime, processSupplierSyncJob } from "../../scheduled/supplierSyncWorker";
 import {
+  createSupplierSyncJob,
+  listSupplierSyncJobs,
+  projectSupplierSyncJobForAdmin,
+  requestSupplierSyncJobCancellation,
+  requeueSupplierSyncJob,
+  SupplierSyncJobRecord,
+} from "../suppliers/supplierSyncJobs";
+import {
+  listSupplierQueuePage,
   processDueSupplierReviewQueueItems,
   recoverExpiredSupplierReviewQueueLeases,
   retryDeadLetterSupplierReviewQueueItem,
@@ -29,11 +40,17 @@ import {
   saveSupplierHubSettings,
   saveSupplierSource,
 } from "../suppliers/supplierAdminConfiguration";
+import {
+  configureSupplierProductOffer,
+  listSupplierProductOffers,
+  selectSupplierProductOffer,
+} from "../suppliers/supplierOfferEngine";
 
 const readSourceIds = (value: unknown): string[] => {
   if (value === undefined) return [];
   if (!Array.isArray(value)) throw new ApiError("sourceIds must be an array when provided.", 400);
   const sourceIds = [...new Set(value.map((sourceId) => typeof sourceId === "string" ? sourceId.trim() : "").filter(Boolean))];
+  if (sourceIds.length > 100) throw new ApiError("sourceIds cannot contain more than 100 supplier sources.", 400);
   if (sourceIds.some((sourceId) => sourceId.includes("/") || sourceId.length > 160)) {
     throw new ApiError("sourceIds contains an invalid supplier source ID.", 400);
   }
@@ -47,6 +64,13 @@ const readQueueItemId = (value: unknown): string => {
   return id;
 };
 
+const readSyncJobId = (value: unknown): string => {
+  if (typeof value !== "string") throw new ApiError("A supplier sync job ID is required.", 400);
+  const id = value.trim();
+  if (!id || id.length > 180 || id.includes("/")) throw new ApiError("The supplier sync job ID is invalid.", 400);
+  return id;
+};
+
 const readBoundedLimit = (value: unknown, fallback = 100, maximum = 200): number => {
   if (value === undefined) return fallback;
   const parsed = Number(value);
@@ -54,6 +78,29 @@ const readBoundedLimit = (value: unknown, fallback = 100, maximum = 200): number
     throw new ApiError(`limit must be a whole number between 1 and ${maximum}.`, 400);
   }
   return parsed;
+};
+
+const readSupplierQueueView = (value: unknown): "review" | "import" | "changes" => {
+  const view = typeof value === "string" ? value.trim().toLowerCase() : "review";
+  if (view !== "review" && view !== "import" && view !== "changes") {
+    throw new ApiError("Supplier queue view is invalid.", 400);
+  }
+  return view;
+};
+
+const readSupplierReviewQueueState = (value: unknown): "active" | "review_pending" | "conflict" | "approved" | "rejected" => {
+  const state = typeof value === "string" ? value.trim().toLowerCase() : "active";
+  if (!(["active", "review_pending", "conflict", "approved", "rejected"] as const).includes(state as never)) {
+    throw new ApiError("Supplier review queue status filter is invalid.", 400);
+  }
+  return state as "active" | "review_pending" | "conflict" | "approved" | "rejected";
+};
+
+const startLocalSupplierSyncJob = (jobId: string): void => {
+  if (!isLocalSupplierSyncWorkerRuntime()) return;
+  void processSupplierSyncJob(jobId).catch((error) => {
+    appLogger.error("Local supplier sync job execution failed.", { jobId, error });
+  });
 };
 
 async function testStoredSupplierSource(sourceId: string) {
@@ -176,6 +223,55 @@ export function registerSupplierRoutes(app: express.Express): void {
     }
   });
 
+  app.get("/api/supplier-products/:productId/offers", requireSupplierHubAdmin, async (req, res) => {
+    try {
+      res.status(200).json({ success: true, ...(await listSupplierProductOffers(adminDb, req.params.productId)) });
+    } catch (error: unknown) {
+      sendSupplierFailure(res, error, {
+        logMessage: "Supplier offer listing failed.",
+        fallbackMessage: "Supplier offers could not be loaded.",
+        context: { route: req.path },
+      });
+    }
+  });
+
+  app.patch("/api/supplier-products/:productId/offers/:offerId", requireSupplierHubAdmin, async (req, res) => {
+    try {
+      const result = await configureSupplierProductOffer(
+        adminDb,
+        req.params.productId,
+        req.params.offerId,
+        req.body?.offer,
+        reviewerFor(res),
+      );
+      res.status(200).json({ success: true, ...result });
+    } catch (error: unknown) {
+      sendSupplierFailure(res, error, {
+        logMessage: "Supplier offer configuration failed.",
+        fallbackMessage: "Supplier offer could not be updated.",
+        context: { route: req.path },
+      });
+    }
+  });
+
+  app.post("/api/supplier-products/:productId/offers/select", requireSupplierHubAdmin, async (req, res) => {
+    try {
+      const result = await selectSupplierProductOffer(
+        adminDb,
+        req.params.productId,
+        req.body,
+        reviewerFor(res),
+      );
+      res.status(200).json({ success: true, ...result });
+    } catch (error: unknown) {
+      sendSupplierFailure(res, error, {
+        logMessage: "Active supplier offer selection failed.",
+        fallbackMessage: "The active supplier offer could not be changed.",
+        context: { route: req.path },
+      });
+    }
+  });
+
   app.post("/api/supplier-settings", requireSupplierHubAdmin, async (req, res) => {
     try {
       await saveSupplierHubSettings(adminDb, req.body?.settings, reviewerFor(res));
@@ -184,6 +280,27 @@ export function registerSupplierRoutes(app: express.Express): void {
       sendSupplierFailure(res, error, {
         logMessage: "Supplier Hub settings update failed.",
         fallbackMessage: "Supplier Hub settings could not be updated.",
+        context: { route: req.path },
+      });
+    }
+  });
+
+  app.get("/api/supplier-review-queue", requireSupplierHubAdmin, async (req, res) => {
+    try {
+      const view = readSupplierQueueView(req.query.view);
+      const state = readSupplierReviewQueueState(req.query.state);
+      const after = req.query.after === undefined ? undefined : readQueueItemId(req.query.after);
+      const page = await listSupplierQueuePage(adminDb, {
+        view,
+        ...(view === "review" ? { state } : {}),
+        ...(after ? { after } : {}),
+        limit: readBoundedLimit(req.query.limit, 50, 100),
+      });
+      res.status(200).json({ success: true, ...page });
+    } catch (error: unknown) {
+      sendSupplierFailure(res, error, {
+        logMessage: "Supplier queue page lookup failed.",
+        fallbackMessage: "Supplier queue items could not be loaded.",
         context: { route: req.path },
       });
     }
@@ -333,19 +450,79 @@ export function registerSupplierRoutes(app: express.Express): void {
 
   app.post("/api/supplier-sync", requireSupplierHubAdmin, async (req, res) => {
     try {
-      const result = await runSupplierSync({
+      const reviewer = reviewerFor(res);
+      const result = await createSupplierSyncJob(adminDb, {
         trigger: "manual",
         sourceIds: readSourceIds(req.body?.sourceIds),
+        requestedBy: reviewer,
       });
-      res.status(result.status === "Failed" ? 502 : 200).json({
-        success: result.status !== "Failed",
-        ...result,
+      res.status(202).json({
+        success: true,
+        accepted: true,
+        jobId: result.job.id,
+        batchId: result.job.id,
+        status: "Pending",
+        job: projectSupplierSyncJobForAdmin(result.job),
       });
+      startLocalSupplierSyncJob(result.job.id);
     } catch (error: unknown) {
       sendSupplierFailure(res, error, {
         logMessage: "Supplier synchronization failed.",
         fallbackMessage: "Supplier synchronization could not be completed.",
         context: { route: "/api/supplier-sync" },
+      });
+    }
+  });
+
+  app.get("/api/supplier-sync/jobs", requireSupplierHubAdmin, async (req, res) => {
+    try {
+      const jobs = await listSupplierSyncJobs(adminDb, readBoundedLimit(req.query.limit, 20, 100));
+      res.status(200).json({ success: true, jobs: jobs.map(projectSupplierSyncJobForAdmin) });
+    } catch (error: unknown) {
+      sendSupplierFailure(res, error, {
+        logMessage: "Supplier sync job lookup failed.",
+        fallbackMessage: "Supplier synchronization jobs could not be loaded.",
+        context: { route: req.path },
+      });
+    }
+  });
+
+  app.get("/api/supplier-sync/jobs/:jobId", requireSupplierHubAdmin, async (req, res) => {
+    try {
+      const jobId = readSyncJobId(req.params.jobId);
+      const snapshot = await adminDb.collection("supplier_sync_jobs").doc(jobId).get();
+      if (!snapshot.exists) throw new ApiError("Supplier sync job was not found.", 404);
+      res.status(200).json({
+        success: true,
+        job: projectSupplierSyncJobForAdmin({ id: snapshot.id, ...snapshot.data() } as SupplierSyncJobRecord),
+      });
+    } catch (error: unknown) {
+      sendSupplierFailure(res, error, {
+        logMessage: "Supplier sync job lookup failed.",
+        fallbackMessage: "The supplier synchronization job could not be loaded.",
+        context: { route: req.path },
+      });
+    }
+  });
+
+  app.post("/api/supplier-sync/jobs/:jobId/:action", requireSupplierHubAdmin, async (req, res) => {
+    try {
+      const jobId = readSyncJobId(req.params.jobId);
+      const action = String(req.params.action || "").trim().toLowerCase();
+      if (!["cancel", "retry", "resume"].includes(action)) throw new ApiError("Supplier sync job action is invalid.", 400);
+      const reviewer = reviewerFor(res);
+      const job = action === "cancel"
+        ? await requestSupplierSyncJobCancellation(adminDb, jobId, reviewer.uid)
+        : await requeueSupplierSyncJob(adminDb, jobId, action as "retry" | "resume", reviewer.uid);
+      if (!job) throw new ApiError("Supplier sync job was not found.", 404);
+      const expectedState = action === "cancel" ? ["running", "cancelled"] : ["pending"];
+      if (!expectedState.includes(job.state)) throw new ApiError(`Supplier sync job cannot ${action} from its current state.`, 409);
+      res.status(200).json({ success: true, job: projectSupplierSyncJobForAdmin(job) });
+    } catch (error: unknown) {
+      sendSupplierFailure(res, error, {
+        logMessage: "Supplier sync job action failed.",
+        fallbackMessage: "The supplier synchronization job could not be updated.",
+        context: { route: req.path },
       });
     }
   });
@@ -432,8 +609,20 @@ export function registerSupplierRoutes(app: express.Express): void {
       const sourceSnapshot = await sourceReference.get();
       if (!sourceSnapshot.exists) throw new ApiError("Supplier source was not found.", 404);
       if (action === "sync" || action === "retry") {
-        const result = await runSupplierSync({ trigger: "manual", sourceIds: [sourceId] });
-        res.status(result.status === "Failed" ? 502 : 200).json({ success: result.status !== "Failed", ...result });
+        const result = await createSupplierSyncJob(adminDb, {
+          trigger: "manual",
+          sourceIds: [sourceId],
+          requestedBy: reviewerFor(res),
+        });
+        res.status(202).json({
+          success: true,
+          accepted: true,
+          jobId: result.job.id,
+          batchId: result.job.id,
+          status: "Pending",
+          job: projectSupplierSyncJobForAdmin(result.job),
+        });
+        startLocalSupplierSyncJob(result.job.id);
         return;
       }
       const enabled = action === "resume";

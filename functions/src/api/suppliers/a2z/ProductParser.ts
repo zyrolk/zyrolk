@@ -1,4 +1,8 @@
 import { RawA2ZProduct } from "./types";
+import {
+  CanonicalSupplierFieldId,
+  SUPPLIER_FIELD_SOURCE_ALIASES,
+} from "../supplierFieldManifest";
 
 const BLOCKED_SUPPLIER_IMAGE_HOSTS = new Set([
   "images.unsplash.com",
@@ -10,74 +14,14 @@ const BLOCKED_SUPPLIER_IMAGE_HOSTS = new Set([
 
 const A2Z_PRODUCT_IMAGE_ORIGIN = "https://ayp.lk";
 
-const A2Z_IMAGE_FIELDS = [
-  "mediaGallery",
-  "images",
-  "imageUrls",
-  "productImages",
-  "pro_img",
-  "pro_image",
-  "image",
-  "image_url",
-  "imageUrl",
-  "img",
-  "photo",
-  "product_image",
-  "productImage",
-] as const;
+const A2Z_IMAGE_FIELDS = SUPPLIER_FIELD_SOURCE_ALIASES.mediaGallery;
 
 const FIELD_ALIASES = {
-  supplierProductId: ["supplierProductId", "supplier_product_id", "productId", "product_id", "pro_id", "id"],
-  sku: ["sku", "pro_code", "supplier_code", "supplierSku", "supplier_sku", "product_code"],
-  barcode: ["barcode", "barCode", "ean", "EAN", "upc", "UPC", "isbn", "ISBN", "gtin"],
-  title: ["title", "pro_name", "name", "product_name", "productName"],
-  shortDescription: ["shortDescription", "short_description", "short_desc", "summary", "excerpt"],
-  longDescription: ["longDescription", "fullDescription", "full_description", "pro_desc", "description", "details"],
-  brand: ["brand", "brand_name", "brandName"],
-  manufacturer: ["manufacturer", "manufacturer_name", "manufacturerName", "maker"],
-  model: ["model", "model_number", "modelNumber", "mpn"],
-  categoryHierarchy: ["categoryHierarchy", "category_hierarchy", "categories", "breadcrumbs"],
-  supplierCategory: ["supplierCategory", "supplier_category", "cat_name", "category", "category_name", "categoryName"],
-  supplierSubcategory: ["supplierSubcategory", "supplier_subcategory", "sub_category", "subcategory", "subcategory_name", "subCategory"],
-  tags: ["tags", "product_tags", "tag_list"],
-  keywords: ["keywords", "search_keywords", "searchKeywords"],
-  productType: ["productType", "product_type", "type"],
-  collection: ["collection", "collection_name", "collectionName"],
-  attributes: ["attributes", "product_attributes", "custom_attributes"],
-  variants: ["variants", "product_variants", "variations"],
-  options: ["options", "product_options", "variant_options"],
-  specifications: ["specifications", "specs", "technical_specifications"],
-  features: ["features", "key_features", "keyFeatures", "highlights"],
-  dimensions: ["dimensions", "product_dimensions", "dimension"],
-  weight: ["weight", "product_weight", "shipping_weight"],
-  packageSize: ["packageSize", "package_size", "package_dimensions", "pack_size"],
-  shippingClass: ["shippingClass", "shipping_class"],
-  warranty: ["warranty", "warranty_period", "warrantyPeriod"],
-  countryOfOrigin: ["countryOfOrigin", "country_of_origin", "origin_country", "made_in"],
-  mediaGallery: A2Z_IMAGE_FIELDS,
-  videoUrls: ["videoUrls", "video_urls", "videos", "video", "product_video", "video_url"],
-  price: ["price", "selling_price", "sellingPrice", "website_price", "price_min"],
-  comparePrice: ["comparePrice", "compare_price", "regular_price", "price_max", "recommendedRetailPrice", "marketPrice", "retail_price"],
-  costPrice: ["costPrice", "cost_price", "wholesale_price", "wholesalePrice", "supplier_price", "purchase_price"],
-  currency: ["currency", "currency_code", "currencyCode"],
-  tax: ["tax", "tax_rate", "taxRate", "tax_class", "taxClass"],
-  discount: ["discount", "discount_percent", "discountPercent", "discount_percentage"],
-  stock: ["inventoryLevel", "inventory_level", "stock", "quantity", "qty", "bal"],
-  availability: ["availability", "stock_status", "stockStatus"],
-  leadTime: ["leadTime", "lead_time", "delivery_lead_time"],
-  minimumOrderQuantity: ["minimumOrderQuantity", "minimum_order_quantity", "min_order_quantity", "moq"],
-  maximumOrderQuantity: ["maximumOrderQuantity", "maximum_order_quantity", "max_order_quantity"],
-  visibility: ["visibility", "visible", "is_visible"],
-  status: ["status", "product_status"],
-  lastUpdated: ["lastUpdated", "last_updated", "updatedAt", "updated_at", "date_modified"],
-  createdDate: ["createdDate", "created_date", "createdAt", "created_at", "date_created"],
-  slug: ["slug", "url_slug", "handle"],
-  metaDescription: ["metaDescription", "meta_description", "seo_description"],
-  extraAttributes: ["extraAttributes"],
-  providedFields: ["providedFields"],
-} as const;
+  ...SUPPLIER_FIELD_SOURCE_ALIASES,
+  providedFields: ["providedFields"] as const,
+};
 
-type CanonicalSupplierField = keyof typeof FIELD_ALIASES;
+type CanonicalSupplierField = CanonicalSupplierFieldId | "providedFields";
 
 const VARIANT_ATTRIBUTE_ALIASES = {
   Color: ["color", "colour"],
@@ -356,6 +300,8 @@ export class ProductParser {
     const features = stringList(firstSupplied(rawObj, FIELD_ALIASES.features));
     const extraAttributes = collectExtraAttributes(rawObj);
     const providedFields = canonicalProvidedFields(rawObj);
+    if (mediaGallery.length > 0 && !providedFields.includes("mediaGallery")) providedFields.push("mediaGallery");
+    if (extraAttributes && !providedFields.includes("extraAttributes")) providedFields.push("extraAttributes");
 
     return {
       sku,

@@ -9,6 +9,31 @@ const normalizeTextList = (values: readonly string[] | undefined): string[] => {
   return [...new Set(normalized)];
 };
 
+export const MANUAL_PRODUCT_EDITOR_OWNERSHIP_FIELDS = [
+  'name',
+  'description',
+  'shortDescription',
+  'brand',
+  'model',
+  'barcode',
+  'productType',
+  'category',
+  'subcategory',
+  'tags',
+  'keyFeatures',
+  'whatsIncluded',
+  'price',
+  'originalPrice',
+  'stock',
+  'specs',
+  'imageUrl',
+  'imageUrls',
+  'isActive',
+  'isNew',
+  'isFeatured',
+  'isBestSeller',
+] as const;
+
 export const normalizeSubcategories = (values: readonly SubCategory[] | undefined): SubCategory[] => {
   const seen = new Set<string>();
   const result: SubCategory[] = [];

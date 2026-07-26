@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { motion } from 'motion/react';
-import { 
+import {
   Activity, 
   RefreshCw, 
   UserCheck, 
@@ -62,6 +62,18 @@ import {
   limitSupplierProducts,
   resolveSupplierProductLimit,
 } from '../services/supplierSyncSettings';
+import {
+  sortSupplierOffers,
+  SupplierOfferSelectionView,
+  SupplierOffersResponse,
+  SupplierOfferView,
+} from '../services/supplierOffers';
+import {
+  formatSupplierSyncEta,
+  isSupplierSyncJobActive,
+  supplierSyncJobStateLabel,
+  SupplierSyncJobView,
+} from '../services/supplierSyncJobs';
 
 const SYNC_HISTORY_LIMIT = 100;
 const FIRESTORE_BATCH_WRITE_LIMIT = 450;
@@ -133,6 +145,18 @@ export interface ComparisonResult {
   matchedProductId: string | null;
   comparisonStatus: 'NEW_PRODUCT' | 'PRICE_CHANGED' | 'STOCK_CHANGED' | 'DESCRIPTION_CHANGED' | 'IMAGE_CHANGED' | 'UNCHANGED';
   changedFields: string[];
+  fieldChanges?: Array<{
+    field: string;
+    label: string;
+    auditKey?: string;
+    auditRepresentation?: string;
+    before: unknown;
+    after: unknown;
+    changeType?: 'added' | 'changed' | 'invalid_removal';
+    syncGroup?: string;
+    emptyBehavior?: string;
+    adminEditable?: boolean;
+  }>;
 }
 
 export interface ReviewQueueItem {
@@ -208,6 +232,22 @@ export interface SyncHistoryItem {
   details: string;
 }
 
+type SupplierQueueView = 'review' | 'import' | 'changes';
+
+interface SupplierQueuePageResponse {
+  success?: boolean;
+  view?: SupplierQueueView;
+  items?: Array<Record<string, unknown> & { id: string }>;
+  nextCursor?: string | null;
+  error?: string;
+}
+
+const mergeSupplierQueuePage = <T extends { id: string }>(current: T[], page: T[]): T[] => {
+  const items = new Map(current.map((item) => [item.id, item]));
+  page.forEach((item) => items.set(item.id, item));
+  return Array.from(items.values());
+};
+
 export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) {
   // Stat states
   const [newProducts, setNewProducts] = useState<number>(0);
@@ -219,11 +259,24 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
   const [reviewQueue, setReviewQueue] = useState<ReviewQueueItem[]>([]);
   const [importQueue, setImportQueue] = useState<any[]>([]);
   const [syncHistory, setSyncHistory] = useState<SyncHistoryItem[]>([]);
+  const [supplierQueueCursors, setSupplierQueueCursors] = useState<Record<SupplierQueueView, string | null>>({
+    review: null,
+    import: null,
+    changes: null,
+  });
+  const [supplierQueueLoading, setSupplierQueueLoading] = useState<Record<SupplierQueueView, boolean>>({
+    review: false,
+    import: false,
+    changes: false,
+  });
+  const [supplierQueueError, setSupplierQueueError] = useState<string | null>(null);
   
   // Syncing state
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [syncStatusMsg, setSyncStatusMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [activeSyncJob, setActiveSyncJob] = useState<SupplierSyncJobView | null>(null);
+  const [syncJobAction, setSyncJobAction] = useState<'cancel' | 'retry' | 'resume' | null>(null);
 
   // Supplier Hub navigation and interaction state
   const [activeSubTab, setActiveSubTab] = useState<'operations' | 'review' | 'import_queue' | 'sources' | 'changes' | 'settings'>('operations');
@@ -268,13 +321,21 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
     let cancelled = false;
     const loadSources = async () => {
       try {
-        const response = await getSupplierApi('/api/supplier-sources');
+        const [response, jobsResponse] = await Promise.all([
+          getSupplierApi('/api/supplier-sources'),
+          getSupplierApi('/api/supplier-sync/jobs?limit=1'),
+        ]);
         const result = await response.json().catch(() => ({})) as { success?: boolean; sources?: any[]; error?: string };
+        const jobsResult = await jobsResponse.json().catch(() => ({})) as { success?: boolean; jobs?: SupplierSyncJobView[] };
         if (!response.ok || result.success !== true || !Array.isArray(result.sources)) {
           throw new Error(result.error || 'Supplier sources could not be loaded.');
         }
         if (!cancelled) {
           setSupplierSources(result.sources.map(normalizeSupplierSourceForUi));
+          if (jobsResponse.ok && jobsResult.success === true && jobsResult.jobs?.[0]) {
+            setActiveSyncJob(jobsResult.jobs[0]);
+            setIsSyncing(isSupplierSyncJobActive(jobsResult.jobs[0]));
+          }
         }
       } catch (error) {
         if (!cancelled) handleFirestoreError(error, OperationType.GET, 'supplierSources API');
@@ -345,51 +406,6 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
       });
     };
 
-    const unsubscribeReviewQueue = onSnapshot(
-      collection(db, "supplier_review_queue"),
-      (snapshot) => {
-        const items: ReviewQueueItem[] = [];
-        snapshot.forEach((queueDoc) => {
-          const queueItem = { id: queueDoc.id, ...queueDoc.data() } as ReviewQueueItem;
-          // Lifecycle-aware queue records remain durable after a decision, while the
-          // existing review UI continues to show only actionable review items.
-          if (!queueItem.queueState || ['review_pending', 'conflict'].includes(queueItem.queueState)) items.push(queueItem);
-        });
-        setReviewQueue(sortByCreatedAtDesc(items));
-      },
-      (error) => {
-        handleFirestoreError(error, OperationType.GET, "supplier_review_queue");
-      }
-    );
-
-    const unsubscribeImportQueue = onSnapshot(
-      collection(db, "supplier_import_queue"),
-      (snapshot) => {
-        const items: any[] = [];
-        snapshot.forEach((queueDoc) => {
-          items.push({ id: queueDoc.id, ...queueDoc.data() });
-        });
-        setImportQueue(sortByCreatedAtDesc(items));
-      },
-      (error) => {
-        handleFirestoreError(error, OperationType.GET, "supplier_import_queue");
-      }
-    );
-
-    const unsubscribePendingChanges = onSnapshot(
-      collection(db, "supplier_pending_changes"),
-      (snapshot) => {
-        const items: any[] = [];
-        snapshot.forEach((queueDoc) => {
-          items.push({ id: queueDoc.id, ...queueDoc.data() });
-        });
-        setSupplierPendingChanges(sortByCreatedAtDesc(items));
-      },
-      (error) => {
-        handleFirestoreError(error, OperationType.GET, "supplier_pending_changes");
-      }
-    );
-
     const unsubscribeSyncHistory = onSnapshot(
       query(
         collection(db, "supplier_sync_history"),
@@ -409,9 +425,6 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
     );
 
     return () => {
-      unsubscribeReviewQueue();
-      unsubscribeImportQueue();
-      unsubscribePendingChanges();
       unsubscribeSyncHistory();
     };
   }, []);
@@ -491,6 +504,11 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
   const [processingChangeId, setProcessingChangeId] = useState<string | null>(null);
   const [comparingChange, setComparingChange] = useState<any | null>(null);
   const [editingReviewItem, setEditingReviewItem] = useState<ReviewQueueItem | null>(null);
+  const [supplierOffers, setSupplierOffers] = useState<SupplierOfferView[]>([]);
+  const [supplierOfferSelection, setSupplierOfferSelection] = useState<SupplierOfferSelectionView>({ activeOfferId: null, lockedOfferId: null, failoverEnabled: true });
+  const [supplierOffersLoading, setSupplierOffersLoading] = useState(false);
+  const [supplierOfferActionId, setSupplierOfferActionId] = useState<string | null>(null);
+  const [supplierOfferError, setSupplierOfferError] = useState<string | null>(null);
   const [rejectingReviewItem, setRejectingReviewItem] = useState<ReviewQueueItem | null>(null);
   const [rejectionReasonDraft, setRejectionReasonDraft] = useState('');
 
@@ -547,7 +565,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
 
     const [token, appCheckHeaders] = await Promise.all([
       user.getIdToken(forceRefresh),
-      getAppCheckRequestHeaders(),
+      getAppCheckRequestHeaders(forceRefresh),
     ]);
     return {
       'Content-Type': 'application/json',
@@ -571,6 +589,185 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
   const postSupplierApi = (path: string, body: Record<string, unknown>) => requestSupplierApi(path, 'POST', body);
   const patchSupplierApi = (path: string, body: Record<string, unknown>) => requestSupplierApi(path, 'PATCH', body);
   const getSupplierApi = (path: string) => requestSupplierApi(path, 'GET');
+
+  const loadSupplierQueueView = async (
+    view: SupplierQueueView,
+    options: { append?: boolean; after?: string | null } = {},
+  ): Promise<void> => {
+    const append = options.append === true;
+    const after = options.after === undefined ? (append ? supplierQueueCursors[view] : null) : options.after;
+    if (append && !after) return;
+    setSupplierQueueLoading((current) => ({ ...current, [view]: true }));
+    setSupplierQueueError(null);
+    try {
+      const parameters = new URLSearchParams({ view, limit: '50' });
+      if (view === 'review') parameters.set('state', 'active');
+      if (after) parameters.set('after', after);
+      const response = await getSupplierApi(`/api/supplier-review-queue?${parameters.toString()}`);
+      const result = await response.json().catch(() => ({})) as SupplierQueuePageResponse;
+      if (!response.ok || result.success !== true || !Array.isArray(result.items)) {
+        throw new Error(result.error || 'Supplier queue items could not be loaded.');
+      }
+      if (view === 'review') {
+        const items = result.items as unknown as ReviewQueueItem[];
+        setReviewQueue((current) => append ? mergeSupplierQueuePage(current, items) : items);
+      } else if (view === 'import') {
+        setImportQueue((current: any[]) => append ? mergeSupplierQueuePage(current, result.items as any[]) : result.items);
+      } else {
+        setSupplierPendingChanges((current: any[]) => append ? mergeSupplierQueuePage(current, result.items as any[]) : result.items);
+      }
+      setSupplierQueueCursors((current) => ({ ...current, [view]: result.nextCursor || null }));
+    } catch (error) {
+      setSupplierQueueError(error instanceof Error ? error.message : 'Supplier queue items could not be loaded.');
+    } finally {
+      setSupplierQueueLoading((current) => ({ ...current, [view]: false }));
+    }
+  };
+
+  const refreshSupplierQueueViews = async (): Promise<void> => {
+    await Promise.all((['review', 'import', 'changes'] as const).map((view) => loadSupplierQueueView(view)));
+  };
+
+  useEffect(() => onIdTokenChanged(auth, (currentUser) => {
+    if (currentUser) void loadSupplierQueueView('review');
+  }), []);
+
+  useEffect(() => {
+    const view: SupplierQueueView | null = activeSubTab === 'review'
+      ? 'review'
+      : activeSubTab === 'import_queue' ? 'import' : activeSubTab === 'changes' ? 'changes' : null;
+    if (!view || !auth.currentUser) return;
+    void loadSupplierQueueView(view);
+    const refreshTimer = window.setInterval(() => {
+      if (auth.currentUser) void loadSupplierQueueView(view);
+    }, 30_000);
+    return () => window.clearInterval(refreshTimer);
+  }, [activeSubTab]);
+
+  useEffect(() => {
+    const jobId = activeSyncJob?.id;
+    if (!jobId || !isSupplierSyncJobActive(activeSyncJob)) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const poll = async () => {
+      try {
+        const response = await getSupplierApi(`/api/supplier-sync/jobs/${encodeURIComponent(jobId)}`);
+        const result = await response.json().catch(() => ({})) as { success?: boolean; job?: SupplierSyncJobView; error?: string };
+        if (!response.ok || result.success !== true || !result.job) throw new Error(result.error || 'Synchronization status could not be loaded.');
+        if (cancelled) return;
+        setActiveSyncJob(result.job);
+        const active = isSupplierSyncJobActive(result.job);
+        setIsSyncing(active);
+        setSyncStatusMsg(active
+          ? `${supplierSyncJobStateLabel(result.job.state)} · ${result.job.progress.percent}% · ${result.job.progress.productsScanned} scanned · ${formatSupplierSyncEta(result.job.progress.etaMs)}`
+          : `${supplierSyncJobStateLabel(result.job.state)} · ${result.job.progress.productsScanned} scanned · ${result.job.progress.productsQueued} queued`);
+        if (!active) void refreshSupplierQueueViews();
+        if (active) timer = setTimeout(poll, 2_000);
+      } catch (error) {
+        if (cancelled) return;
+        setErrorMsg(error instanceof Error ? error.message : 'Synchronization status could not be loaded.');
+        timer = setTimeout(poll, 5_000);
+      }
+    };
+
+    timer = setTimeout(poll, 500);
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [activeSyncJob?.id, activeSyncJob?.state]);
+
+  const handleSyncJobAction = async (action: 'cancel' | 'retry' | 'resume') => {
+    if (!activeSyncJob) return;
+    setSyncJobAction(action);
+    setErrorMsg(null);
+    try {
+      const response = await postSupplierApi(`/api/supplier-sync/jobs/${encodeURIComponent(activeSyncJob.id)}/${action}`, {});
+      const result = await response.json().catch(() => ({})) as { success?: boolean; job?: SupplierSyncJobView; error?: string };
+      if (!response.ok || result.success !== true || !result.job) throw new Error(result.error || `Synchronization could not ${action}.`);
+      setActiveSyncJob(result.job);
+      setIsSyncing(isSupplierSyncJobActive(result.job));
+      setSyncStatusMsg(`${supplierSyncJobStateLabel(result.job.state)} · ${result.job.progress.percent}%`);
+    } catch (error) {
+      setErrorMsg(error instanceof Error ? error.message : `Synchronization could not ${action}.`);
+    } finally {
+      setSyncJobAction(null);
+    }
+  };
+
+  const supplierReviewProductId = (item: ReviewQueueItem | null): string => String(
+    item?.productPayload?.id || item?.matchedProductId || item?.comparison?.matchedProductId || '',
+  ).trim();
+
+  const loadSupplierOffers = async (item: ReviewQueueItem | null = editingReviewItem) => {
+    const productId = supplierReviewProductId(item);
+    if (!productId) {
+      setSupplierOffers([]);
+      setSupplierOfferSelection({ activeOfferId: null, lockedOfferId: null, failoverEnabled: true });
+      return;
+    }
+    setSupplierOffersLoading(true);
+    setSupplierOfferError(null);
+    try {
+      const response = await getSupplierApi(`/api/supplier-products/${encodeURIComponent(productId)}/offers`);
+      const result = await response.json().catch(() => ({})) as SupplierOffersResponse;
+      if (!response.ok || result.success !== true || !Array.isArray(result.offers)) {
+        throw new Error(result.error || 'Supplier offers could not be loaded.');
+      }
+      setSupplierOffers(sortSupplierOffers(result.offers));
+      setSupplierOfferSelection(result.selection || { activeOfferId: null, lockedOfferId: null, failoverEnabled: true });
+    } catch (error) {
+      setSupplierOfferError(error instanceof Error ? error.message : 'Supplier offers could not be loaded.');
+    } finally {
+      setSupplierOffersLoading(false);
+    }
+  };
+
+  const openSupplierReviewEditor = (item: ReviewQueueItem) => {
+    setEditingReviewItem(item);
+    void loadSupplierOffers(item);
+  };
+
+  const configureSupplierOffer = async (offerId: string, patch: { priority?: number; enabled?: boolean }) => {
+    const productId = supplierReviewProductId(editingReviewItem);
+    if (!productId) return;
+    setSupplierOfferActionId(offerId);
+    setSupplierOfferError(null);
+    try {
+      const response = await patchSupplierApi(
+        `/api/supplier-products/${encodeURIComponent(productId)}/offers/${encodeURIComponent(offerId)}`,
+        { offer: patch },
+      );
+      const result = await response.json().catch(() => ({})) as { success?: boolean; error?: string };
+      if (!response.ok || result.success !== true) throw new Error(result.error || 'Supplier offer could not be updated.');
+      await loadSupplierOffers(editingReviewItem);
+    } catch (error) {
+      setSupplierOfferError(error instanceof Error ? error.message : 'Supplier offer could not be updated.');
+    } finally {
+      setSupplierOfferActionId(null);
+    }
+  };
+
+  const selectSupplierOffer = async (offerId: string, options: { locked: boolean; failoverEnabled: boolean }) => {
+    const productId = supplierReviewProductId(editingReviewItem);
+    if (!productId) return;
+    setSupplierOfferActionId(offerId);
+    setSupplierOfferError(null);
+    try {
+      const response = await postSupplierApi(`/api/supplier-products/${encodeURIComponent(productId)}/offers/select`, {
+        offerId,
+        ...options,
+      });
+      const result = await response.json().catch(() => ({})) as { success?: boolean; error?: string };
+      if (!response.ok || result.success !== true) throw new Error(result.error || 'The active supplier offer could not be changed.');
+      await loadSupplierOffers(editingReviewItem);
+    } catch (error) {
+      setSupplierOfferError(error instanceof Error ? error.message : 'The active supplier offer could not be changed.');
+    } finally {
+      setSupplierOfferActionId(null);
+    }
+  };
 
   const decideSupplierReviewQueueItem = async (
     queueItemId: string,
@@ -1089,6 +1286,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
   };
 
   const handleSyncSupplier = async (sourceIds?: string[]): Promise<boolean> => {
+    let accepted = false;
     setIsSyncing(true);
     setErrorMsg(null);
     setSyncStatusMsg('Starting the supplier synchronization job...');
@@ -1096,30 +1294,25 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
       const response = await postSupplierApi('/api/supplier-sync', sourceIds?.length ? { sourceIds } : {});
       const result = await response.json().catch(() => ({})) as {
         success?: boolean;
+        accepted?: boolean;
+        job?: SupplierSyncJobView;
+        jobId?: string;
         status?: string;
-        productsScanned?: number;
-        productsQueued?: number;
-        errors?: string[];
         error?: string;
       };
-      if (!response.ok || result.success === false) {
+      if (!response.ok || result.success !== true || result.accepted !== true || !result.job) {
         throw new Error(result.error || 'Supplier synchronization could not be completed.');
       }
-
-      const errors = Array.isArray(result.errors) ? result.errors.filter(Boolean) : [];
-      if (result.status === 'Skipped') {
-        setSyncStatusMsg('No enabled supplier source was ready to synchronize.');
-      } else {
-        setSyncStatusMsg(`Synchronization complete. Scanned ${Number(result.productsScanned || 0)} products and queued ${Number(result.productsQueued || 0)} for review.${errors.length ? ` ${errors.length} source error${errors.length === 1 ? '' : 's'} recorded.` : ''}`);
-      }
-      setTimeout(() => setSyncStatusMsg(null), 5000);
+      setActiveSyncJob(result.job);
+      setSyncStatusMsg(`Synchronization job ${result.jobId || result.job.id} was accepted and is pending.`);
+      accepted = true;
       return true;
     } catch (error: any) {
       setErrorMsg(error.message || 'Supplier synchronization failed.');
       setSyncStatusMsg(null);
       return false;
     } finally {
-      setIsSyncing(false);
+      if (!accepted) setIsSyncing(false);
     }
   };
 
@@ -1303,7 +1496,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
     try {
       const succeeded = await handleSyncSupplier([id]);
       if (succeeded) {
-        setSuccessMsg(`Supplier synchronization completed for feed ID: ${id}. Review the queued results before publishing.`);
+        setSuccessMsg(`Supplier synchronization job accepted for feed ID: ${id}. Progress will update automatically.`);
       } else {
         setSuccessMsg(null);
       }
@@ -1408,6 +1601,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
       }
 
       setProcessingChangeId(null);
+      void refreshSupplierQueueViews();
       setSuccessMsg(`Change for "${change.productName}" approved successfully.`);
       setTimeout(() => setSuccessMsg(null), 3000);
     } catch (error: any) {
@@ -1423,6 +1617,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
     try {
       await decideSupplierReviewQueueItem(change.id, 'reject', { rejectionReason: 'Change rejected by admin.' });
       setProcessingChangeId(null);
+      void refreshSupplierQueueViews();
       setSuccessMsg(`Change for "${change.productName}" rejected.`);
       setTimeout(() => setSuccessMsg(null), 3000);
     } catch (error: any) {
@@ -1454,6 +1649,9 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
       }
 
       setEditingReviewItem(null);
+      setSupplierOffers([]);
+      setSupplierOfferError(null);
+      void refreshSupplierQueueViews();
       setSuccessMsg(`Product "${draft.productName.trim()}" approved and published successfully.`);
       setTimeout(() => setSuccessMsg(null), 3000);
     } catch (error: any) {
@@ -1472,6 +1670,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
       setProcessingChangeId(null);
       setRejectingReviewItem(null);
       setRejectionReasonDraft('');
+      void refreshSupplierQueueViews();
       setSuccessMsg(`Product "${item.productName}" rejected.`);
       setTimeout(() => setSuccessMsg(null), 3000);
     } catch (error: any) {
@@ -1510,6 +1709,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
       if (!response.ok || result.success !== true) throw new Error(result.error || 'Bulk supplier approval could not be completed.');
 
       setSelectedReviewIds([]);
+      void refreshSupplierQueueViews();
       setSuccessMsg(`${approvals.length} products approved and published successfully.`);
       setTimeout(() => setSuccessMsg(null), 3000);
     } catch (error: any) {
@@ -1532,6 +1732,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
       const result = await response.json().catch(() => ({})) as { success?: boolean; error?: string };
       if (!response.ok || result.success !== true) throw new Error(result.error || 'Bulk supplier rejection could not be completed.');
       setSelectedReviewIds([]);
+      void refreshSupplierQueueViews();
       setSuccessMsg(`${selectedReviewItems.length} products rejected with audit records.`);
       setTimeout(() => setSuccessMsg(null), 3000);
     } catch (error: any) {
@@ -1551,6 +1752,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
         await decideSupplierReviewQueueItem(item.id, 'delete', { deletionReason: 'Bulk deleted by admin.' });
       }
       setSelectedReviewIds([]);
+      void refreshSupplierQueueViews();
       setSuccessMsg(`${selectedReviewItems.length} queue items deleted with audit records.`);
       setTimeout(() => setSuccessMsg(null), 3000);
     } catch (error: any) {
@@ -1694,6 +1896,74 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
           <Info className="h-4 w-4 shrink-0 animate-pulse" />
           <span>{syncStatusMsg}</span>
         </motion.div>
+      )}
+
+      {activeSyncJob && (
+        <section
+          aria-label="Supplier synchronization progress"
+          className="rounded-2xl border border-slate-200/70 bg-white/80 p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900/60"
+        >
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0 space-y-1">
+              <div className="flex items-center gap-2">
+                <Activity className="h-4 w-4 text-blue-500" aria-hidden="true" />
+                <p className="text-xs font-extrabold text-slate-900 dark:text-white">
+                  Sync job · {supplierSyncJobStateLabel(activeSyncJob.state)}
+                </p>
+              </div>
+              <p className="truncate font-mono text-[10px] text-slate-400">{activeSyncJob.id}</p>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400" aria-live="polite">
+                {activeSyncJob.progress.productsScanned} scanned · {activeSyncJob.progress.productsQueued} queued · {activeSyncJob.progress.pagesProcessed} pages
+                {isSupplierSyncJobActive(activeSyncJob) ? ` · ${formatSupplierSyncEta(activeSyncJob.progress.etaMs)}` : ''}
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {['pending', 'running', 'waiting'].includes(activeSyncJob.state) && (
+                <button
+                  type="button"
+                  onClick={() => handleSyncJobAction('cancel')}
+                  disabled={syncJobAction !== null || activeSyncJob.cancellationRequestedAt != null}
+                  className="min-h-10 rounded-xl border border-rose-200 px-3 text-[11px] font-bold text-rose-600 transition-colors hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-rose-900/60 dark:hover:bg-rose-950/30"
+                >
+                  {activeSyncJob.cancellationRequestedAt ? 'Cancelling…' : 'Cancel'}
+                </button>
+              )}
+              {(activeSyncJob.state === 'waiting' || activeSyncJob.state === 'cancelled') && (
+                <button
+                  type="button"
+                  onClick={() => handleSyncJobAction('resume')}
+                  disabled={syncJobAction !== null}
+                  className="min-h-10 rounded-xl bg-blue-600 px-3 text-[11px] font-bold text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Resume
+                </button>
+              )}
+              {activeSyncJob.state === 'failed' && (
+                <button
+                  type="button"
+                  onClick={() => handleSyncJobAction('retry')}
+                  disabled={syncJobAction !== null}
+                  className="min-h-10 rounded-xl bg-blue-600 px-3 text-[11px] font-bold text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Retry
+                </button>
+              )}
+            </div>
+          </div>
+          <div
+            className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800"
+            role="progressbar"
+            aria-label="Supplier synchronization progress"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={activeSyncJob.progress.percent}
+          >
+            <div
+              className="h-full rounded-full bg-gradient-to-r from-blue-600 to-cyan-500 transition-[width] duration-500 motion-reduce:transition-none"
+              style={{ width: `${Math.max(0, Math.min(100, activeSyncJob.progress.percent))}%` }}
+            />
+          </div>
+        </section>
       )}
 
       {successMsg && (
@@ -1881,7 +2151,15 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
                 </button>
               </div>
 
-              {visibleReviewItems.length === 0 ? (
+              {supplierQueueError && (
+                <p role="alert" className="mb-4 rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs font-semibold text-red-600">
+                  {supplierQueueError}
+                </p>
+              )}
+
+              {supplierQueueLoading.review && reviewQueue.length === 0 ? (
+                <div className="p-12 text-center text-xs font-bold text-slate-400" role="status">Loading review queue…</div>
+              ) : visibleReviewItems.length === 0 ? (
                 <div className="p-12 text-center rounded-2xl border border-dashed border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/10 space-y-3">
                   <UserCheck className="h-10 w-10 text-slate-300 mx-auto" />
                   <div className="space-y-1">
@@ -2032,7 +2310,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
                             {(item.status === 'Pending' || item.status === 'CONFLICT') && (
                               <div className="flex items-center justify-end gap-2">
                                 <button
-                                  onClick={() => setEditingReviewItem(item)}
+                                  onClick={() => openSupplierReviewEditor(item)}
                                   disabled={processingChangeId === item.id}
                                   className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-700 text-white font-bold rounded-lg text-[10px] transition-colors flex items-center gap-1 cursor-pointer"
                                 >
@@ -2064,6 +2342,18 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
                       })}
                     </tbody>
                   </table>
+                </div>
+              )}
+              {supplierQueueCursors.review && (
+                <div className="mt-4 flex justify-center">
+                  <button
+                    type="button"
+                    onClick={() => void loadSupplierQueueView('review', { append: true })}
+                    disabled={supplierQueueLoading.review}
+                    className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-black text-slate-600 transition-colors hover:bg-slate-50 disabled:opacity-50 dark:border-slate-800 dark:text-slate-300 dark:hover:bg-slate-900"
+                  >
+                    {supplierQueueLoading.review ? 'Loading…' : 'Load more reviews'}
+                  </button>
                 </div>
               )}
             </div>
@@ -2146,7 +2436,9 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
               </div>
             </div>
 
-            {importQueue.filter((item) => matchesSupplierSearch(item, importSearch)).length === 0 ? (
+            {supplierQueueLoading.import && importQueue.length === 0 ? (
+              <div className="p-12 text-center text-xs font-bold text-slate-400" role="status">Loading import queue…</div>
+            ) : importQueue.filter((item) => matchesSupplierSearch(item, importSearch)).length === 0 ? (
               /* Empty State */
               <div className="p-16 text-center rounded-3xl border border-dashed border-slate-250 dark:border-slate-800 bg-slate-50/30 dark:bg-[#111928]/30 space-y-4 max-w-xl mx-auto my-6">
                 <div className="w-14 h-14 bg-blue-500/10 text-blue-500 rounded-2xl flex items-center justify-center mx-auto shadow-inner">
@@ -2193,6 +2485,18 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
                     ))}
                   </tbody>
                 </table>
+              </div>
+            )}
+            {supplierQueueCursors.import && (
+              <div className="flex justify-center">
+                <button
+                  type="button"
+                  onClick={() => void loadSupplierQueueView('import', { append: true })}
+                  disabled={supplierQueueLoading.import}
+                  className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-black text-slate-600 transition-colors hover:bg-slate-50 disabled:opacity-50 dark:border-slate-800 dark:text-slate-300 dark:hover:bg-slate-900"
+                >
+                  {supplierQueueLoading.import ? 'Loading…' : 'Load more imports'}
+                </button>
               </div>
             )}
           </div>
@@ -2819,6 +3123,18 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
                 </div>
               );
             })()}
+            {supplierQueueCursors.changes && (
+              <div className="flex justify-center">
+                <button
+                  type="button"
+                  onClick={() => void loadSupplierQueueView('changes', { append: true })}
+                  disabled={supplierQueueLoading.changes}
+                  className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-black text-slate-600 transition-colors hover:bg-slate-50 disabled:opacity-50 dark:border-slate-800 dark:text-slate-300 dark:hover:bg-slate-900"
+                >
+                  {supplierQueueLoading.changes ? 'Loading…' : 'Load more changes'}
+                </button>
+              </div>
+            )}
           </div>
         )}
 
@@ -3442,8 +3758,20 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
           brands={brands}
           validCategoryIds={validCategoryIds}
           isPublishing={processingChangeId === editingReviewItem.id}
+          offers={supplierOffers}
+          offerSelection={supplierOfferSelection}
+          offersLoading={supplierOffersLoading}
+          offerActionId={supplierOfferActionId}
+          offerError={supplierOfferError}
+          onRefreshOffers={() => loadSupplierOffers(editingReviewItem)}
+          onConfigureOffer={configureSupplierOffer}
+          onSelectOffer={selectSupplierOffer}
           onClose={() => {
-            if (processingChangeId !== editingReviewItem.id) setEditingReviewItem(null);
+            if (processingChangeId !== editingReviewItem.id) {
+              setEditingReviewItem(null);
+              setSupplierOffers([]);
+              setSupplierOfferError(null);
+            }
           }}
           onPublish={(draft) => handleApproveReviewItem(editingReviewItem, draft)}
         />

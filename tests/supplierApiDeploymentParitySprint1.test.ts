@@ -7,12 +7,14 @@ const source = (path: string): string => readFileSync(path, 'utf8');
 test('Sprint 1 makes the Functions Supplier API the production manual-sync authority', () => {
   const routes = source('functions/src/api/routes/supplier.ts');
   const worker = source('functions/src/scheduled/supplierSync.ts');
+  const jobWorker = source('functions/src/scheduled/supplierSyncWorker.ts');
   const hub = source('src/components/SupplierHubFiveStars.tsx');
 
   assert.match(routes, /app\.post\("\/api\/supplier-sync", requireSupplierHubAdmin/);
-  assert.match(routes, /runSupplierSync\(\{[\s\S]*trigger: "manual"/);
+  assert.match(routes, /createSupplierSyncJob\(adminDb, \{[\s\S]*trigger: "manual"/);
   assert.match(worker, /export async function runSupplierSync\(options: SupplierSyncRunOptions = \{\}\)/);
-  assert.match(worker, /export async function runScheduledSupplierSync\(\): Promise<void> \{\s+await runSupplierSync\(\{ trigger: "scheduled" \}\);/);
+  assert.match(worker, /export async function runScheduledSupplierSync\(now = Date\.now\(\)\): Promise<void> \{[\s\S]*createSupplierSyncJob/);
+  assert.match(jobWorker, /runSupplierSync\(\{/);
   assert.match(hub, /postSupplierApi\('\/api\/supplier-sync'/);
 
   const productionHandler = hub.slice(hub.indexOf('const handleSyncSupplier ='), hub.indexOf('// --- CONNECT SUPPLIER HANDLERS ---'));

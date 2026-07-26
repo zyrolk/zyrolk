@@ -11,7 +11,7 @@ test('Sprint 8 makes Supplier Hub operational collections browser read-only or f
   for (const collection of [
     'supplier_review_queue', 'supplier_import_queue', 'supplier_pending_changes',
     'supplier_sync_locks', 'supplier_sync_history', 'supplier_approval_audit',
-    'supplier_product_conflicts', 'supplier_settings',
+    'supplier_sync_jobs', 'supplier_product_conflicts', 'supplier_product_offers', 'supplier_settings',
   ]) {
     assert.match(rules, new RegExp(`match /${collection}/\\{docId\\}[\\s\\S]*?allow create, update, delete: if false;`));
   }

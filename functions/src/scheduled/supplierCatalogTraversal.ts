@@ -9,6 +9,8 @@ export interface SupplierCatalogTraversalCheckpoint {
   pagesProcessed: number;
   productsScanned: number;
   productsImported: number;
+  invalidProducts: number;
+  deletionReconciliationEligible: boolean;
   resumeCount: number;
   startedAt: string;
   lastCheckpointAt: string;
@@ -19,6 +21,7 @@ export interface SupplierCatalogTraversalCheckpoint {
 export interface SupplierCatalogPageMetrics {
   productsScanned: number;
   productsImported: number;
+  invalidProducts?: number;
 }
 
 export interface SupplierCatalogTraversalResult {
@@ -70,6 +73,8 @@ export function createSupplierCatalogTraversalCheckpoint(
     pagesProcessed: resumable ? safeCount(initial.pagesProcessed) : 0,
     productsScanned: resumable ? safeCount(initial.productsScanned) : 0,
     productsImported: resumable ? safeCount(initial.productsImported) : 0,
+    invalidProducts: resumable ? safeCount(initial.invalidProducts) : 0,
+    deletionReconciliationEligible: resumable ? initial.deletionReconciliationEligible !== false : true,
     resumeCount: resumable ? safeCount(initial.resumeCount) + 1 : 0,
     startedAt,
     lastCheckpointAt: new Date(now).toISOString(),
@@ -86,7 +91,9 @@ export async function runSupplierCatalogTraversal(options: SupplierCatalogTraver
   });
 
   if (checkpoint.status === "reconciling") {
-    await options.reconcileDeletedProducts(checkpoint);
+    if (checkpoint.deletionReconciliationEligible) {
+      await options.reconcileDeletedProducts(checkpoint);
+    }
     checkpoint = { ...checkpoint, status: "completed", lastCheckpointAt: new Date(now()).toISOString() };
     await options.persistCheckpoint(checkpoint);
     return { complete: true, paused: false, checkpoint };
@@ -113,22 +120,28 @@ export async function runSupplierCatalogTraversal(options: SupplierCatalogTraver
     }
 
     const pageMetrics = await options.processPage(page, checkpoint);
+    const pageInvalidProducts = safeCount(pageMetrics.invalidProducts);
+    const deletionReconciliationEligible = checkpoint.deletionReconciliationEligible && pageInvalidProducts === 0;
     checkpoint = {
       ...checkpoint,
       cursor: page.complete ? null : page.nextCursor,
       pagesProcessed: checkpoint.pagesProcessed + 1,
       productsScanned: checkpoint.productsScanned + safeCount(pageMetrics.productsScanned),
       productsImported: checkpoint.productsImported + safeCount(pageMetrics.productsImported),
+      invalidProducts: checkpoint.invalidProducts + pageInvalidProducts,
+      deletionReconciliationEligible,
       lastCheckpointAt: new Date(now()).toISOString(),
       lastPageFingerprint: fingerprint,
-      status: page.complete ? "reconciling" : "in_progress",
+      status: page.complete && deletionReconciliationEligible ? "reconciling" : page.complete ? "completed" : "in_progress",
     };
     await options.persistCheckpoint(checkpoint);
 
     if (page.complete) {
-      await options.reconcileDeletedProducts(checkpoint);
-      checkpoint = { ...checkpoint, status: "completed", lastCheckpointAt: new Date(now()).toISOString() };
-      await options.persistCheckpoint(checkpoint);
+      if (checkpoint.deletionReconciliationEligible) {
+        await options.reconcileDeletedProducts(checkpoint);
+        checkpoint = { ...checkpoint, status: "completed", lastCheckpointAt: new Date(now()).toISOString() };
+        await options.persistCheckpoint(checkpoint);
+      }
       return { complete: true, paused: false, checkpoint };
     }
   }

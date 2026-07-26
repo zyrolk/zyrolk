@@ -1,4 +1,6 @@
 import { normalizeSupplierCategory } from './supplierCategoryMapping';
+import { supplierFieldForAuditLabel, SupplierFieldSyncGroup } from '../api/suppliers/supplierFieldManifest';
+import { SupplierFieldChange } from '../api/suppliers/supplierProductImport';
 
 export type SupplierComparisonStatus =
   | 'NEW_PRODUCT'
@@ -24,19 +26,24 @@ export interface SupplierSourceSyncSettings {
 export interface SupplierComparison {
   status: SupplierComparisonStatus;
   changedFields: string[];
+  fieldChanges?: SupplierFieldChange[];
 }
 
 const PRICE_FIELDS = new Set(['Cost Price', 'Market Price']);
-const DESCRIPTION_FIELDS = new Set(['Product Name', 'Description']);
 const IMAGE_FIELDS = new Set(['Primary Image', 'Images']);
-const PRODUCT_DETAIL_FIELDS = new Set([
-  'Supplier Product ID', 'Barcode', 'Short Description', 'Supplier Brand', 'Manufacturer', 'Model',
-  'Supplier Category', 'Supplier Subcategory', 'Tags', 'Keywords', 'Product Type', 'Collection',
-  'Attributes', 'Variants', 'Options', 'Specifications', 'Features', 'Dimensions', 'Weight',
-  'Package Size', 'Shipping Class', 'Warranty', 'Country of Origin', 'Videos', 'Currency', 'Tax',
-  'Supplier Discount', 'Availability', 'Lead Time', 'Minimum Order Quantity', 'Maximum Order Quantity',
-  'Supplier Visibility', 'Supplier Status', 'SEO Slug', 'Meta Description', 'Extra Attributes',
-]);
+const syncGroupForLabel = (label: string): SupplierFieldSyncGroup => {
+  if (PRICE_FIELDS.has(label)) return 'pricing';
+  if (label === 'Stock') return 'inventory';
+  if (IMAGE_FIELDS.has(label)) return 'media';
+  return supplierFieldForAuditLabel(label)?.syncGroup || 'content';
+};
+
+const groupIsEnabled = (group: SupplierFieldSyncGroup, settings: SupplierSourceSyncSettings | undefined): boolean => {
+  if (group === 'pricing') return settings?.syncPriceUpdates !== false;
+  if (group === 'inventory') return settings?.syncStockUpdates !== false;
+  if (group === 'media') return settings?.syncImageUpdates !== false;
+  return settings?.syncDescriptionUpdates !== false;
+};
 
 export function getSupplierProductLimit(productLimit: string | undefined, maximum = 250): number {
   const safeMaximum = Math.max(1, Math.floor(maximum));
@@ -75,20 +82,18 @@ export function filterSupplierComparison(
   if (comparison.status === 'UNCHANGED') return null;
   if (comparison.status === 'NEW_PRODUCT') return settings?.syncNewProducts === false ? null : comparison;
 
-  const allowedFields = comparison.changedFields.filter((field) => {
-    if (PRICE_FIELDS.has(field)) return settings?.syncPriceUpdates !== false;
-    if (field === 'Stock') return settings?.syncStockUpdates !== false;
-    if (DESCRIPTION_FIELDS.has(field)) return settings?.syncDescriptionUpdates !== false;
-    if (IMAGE_FIELDS.has(field)) return settings?.syncImageUpdates !== false;
-    if (PRODUCT_DETAIL_FIELDS.has(field)) return settings?.syncDescriptionUpdates !== false;
-    return false;
-  });
+  const allowedFieldChanges = comparison.fieldChanges?.filter((change) => groupIsEnabled(change.syncGroup, settings));
+  const allowedFields = comparison.fieldChanges
+    ? [...new Set((allowedFieldChanges || []).map((change) => change.label))]
+    : comparison.changedFields.filter((field) => groupIsEnabled(syncGroupForLabel(field), settings));
 
   if (allowedFields.length === 0) return null;
-  if (allowedFields.some((field) => PRICE_FIELDS.has(field))) return { status: 'PRICE_CHANGED', changedFields: allowedFields };
-  if (allowedFields.includes('Stock')) return { status: 'STOCK_CHANGED', changedFields: allowedFields };
-  if (allowedFields.some((field) => IMAGE_FIELDS.has(field))) return { status: 'IMAGE_CHANGED', changedFields: allowedFields };
-  return { status: 'DESCRIPTION_CHANGED', changedFields: allowedFields };
+  const allowedGroups = new Set(allowedFieldChanges?.map((change) => change.syncGroup) || allowedFields.map(syncGroupForLabel));
+  const filteredChanges = allowedFieldChanges && allowedFieldChanges.length > 0 ? { fieldChanges: allowedFieldChanges } : {};
+  if (allowedGroups.has('pricing')) return { status: 'PRICE_CHANGED', changedFields: allowedFields, ...filteredChanges };
+  if (allowedGroups.has('inventory')) return { status: 'STOCK_CHANGED', changedFields: allowedFields, ...filteredChanges };
+  if (allowedGroups.has('media')) return { status: 'IMAGE_CHANGED', changedFields: allowedFields, ...filteredChanges };
+  return { status: 'DESCRIPTION_CHANGED', changedFields: allowedFields, ...filteredChanges };
 }
 
 export function getSupplierImageLimit(value: unknown, maximum = 20): number {

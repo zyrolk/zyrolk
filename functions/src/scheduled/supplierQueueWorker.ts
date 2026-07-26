@@ -1,4 +1,4 @@
-import { FieldValue } from "firebase-admin/firestore";
+import { FieldValue, Firestore } from "firebase-admin/firestore";
 import { logger } from "firebase-functions";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { adminDb } from "../api/firebase";
@@ -11,6 +11,7 @@ import {
 
 const WORKER_LOCK_ID = "scheduled_supplier_queue_worker";
 const WORKER_LEASE_MS = 4 * 60 * 1000;
+const WORKER_HEARTBEAT_INTERVAL_MS = 60 * 1000;
 const DEFAULT_QUEUE_WORKER_SCHEDULE = "every 5 minutes";
 export const SUPPLIER_QUEUE_WORKER_SCHEDULE = String(process.env.SUPPLIER_QUEUE_WORKER_SCHEDULE || DEFAULT_QUEUE_WORKER_SCHEDULE).trim() || DEFAULT_QUEUE_WORKER_SCHEDULE;
 
@@ -48,6 +49,33 @@ async function releaseQueueWorkerLock(workerId: string): Promise<void> {
   });
 }
 
+export async function heartbeatSupplierQueueWorkerLock(
+  db: Firestore,
+  workerId: string,
+  now = Date.now(),
+  leaseMs = WORKER_LEASE_MS,
+): Promise<boolean> {
+  const reference = db.collection("supplier_sync_locks").doc(WORKER_LOCK_ID);
+  return db.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(reference);
+    const lock = snapshot.data() || {};
+    const expiresAt = Date.parse(String(lock.lockedUntil || ""));
+    if (
+      lock.status !== "running"
+      || lock.owner !== workerId
+      || !Number.isFinite(expiresAt)
+      || expiresAt <= now
+    ) return false;
+    transaction.set(reference, {
+      lockedUntil: new Date(now + leaseMs).toISOString(),
+      lastHeartbeatAt: new Date(now).toISOString(),
+      heartbeatCount: Number(lock.heartbeatCount || 0) + 1,
+      updatedAt: new Date(now).toISOString(),
+    }, { merge: true });
+    return true;
+  });
+}
+
 export interface SupplierQueueWorkerResult {
   workerId: string;
   skipped: boolean;
@@ -64,7 +92,17 @@ export async function runSupplierQueueWorker(now = Date.now(), limit = 100): Pro
   if (!await acquireQueueWorkerLock(workerId, now)) {
     return { workerId, skipped: true, recoveredLeases: 0, processed: 0, completed: 0, retryableFailures: 0, deadLetters: 0 };
   }
+  let workerHeartbeat: ReturnType<typeof setInterval> | null = null;
+  let workerHeartbeatInFlight: Promise<void> = Promise.resolve();
   try {
+    workerHeartbeat = setInterval(() => {
+      workerHeartbeatInFlight = workerHeartbeatInFlight.then(async () => {
+        const renewed = await heartbeatSupplierQueueWorkerLock(adminDb, workerId);
+        if (!renewed) throw new Error("Supplier queue worker lock was lost during processing.");
+      }).catch((error) => {
+        logger.error("Supplier review queue worker heartbeat failed.", { workerId, error });
+      });
+    }, WORKER_HEARTBEAT_INTERVAL_MS);
     const recoveredLeases = await recoverExpiredSupplierReviewQueueLeases(adminDb, now, limit);
     const results = await processDueSupplierReviewQueueItems(adminDb, workerId, now, limit);
     const metrics = await getSupplierReviewQueueMetrics(adminDb, now);
@@ -97,6 +135,8 @@ export async function runSupplierQueueWorker(now = Date.now(), limit = 100): Pro
     }, { merge: true });
     throw error;
   } finally {
+    if (workerHeartbeat) clearInterval(workerHeartbeat);
+    await workerHeartbeatInFlight;
     await releaseQueueWorkerLock(workerId);
   }
 }

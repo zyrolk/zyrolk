@@ -1,3 +1,5 @@
+import { getAppCheckRequestHeaders } from '../security/appCheck';
+
 const DEFAULT_TIMEOUT_MS = 20_000;
 const DEFAULT_ERROR_MESSAGE = 'The service is temporarily unavailable. Please try again.';
 
@@ -64,4 +66,3 @@ export async function fetchJson<T>(input: RequestInfo | URL, init: RequestInit =
     clearTimeout(timeoutId);
   }
 }
-import { getAppCheckRequestHeaders } from '../security/appCheck';

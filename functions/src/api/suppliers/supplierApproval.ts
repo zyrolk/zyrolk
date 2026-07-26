@@ -21,12 +21,36 @@ import {
   SupplierApprovalConflict,
 } from "./supplierApprovalConcurrency";
 import { ensureSupplierReviewQueueManagedMedia } from "../../scheduled/supplierReviewQueue";
+import {
+  applySupplierProductFieldOwnership,
+  parseSupplierProductEditedFields,
+  parseSupplierProductFieldOwnershipDecision,
+  SupplierProductFieldOwnershipDecision,
+} from "./supplierFieldOwnership";
+import {
+  buildSupplierRemovalPublicProjection,
+  isSupplierOfferAvailableForCommerce,
+  parseSupplierOfferSelection,
+  projectSupplierOfferForAdmin,
+  resolveActiveSupplierOffer,
+  SupplierProductOffer,
+  SUPPLIER_PRODUCT_OFFERS_COLLECTION,
+} from "./supplierOfferEngine";
 
 // Every decision transaction appends an immutable supplier_approval_audit event
 // through the shared server-only audit trail helper.
 
 export interface SupplierApprovalDraft {
   productName: string;
+  shortDescription?: string;
+  description?: string;
+  model?: string;
+  barcode?: string;
+  productType?: string;
+  tags?: string[];
+  keyFeatures?: string[];
+  whatsIncluded?: string[];
+  slug?: string;
   sellingPrice: number;
   comparePrice: number;
   stock: number;
@@ -35,8 +59,13 @@ export interface SupplierApprovalDraft {
   brand: string;
   specifications?: Record<string, string>;
   isActive: boolean;
+  isNew?: boolean;
+  isFeatured?: boolean;
+  isBestSeller?: boolean;
   primaryImageUrl: string;
   galleryImageUrls: string[];
+  fieldOwnership?: SupplierProductFieldOwnershipDecision;
+  editedFields?: string[];
 }
 
 export interface SupplierAdminReviewer {
@@ -130,6 +159,15 @@ const cleanSpecifications = (value: unknown): Record<string, string> => {
   ]));
 };
 
+const cleanTextList = (value: unknown, field: string, maximum = 40): string[] => {
+  if (!Array.isArray(value) || value.length > maximum) throw new ApiError(`${field} is invalid.`, 400);
+  return [...new Set(value.map((entry) => cleanText(entry, field, 240, false)).filter(Boolean))];
+};
+
+const cleanOptionalText = (value: unknown, field: string, maximum: number): string => value === undefined
+  ? ""
+  : cleanText(value, field, maximum, false);
+
 export function parseSupplierApprovalDraft(value: unknown): SupplierApprovalDraft | undefined {
   if (value === undefined) return undefined;
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -137,6 +175,12 @@ export function parseSupplierApprovalDraft(value: unknown): SupplierApprovalDraf
   }
   const draft = value as Record<string, unknown>;
   const productName = cleanText(draft.productName, "Product name", 300);
+  const shortDescription = cleanOptionalText(draft.shortDescription, "Short description", 500);
+  const description = cleanOptionalText(draft.description, "Description", 20_000);
+  const model = cleanOptionalText(draft.model, "Model", 160);
+  const barcode = cleanOptionalText(draft.barcode, "Barcode", 64);
+  const productType = cleanOptionalText(draft.productType, "Product type", 160);
+  const slug = cleanOptionalText(draft.slug, "SEO slug", 160);
   const category = cleanText(draft.category, "Category", 160);
   const subcategory = typeof draft.subcategory === "string" ? cleanText(draft.subcategory, "Subcategory", 160, false) : undefined;
   const specifications = draft.specifications === undefined ? undefined : cleanSpecifications(draft.specifications);
@@ -153,6 +197,11 @@ export function parseSupplierApprovalDraft(value: unknown): SupplierApprovalDraf
     throw new ApiError("Every gallery image must use a valid supplier image URL.", 400);
   }
   if (typeof draft.isActive !== "boolean") throw new ApiError("Product visibility is invalid.", 400);
+  if ((draft.isNew !== undefined && typeof draft.isNew !== "boolean")
+    || (draft.isFeatured !== undefined && typeof draft.isFeatured !== "boolean")
+    || (draft.isBestSeller !== undefined && typeof draft.isBestSeller !== "boolean")) {
+    throw new ApiError("Product merchandising flags are invalid.", 400);
+  }
 
   const sellingPrice = cleanNumber(draft.sellingPrice, "Selling price", { minimum: Number.EPSILON });
   const comparePrice = cleanNumber(draft.comparePrice, "Compare price", { minimum: 0 });
@@ -162,6 +211,15 @@ export function parseSupplierApprovalDraft(value: unknown): SupplierApprovalDraf
 
   return {
     productName,
+    ...(draft.shortDescription !== undefined ? { shortDescription } : {}),
+    ...(draft.description !== undefined ? { description } : {}),
+    ...(draft.model !== undefined ? { model } : {}),
+    ...(draft.barcode !== undefined ? { barcode } : {}),
+    ...(draft.productType !== undefined ? { productType } : {}),
+    ...(draft.tags !== undefined ? { tags: cleanTextList(draft.tags, "Product tags") } : {}),
+    ...(draft.keyFeatures !== undefined ? { keyFeatures: cleanTextList(draft.keyFeatures, "Key features") } : {}),
+    ...(draft.whatsIncluded !== undefined ? { whatsIncluded: cleanTextList(draft.whatsIncluded, "What's included") } : {}),
+    ...(draft.slug !== undefined ? { slug } : {}),
     sellingPrice,
     comparePrice,
     stock: cleanNumber(draft.stock, "Stock", { integer: true, minimum: 0 }),
@@ -170,8 +228,25 @@ export function parseSupplierApprovalDraft(value: unknown): SupplierApprovalDraf
     brand,
     ...(specifications !== undefined ? { specifications } : {}),
     isActive: draft.isActive,
+    ...(draft.isNew !== undefined ? { isNew: draft.isNew === true } : {}),
+    ...(draft.isFeatured !== undefined ? { isFeatured: draft.isFeatured === true } : {}),
+    ...(draft.isBestSeller !== undefined ? { isBestSeller: draft.isBestSeller === true } : {}),
     primaryImageUrl,
     galleryImageUrls,
+    ...(draft.fieldOwnership !== undefined ? { fieldOwnership: (() => {
+      try {
+        return parseSupplierProductFieldOwnershipDecision(draft.fieldOwnership);
+      } catch (error) {
+        throw new ApiError(error instanceof Error ? error.message : "Product field ownership is invalid.", 400);
+      }
+    })() } : {}),
+    ...(draft.editedFields !== undefined ? { editedFields: (() => {
+      try {
+        return parseSupplierProductEditedFields(draft.editedFields);
+      } catch (error) {
+        throw new ApiError(error instanceof Error ? error.message : "Edited product fields are invalid.", 400);
+      }
+    })() } : {}),
   };
 }
 
@@ -243,6 +318,15 @@ const toPublicProductPayload = (queueItem: QueueItemRecord, draft: SupplierAppro
     media: toPublishedProductMedia(managedMedia),
     supplierMedia: managedMedia,
     name: productName,
+    shortDescription: draft?.shortDescription ?? originalPayload.shortDescription,
+    description: draft?.description ?? originalPayload.description,
+    model: draft?.model ?? originalPayload.model,
+    barcode: draft?.barcode ?? originalPayload.barcode,
+    productType: draft?.productType ?? originalPayload.productType,
+    tags: draft?.tags ?? originalPayload.tags,
+    keyFeatures: draft?.keyFeatures ?? originalPayload.keyFeatures,
+    whatsIncluded: draft?.whatsIncluded ?? originalPayload.whatsIncluded,
+    slug: draft?.slug ?? originalPayload.slug,
     price,
     originalPrice: normalizedComparePrice,
     discount,
@@ -252,6 +336,9 @@ const toPublicProductPayload = (queueItem: QueueItemRecord, draft: SupplierAppro
     brand: draft?.brand || stringValue(originalPayload.brand),
     specs: { ...specs, ...(draft?.specifications || {}) },
     isActive,
+    isNew: draft?.isNew ?? originalPayload.isNew === true,
+    isFeatured: draft?.isFeatured ?? originalPayload.isFeatured === true,
+    isBestSeller: draft?.isBestSeller ?? originalPayload.isBestSeller === true,
     active: isActive,
     visible: isActive,
     approved: true,
@@ -331,13 +418,19 @@ export async function decideSupplierQueueItem(
       id: requestedQueueItemId,
       reviewQueueItemId,
     };
-    const approvedPayload = action === "approved" ? toPublicProductPayload(queueItem, effectiveDraft) : undefined;
+    const isSupplierOfferRemoval = action === "approved"
+      && stringValue(queueItem.reconciliationAction) === "supplier_offer_unavailable";
+    let approvedPayload = action === "approved" ? toPublicProductPayload(queueItem, effectiveDraft) : undefined;
     const categoryReference = approvedPayload ? db.collection("categories").doc(String(approvedPayload.category)) : null;
     const approvedBrandId = approvedPayload ? String(approvedPayload.brand || "").trim() : "";
     const brandReference = approvedBrandId ? db.collection("brands").doc(approvedBrandId) : null;
     const needsCategoryMapping = Boolean(approvedPayload && Array.isArray(record(queueItem.supplierSnapshot).categoryHierarchy));
     const productReference = approvedPayload ? db.collection("products").doc(String(approvedPayload.id)) : null;
     const privateProductReference = approvedPayload ? db.collection(PRODUCT_PRIVATE_COLLECTION).doc(String(approvedPayload.id)) : null;
+    const supplierOfferId = stringValue(queueItem.supplierOfferId);
+    const supplierOfferReference = supplierOfferId
+      ? db.collection(SUPPLIER_PRODUCT_OFFERS_COLLECTION).doc(supplierOfferId)
+      : null;
     const supplierSnapshot = record(queueItem.supplierSnapshot);
     const categoryHierarchy = supplierSnapshot.categoryHierarchy;
     const supplierCategory = Array.isArray(categoryHierarchy) ? stringValue(categoryHierarchy[0]) : "";
@@ -360,6 +453,8 @@ export async function decideSupplierQueueItem(
       existingPrivateProductSnapshot,
       existingCategoryMappingSnapshot,
       existingBrandMappingSnapshot,
+      supplierOfferSnapshot,
+      productOffersSnapshot,
     ] = await Promise.all([
       categoryReference ? transaction.get(categoryReference) : Promise.resolve(null),
       brandReference ? transaction.get(brandReference) : Promise.resolve(null),
@@ -368,6 +463,10 @@ export async function decideSupplierQueueItem(
       privateProductReference ? transaction.get(privateProductReference) : Promise.resolve(null),
       categoryMappingReference ? transaction.get(categoryMappingReference) : Promise.resolve(null),
       brandMappingReference ? transaction.get(brandMappingReference) : Promise.resolve(null),
+      supplierOfferReference ? transaction.get(supplierOfferReference) : Promise.resolve(null),
+      approvedPayload
+        ? transaction.get(db.collection(SUPPLIER_PRODUCT_OFFERS_COLLECTION).where("productId", "==", String(approvedPayload.id)).limit(100))
+        : Promise.resolve(null),
     ]);
     const now = FieldValue.serverTimestamp();
     const previousState = reviewQueueState || "review_pending";
@@ -421,6 +520,117 @@ export async function decideSupplierQueueItem(
       }
     }
 
+    const currentOfferSelection = parseSupplierOfferSelection(existingPrivateProductSnapshot?.data()?.supplierOfferSelection);
+    const approvedSupplierOffer = supplierOfferSnapshot?.exists
+      ? projectSupplierOfferForAdmin({ id: supplierOfferSnapshot.id, ...supplierOfferSnapshot.data() })
+      : null;
+    const offerBelongsToProduct = Boolean(approvedPayload && approvedSupplierOffer && (
+      !approvedSupplierOffer.productId || approvedSupplierOffer.productId === String(approvedPayload.id)
+    ));
+    if (approvedSupplierOffer && !offerBelongsToProduct) {
+      throw new ApiError("Supplier offer does not belong to the reviewed product.", 409);
+    }
+    const approvedOffers = (productOffersSnapshot?.docs || [])
+      .map((document) => projectSupplierOfferForAdmin({ id: document.id, ...document.data() }))
+      .filter((offer): offer is SupplierProductOffer => Boolean(offer))
+      .map((offer) => approvedSupplierOffer && offer.id === approvedSupplierOffer.id
+        ? { ...approvedSupplierOffer, reviewStatus: isSupplierOfferRemoval ? approvedSupplierOffer.reviewStatus : "approved" as const }
+        : offer)
+      .filter((offer) => offer.reviewStatus === "approved" && (!isSupplierOfferRemoval || offer.id !== approvedSupplierOffer?.id));
+    if (approvedSupplierOffer && !isSupplierOfferRemoval && !approvedOffers.some((offer) => offer.id === approvedSupplierOffer.id)) {
+      approvedOffers.push({ ...approvedSupplierOffer, reviewStatus: "approved" });
+    }
+    const activeSupplierOffer = approvedSupplierOffer && approvedPayload
+      ? (isSupplierOfferRemoval
+        ? resolveActiveSupplierOffer(approvedOffers, currentOfferSelection)
+        : !currentOfferSelection.activeOfferId
+          ? approvedSupplierOffer
+          : resolveActiveSupplierOffer(approvedOffers, currentOfferSelection) || approvedSupplierOffer)
+      : null;
+    const activeCommerceOffer = activeSupplierOffer && isSupplierOfferAvailableForCommerce(activeSupplierOffer)
+      ? activeSupplierOffer
+      : null;
+    const projectedSupplierOffer = isSupplierOfferRemoval ? activeCommerceOffer : activeSupplierOffer;
+    const nextOfferSelection = approvedSupplierOffer && approvedPayload ? {
+      ...currentOfferSelection,
+      activeOfferId: activeCommerceOffer?.id || (isSupplierOfferRemoval ? null : activeSupplierOffer?.id || null),
+      updatedAt: now,
+      updatedBy: reviewer.uid,
+    } : currentOfferSelection;
+    const shouldProjectApprovedOffer = isSupplierOfferRemoval
+      || !approvedSupplierOffer
+      || !existingProductSnapshot?.exists
+      || nextOfferSelection.activeOfferId === approvedSupplierOffer.id;
+
+    let resolvedOwnership = existingPrivateProductSnapshot?.data()?.supplierFieldOwnership;
+    if (approvedPayload) {
+      const ownershipResult = applySupplierProductFieldOwnership({
+        proposedProduct: approvedPayload,
+        currentProduct: existingProductSnapshot?.exists ? existingProductSnapshot.data() : undefined,
+        existingOwnership: resolvedOwnership,
+        requestedOwnership: effectiveDraft?.fieldOwnership,
+        editedFields: effectiveDraft?.editedFields,
+        sourceId,
+        reviewerId: reviewer.uid,
+        timestamp: now,
+      });
+      resolvedOwnership = ownershipResult.ownership;
+      if (shouldProjectApprovedOffer || !existingProductSnapshot?.exists) {
+        approvedPayload = ownershipResult.product;
+      } else {
+        const preservedProduct: Record<string, unknown> = {
+          ...existingProductSnapshot.data(),
+          ...(existingPrivateProductSnapshot?.data() || {}),
+          id: String(approvedPayload.id),
+        };
+        for (const field of effectiveDraft?.editedFields || []) {
+          if (Object.hasOwn(ownershipResult.product, field)) preservedProduct[field] = ownershipResult.product[field];
+          else delete preservedProduct[field];
+        }
+        approvedPayload = preservedProduct;
+      }
+      approvedPayload.supplierFieldOwnership = resolvedOwnership;
+    }
+    if (approvedPayload && isSupplierOfferRemoval) {
+      const approvalBaseline = parseSupplierProductApprovalBaseline(queueItem.approvalBaseline);
+      approvedPayload = {
+        ...approvedPayload,
+        ...buildSupplierRemovalPublicProjection(
+          activeCommerceOffer,
+          existingProductSnapshot?.data(),
+          approvalBaseline?.stockAtCapture,
+        ),
+      };
+    }
+    if (approvedPayload && approvedSupplierOffer) approvedPayload.supplierOfferSelection = nextOfferSelection;
+    if (approvedPayload && projectedSupplierOffer) {
+      approvedPayload.supplierId = projectedSupplierOffer.supplierId;
+      approvedPayload.supplierSourceId = projectedSupplierOffer.sourceId;
+      approvedPayload.supplierItemCode = projectedSupplierOffer.sku;
+      approvedPayload.costPrice = projectedSupplierOffer.cost;
+      approvedPayload.supplierMetadata = {
+        ...record(approvedPayload.supplierMetadata),
+        supplierProductId: projectedSupplierOffer.supplierProductId,
+        sku: projectedSupplierOffer.sku,
+        barcode: projectedSupplierOffer.barcode,
+        inventoryLevel: projectedSupplierOffer.stock,
+        price: projectedSupplierOffer.price,
+        availability: projectedSupplierOffer.availability,
+        activeOfferId: projectedSupplierOffer.id,
+      };
+    } else if (approvedPayload && isSupplierOfferRemoval) {
+      approvedPayload.supplierId = "";
+      approvedPayload.supplierSourceId = "";
+      approvedPayload.supplierItemCode = "";
+      approvedPayload.costPrice = 0;
+      approvedPayload.supplierMetadata = {
+        ...record(approvedPayload.supplierMetadata),
+        inventoryLevel: 0,
+        availability: "unavailable",
+        activeOfferId: null,
+      };
+    }
+
     if (approvedPayload) {
       const categoryData = categorySnapshot?.exists ? categorySnapshot.data() || {} : {};
       const brandData = brandSnapshot?.exists ? brandSnapshot.data() || {} : {};
@@ -459,14 +669,23 @@ export async function decideSupplierQueueItem(
     if (approvedPayload) {
       decidedProductId = String(approvedPayload.id);
       const approvalBaseline = parseSupplierProductApprovalBaseline(queueItem.approvalBaseline);
+      const stockOwnership = record(resolvedOwnership).stock;
+      const stockOwner = typeof stockOwnership === "string" ? stockOwnership : stringValue(record(stockOwnership).owner);
+      const stockWasEdited = effectiveDraft?.editedFields?.includes("stock") === true;
       approvedProductPayload = {
         ...approvedPayload,
-        stock: reconcileSupplierApprovalStock(
-          approvalBaseline?.stockAtCapture,
-          existingProductSnapshot?.data()?.stock,
-          approvedPayload.stock,
-          existingProductSnapshot?.exists === true,
-        ),
+        stock: isSupplierOfferRemoval
+          ? Number(approvedPayload.stock ?? 0)
+          : stockOwner === "admin" && !stockWasEdited && existingProductSnapshot?.exists
+          ? Number(existingProductSnapshot.data()?.stock ?? 0)
+          : !shouldProjectApprovedOffer && !stockWasEdited && existingProductSnapshot?.exists
+            ? Number(existingProductSnapshot.data()?.stock ?? 0)
+          : reconcileSupplierApprovalStock(
+            approvalBaseline?.stockAtCapture,
+            existingProductSnapshot?.data()?.stock,
+            approvedPayload.stock,
+            existingProductSnapshot?.exists === true,
+          ),
         updatedAt: now,
       };
       const { publicData, commercialData } = splitProductData(approvedProductPayload);
@@ -478,6 +697,15 @@ export async function decideSupplierQueueItem(
         transaction.set(db.collection(PRODUCT_PRIVATE_COLLECTION).doc(decidedProductId), {
           ...commercialData,
           productId: decidedProductId,
+          updatedAt: now,
+        }, { merge: true });
+      }
+      if (supplierOfferReference && approvedSupplierOffer) {
+        transaction.set(supplierOfferReference, {
+          productId: decidedProductId,
+          reviewStatus: "approved",
+          approvedAt: now,
+          approvedBy: reviewer.uid,
           updatedAt: now,
         }, { merge: true });
       }
@@ -594,6 +822,14 @@ export async function decideSupplierQueueItem(
     }
 
     const terminalState = action === "approved" ? "approved" : action === "rejected" ? "rejected" : "suppressed";
+    if (action !== "approved" && supplierOfferReference && supplierOfferSnapshot?.exists) {
+      transaction.set(supplierOfferReference, {
+        reviewStatus: terminalState,
+        reviewedAt: now,
+        reviewedBy: reviewer.uid,
+        updatedAt: now,
+      }, { merge: true });
+    }
     const approvedProduct = approvedProductPayload ? splitProductData(approvedProductPayload) : undefined;
     const auditId = createSupplierAuditEvent(db, transaction, {
       queueItemId: reviewQueueItemId,

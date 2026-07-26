@@ -1,5 +1,14 @@
 import { RawA2ZProduct } from "./a2z/types";
 import { isDeepStrictEqual } from "node:util";
+import {
+  CanonicalSupplierFieldDefinition,
+  CanonicalSupplierFieldId,
+  SUPPLIER_FIELD_MANIFEST,
+  SupplierFieldAuditRepresentation,
+  SupplierFieldDestination,
+  SupplierFieldEmptyBehavior,
+  SupplierFieldSyncGroup,
+} from "./supplierFieldManifest";
 
 export interface SupplierImportValidationWarning {
   field: string;
@@ -8,80 +17,9 @@ export interface SupplierImportValidationWarning {
   severity: "warning";
 }
 
-const CUSTOMER_CATALOG_FIELDS: ReadonlyArray<keyof RawA2ZProduct> = [
-  "shortDescription",
-  "manufacturer",
-  "model",
-  "tags",
-  "keywords",
-  "productType",
-  "collection",
-  "attributes",
-  "variants",
-  "options",
-  "features",
-  "dimensions",
-  "weight",
-  "packageSize",
-  "shippingClass",
-  "warranty",
-  "countryOfOrigin",
-  "videoUrls",
-  "currency",
-  "tax",
-  "availability",
-  "slug",
-  "metaDescription",
-];
-
-const SUPPLIER_METADATA_FIELDS: ReadonlyArray<keyof RawA2ZProduct> = [
-  "supplierProductId",
-  "sku",
-  "barcode",
-  "title",
-  "shortDescription",
-  "longDescription",
-  "brand",
-  "manufacturer",
-  "model",
-  "categoryHierarchy",
-  "supplierCategory",
-  "supplierSubcategory",
-  "tags",
-  "keywords",
-  "productType",
-  "collection",
-  "attributes",
-  "variants",
-  "options",
-  "specifications",
-  "features",
-  "dimensions",
-  "weight",
-  "packageSize",
-  "shippingClass",
-  "warranty",
-  "countryOfOrigin",
-  "mediaGallery",
-  "videoUrls",
-  "price",
-  "comparePrice",
-  "costPrice",
-  "currency",
-  "tax",
-  "discount",
-  "inventoryLevel",
-  "availability",
-  "leadTime",
-  "minimumOrderQuantity",
-  "maximumOrderQuantity",
-  "visibility",
-  "status",
-  "lastUpdated",
-  "createdDate",
-  "slug",
-  "metaDescription",
-];
+const FIELD_MANIFEST: readonly CanonicalSupplierFieldDefinition[] = SUPPLIER_FIELD_MANIFEST;
+const CUSTOMER_CATALOG_FIELDS = FIELD_MANIFEST.filter((field) => field.catalogField);
+const SUPPLIER_METADATA_FIELDS = FIELD_MANIFEST.filter((field) => field.metadataField);
 
 const hasValue = (value: unknown): boolean => {
   if (value === undefined || value === null) return false;
@@ -97,66 +35,164 @@ const asRecord = (value: unknown): Record<string, unknown> => value && typeof va
 
 const hasCollectionValues = (value: unknown): boolean => hasValue(value);
 
-const DETAIL_CHANGE_FIELDS: ReadonlyArray<{ field: keyof RawA2ZProduct; label: string; catalogField?: string }> = [
-  { field: "supplierProductId", label: "Supplier Product ID" },
-  { field: "barcode", label: "Barcode", catalogField: "barcode" },
-  { field: "shortDescription", label: "Short Description", catalogField: "shortDescription" },
-  { field: "brand", label: "Supplier Brand" },
-  { field: "manufacturer", label: "Manufacturer", catalogField: "manufacturer" },
-  { field: "model", label: "Model", catalogField: "model" },
-  { field: "categoryHierarchy", label: "Supplier Category" },
-  { field: "supplierCategory", label: "Supplier Category" },
-  { field: "supplierSubcategory", label: "Supplier Subcategory" },
-  { field: "tags", label: "Tags", catalogField: "tags" },
-  { field: "keywords", label: "Keywords", catalogField: "keywords" },
-  { field: "productType", label: "Product Type", catalogField: "productType" },
-  { field: "collection", label: "Collection", catalogField: "collection" },
-  { field: "attributes", label: "Attributes", catalogField: "attributes" },
-  { field: "variants", label: "Variants", catalogField: "variants" },
-  { field: "options", label: "Options", catalogField: "options" },
-  { field: "specifications", label: "Specifications" },
-  { field: "features", label: "Features", catalogField: "features" },
-  { field: "dimensions", label: "Dimensions", catalogField: "dimensions" },
-  { field: "weight", label: "Weight", catalogField: "weight" },
-  { field: "packageSize", label: "Package Size", catalogField: "packageSize" },
-  { field: "shippingClass", label: "Shipping Class", catalogField: "shippingClass" },
-  { field: "warranty", label: "Warranty", catalogField: "warranty" },
-  { field: "countryOfOrigin", label: "Country of Origin", catalogField: "countryOfOrigin" },
-  { field: "videoUrls", label: "Videos", catalogField: "videoUrls" },
-  { field: "currency", label: "Currency", catalogField: "currency" },
-  { field: "tax", label: "Tax", catalogField: "tax" },
-  { field: "discount", label: "Supplier Discount" },
-  { field: "availability", label: "Availability", catalogField: "availability" },
-  { field: "leadTime", label: "Lead Time" },
-  { field: "minimumOrderQuantity", label: "Minimum Order Quantity" },
-  { field: "maximumOrderQuantity", label: "Maximum Order Quantity" },
-  { field: "visibility", label: "Supplier Visibility" },
-  { field: "status", label: "Supplier Status" },
-  { field: "slug", label: "SEO Slug", catalogField: "slug" },
-  { field: "metaDescription", label: "Meta Description", catalogField: "metaDescription" },
-];
+export interface SupplierFieldChange {
+  field: CanonicalSupplierFieldId;
+  label: string;
+  auditKey: string;
+  auditRepresentation: SupplierFieldAuditRepresentation;
+  before: unknown;
+  after: unknown;
+  changeType: "added" | "changed" | "invalid_removal";
+  syncGroup: SupplierFieldSyncGroup;
+  emptyBehavior: SupplierFieldEmptyBehavior;
+  adminEditable: boolean;
+  destinations: readonly SupplierFieldDestination[];
+}
+
+export type SupplierProductComparisonStatus = "NEW_PRODUCT" | "PRICE_CHANGED" | "STOCK_CHANGED" | "DESCRIPTION_CHANGED" | "IMAGE_CHANGED" | "UNCHANGED";
+
+export interface SupplierProductComparison {
+  status: SupplierProductComparisonStatus;
+  changedFields: string[];
+  fieldChanges: SupplierFieldChange[];
+}
+
+const pathValue = (record: Readonly<Record<string, unknown>>, path: string): unknown => {
+  let current: unknown = record;
+  for (const segment of path.split(".")) {
+    if (!current || typeof current !== "object" || Array.isArray(current)) return undefined;
+    current = (current as Record<string, unknown>)[segment];
+  }
+  return current;
+};
+
+const existingFieldValue = (
+  existing: Readonly<Record<string, unknown>>,
+  field: CanonicalSupplierFieldDefinition,
+): unknown => {
+  for (const path of field.existingPaths) {
+    const value = pathValue(existing, path);
+    if (hasValue(value)) return value;
+  }
+  return undefined;
+};
+
+const normalizedSupplierValue = (
+  product: RawA2ZProduct,
+  field: CanonicalSupplierFieldDefinition,
+): unknown => product[field.normalizedField];
+
+const canonicalize = (value: unknown, comparison: CanonicalSupplierFieldDefinition["comparison"]): unknown => {
+  if (comparison === "number") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  if (comparison === "text") return typeof value === "string" ? value.trim() : value;
+  if (comparison === "boolean") return Boolean(value);
+  if (comparison === "unordered_list") {
+    const values = Array.isArray(value) ? value : [];
+    return values.map((entry) => canonicalize(entry, "deep")).sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+  }
+  if (Array.isArray(value)) return value.map((entry) => canonicalize(entry, "deep"));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => [key, canonicalize(entry, "deep")]));
+  }
+  return value ?? null;
+};
+
+const valuesEqual = (
+  left: unknown,
+  right: unknown,
+  comparison: CanonicalSupplierFieldDefinition["comparison"],
+): boolean => isDeepStrictEqual(canonicalize(left, comparison), canonicalize(right, comparison));
+
+const fieldWasProvided = (product: RawA2ZProduct, field: CanonicalSupplierFieldDefinition): boolean => {
+  const providedFields = new Set(product.providedFields || []);
+  return providedFields.has(field.presenceField || field.id)
+    || (field.id === "mediaGallery" && product.mediaGallery.length > 0)
+    || (field.id === "extraAttributes" && hasValue(product.extraAttributes));
+};
+
+/** Returns one complete, serializable before/after record per changed supplier field. */
+export function detectSupplierProductFieldChanges(
+  product: RawA2ZProduct,
+  existing: Readonly<Record<string, unknown>>,
+): SupplierFieldChange[] {
+  const changes: SupplierFieldChange[] = [];
+  for (const field of FIELD_MANIFEST) {
+    if (!fieldWasProvided(product, field)) continue;
+    const incoming = normalizedSupplierValue(product, field);
+    const current = existingFieldValue(existing, field);
+    if (!hasValue(incoming)) {
+      if (field.emptyBehavior === "reject" && hasValue(current)) {
+        changes.push({
+          field: field.id as CanonicalSupplierFieldId,
+          label: field.audit.label,
+          auditKey: field.audit.key,
+          auditRepresentation: field.audit.representation,
+          before: current,
+          after: null,
+          changeType: "invalid_removal",
+          syncGroup: field.syncGroup,
+          emptyBehavior: field.emptyBehavior,
+          adminEditable: field.adminEditable,
+          destinations: field.destinations,
+        });
+      }
+      continue;
+    }
+    if (valuesEqual(incoming, current, field.comparison)) continue;
+    const label = field.id === "mediaGallery"
+      && Array.isArray(incoming)
+      && Array.isArray(current)
+      && incoming[0] !== current[0]
+      ? "Primary Image"
+      : field.audit.label;
+    changes.push({
+      field: field.id as CanonicalSupplierFieldId,
+      label,
+      auditKey: field.audit.key,
+      auditRepresentation: field.audit.representation,
+      before: current ?? null,
+      after: incoming,
+      changeType: hasValue(current) ? "changed" : "added",
+      syncGroup: field.syncGroup,
+      emptyBehavior: field.emptyBehavior,
+      adminEditable: field.adminEditable,
+      destinations: field.destinations,
+    });
+  }
+  return changes;
+}
+
+export function buildSupplierProductComparison(
+  product: RawA2ZProduct,
+  existing?: Readonly<Record<string, unknown>>,
+): SupplierProductComparison {
+  const fieldChanges = detectSupplierProductFieldChanges(product, existing || {});
+  const changedFields = [...new Set(fieldChanges.map((change) => change.label))];
+  if (!existing) return { status: "NEW_PRODUCT", changedFields, fieldChanges };
+  if (fieldChanges.length === 0) return { status: "UNCHANGED", changedFields, fieldChanges };
+  const groups = new Set(fieldChanges.map((change) => change.syncGroup));
+  if (groups.has("pricing")) return { status: "PRICE_CHANGED", changedFields, fieldChanges };
+  if (groups.has("inventory")) return { status: "STOCK_CHANGED", changedFields, fieldChanges };
+  if (groups.has("media")) return { status: "IMAGE_CHANGED", changedFields, fieldChanges };
+  return { status: "DESCRIPTION_CHANGED", changedFields, fieldChanges };
+}
 
 /** Detects supplied metadata changes without interpreting absent fields as deletes. */
 export function detectSupplierProductDetailChanges(
   product: RawA2ZProduct,
   existing: Readonly<Record<string, unknown>>,
 ): string[] {
-  const providedFields = new Set(product.providedFields || []);
-  const existingMetadata = asRecord(existing.supplierMetadata);
-  const changes: string[] = [];
-  for (const descriptor of DETAIL_CHANGE_FIELDS) {
-    if (!providedFields.has(String(descriptor.field))) continue;
-    const incoming = product[descriptor.field];
-    if (!hasValue(incoming)) continue;
-    const current = descriptor.catalogField && hasValue(existing[descriptor.catalogField])
-      ? existing[descriptor.catalogField]
-      : existingMetadata[descriptor.field];
-    if (!isDeepStrictEqual(incoming, current)) changes.push(descriptor.label);
-  }
-  if (product.extraAttributes && !isDeepStrictEqual(product.extraAttributes, asRecord(existingMetadata.extraAttributes))) {
-    changes.push("Extra Attributes");
-  }
-  return [...new Set(changes)];
+  const coreFields = new Set<CanonicalSupplierFieldId>([
+    "sku", "title", "longDescription", "mediaGallery", "price", "comparePrice", "costPrice", "stock",
+  ]);
+  return [...new Set(detectSupplierProductFieldChanges(product, existing)
+    .filter((change) => !coreFields.has(change.field))
+    .map((change) => change.label))];
 }
 
 /**
@@ -166,13 +202,17 @@ export function detectSupplierProductDetailChanges(
 export function mergeSupplierCatalogDetails(
   product: RawA2ZProduct,
   existing: Readonly<Record<string, unknown>> = {},
-  acceptSupplierValues = true,
+  acceptSupplierValues: boolean | ReadonlySet<string> = true,
 ): Record<string, unknown> {
   const merged: Record<string, unknown> = {};
-  for (const field of CUSTOMER_CATALOG_FIELDS) {
+  for (const definition of CUSTOMER_CATALOG_FIELDS) {
+    const field = definition.catalogField;
+    if (!field) continue;
     const supplierValue = product[field];
     const currentValue = existing[field];
-    if (acceptSupplierValues && hasValue(supplierValue)) merged[field] = supplierValue;
+    const accepted = acceptSupplierValues === true
+      || (acceptSupplierValues !== false && acceptSupplierValues.has(definition.id));
+    if (accepted && hasValue(supplierValue)) merged[field] = supplierValue;
     else if (hasValue(currentValue)) merged[field] = currentValue;
   }
   return merged;
@@ -186,16 +226,24 @@ export function mergeSupplierCatalogDetails(
 export function mergeSupplierProductMetadata(
   product: RawA2ZProduct,
   existing: Readonly<Record<string, unknown>> = {},
+  acceptSupplierValues: boolean | ReadonlySet<string> = true,
 ): Record<string, unknown> {
   const merged: Record<string, unknown> = { ...existing };
   const providedFields = new Set(product.providedFields || []);
-  for (const field of SUPPLIER_METADATA_FIELDS) {
-    const value = product[field];
-    const presenceField = field === "inventoryLevel" ? "stock" : String(field);
+  for (const definition of SUPPLIER_METADATA_FIELDS) {
+    const field = definition.metadataField;
+    if (!field) continue;
+    const directValue = product[field];
+    const value = hasValue(directValue) ? directValue : product[definition.normalizedField];
+    const presenceField = definition.presenceField || definition.id;
     const explicitlyProvided = providedFields.has(presenceField);
-    if ((explicitlyProvided || field === "sku" || field === "title") && hasValue(value)) merged[field] = value;
+    const accepted = acceptSupplierValues === true
+      || (acceptSupplierValues !== false && acceptSupplierValues.has(definition.id));
+    if (accepted && explicitlyProvided && hasValue(value)) merged[field] = value;
   }
-  if (product.extraAttributes && Object.keys(product.extraAttributes).length > 0) {
+  const acceptsExtraAttributes = acceptSupplierValues === true
+    || (acceptSupplierValues !== false && acceptSupplierValues.has("extraAttributes"));
+  if (acceptsExtraAttributes && product.extraAttributes && Object.keys(product.extraAttributes).length > 0) {
     merged.extraAttributes = {
       ...asRecord(existing.extraAttributes),
       ...product.extraAttributes,
@@ -204,7 +252,12 @@ export function mergeSupplierProductMetadata(
   const existingProvidedFields = Array.isArray(existing.providedFields)
     ? existing.providedFields.filter((field): field is string => typeof field === "string")
     : [];
-  const mergedProvidedFields = [...new Set([...existingProvidedFields, ...providedFields])];
+  const acceptedProvidedFields = acceptSupplierValues === true
+    ? [...providedFields]
+    : acceptSupplierValues === false
+      ? []
+      : [...providedFields].filter((field) => acceptSupplierValues.has(field));
+  const mergedProvidedFields = [...new Set([...existingProvidedFields, ...acceptedProvidedFields])];
   if (mergedProvidedFields.length > 0) merged.providedFields = mergedProvidedFields;
   return merged;
 }

@@ -19,10 +19,12 @@ test('Sprint 6 defaults to hourly scheduler execution and derives per-source nex
 test('Sprint 6 keeps manual and scheduled runs on one pipeline with leases, recovery, and source failure isolation', () => {
   const sync = readFileSync('functions/src/scheduled/supplierSync.ts', 'utf8');
   const routes = readFileSync('functions/src/api/routes/supplier.ts', 'utf8');
+  const worker = readFileSync('functions/src/scheduled/supplierSyncWorker.ts', 'utf8');
 
   assert.match(sync, /export async function runSupplierSync/);
-  assert.match(sync, /runSupplierSync\(\{ trigger: "scheduled" \}\)/);
-  assert.match(routes, /runSupplierSync\(\{[\s\S]*trigger: "manual"/);
+  assert.match(sync, /runScheduledSupplierSync[\s\S]*createSupplierSyncJob/);
+  assert.match(routes, /createSupplierSyncJob\(adminDb, \{[\s\S]*trigger: "manual"/);
+  assert.match(worker, /runSupplierSync\(\{/);
   assert.match(sync, /acquireSyncLock\(startedAt, batchId, trigger\)/);
   assert.match(sync, /recoverStaleSourceSyncLeases/);
   assert.match(sync, /clearInterruptedSourceSyncMarkers/);
@@ -37,7 +39,7 @@ test('Sprint 6 keeps manual and scheduled runs on one pipeline with leases, reco
   assert.match(sync, /retryCount/);
   assert.match(sync, /classifySupplierQueueFailure/);
   assert.match(sync, /lastFailureClassification/);
-  assert.match(sync, /existingQueueIds\.has\(queueItemId\) \|\| queuedSupplierCodes\.has/);
+  assert.match(sync, /existingQueueIds\.has\(queueItemId\)/);
 });
 
 test('Sprint 6 exposes administrator-only scheduler observability without changing the Supplier Hub UI', () => {

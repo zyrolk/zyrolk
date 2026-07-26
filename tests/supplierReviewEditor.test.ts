@@ -44,6 +44,15 @@ const queueItem = {
 test('supplier review draft projects editable product values with safe defaults', () => {
   assert.deepEqual(createSupplierReviewDraft(queueItem), {
     productName: 'Supplier Watch',
+    shortDescription: '',
+    description: 'Supplier description',
+    model: '',
+    barcode: '',
+    productType: '',
+    tags: [],
+    keyFeatures: [],
+    whatsIncluded: [],
+    slug: '',
     sellingPrice: 1500,
     comparePrice: 1700,
     stock: 5,
@@ -52,8 +61,19 @@ test('supplier review draft projects editable product values with safe defaults'
     brand: 'Supplier Brand',
     specifications: { Brand: 'Supplier Brand' },
     isActive: true,
+    isNew: false,
+    isFeatured: false,
+    isBestSeller: false,
     primaryImageUrl: 'https://a2zdropshipping.lk/products/watch.jpg',
     galleryImageUrls: [],
+    fieldOwnership: {
+      name: 'admin', shortDescription: 'admin', description: 'admin', model: 'admin', barcode: 'admin',
+      productType: 'admin', tags: 'admin', keyFeatures: 'admin', whatsIncluded: 'admin', slug: 'admin',
+      price: 'admin', originalPrice: 'admin', stock: 'admin', category: 'admin', subcategory: 'admin',
+      brand: 'admin', specs: 'admin', isActive: 'admin', isNew: 'admin', isFeatured: 'admin',
+      isBestSeller: 'admin', imageUrl: 'admin', imageUrls: 'admin',
+    },
+    editedFields: [],
   });
 });
 
@@ -70,6 +90,7 @@ test('supplier profit and margin update from selling price', () => {
 
 test('supplier review validation blocks invalid publish values', () => {
   const errors = validateSupplierReviewDraft({
+    ...createSupplierReviewDraft(queueItem),
     productName: ' ',
     sellingPrice: 0,
     comparePrice: -1,
@@ -107,6 +128,7 @@ test('publish payload guard requires image, selling price, and a valid category'
 test('approval publishes edited values and preserves immutable supplier values for audit', () => {
   const original = structuredClone(queueItem);
   const approved = buildSupplierApprovalItem(queueItem, {
+    ...createSupplierReviewDraft(queueItem),
     productName: 'Zyro Smart Watch',
     sellingPrice: 2200,
     comparePrice: 2500,
