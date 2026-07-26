@@ -95,9 +95,27 @@ test('Supplier Hub keeps its authenticated API callback stable across progress r
 
 test('Supplier Hub prevents another source sync while an active job is being tracked', () => {
   const component = projectFile('src/components/SupplierHubFiveStars.tsx');
-  assert.match(component, /syncStartInFlightRef\.current \|\| isSupplierSyncJobActive\(activeSyncJob\)/);
+  assert.match(component, /syncStartInFlightRef\.current \|\| isSupplierSyncJobActive\(currentJob\)/);
+  assert.match(component, /const currentJob = activeSyncJobRef\.current/);
   assert.match(component, /disabled=\{isSyncing \|\| syncingSourceId !== null \|\| testingSourceId !== null\}/);
   assert.match(component, /supplier-sync\/jobs\?limit=20/);
+});
+
+test('operations sync delegates to the canonical parent job state and shared duplicate guard', () => {
+  const parent = projectFile('src/components/SupplierHubFiveStars.tsx');
+  const operations = projectFile('src/components/supplier-operations/SupplierOperationsDashboard.tsx');
+  const actionStart = operations.indexOf('const runSupplierAction');
+  const actionEnd = operations.indexOf('const runQueueAction', actionStart);
+
+  assert.ok(actionStart >= 0 && actionEnd > actionStart);
+  assert.match(parent, /onSyncSupplier=\{handleSyncSupplier\}/);
+  assert.match(parent, /syncInProgress=\{isSyncing\}/);
+  assert.match(parent, /const handleSyncSupplier = useCallback/);
+  assert.match(parent, /applyActiveSyncJob\(result\.job\)/);
+  assert.match(parent, /const applyActiveSyncJob = useCallback[\s\S]*setIsSyncing\(active\)/);
+  assert.match(operations.slice(actionStart, actionEnd), /action === 'sync' \|\| action === 'retry'/);
+  assert.match(operations.slice(actionStart, actionEnd), /await onSyncSupplier\(\[supplierId\]\)/);
+  assert.match(operations, /disabled=\{syncInProgress \|\| Boolean\(actionId\)\}/);
 });
 
 test('operations refresh does not duplicate queue requests or rerender on unchanged parent props', () => {

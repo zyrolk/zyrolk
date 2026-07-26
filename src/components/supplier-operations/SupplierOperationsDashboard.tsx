@@ -24,6 +24,8 @@ type SupplierApiRequest = (path: string, method: 'GET' | 'POST', body?: Record<s
 
 interface SupplierOperationsDashboardProps {
   requestApi: SupplierApiRequest;
+  onSyncSupplier: (sourceIds?: string[]) => Promise<boolean>;
+  syncInProgress: boolean;
 }
 
 interface OperationsSummary {
@@ -146,7 +148,11 @@ const downloadCsv = (name: string, records: Array<Record<string, unknown>>): voi
   URL.revokeObjectURL(link.href);
 };
 
-function SupplierOperationsDashboard({ requestApi }: SupplierOperationsDashboardProps) {
+function SupplierOperationsDashboard({
+  requestApi,
+  onSyncSupplier,
+  syncInProgress,
+}: SupplierOperationsDashboardProps) {
   const [snapshot, setSnapshot] = useState<OperationsSnapshot | null>(null);
   const [queueItems, setQueueItems] = useState<QueueItem[]>([]);
   const [historyItems, setHistoryItems] = useState<Array<Record<string, any>>>([]);
@@ -227,6 +233,13 @@ function SupplierOperationsDashboard({ requestApi }: SupplierOperationsDashboard
     setActionId(`${supplierId}:${action}`);
     setError(null);
     try {
+      if (action === 'sync' || action === 'retry') {
+        const accepted = await onSyncSupplier([supplierId]);
+        if (!accepted) return;
+        await loadAll(true);
+        return;
+      }
+
       await readJson(await requestApi(`/api/supplier-operations/suppliers/${encodeURIComponent(supplierId)}/action`, 'POST', { action }));
       await loadAll(true);
     } catch (actionError) {
@@ -343,7 +356,7 @@ function SupplierOperationsDashboard({ requestApi }: SupplierOperationsDashboard
             <div className="flex items-start justify-between gap-3"><div><h5 className="font-black text-slate-900 dark:text-white">{supplier.name}</h5><p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{supplier.status}</p></div><div className={`rounded-full px-3 py-1 text-xs font-black ${supplier.healthScore >= 80 ? 'bg-emerald-100 text-emerald-700' : supplier.healthScore >= 50 ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'}`}>{supplier.healthScore}%</div></div>
             <dl className="mt-4 grid grid-cols-2 gap-3 text-xs"><div><dt className="text-slate-400">Last success</dt><dd className="font-semibold text-slate-700 dark:text-slate-200">{dateTime(supplier.lastSuccess)}</dd></div><div><dt className="text-slate-400">Average sync</dt><dd className="font-semibold text-slate-700 dark:text-slate-200">{duration(supplier.syncDurationMs)}</dd></div><div><dt className="text-slate-400">Products</dt><dd className="font-semibold text-slate-700 dark:text-slate-200">{supplier.productCount}</dd></div><div><dt className="text-slate-400">Queue</dt><dd className="font-semibold text-slate-700 dark:text-slate-200">{supplier.queueSize}</dd></div></dl>
             {supplier.failureReason && supplier.failureReason !== 'None' && <p className="mt-3 rounded-xl bg-red-50 p-2 text-xs text-red-700 dark:bg-red-950/30 dark:text-red-300">{supplier.failureReason}</p>}
-            <div className="mt-4 flex flex-wrap gap-2"><button type="button" onClick={() => void runSupplierAction(supplier.id, 'sync')} disabled={Boolean(actionId)} className="min-h-10 rounded-xl bg-blue-600 px-3 text-[10px] font-black text-white"><RefreshCw className="mr-1 inline h-3.5 w-3.5" />Sync</button>{supplier.enabled ? <><button type="button" onClick={() => void runSupplierAction(supplier.id, 'pause')} disabled={Boolean(actionId)} className="min-h-10 rounded-xl bg-amber-100 px-3 text-[10px] font-black text-amber-700"><Pause className="mr-1 inline h-3.5 w-3.5" />Pause</button><button type="button" onClick={() => void runSupplierAction(supplier.id, 'disable')} disabled={Boolean(actionId)} className="min-h-10 rounded-xl bg-slate-100 px-3 text-[10px] font-black text-slate-700"><XCircle className="mr-1 inline h-3.5 w-3.5" />Disable</button></> : <button type="button" onClick={() => void runSupplierAction(supplier.id, 'resume')} disabled={Boolean(actionId)} className="min-h-10 rounded-xl bg-emerald-100 px-3 text-[10px] font-black text-emerald-700"><Play className="mr-1 inline h-3.5 w-3.5" />Resume</button>}{supplier.lastFailure && <button type="button" onClick={() => void runSupplierAction(supplier.id, 'retry')} disabled={Boolean(actionId)} className="min-h-10 rounded-xl bg-red-100 px-3 text-[10px] font-black text-red-700"><RotateCcw className="mr-1 inline h-3.5 w-3.5" />Retry failed sync</button>}</div>
+            <div className="mt-4 flex flex-wrap gap-2"><button type="button" onClick={() => void runSupplierAction(supplier.id, 'sync')} disabled={syncInProgress || Boolean(actionId)} className="min-h-10 rounded-xl bg-blue-600 px-3 text-[10px] font-black text-white disabled:cursor-not-allowed disabled:opacity-50"><RefreshCw className="mr-1 inline h-3.5 w-3.5" />Sync</button>{supplier.enabled ? <><button type="button" onClick={() => void runSupplierAction(supplier.id, 'pause')} disabled={Boolean(actionId)} className="min-h-10 rounded-xl bg-amber-100 px-3 text-[10px] font-black text-amber-700"><Pause className="mr-1 inline h-3.5 w-3.5" />Pause</button><button type="button" onClick={() => void runSupplierAction(supplier.id, 'disable')} disabled={Boolean(actionId)} className="min-h-10 rounded-xl bg-slate-100 px-3 text-[10px] font-black text-slate-700"><XCircle className="mr-1 inline h-3.5 w-3.5" />Disable</button></> : <button type="button" onClick={() => void runSupplierAction(supplier.id, 'resume')} disabled={Boolean(actionId)} className="min-h-10 rounded-xl bg-emerald-100 px-3 text-[10px] font-black text-emerald-700"><Play className="mr-1 inline h-3.5 w-3.5" />Resume</button>}{supplier.lastFailure && <button type="button" onClick={() => void runSupplierAction(supplier.id, 'retry')} disabled={syncInProgress || Boolean(actionId)} className="min-h-10 rounded-xl bg-red-100 px-3 text-[10px] font-black text-red-700 disabled:cursor-not-allowed disabled:opacity-50"><RotateCcw className="mr-1 inline h-3.5 w-3.5" />Retry failed sync</button>}</div>
           </article>)}
         </div>
       </section>
