@@ -149,7 +149,8 @@ test("Supplier Hub exposes audited bulk actions and both sync paths resolve pers
   assert.match(scheduledSync, /matchesSupplierCategoryFilter/);
   assert.match(scheduledSync, /settings\.categoryMappings/);
   assert.match(scheduledSync, /isSupplierSourceAutoSyncDue/);
-  assert.match(scheduledSync, /filterSupplierComparison/);
+  assert.match(scheduledSync, /selectSupplierComparisonForReview/);
+  assert.match(scheduledSync, /hasActiveReviewQueueItem/);
   assert.match(scheduledSync, /dryRunMode/);
 });
 

@@ -42,10 +42,10 @@ import { matchesSupplierCategoryFilter, SupplierCategoryMappings } from "./suppl
 import {
   calculateSupplierInitialPricing,
   collectDiscoveredSupplierCategories,
-  filterSupplierComparison,
   getSupplierImageLimit,
   isSupplierSourceAutoSyncDue,
   resolveSupplierProductLimit,
+  selectSupplierComparisonForReview,
   SupplierSourceSyncSettings,
 } from "./supplierSyncSettings";
 import {
@@ -1728,7 +1728,21 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
             costPrice: ownOffer.cost,
             stock: ownOffer.stock,
           } : match ? { ...match } : undefined;
-          const comparison = filterSupplierComparison(buildSupplierProductComparison(product, comparisonBaseline), sourceSettings);
+          const hasActiveReviewQueueItem = activeReviewQueueDocs.some((queueDoc) => {
+            const data = queueDoc.data();
+            return queueDoc.id === queueItemId
+              || String(data.supplierOfferId || "") === ownOfferId
+              || (
+                String(data.sourceId || "") === source.id
+                && normalizeConflictValue(data.supplierCode) === normalizedSupplierCode
+              );
+          });
+          const comparison = selectSupplierComparisonForReview(
+            buildSupplierProductComparison(product, comparisonBaseline),
+            sourceSettings,
+            ownOffer?.reviewStatus,
+            hasActiveReviewQueueItem,
+          );
           if (!comparison) {
             queuedWrites.push({
               collection: SUPPLIER_PRODUCT_OFFERS_COLLECTION,

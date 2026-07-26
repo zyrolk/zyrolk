@@ -63,6 +63,46 @@ test('every persisted supplier sync-mode flag filters its own change group', () 
   });
 });
 
+test('suppressed unchanged supplier offers are requeued for review', () => {
+  const comparison = { status: 'UNCHANGED' as const, changedFields: [] };
+  assert.deepEqual(
+    scheduledPolicy.selectSupplierComparisonForReview(comparison, {}, 'suppressed', false),
+    comparison,
+  );
+});
+
+test('rejected unchanged supplier offers are requeued for review', () => {
+  const comparison = { status: 'UNCHANGED' as const, changedFields: [] };
+  assert.deepEqual(
+    scheduledPolicy.selectSupplierComparisonForReview(comparison, {}, 'rejected', false),
+    comparison,
+  );
+});
+
+test('approved unchanged supplier offers remain skipped', () => {
+  assert.equal(
+    scheduledPolicy.selectSupplierComparisonForReview(
+      { status: 'UNCHANGED', changedFields: [] },
+      {},
+      'approved',
+      false,
+    ),
+    null,
+  );
+});
+
+test('an active deterministic queue item prevents duplicate reopening', () => {
+  assert.equal(
+    scheduledPolicy.selectSupplierComparisonForReview(
+      { status: 'UNCHANGED', changedFields: [] },
+      {},
+      'suppressed',
+      true,
+    ),
+    null,
+  );
+});
+
 test('supplier category discovery is normalized, deduplicated, and deterministic', () => {
   policies.forEach(({ collectDiscoveredSupplierCategories }) => {
     assert.deepEqual(collectDiscoveredSupplierCategories([

@@ -96,6 +96,23 @@ export function filterSupplierComparison(
   return { status: 'DESCRIPTION_CHANGED', changedFields: allowedFields, ...filteredChanges };
 }
 
+/**
+ * Queue policy for an existing supplier offer. Rejected and suppressed offers
+ * may be reviewed again even when the supplier payload is unchanged, but an
+ * already-active deterministic queue item always wins to prevent duplicates.
+ */
+export function selectSupplierComparisonForReview(
+  comparison: SupplierComparison,
+  settings: SupplierSourceSyncSettings | undefined,
+  offerReviewStatus: unknown,
+  hasActiveQueueItem: boolean,
+): SupplierComparison | null {
+  const filtered = filterSupplierComparison(comparison, settings);
+  if (filtered || comparison.status !== 'UNCHANGED' || hasActiveQueueItem) return filtered;
+  const reviewStatus = String(offerReviewStatus || '').trim().toLowerCase();
+  return reviewStatus === 'suppressed' || reviewStatus === 'rejected' ? comparison : null;
+}
+
 export function getSupplierImageLimit(value: unknown, maximum = 20): number {
   const safeMaximum = Math.max(1, Math.floor(maximum));
   const parsed = Number(value);
