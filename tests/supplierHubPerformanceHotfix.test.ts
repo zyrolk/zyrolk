@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import {
   formatSupplierSyncProgress,
+  selectSupplierSyncJobForDisplay,
   SupplierSyncJobView,
 } from '../src/services/supplierSyncJobs';
 
@@ -49,12 +50,54 @@ test('active single-source traversal reports indeterminate progress instead of a
   assert.equal(completed, 'Completed · 40 scanned · 8 queued');
 });
 
+test('job selection follows the worker state instead of a newer waiting job', () => {
+  const running = buildJob({
+    id: 'running-job',
+    state: 'running',
+    createdAt: '2026-07-26T00:00:00.000Z',
+    startedAt: '2026-07-26T00:00:01.000Z',
+  });
+  const newerWaiting = buildJob({
+    id: 'waiting-job',
+    state: 'waiting',
+    createdAt: '2026-07-26T00:01:00.000Z',
+    nextAttemptAt: '2026-07-26T00:01:15.000Z',
+    progress: { ...buildJob().progress, phase: 'waiting', pagesProcessed: 0, productsScanned: 0 },
+  });
+
+  assert.equal(selectSupplierSyncJobForDisplay([newerWaiting, running])?.id, 'running-job');
+});
+
+test('job selection hands off to queued work after the tracked job completes', () => {
+  const completed = buildJob({
+    id: 'completed-job',
+    state: 'completed',
+    createdAt: '2026-07-26T00:00:00.000Z',
+    progress: { ...buildJob().progress, phase: 'completed', percent: 100 },
+  });
+  const queued = buildJob({
+    id: 'queued-job',
+    state: 'waiting',
+    createdAt: '2026-07-26T00:01:00.000Z',
+    nextAttemptAt: '2026-07-26T00:01:15.000Z',
+  });
+
+  assert.equal(selectSupplierSyncJobForDisplay([completed, queued])?.id, 'queued-job');
+});
+
 test('Supplier Hub keeps its authenticated API callback stable across progress renders', () => {
   const component = projectFile('src/components/SupplierHubFiveStars.tsx');
   assert.match(component, /const getSupplierApiHeaders = useCallback\(/);
   assert.match(component, /const requestSupplierApi = useCallback\(/);
   assert.match(component, /\}, \[getSupplierApiHeaders\]\);/);
   assert.match(component, /export default React\.memo\(SupplierHubFiveStars\)/);
+});
+
+test('Supplier Hub prevents another source sync while an active job is being tracked', () => {
+  const component = projectFile('src/components/SupplierHubFiveStars.tsx');
+  assert.match(component, /syncStartInFlightRef\.current \|\| isSupplierSyncJobActive\(activeSyncJob\)/);
+  assert.match(component, /disabled=\{isSyncing \|\| syncingSourceId !== null \|\| testingSourceId !== null\}/);
+  assert.match(component, /supplier-sync\/jobs\?limit=20/);
 });
 
 test('operations refresh does not duplicate queue requests or rerender on unchanged parent props', () => {

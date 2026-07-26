@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { motion } from 'motion/react';
 import {
   Activity, 
@@ -72,6 +72,7 @@ import {
   formatSupplierSyncEta,
   formatSupplierSyncProgress,
   isSupplierSyncJobActive,
+  selectSupplierSyncJobForDisplay,
   supplierSyncJobStateLabel,
   SupplierSyncJobView,
 } from '../services/supplierSyncJobs';
@@ -278,6 +279,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [activeSyncJob, setActiveSyncJob] = useState<SupplierSyncJobView | null>(null);
   const [syncJobAction, setSyncJobAction] = useState<'cancel' | 'retry' | 'resume' | null>(null);
+  const syncStartInFlightRef = useRef(false);
 
   // Supplier Hub navigation and interaction state
   const [activeSubTab, setActiveSubTab] = useState<'operations' | 'review' | 'import_queue' | 'sources' | 'changes' | 'settings'>('operations');
@@ -324,7 +326,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
       try {
         const [response, jobsResponse] = await Promise.all([
           getSupplierApi('/api/supplier-sources'),
-          getSupplierApi('/api/supplier-sync/jobs?limit=1'),
+          getSupplierApi('/api/supplier-sync/jobs?limit=20'),
         ]);
         const result = await response.json().catch(() => ({})) as { success?: boolean; sources?: any[]; error?: string };
         const jobsResult = await jobsResponse.json().catch(() => ({})) as { success?: boolean; jobs?: SupplierSyncJobView[] };
@@ -333,9 +335,15 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
         }
         if (!cancelled) {
           setSupplierSources(result.sources.map(normalizeSupplierSourceForUi));
-          if (jobsResponse.ok && jobsResult.success === true && jobsResult.jobs?.[0]) {
-            setActiveSyncJob(jobsResult.jobs[0]);
-            setIsSyncing(isSupplierSyncJobActive(jobsResult.jobs[0]));
+          if (jobsResponse.ok && jobsResult.success === true && Array.isArray(jobsResult.jobs)) {
+            const selectedJob = selectSupplierSyncJobForDisplay(jobsResult.jobs);
+            if (selectedJob) {
+              const active = isSupplierSyncJobActive(selectedJob);
+              syncStartInFlightRef.current = active;
+              setActiveSyncJob(selectedJob);
+              setIsSyncing(active);
+              if (active) setSyncStatusMsg(formatSupplierSyncProgress(selectedJob));
+            }
           }
         }
       } catch (error) {
@@ -659,9 +667,26 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
         if (cancelled) return;
         setActiveSyncJob(result.job);
         const active = isSupplierSyncJobActive(result.job);
+        syncStartInFlightRef.current = active;
         setIsSyncing(active);
         setSyncStatusMsg(formatSupplierSyncProgress(result.job));
-        if (!active) void refreshSupplierQueueViews();
+        if (!active) {
+          void refreshSupplierQueueViews();
+          const jobsResponse = await getSupplierApi('/api/supplier-sync/jobs?limit=20');
+          const jobsResult = await jobsResponse.json().catch(() => ({})) as {
+            success?: boolean;
+            jobs?: SupplierSyncJobView[];
+          };
+          if (!cancelled && jobsResponse.ok && jobsResult.success === true && Array.isArray(jobsResult.jobs)) {
+            const nextJob = selectSupplierSyncJobForDisplay(jobsResult.jobs);
+            if (nextJob && nextJob.id !== result.job.id && isSupplierSyncJobActive(nextJob)) {
+              syncStartInFlightRef.current = true;
+              setActiveSyncJob(nextJob);
+              setIsSyncing(true);
+              setSyncStatusMsg(formatSupplierSyncProgress(nextJob));
+            }
+          }
+        }
         if (active) timer = setTimeout(poll, 2_000);
       } catch (error) {
         if (cancelled) return;
@@ -686,7 +711,9 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
       const result = await response.json().catch(() => ({})) as { success?: boolean; job?: SupplierSyncJobView; error?: string };
       if (!response.ok || result.success !== true || !result.job) throw new Error(result.error || `Synchronization could not ${action}.`);
       setActiveSyncJob(result.job);
-      setIsSyncing(isSupplierSyncJobActive(result.job));
+      const active = isSupplierSyncJobActive(result.job);
+      syncStartInFlightRef.current = active;
+      setIsSyncing(active);
       setSyncStatusMsg(`${supplierSyncJobStateLabel(result.job.state)} · ${result.job.progress.percent}%`);
     } catch (error) {
       setErrorMsg(error instanceof Error ? error.message : `Synchronization could not ${action}.`);
@@ -1285,7 +1312,12 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
   };
 
   const handleSyncSupplier = async (sourceIds?: string[]): Promise<boolean> => {
+    if (syncStartInFlightRef.current || isSupplierSyncJobActive(activeSyncJob)) {
+      if (activeSyncJob) setSyncStatusMsg(formatSupplierSyncProgress(activeSyncJob));
+      return false;
+    }
     let accepted = false;
+    syncStartInFlightRef.current = true;
     setIsSyncing(true);
     setErrorMsg(null);
     setSyncStatusMsg('Starting the supplier synchronization job...');
@@ -1311,7 +1343,10 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
       setSyncStatusMsg(null);
       return false;
     } finally {
-      if (!accepted) setIsSyncing(false);
+      if (!accepted) {
+        syncStartInFlightRef.current = false;
+        setIsSyncing(false);
+      }
     }
   };
 
@@ -1918,6 +1953,11 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                 {activeSyncJob.progress.productsScanned} scanned · {activeSyncJob.progress.productsQueued} queued · {activeSyncJob.progress.pagesProcessed} pages
                 {isSupplierSyncJobActive(activeSyncJob) ? ` · ${formatSupplierSyncEta(activeSyncJob.progress.etaMs)}` : ''}
               </p>
+              {activeSyncJob.state === 'waiting' && activeSyncJob.waitingReason ? (
+                <p className="text-[11px] font-semibold text-amber-600 dark:text-amber-400">
+                  {activeSyncJob.waitingReason}
+                </p>
+              ) : null}
             </div>
             <div className="flex flex-wrap gap-2">
               {['pending', 'running', 'waiting'].includes(activeSyncJob.state) && (
@@ -2652,7 +2692,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                         </button>
                         <button
                           onClick={() => handleTriggerSync(source.id)}
-                          disabled={syncingSourceId !== null || testingSourceId !== null}
+                          disabled={isSyncing || syncingSourceId !== null || testingSourceId !== null}
                           className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-700 disabled:opacity-50 text-white font-bold rounded-lg text-[10px] flex items-center gap-1.5 cursor-pointer transition-colors"
                         >
                           <RefreshCw className={`h-3 w-3 ${syncingSourceId === source.id ? 'animate-spin' : ''}`} />

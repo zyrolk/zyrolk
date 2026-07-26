@@ -47,6 +47,40 @@ export const isSupplierSyncJobActive = (job: SupplierSyncJobView | null | undefi
   job?.state === 'pending' || job?.state === 'running' || job?.state === 'waiting'
 );
 
+const syncJobTime = (value: string | null | undefined, fallback: number): number => {
+  const parsed = Date.parse(String(value || ''));
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+/**
+ * Prefer the job that owns the worker lease over a newer job waiting behind it.
+ * Pending/waiting jobs then follow dispatcher order; with no active work, show
+ * the newest terminal result.
+ */
+export const selectSupplierSyncJobForDisplay = (
+  jobs: readonly SupplierSyncJobView[],
+): SupplierSyncJobView | null => {
+  const candidates = jobs.filter((job) => Boolean(job?.id));
+  if (candidates.length === 0) return null;
+
+  const running = candidates
+    .filter((job) => job.state === 'running')
+    .sort((left, right) => syncJobTime(left.startedAt, Number.MAX_SAFE_INTEGER)
+      - syncJobTime(right.startedAt, Number.MAX_SAFE_INTEGER));
+  if (running[0]) return running[0];
+
+  const queued = candidates
+    .filter(isSupplierSyncJobActive)
+    .sort((left, right) => {
+      const nextAttemptDifference = syncJobTime(left.nextAttemptAt, 0) - syncJobTime(right.nextAttemptAt, 0);
+      if (nextAttemptDifference !== 0) return nextAttemptDifference;
+      return syncJobTime(left.createdAt, 0) - syncJobTime(right.createdAt, 0);
+    });
+  if (queued[0]) return queued[0];
+
+  return [...candidates].sort((left, right) => syncJobTime(right.createdAt, 0) - syncJobTime(left.createdAt, 0))[0];
+};
+
 export const supplierSyncJobStateLabel = (state: SupplierSyncJobState): string => ({
   pending: 'Pending',
   running: 'Running',
