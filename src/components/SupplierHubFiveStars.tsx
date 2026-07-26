@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { motion } from 'motion/react';
 import {
   Activity, 
@@ -70,6 +70,7 @@ import {
 } from '../services/supplierOffers';
 import {
   formatSupplierSyncEta,
+  formatSupplierSyncProgress,
   isSupplierSyncJobActive,
   supplierSyncJobStateLabel,
   SupplierSyncJobView,
@@ -248,7 +249,7 @@ const mergeSupplierQueuePage = <T extends { id: string }>(current: T[], page: T[
   return Array.from(items.values());
 };
 
-export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) {
+function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) {
   // Stat states
   const [newProducts, setNewProducts] = useState<number>(0);
   const [priceChanges, setPriceChanges] = useState<number>(0);
@@ -556,7 +557,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
     return new Date(parsed.getTime() - timezoneOffsetMs).toISOString().slice(0, 16);
   };
 
-  const getSupplierApiHeaders = async (forceRefresh = false) => {
+  const getSupplierApiHeaders = useCallback(async (forceRefresh = false) => {
     await auth.authStateReady();
     const user = auth.currentUser;
     if (!user) {
@@ -572,9 +573,9 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
       'Authorization': `Bearer ${token}`,
       ...appCheckHeaders,
     };
-  };
+  }, []);
 
-  const requestSupplierApi = async (path: string, method: 'GET' | 'POST' | 'PATCH', body?: Record<string, unknown>) => {
+  const requestSupplierApi = useCallback(async (path: string, method: 'GET' | 'POST' | 'PATCH', body?: Record<string, unknown>) => {
     const request = async (forceRefresh: boolean) => fetch(path, {
       method,
       headers: await getSupplierApiHeaders(forceRefresh),
@@ -584,11 +585,11 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
     let response = await request(false);
     if (response.status === 401) response = await request(true);
     return response;
-  };
+  }, [getSupplierApiHeaders]);
 
-  const postSupplierApi = (path: string, body: Record<string, unknown>) => requestSupplierApi(path, 'POST', body);
-  const patchSupplierApi = (path: string, body: Record<string, unknown>) => requestSupplierApi(path, 'PATCH', body);
-  const getSupplierApi = (path: string) => requestSupplierApi(path, 'GET');
+  const postSupplierApi = useCallback((path: string, body: Record<string, unknown>) => requestSupplierApi(path, 'POST', body), [requestSupplierApi]);
+  const patchSupplierApi = useCallback((path: string, body: Record<string, unknown>) => requestSupplierApi(path, 'PATCH', body), [requestSupplierApi]);
+  const getSupplierApi = useCallback((path: string) => requestSupplierApi(path, 'GET'), [requestSupplierApi]);
 
   const loadSupplierQueueView = async (
     view: SupplierQueueView,
@@ -659,9 +660,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
         setActiveSyncJob(result.job);
         const active = isSupplierSyncJobActive(result.job);
         setIsSyncing(active);
-        setSyncStatusMsg(active
-          ? `${supplierSyncJobStateLabel(result.job.state)} · ${result.job.progress.percent}% · ${result.job.progress.productsScanned} scanned · ${formatSupplierSyncEta(result.job.progress.etaMs)}`
-          : `${supplierSyncJobStateLabel(result.job.state)} · ${result.job.progress.productsScanned} scanned · ${result.job.progress.productsQueued} queued`);
+        setSyncStatusMsg(formatSupplierSyncProgress(result.job));
         if (!active) void refreshSupplierQueueViews();
         if (active) timer = setTimeout(poll, 2_000);
       } catch (error) {
@@ -1913,6 +1912,9 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
               </div>
               <p className="truncate font-mono text-[10px] text-slate-400">{activeSyncJob.id}</p>
               <p className="text-[11px] text-slate-500 dark:text-slate-400" aria-live="polite">
+                {isSupplierSyncJobActive(activeSyncJob) && activeSyncJob.progress.percent <= 0 && activeSyncJob.progress.pagesProcessed > 0
+                  ? 'In progress · '
+                  : activeSyncJob.progress.percent > 0 ? `${activeSyncJob.progress.percent}% · ` : ''}
                 {activeSyncJob.progress.productsScanned} scanned · {activeSyncJob.progress.productsQueued} queued · {activeSyncJob.progress.pagesProcessed} pages
                 {isSupplierSyncJobActive(activeSyncJob) ? ` · ${formatSupplierSyncEta(activeSyncJob.progress.etaMs)}` : ''}
               </p>
@@ -1957,6 +1959,7 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
             aria-valuemin={0}
             aria-valuemax={100}
             aria-valuenow={activeSyncJob.progress.percent}
+            aria-valuetext={formatSupplierSyncProgress(activeSyncJob)}
           >
             <div
               className="h-full rounded-full bg-gradient-to-r from-blue-600 to-cyan-500 transition-[width] duration-500 motion-reduce:transition-none"
@@ -3857,3 +3860,5 @@ export default function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubF
     </motion.div>
   );
 }
+
+export default React.memo(SupplierHubFiveStars);

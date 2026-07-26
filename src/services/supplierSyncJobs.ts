@@ -62,3 +62,20 @@ export const formatSupplierSyncEta = (etaMs: number | null | undefined): string 
   const minutes = Math.max(1, Math.ceil(etaMs / 60_000));
   return `${minutes} minute${minutes === 1 ? '' : 's'} remaining`;
 };
+
+export const formatSupplierSyncProgress = (job: SupplierSyncJobView): string => {
+  const label = supplierSyncJobStateLabel(job.state);
+  const { pagesProcessed, percent, productsQueued, productsScanned } = job.progress;
+  if (!isSupplierSyncJobActive(job)) {
+    return `${label} · ${productsScanned} scanned · ${productsQueued} queued`;
+  }
+
+  // Connectors do not always expose a total page count, so avoid presenting an
+  // active, advancing single-source traversal as a misleading zero percent.
+  const progressLabel = percent > 0
+    ? `${percent}%`
+    : pagesProcessed > 0 || productsScanned > 0
+      ? 'In progress'
+      : 'Starting';
+  return `${label} · ${progressLabel} · ${productsScanned} scanned · ${formatSupplierSyncEta(job.progress.etaMs)}`;
+};

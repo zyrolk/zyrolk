@@ -146,7 +146,7 @@ const downloadCsv = (name: string, records: Array<Record<string, unknown>>): voi
   URL.revokeObjectURL(link.href);
 };
 
-export default function SupplierOperationsDashboard({ requestApi }: SupplierOperationsDashboardProps) {
+function SupplierOperationsDashboard({ requestApi }: SupplierOperationsDashboardProps) {
   const [snapshot, setSnapshot] = useState<OperationsSnapshot | null>(null);
   const [queueItems, setQueueItems] = useState<QueueItem[]>([]);
   const [historyItems, setHistoryItems] = useState<Array<Record<string, any>>>([]);
@@ -187,7 +187,6 @@ export default function SupplierOperationsDashboard({ requestApi }: SupplierOper
         requestApi('/api/supplier-operations/summary', 'GET'),
         requestApi('/api/supplier-operations/sync-history?limit=40', 'GET'),
         requestApi('/api/supplier-operations/audit?limit=40', 'GET'),
-        loadQueue(false),
       ]);
       const summaryResult = await readJson<OperationsSnapshot & { success: boolean }>(summaryResponse);
       const historyResult = await readJson<PageResponse>(historyResponse);
@@ -203,7 +202,7 @@ export default function SupplierOperationsDashboard({ requestApi }: SupplierOper
       setLoading(false);
       setRefreshing(false);
     }
-  }, [loadQueue, readJson, requestApi]);
+  }, [readJson, requestApi]);
 
   useEffect(() => {
     void loadAll();
@@ -215,7 +214,13 @@ export default function SupplierOperationsDashboard({ requestApi }: SupplierOper
     const timeout = window.setTimeout(() => void loadQueue(false).catch((loadError) => {
       setError(loadError instanceof Error ? loadError.message : 'Queue could not be loaded.');
     }), 250);
-    return () => window.clearTimeout(timeout);
+    const interval = window.setInterval(() => void loadQueue(false).catch((loadError) => {
+      setError(loadError instanceof Error ? loadError.message : 'Queue could not be loaded.');
+    }), 30_000);
+    return () => {
+      window.clearTimeout(timeout);
+      window.clearInterval(interval);
+    };
   }, [loadQueue]);
 
   const runSupplierAction = async (supplierId: string, action: string) => {
@@ -385,3 +390,5 @@ export default function SupplierOperationsDashboard({ requestApi }: SupplierOper
     </div>
   );
 }
+
+export default React.memo(SupplierOperationsDashboard);
