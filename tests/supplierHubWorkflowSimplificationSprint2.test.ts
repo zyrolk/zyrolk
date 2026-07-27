@@ -19,7 +19,7 @@ test('Supplier Hub exposes only the four business navigation sections', () => {
     component.indexOf('{/* SUB-TAB CONTENTS */}'),
   );
 
-  for (const label of ['Suppliers', 'Product Review', 'Activity', 'Advanced']) {
+  for (const label of ['Suppliers', 'Product Review', 'Activity', 'Settings']) {
     assert.match(navigation, new RegExp(`label: '${label}'`));
   }
   for (const internalLabel of ['Review Queue', 'Import Queue', 'Pending Changes', 'Operations']) {
@@ -89,13 +89,13 @@ test('product review editor prioritizes storefront fields and collapses supplier
   assert.match(editor, /Advanced field protection/);
 });
 
-test('Advanced is claim-restricted and contains technical controls', () => {
+test('Settings contains business controls and a claim-restricted Advanced section', () => {
   const component = projectFile('src/components/SupplierHubFiveStars.tsx');
   assert.equal(hasSupplierHubAdvancedAccess({ role: 'super_admin' }), true);
   assert.equal(hasSupplierHubAdvancedAccess({ role: 'admin' }), false);
-  assert.match(component, /activeSubTab === 'advanced' && canAccessAdvanced/);
-  assert.match(component, /Automatic updates/);
-  assert.match(component, /Advanced scheduling details/);
-  assert.match(component, /Advanced image settings/);
+  assert.match(component, /activeSubTab === 'settings'/);
+  assert.match(component, /Global Auto Sync/);
+  assert.match(component, /Default Auto Sync Behaviour/);
+  assert.match(component, /Advanced Settings/);
   assert.match(component, /Supplier Restrictions & Limits/);
 });

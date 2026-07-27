@@ -1,4 +1,4 @@
-export type SupplierHubSection = 'suppliers' | 'review' | 'activity' | 'advanced';
+export type SupplierHubSection = 'suppliers' | 'review' | 'activity' | 'settings';
 
 export type ProductReviewFilter =
   | 'new_products'
@@ -50,6 +50,25 @@ export function hasSupplierHubAdvancedAccess(claims: Record<string, unknown>): b
     || claims.supplierHubSuperAdmin === true
     || role === 'super_admin'
     || role === 'owner';
+}
+
+export function supplierBusinessErrorMessage(value: unknown, fallback = 'Supplier Hub could not complete that action.'): string {
+  const message = value instanceof Error ? value.message : String(value || '');
+  const key = normalized(message);
+  if (!key) return fallback;
+  if (key.includes('appcheck') || key.includes('app check') || key.includes('app verification') || key.includes('throttled')) {
+    return 'Your secure session could not be verified. Refresh the page and try again.';
+  }
+  if (key.includes('authentication required') || key.includes('id token') || key.includes('unauthorized')) {
+    return 'Your admin session has expired. Sign in again and retry.';
+  }
+  if (key.includes('failed to fetch') || key.includes('network') || key.includes('connection closed')) {
+    return 'Supplier Hub could not reach the service. Check your connection and retry.';
+  }
+  if (key.includes('permission') || key.includes('forbidden')) {
+    return 'You do not have permission to complete this Supplier Hub action.';
+  }
+  return message || fallback;
 }
 
 interface ReviewChangeSummary {

@@ -9,18 +9,17 @@ import {
 
 const projectFile = (path: string): string => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
-test('Sprint 5 exposes only the approved business navigation and protects Advanced', () => {
+test('Sprint 5.1 exposes Settings in business navigation and protects its Advanced section', () => {
   const hub = projectFile('src/components/SupplierHubFiveStars.tsx');
   const navigation = hub.slice(
     hub.indexOf('{/* Business navigation */}'),
     hub.indexOf('{/* SUB-TAB CONTENTS */}'),
   );
 
-  for (const label of ['Suppliers', 'Product Review', 'Activity', 'Advanced']) {
+  for (const label of ['Suppliers', 'Product Review', 'Activity', 'Settings']) {
     assert.match(navigation, new RegExp(`label: '${label}'`));
   }
-  assert.doesNotMatch(navigation, /label: 'Settings'/);
-  assert.match(navigation, /canAccessAdvanced/);
+  assert.doesNotMatch(navigation, /label: 'Advanced'/);
   assert.equal(hasSupplierHubAdvancedAccess({ role: 'super_admin' }), true);
   assert.equal(hasSupplierHubAdvancedAccess({ superAdmin: true }), true);
   assert.equal(hasSupplierHubAdvancedAccess({ role: 'admin' }), false);
@@ -45,7 +44,7 @@ test('supplier cards expose only business controls and delay Auto Sync until Ini
 
   for (const label of [
     'Connected Suppliers',
-    'platform',
+    'Supplier Platform',
     'Connection Problem',
     'Active',
     'Paused',
@@ -95,7 +94,7 @@ test('Product Review is the only normal approval workspace and uses business lan
   assert.equal(supplierReviewStatusLabel({ queueState: 'rejected' }), 'Rejected');
 });
 
-test('Activity remains business-focused while diagnostics and controls stay in Advanced', () => {
+test('Activity remains business-focused while diagnostics and controls stay in protected Settings', () => {
   const dashboard = projectFile('src/components/supplier-operations/SupplierOperationsDashboard.tsx');
   const hub = projectFile('src/components/SupplierHubFiveStars.tsx');
 
@@ -105,12 +104,15 @@ test('Activity remains business-focused while diagnostics and controls stay in A
   assert.match(dashboard, /mode === 'advanced'[\s\S]*Queue monitoring/);
   assert.match(dashboard, /Advanced Media Diagnostics/);
   assert.match(dashboard, /Advanced Performance Diagnostics/);
-  assert.match(hub, /Automatic updates/);
+  assert.match(hub, /Global Auto Sync/);
   assert.match(hub, /Default Profit Margin/);
   assert.match(hub, /Category restrictions/i);
   assert.match(hub, /Brand restrictions/i);
   assert.match(hub, /Product Page Size/i);
   assert.match(hub, /Maximum Image Limit/);
+  assert.match(hub, /Business Settings/);
+  assert.match(hub, /Advanced Settings/);
+  assert.match(hub, /canAccessAdvanced && <section/);
 });
 
 test('legacy onboarding presentation controls are absent without changing backend compatibility', () => {

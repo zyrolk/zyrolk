@@ -1780,7 +1780,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
               { id: 'customers', label: 'Customers', icon: Users },
               { id: 'pages', label: 'Pages CMS', icon: FileText },
               { id: 'settings', label: 'Store Settings', icon: Settings },
-              { id: 'supplierHubFiveStars', label: 'Supplier Hub ⭐⭐⭐⭐⭐', icon: Award }
+              { id: 'supplierHubFiveStars', label: 'Supplier Hub', icon: Award }
             ].map(tab => {
               const Icon = tab.icon;
               const active = activeTab === tab.id;

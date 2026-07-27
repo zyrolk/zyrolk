@@ -17,6 +17,8 @@ import {
   Users,
   XCircle,
 } from 'lucide-react';
+import { supplierBusinessErrorMessage } from '../../services/supplierHubPresentation';
+import { reportClientIssue } from '../../services/observability/clientDiagnostics';
 
 type SupplierApiRequest = (path: string, method: 'GET' | 'POST', body?: Record<string, unknown>) => Promise<Response>;
 
@@ -315,6 +317,7 @@ function SupplierOperationsDashboard({
 
   const summary = snapshot?.summary || EMPTY_SUMMARY;
   const error = actionError || snapshotError || queueError;
+  const visibleError = error ? supplierBusinessErrorMessage(error, 'Supplier activity could not be loaded.') : null;
   const queueCounts = snapshot?.queues || {};
   const media = snapshot?.media || {};
   const performance = snapshot?.performance || {};
@@ -347,6 +350,10 @@ function SupplierOperationsDashboard({
   ] as const;
   const cards = mode === 'activity' ? activityCards : advancedCards;
 
+  useEffect(() => {
+    if (error) reportClientIssue('supplier-operations', new Error(error));
+  }, [error]);
+
   if (loading) {
     return <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4" aria-label="Loading supplier activity"><div className="h-28 animate-pulse rounded-3xl bg-slate-100 dark:bg-slate-800" /><div className="h-28 animate-pulse rounded-3xl bg-slate-100 dark:bg-slate-800" /><div className="h-28 animate-pulse rounded-3xl bg-slate-100 dark:bg-slate-800" /><div className="h-28 animate-pulse rounded-3xl bg-slate-100 dark:bg-slate-800" /></div>;
   }
@@ -363,7 +370,7 @@ function SupplierOperationsDashboard({
         </button>
       </div>
 
-      {error && <div role="alert" className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300">{error}</div>}
+      {visibleError && <div role="alert" className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300">{visibleError}</div>}
 
       <section aria-labelledby="operations-summary-title">
         <h4 id="operations-summary-title" className="sr-only">Operations summary</h4>
