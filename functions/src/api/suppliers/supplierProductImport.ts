@@ -115,6 +115,34 @@ const fieldWasProvided = (product: RawA2ZProduct, field: CanonicalSupplierFieldD
     || (field.id === "extraAttributes" && hasValue(product.extraAttributes));
 };
 
+/**
+ * Creates the same canonical audit shape for lifecycle changes detected by the
+ * traversal engine (for example, a listing disappearing or returning). These
+ * changes do not originate in a connector field parser, but they must remain
+ * indistinguishable from normal supplier changes throughout review and audit.
+ */
+export function buildSupplierLifecycleFieldChange(
+  fieldId: CanonicalSupplierFieldId,
+  before: unknown,
+  after: unknown,
+): SupplierFieldChange {
+  const field = FIELD_MANIFEST.find((candidate) => candidate.id === fieldId);
+  if (!field) throw new Error(`Unsupported supplier lifecycle field: ${fieldId}`);
+  return {
+    field: field.id as CanonicalSupplierFieldId,
+    label: field.audit.label,
+    auditKey: field.audit.key,
+    auditRepresentation: field.audit.representation,
+    before: before ?? null,
+    after: after ?? null,
+    changeType: hasValue(before) ? "changed" : "added",
+    syncGroup: field.syncGroup,
+    emptyBehavior: field.emptyBehavior,
+    adminEditable: field.adminEditable,
+    destinations: field.destinations,
+  };
+}
+
 /** Returns one complete, serializable before/after record per changed supplier field. */
 export function detectSupplierProductFieldChanges(
   product: RawA2ZProduct,

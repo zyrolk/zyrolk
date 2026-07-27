@@ -14,6 +14,7 @@ import {
   Search,
   Server,
   ShieldAlert,
+  UserCheck,
   Users,
   XCircle,
 } from 'lucide-react';
@@ -339,6 +340,9 @@ function SupplierOperationsDashboard({
   }, [auditItems, auditSearch]);
 
   const cards = [
+    ['Active sync', activeSyncJob && ['pending', 'running', 'waiting'].includes(activeSyncJob.state) ? 1 : 0, RefreshCw, 'text-blue-500'],
+    ['Awaiting product review', Number(queueCounts.pending || 0), UserCheck, 'text-violet-500'],
+    ['Retry available', Number(queueCounts.retry || 0) + Number(queueCounts.dead_letter || 0), RefreshCw, 'text-amber-500'],
     ['Total suppliers', summary.totalSuppliers, Users, 'text-blue-500'],
     ['Active suppliers', summary.activeSuppliers, CheckCircle2, 'text-emerald-500'],
     ['Disabled suppliers', summary.disabledSuppliers, Pause, 'text-slate-500'],

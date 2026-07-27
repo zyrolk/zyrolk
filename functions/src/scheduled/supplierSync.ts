@@ -9,10 +9,12 @@ import { isValidSupplierImageUrl, ProductParser } from "../api/suppliers/a2z/Pro
 import { RawA2ZProduct } from "../api/suppliers/a2z/types";
 import {
   buildSupplierImportWarnings,
+  buildSupplierLifecycleFieldChange,
   buildSupplierProductComparison,
   mergeSupplierCatalogDetails,
   mergeSupplierProductMetadata,
   SupplierFieldChange,
+  SupplierProductComparison,
   SupplierProductComparisonStatus,
 } from "../api/suppliers/supplierProductImport";
 import { buildSupplierAuditEvent } from "../api/suppliers/supplierAuditTrail";
@@ -221,7 +223,7 @@ function generateSlug(name: string): string {
     .replace(/^-+|-+$/g, "");
 }
 
-function generateQueueDocId(sourceId: string, supplierCode: string, productName: string): string {
+export function generateQueueDocId(sourceId: string, supplierCode: string, productName: string): string {
   const sourcePart = generateSlug(sourceId) || "supplier";
   const productPart = generateSlug(supplierCode || productName) || `${Date.now()}`;
   return `${sourcePart}-${productPart}`;
@@ -532,6 +534,22 @@ async function loadSupplierProductMappings(sourceId: string): Promise<{
   };
 }
 
+export function resolveSupplierProductReviewVisibility(
+  match: Pick<ExistingProduct, "isActive" | "active" | "visible"> | undefined,
+  isNewProduct: boolean,
+  reactivateSupplierProduct: boolean,
+): { isActive: boolean; visible: boolean } {
+  const isActive = reactivateSupplierProduct
+    ? true
+    : match
+      ? (typeof match.isActive === "boolean" ? match.isActive : (typeof match.active === "boolean" ? match.active : true))
+      : true;
+  return {
+    isActive,
+    visible: reactivateSupplierProduct || isNewProduct ? true : match?.visible !== false,
+  };
+}
+
 function buildProductPayload(
   product: RawA2ZProduct,
   match: ExistingProduct | undefined,
@@ -542,6 +560,7 @@ function buildProductPayload(
   settings: SupplierSettings,
   source: SupplierSource,
   targetProductId?: string,
+  reactivateSupplierProduct = false,
 ): Record<string, unknown> {
   const docId = match?.id || targetProductId || generateSlug(product.title) || product.sku;
   const wholesale = product.wholesalePrice || 0;
@@ -566,9 +585,7 @@ function buildProductPayload(
   const imageUpdateEnabled = acceptsField("mediaGallery");
   const imageUrl = imageUpdateEnabled ? supplierImageUrl : (match?.imageUrl || "");
   const effectiveImageUrls = imageUpdateEnabled ? imageUrls : (match?.imageUrls || (imageUrl ? [imageUrl] : []));
-  const existingIsActive = match
-    ? (typeof match.isActive === "boolean" ? match.isActive : (typeof match.active === "boolean" ? match.active : true))
-    : true;
+  const reviewVisibility = resolveSupplierProductReviewVisibility(match, isNewProduct, reactivateSupplierProduct);
   const selectedBrandId = isNewProduct
     ? (brandSuggestion.autoSelected ? brandSuggestion.mappedBrandId : "")
     : (match?.brand || "");
@@ -596,11 +613,11 @@ function buildProductPayload(
     isNew: isNewProduct ? true : match?.isNew === true,
     isFeatured: isNewProduct ? false : match?.isFeatured === true,
     isBestSeller: isNewProduct ? false : match?.isBestSeller === true,
-    isActive: existingIsActive,
-    active: existingIsActive,
+    isActive: reviewVisibility.isActive,
+    active: reviewVisibility.isActive,
     published: isNewProduct ? true : match?.published !== false,
     approved: isNewProduct ? true : match?.approved !== false,
-    visible: isNewProduct ? true : match?.visible !== false,
+    visible: reviewVisibility.visible,
     sku: product.sku,
     ...(acceptsField("barcode") && product.barcode ? { barcode: product.barcode } : match?.barcode ? { barcode: match.barcode } : {}),
     supplierId: source.supplierId || source.id,
@@ -664,6 +681,27 @@ interface SupplierSyncConflictWinner extends SupplierPriorityCandidate {
   queueItemId: string;
   productId?: string;
   offerId?: string;
+}
+
+export function buildSupplierReactivationComparison(
+  comparison: SupplierProductComparison,
+  previousAvailability: SupplierProductOffer["availability"] | undefined,
+  nextAvailability: SupplierProductOffer["availability"],
+): { comparison: SupplierProductComparison; reactivating: boolean } {
+  const reactivating = previousAvailability === "unavailable" && nextAvailability !== "unavailable";
+  if (!reactivating) return { comparison, reactivating: false };
+  const availabilityChange = buildSupplierLifecycleFieldChange("availability", previousAvailability, nextAvailability);
+  return {
+    reactivating: true,
+    comparison: {
+      status: comparison.status === "UNCHANGED" ? "STOCK_CHANGED" : comparison.status,
+      changedFields: [...new Set([...comparison.changedFields, availabilityChange.label])],
+      fieldChanges: [
+        ...comparison.fieldChanges.filter((change) => change.field !== "availability"),
+        availabilityChange,
+      ],
+    },
+  };
 }
 
 function buildSupplierConflictRecord(
@@ -1108,6 +1146,10 @@ async function queueMissingSupplierOffersForReview(
             matchedProductId: offer.productId,
             comparisonStatus: "SUPPLIER_OFFER_REMOVED",
             changedFields: ["Supplier availability", "Supplier stock"],
+            fieldChanges: [
+              buildSupplierLifecycleFieldChange("availability", offer.availability, "unavailable"),
+              buildSupplierLifecycleFieldChange("stock", offer.stock, 0),
+            ],
           },
           reconciliationAction: "supplier_offer_unavailable",
           productPayload,
@@ -1221,6 +1263,11 @@ async function queueMissingSupplierProductsForReview(
             matchedProductId: productSnapshot.id,
             comparisonStatus: "STOCK_CHANGED",
             changedFields: ["Supplier listing removed", "Stock", "Visibility"],
+            fieldChanges: [
+              buildSupplierLifecycleFieldChange("availability", currentProduct.availability || "available", "unavailable"),
+              buildSupplierLifecycleFieldChange("stock", currentProduct.stock, 0),
+              buildSupplierLifecycleFieldChange("visibility", currentProduct.visible !== false, false),
+            ],
           },
           reconciliationAction: "deactivate_and_zero_stock",
           productPayload,
@@ -1677,14 +1724,8 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
         });
 
         for (const product of productsToProcess) {
-          const queueItemId = generateQueueDocId(source.id, product.sku, product.title);
+          let queueItemId = generateQueueDocId(source.id, product.sku, product.title);
           const normalizedSupplierCode = product.sku.trim().toLowerCase();
-          const currentWinner: SupplierSyncConflictWinner = {
-            supplierId: source.supplierId || source.id,
-            sourceId: source.id,
-            priority: supplierPriority(source),
-            queueItemId,
-          };
           const supplierProductKey = `${source.id}:${normalizedSupplierCode}`;
           const priorSupplierProduct = seenSupplierProducts.get(supplierProductKey);
           const skuWinner = winnerBySku.get(normalizedSupplierCode);
@@ -1692,6 +1733,22 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
           const barcodeWinner = normalizedBarcode ? winnerByBarcode.get(normalizedBarcode) : undefined;
           const ownOfferId = buildSupplierOfferId(source.id, product.supplierProductId || product.sku, product.sku);
           const ownOffer = existingOffers.find((offer) => offer.id === ownOfferId);
+          const activeReviewQueueDoc = activeReviewQueueDocs.find((queueDoc) => {
+            const data = queueDoc.data();
+            return queueDoc.id === queueItemId
+              || String(data.supplierOfferId || "") === ownOfferId
+              || (
+                String(data.sourceId || "") === source.id
+                && normalizeConflictValue(data.supplierCode) === normalizedSupplierCode
+              );
+          });
+          if (activeReviewQueueDoc) queueItemId = activeReviewQueueDoc.id;
+          const currentWinner: SupplierSyncConflictWinner = {
+            supplierId: source.supplierId || source.id,
+            sourceId: source.id,
+            priority: supplierPriority(source),
+            queueItemId,
+          };
           const duplicateOffer = existingOffers
             .filter((offer) => offer.sourceId !== source.id && offer.productId && (
               offer.skuNormalized === normalizedSupplierCode
@@ -1781,17 +1838,16 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
             costPrice: ownOffer.cost,
             stock: ownOffer.stock,
           } : match ? { ...match } : undefined;
-          const hasActiveReviewQueueItem = activeReviewQueueDocs.some((queueDoc) => {
-            const data = queueDoc.data();
-            return queueDoc.id === queueItemId
-              || String(data.supplierOfferId || "") === ownOfferId
-              || (
-                String(data.sourceId || "") === source.id
-                && normalizeConflictValue(data.supplierCode) === normalizedSupplierCode
-              );
-          });
+          const hasActiveReviewQueueItem = Boolean(activeReviewQueueDoc);
+          const detectedComparison = buildSupplierProductComparison(product, comparisonBaseline);
+          const reactivation = buildSupplierReactivationComparison(
+            detectedComparison,
+            ownOffer?.availability,
+            initialOffer.availability,
+          );
+          const reactivatingSupplierOffer = reactivation.reactivating;
           const comparison = selectSupplierComparisonForReview(
-            buildSupplierProductComparison(product, comparisonBaseline),
+            reactivation.comparison,
             sourceSettings,
             ownOffer?.reviewStatus,
             hasActiveReviewQueueItem,
@@ -1830,7 +1886,18 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
             brands: storeBrands,
             mappings: storedMappings.brandMappings,
           });
-          const productPayload = buildProductPayload(product, match, categoryMapping, brandMapping, storeBrands, comparison, settings, source, targetProductId);
+          const productPayload = buildProductPayload(
+            product,
+            match,
+            categoryMapping,
+            brandMapping,
+            storeBrands,
+            comparison,
+            settings,
+            source,
+            targetProductId,
+            reactivatingSupplierOffer,
+          );
           const productValidationErrors = validateSupplierProductForApproval(productPayload, storeCategories, storeBrands);
           const productImportWarnings = buildSupplierImportWarnings(product, productPayload);
           const supplierSnapshot = {
@@ -1909,6 +1976,7 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
               changedFields: comparison.changedFields,
               fieldChanges: comparison.fieldChanges || [],
             },
+            ...(reactivatingSupplierOffer ? { reconciliationAction: "supplier_offer_reactivated" } : {}),
             productPayload,
             managedMedia: Array.isArray(productPayload.supplierMedia) ? productPayload.supplierMedia : [],
             supplierSnapshot,

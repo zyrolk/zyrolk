@@ -68,6 +68,7 @@ import {
   ProductReviewFilter,
   supplierHealthLabel,
   SupplierHubSection,
+  supplierReviewChangeLabel,
   supplierReviewApiState,
 } from '../services/supplierHubPresentation';
 
@@ -1666,8 +1667,14 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                           <td className="py-3 px-3">
                             <SupplierImagePreview src={item.imageUrl} alt={item.productName} />
                           </td>
-                          <td className="py-3 px-4 font-mono font-medium">{item.supplierCode}</td>
-                          <td className="py-3 px-4 font-semibold">{item.productName}</td>
+                          <td className="py-3 px-4 font-mono font-medium">
+                            {item.supplierCode}
+                            <span className="mt-1 block font-sans text-[9px] font-semibold text-slate-400">{item.supplierName || item.sourceId || 'Supplier'}</span>
+                          </td>
+                          <td className="py-3 px-4 font-semibold">
+                            {item.productName}
+                            <span className="mt-1 block text-[9px] font-medium text-slate-400">Detected {item.createdAt ? new Date(item.createdAt).toLocaleString() : 'recently'}</span>
+                          </td>
                           <td className="py-3 px-3 text-right font-bold text-slate-900 dark:text-white">
                             LKR {item.costPrice.toLocaleString()}
                           </td>
@@ -1726,13 +1733,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                                       ? 'bg-red-500'
                                       : 'bg-slate-500'
                                   }`} />
-                                  {item.comparison.comparisonStatus === 'NEW_PRODUCT' && 'NEW'}
-                                  {item.comparison.comparisonStatus === 'PRICE_CHANGED' && 'PRICE CHANGED'}
-                                  {item.comparison.comparisonStatus === 'STOCK_CHANGED' && 'STOCK CHANGED'}
-                                  {item.comparison.comparisonStatus === 'IMAGE_CHANGED' && 'IMAGE CHANGED'}
-                                  {item.comparison.comparisonStatus === 'DESCRIPTION_CHANGED' && 'DESC CHANGED'}
-                                  {item.comparison.comparisonStatus === 'SUPPLIER_OFFER_REMOVED' && 'REMOVED'}
-                                  {item.comparison.comparisonStatus === 'UNCHANGED' && 'UNCHANGED'}
+                                  {supplierReviewChangeLabel(item.comparison)}
                                 </span>
                                 
                                 {item.comparison.changedFields.length > 0 && (
