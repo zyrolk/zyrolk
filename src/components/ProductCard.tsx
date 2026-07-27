@@ -60,10 +60,9 @@ function ProductCard({
 
   const handleWhatsAppQuickBuy = (e: React.MouseEvent) => {
     e.stopPropagation();
-    const skuText = product.sku ? `\nSKU: *${product.sku}*` : "";
     const message = encodeURIComponent(
       `Hello Zyro.lk, I am interested in ordering:\n` +
-      `- *${product.name}* (Qty: 1)${skuText}\n` +
+      `- *${product.name}* (Qty: 1)\n` +
       `Price: *${formatPrice(product.price)}*\n` +
       `Category: ${product.category}\n\n` +
       `Please confirm availability and guide me through delivery details.`
@@ -81,10 +80,9 @@ function ProductCard({
 
   const handleWhatsAppEnquiry = (e: React.MouseEvent) => {
     e.stopPropagation();
-    const skuText = product.sku ? `\nSKU: *${product.sku}*` : "";
     const message = encodeURIComponent(
       `Hello Zyro.lk, I am interested in this product but it is currently out of stock:\n` +
-      `- *${product.name}*${skuText}\n` +
+      `- *${product.name}*\n` +
       `Price: *${formatPrice(product.price)}*\n\n` +
       `Can you please let me know when this will be back in stock or if there is an alternative available?`
     );

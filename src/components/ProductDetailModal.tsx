@@ -274,9 +274,8 @@ export default function ProductDetailModal({
 
   const handleWhatsAppCheckout = () => {
     const totalPrice = formatPrice(product.price * quantity);
-    const skuLine = product.sku ? `\n*SKU:* ${product.sku}` : "";
     const message = encodeURIComponent(
-      `Hello Zyro.lk! I want to order the following product:\n\n*Product:* ${product.name}${skuLine}\n*Quantity:* ${quantity}\n*Unit Price:* ${formatPrice(product.price)}\n*Total Price:* ${totalPrice}\n\nPlease proceed with my COD islandwide delivery confirmation details.`
+      `Hello Zyro.lk! I want to order the following product:\n\n*Product:* ${product.name}\n*Quantity:* ${quantity}\n*Unit Price:* ${formatPrice(product.price)}\n*Total Price:* ${totalPrice}\n\nPlease proceed with my COD islandwide delivery confirmation details.`
     );
     const whatsappNum = settings?.whatsappNumber 
       ? settings.whatsappNumber.replace(/[^0-9+]/g, "") 
@@ -289,9 +288,8 @@ export default function ProductDetailModal({
   };
 
   const handleWhatsAppEnquiry = () => {
-    const skuLine = product.sku ? `\n*SKU:* ${product.sku}` : "";
     const message = encodeURIComponent(
-      `Hello Zyro.lk! I am interested in this product but it is currently out of stock:\n\n*Product:* ${product.name}${skuLine}\n*Price:* ${formatPrice(product.price)}\n\nPlease notify me when it is back in stock or suggest an alternative!`
+      `Hello Zyro.lk! I am interested in this product but it is currently out of stock:\n\n*Product:* ${product.name}\n*Price:* ${formatPrice(product.price)}\n\nPlease notify me when it is back in stock or suggest an alternative!`
     );
     const whatsappNum = settings?.whatsappNumber 
       ? settings.whatsappNumber.replace(/[^0-9+]/g, "") 

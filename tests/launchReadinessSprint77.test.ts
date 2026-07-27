@@ -69,7 +69,7 @@ test('Sprint 77 emits live product structured data without changing the Product 
   assert.equal(result.type, 'product');
   assert.equal(result.image, product.imageUrl);
   assert.equal(result.structuredData['@type'], 'Product');
-  assert.equal(result.structuredData.sku, product.sku);
+  assert.equal(Object.hasOwn(result.structuredData, 'sku'), false);
   assert.equal(offers.priceCurrency, 'LKR');
   assert.equal(offers.price, product.price);
   assert.equal(offers.availability, 'https://schema.org/InStock');

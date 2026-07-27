@@ -1,4 +1,5 @@
 import { FieldValue, Firestore } from "firebase-admin/firestore";
+import { createHash } from "node:crypto";
 import { ApiError } from "../errors";
 import { COMMERCIAL_PRODUCT_FIELDS, PRODUCT_PRIVATE_COLLECTION, splitProductData } from "../products/productCommercialData";
 import { isValidSupplierImageUrl } from "./a2z/ProductParser";
@@ -57,6 +58,8 @@ export interface SupplierApprovalDraft {
   slug?: string;
   sellingPrice: number;
   comparePrice: number;
+  costPrice?: number;
+  marketPrice?: number;
   stock: number;
   category: string;
   subcategory?: string;
@@ -209,6 +212,8 @@ export function parseSupplierApprovalDraft(value: unknown): SupplierApprovalDraf
 
   const sellingPrice = cleanNumber(draft.sellingPrice, "Selling price", { minimum: Number.EPSILON });
   const comparePrice = cleanNumber(draft.comparePrice, "Compare price", { minimum: 0 });
+  const costPrice = draft.costPrice === undefined ? undefined : cleanNumber(draft.costPrice, "Cost price", { minimum: 0 });
+  const marketPrice = draft.marketPrice === undefined ? undefined : cleanNumber(draft.marketPrice, "Market price", { minimum: 0 });
   if (comparePrice > 0 && comparePrice < sellingPrice) {
     throw new ApiError("Compare price must be at least the selling price.", 400);
   }
@@ -226,6 +231,8 @@ export function parseSupplierApprovalDraft(value: unknown): SupplierApprovalDraf
     ...(draft.slug !== undefined ? { slug } : {}),
     sellingPrice,
     comparePrice,
+    ...(costPrice !== undefined ? { costPrice } : {}),
+    ...(marketPrice !== undefined ? { marketPrice } : {}),
     stock: cleanNumber(draft.stock, "Stock", { integer: true, minimum: 0 }),
     category,
     ...(subcategory !== undefined ? { subcategory } : {}),
@@ -274,6 +281,12 @@ const record = (value: unknown): Record<string, unknown> => value && typeof valu
   : {};
 
 const stringValue = (value: unknown): string => typeof value === "string" ? value.trim() : "";
+
+export function buildAutoProductSku(productId: string): string {
+  const normalizedProductId = cleanText(productId, "Product ID", 160).toLocaleLowerCase("en");
+  const digest = createHash("sha256").update(normalizedProductId).digest("hex").slice(0, 12).toUpperCase();
+  return `ZY-${digest}`;
+}
 
 const normalizeSupplierCategory = (value: unknown): string => String(value || "")
   .normalize("NFKC")
@@ -333,6 +346,8 @@ const toPublicProductPayload = (queueItem: QueueItemRecord, draft: SupplierAppro
     slug: draft?.slug ?? originalPayload.slug,
     price,
     originalPrice: normalizedComparePrice,
+    costPrice: draft?.costPrice ?? Number(originalPayload.costPrice ?? 0),
+    marketPrice: draft?.marketPrice ?? Number(originalPayload.marketPrice ?? 0),
     discount,
     stock,
     category,
@@ -558,34 +573,6 @@ export async function decideSupplierQueueItem(
       || nextOfferSelection.activeOfferId === approvedSupplierOffer.id;
 
     let resolvedOwnership = existingPrivateProductSnapshot?.data()?.supplierFieldOwnership;
-    if (approvedPayload) {
-      const ownershipResult = applySupplierProductFieldOwnership({
-        proposedProduct: approvedPayload,
-        currentProduct: existingProductSnapshot?.exists ? existingProductSnapshot.data() : undefined,
-        existingOwnership: resolvedOwnership,
-        requestedOwnership: effectiveDraft?.fieldOwnership,
-        editedFields: effectiveDraft?.editedFields,
-        sourceId,
-        reviewerId: reviewer.uid,
-        timestamp: now,
-      });
-      resolvedOwnership = ownershipResult.ownership;
-      if (shouldProjectApprovedOffer || !existingProductSnapshot?.exists) {
-        approvedPayload = ownershipResult.product;
-      } else {
-        const preservedProduct: Record<string, unknown> = {
-          ...existingProductSnapshot.data(),
-          ...(existingPrivateProductSnapshot?.data() || {}),
-          id: String(approvedPayload.id),
-        };
-        for (const field of effectiveDraft?.editedFields || []) {
-          if (Object.hasOwn(ownershipResult.product, field)) preservedProduct[field] = ownershipResult.product[field];
-          else delete preservedProduct[field];
-        }
-        approvedPayload = preservedProduct;
-      }
-      approvedPayload.supplierFieldOwnership = resolvedOwnership;
-    }
     if (approvedPayload && isSupplierOfferRemoval) {
       const approvalBaseline = parseSupplierProductApprovalBaseline(queueItem.approvalBaseline);
       approvedPayload = {
@@ -602,7 +589,7 @@ export async function decideSupplierQueueItem(
       approvedPayload.supplierId = projectedSupplierOffer.supplierId;
       approvedPayload.supplierSourceId = projectedSupplierOffer.sourceId;
       approvedPayload.supplierItemCode = projectedSupplierOffer.sku;
-      approvedPayload.costPrice = projectedSupplierOffer.cost;
+      approvedPayload.costPrice = effectiveDraft?.costPrice ?? projectedSupplierOffer.cost;
       approvedPayload.supplierMetadata = {
         ...record(approvedPayload.supplierMetadata),
         supplierProductId: projectedSupplierOffer.supplierProductId,
@@ -624,6 +611,47 @@ export async function decideSupplierQueueItem(
         availability: "unavailable",
         activeOfferId: null,
       };
+    }
+
+    if (approvedPayload) {
+      const existingSku = stringValue(existingPrivateProductSnapshot?.data()?.sku)
+        || stringValue(existingProductSnapshot?.data()?.sku);
+      approvedPayload.sku = existingSku || buildAutoProductSku(String(approvedPayload.id));
+    }
+
+    // Apply ownership after the active supplier offer is projected. This is
+    // important for private commercial values: an administrator-owned cost or
+    // market price must not be overwritten by a later supplier approval.
+    if (approvedPayload) {
+      const currentProduct = existingProductSnapshot?.exists ? {
+        ...existingProductSnapshot.data(),
+        ...(existingPrivateProductSnapshot?.data() || {}),
+      } : undefined;
+      const ownershipResult = applySupplierProductFieldOwnership({
+        proposedProduct: approvedPayload,
+        currentProduct,
+        existingOwnership: resolvedOwnership,
+        requestedOwnership: effectiveDraft?.fieldOwnership,
+        editedFields: effectiveDraft?.editedFields,
+        sourceId,
+        reviewerId: reviewer.uid,
+        timestamp: now,
+      });
+      resolvedOwnership = ownershipResult.ownership;
+      if (shouldProjectApprovedOffer || !existingProductSnapshot?.exists) {
+        approvedPayload = ownershipResult.product;
+      } else {
+        const preservedProduct: Record<string, unknown> = {
+          ...currentProduct,
+          id: String(approvedPayload.id),
+        };
+        for (const field of effectiveDraft?.editedFields || []) {
+          if (Object.hasOwn(ownershipResult.product, field)) preservedProduct[field] = ownershipResult.product[field];
+          else delete preservedProduct[field];
+        }
+        approvedPayload = preservedProduct;
+      }
+      approvedPayload.supplierFieldOwnership = resolvedOwnership;
     }
 
     if (approvedPayload) {

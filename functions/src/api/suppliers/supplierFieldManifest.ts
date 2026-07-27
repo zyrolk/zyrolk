@@ -70,7 +70,7 @@ export const SUPPLIER_FIELD_MANIFEST = [
   {
     id: "sku", sourceFields: ["sku", "pro_code", "supplier_code", "supplierSku", "supplier_sku", "product_code"], normalizedField: "sku",
     metadataField: "sku", existingPaths: ["supplierMetadata.sku", "supplierItemCode", "sku"], validation: "required_text", comparison: "text", emptyBehavior: "reject",
-    syncGroup: "identity", adminEditable: false, destinations: [publicDestination("sku", "derived"), privateDestination("supplierItemCode", "direct"), privateDestination("supplierMetadata.sku")], audit: { key: "supplierSku", label: "Supplier SKU", representation: "text" },
+    syncGroup: "identity", adminEditable: false, destinations: [privateDestination("supplierItemCode", "direct"), privateDestination("supplierMetadata.sku")], audit: { key: "supplierSku", label: "Supplier SKU", representation: "text" },
   },
   {
     id: "barcode", sourceFields: ["barcode", "barCode", "ean", "EAN", "upc", "UPC", "isbn", "ISBN", "gtin"], normalizedField: "barcode",
@@ -220,7 +220,7 @@ export const SUPPLIER_FIELD_MANIFEST = [
   {
     id: "costPrice", sourceFields: ["costPrice", "cost_price", "wholesale_price", "wholesalePrice", "supplier_price", "purchase_price"], normalizedField: "wholesalePrice",
     metadataField: "costPrice", existingPaths: ["costPrice", "supplierMetadata.costPrice", "supplierMetadata.wholesalePrice"], validation: "optional_number", comparison: "number", emptyBehavior: "preserve_existing",
-    syncGroup: "pricing", adminEditable: false, destinations: [privateDestination("costPrice", "direct"), privateDestination("supplierMetadata.costPrice")], audit: { key: "supplierCost", label: "Cost Price", representation: "number" },
+    syncGroup: "pricing", adminEditable: true, destinations: [privateDestination("costPrice", "direct"), privateDestination("supplierMetadata.costPrice")], audit: { key: "supplierCost", label: "Cost Price", representation: "number" },
   },
   {
     id: "currency", sourceFields: ["currency", "currency_code", "currencyCode"], normalizedField: "currency",

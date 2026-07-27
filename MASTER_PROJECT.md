@@ -233,6 +233,13 @@ Near-term priorities:
 - Improve product matching and duplicate detection.
 - Add user-facing order tracking and admin order workflow improvements.
 
+Product administration and supplier-review parity:
+
+- Zyro SKU, supplier product code, cost price, and market price are admin-only commercial data stored in `product_private`; they must not be projected into public product documents, storefront messages, or public structured metadata.
+- Manual products receive their Zyro SKU automatically when saved. Newly approved supplier products receive a deterministic Zyro SKU server-side during approval; the supplier SKU remains a separate, read-only matching identity.
+- Supplier Product Review exposes the same core catalogue controls as the manual Product Editor, including selling/compare prices, commercial cost/market prices, stock, content, category, brand, media, specifications, visibility, and merchandising flags.
+- An administrator edit made during Product Review claims durable ownership of that field. Later supplier changes still create review items, but approval must preserve administrator-owned values unless the administrator explicitly returns ownership to the supplier.
+
 Longer-term priorities:
 
 - Support multiple suppliers with source priority and conflict rules.

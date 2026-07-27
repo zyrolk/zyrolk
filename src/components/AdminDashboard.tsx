@@ -4800,7 +4800,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                     <div className="grid grid-cols-2 gap-3">
                       <div className="space-y-1">
                         <label className="text-slate-400 font-bold flex items-center">
-                          Sale Price (LKR) <span className="text-red-500 ml-0.5">*</span>
+                          Selling Price (LKR) <span className="font-normal text-slate-400">(Customer Visible)</span> <span className="text-red-500 ml-0.5">*</span>
                         </label>
                         <input
                           type="number"
@@ -4812,7 +4812,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                         />
                       </div>
                       <div className="space-y-1">
-                        <label className="text-slate-400 font-bold">Regular Price (Optional)</label>
+                        <label className="text-slate-400 font-bold">Compare Price <span className="font-normal">(Customer Visible · Optional)</span></label>
                         <input
                           type="number"
                           placeholder="e.g. 130000"
@@ -4823,7 +4823,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                       </div>
                     </div>
                     <p className="text-[10px] text-slate-400 leading-tight">
-                      * If the Regular Price is greater than the Sale Price, a discount badge is automatically applied.
+                      * If the Compare Price is greater than the Selling Price, a discount badge is automatically applied.
                     </p>
                   </div>
 
@@ -4933,7 +4933,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
 
                       <div className="space-y-1">
                         <label className="text-slate-400 font-bold flex items-center">
-                          Product SKU <span className="text-slate-400 ml-1 font-normal">(Read-Only)</span>
+                          Product SKU <span className="text-slate-400 ml-1 font-normal">(Admin Only · Read-Only)</span>
                         </label>
                         <input
                           type="text"
@@ -4990,7 +4990,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                     <span className="block text-[9px] font-black text-blue-500 uppercase tracking-widest">Corporate Record Details</span>
                     <div className="grid grid-cols-3 gap-2.5">
                       <div className="space-y-1">
-                        <label className="text-slate-400 font-bold">Supplier Code</label>
+                        <label className="text-slate-400 font-bold">Supplier Code <span className="font-normal">(Admin Only)</span></label>
                         <input
                           type="text"
                           value={newProduct.supplierItemCode || ""}
@@ -4999,7 +4999,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                         />
                       </div>
                       <div className="space-y-1">
-                        <label className="text-slate-400 font-bold">Cost (LKR)</label>
+                        <label className="text-slate-400 font-bold">Cost (LKR) <span className="font-normal">(Admin Only)</span></label>
                         <input
                           type="number"
                           value={newProduct.costPrice || ""}
@@ -5008,7 +5008,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                         />
                       </div>
                       <div className="space-y-1">
-                        <label className="text-slate-400 font-bold">Market (LKR)</label>
+                        <label className="text-slate-400 font-bold">Market (LKR) <span className="font-normal">(Admin Only)</span></label>
                         <input
                           type="number"
                           value={newProduct.marketPrice || ""}

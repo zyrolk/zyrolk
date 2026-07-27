@@ -161,7 +161,6 @@ export const buildStorefrontSeo = ({ currentPage, product, settings, origin, isA
     description,
     image: [image].filter(Boolean),
     mainEntityOfPage: canonical,
-    ...(cleanText(product.sku) ? { sku: cleanText(product.sku) } : {}),
     category: cleanText(product.category),
     offers: {
       '@type': 'Offer',

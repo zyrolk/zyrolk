@@ -22,11 +22,17 @@ const ADMIN_ONLY_PRODUCT_FIELDS = [
   "isActive",
 ] as const;
 
+// Commercial values live in product_private, but administrators still need
+// durable ownership when they intentionally override supplier pricing during
+// Product Review.
+const ADMIN_EDITABLE_COMMERCIAL_FIELDS = ["costPrice", "marketPrice"] as const;
+
 export const SUPPLIER_PRODUCT_OWNERSHIP_FIELDS = [...new Set([
   ...SUPPLIER_FIELD_MANIFEST.flatMap((field) => field.destinations
     .filter((destination) => destination.scope === "public" && field.adminEditable)
     .map((destination) => destination.path)),
   ...ADMIN_ONLY_PRODUCT_FIELDS,
+  ...ADMIN_EDITABLE_COMMERCIAL_FIELDS,
 ])].sort();
 
 const ownershipFieldSet = new Set<string>(SUPPLIER_PRODUCT_OWNERSHIP_FIELDS);

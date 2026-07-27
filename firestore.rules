@@ -47,7 +47,7 @@ service cloud.firestore {
 
     function isPublicProductData(data) {
       return !data.keys().hasAny([
-        'supplierItemCode', 'supplierItemCodeNormalized', 'supplierId',
+        'sku', 'supplierItemCode', 'supplierItemCodeNormalized', 'supplierId',
         'costPrice', 'marketPrice', 'supplierPurchasePrice',
         'supplierInternalNotes', 'supplierProfit', 'supplierPrice',
         'purchasePrice', 'profitMargin', 'commission',

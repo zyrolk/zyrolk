@@ -73,6 +73,8 @@ export interface SupplierReviewMetadataSection {
 }
 
 export interface SupplierReviewDraft {
+  productSku: string;
+  supplierItemCode: string;
   productName: string;
   shortDescription: string;
   description: string;
@@ -85,6 +87,8 @@ export interface SupplierReviewDraft {
   slug: string;
   sellingPrice: number;
   comparePrice: number;
+  costPrice: number;
+  marketPrice: number;
   stock: number;
   category: string;
   subcategory?: string;
@@ -102,7 +106,7 @@ export interface SupplierReviewDraft {
 
 export const SUPPLIER_REVIEW_EDITABLE_FIELDS = [
   'name', 'shortDescription', 'description', 'model', 'barcode', 'productType', 'tags', 'keyFeatures',
-  'whatsIncluded', 'slug', 'price', 'originalPrice', 'stock', 'category', 'subcategory', 'brand', 'specs',
+  'whatsIncluded', 'slug', 'price', 'originalPrice', 'costPrice', 'marketPrice', 'stock', 'category', 'subcategory', 'brand', 'specs',
   'isActive', 'isNew', 'isFeatured', 'isBestSeller', 'imageUrl', 'imageUrls',
 ] as const;
 
@@ -125,6 +129,8 @@ export interface SupplierReviewValidationErrors {
   slug?: string;
   sellingPrice?: string;
   comparePrice?: string;
+  costPrice?: string;
+  marketPrice?: string;
   stock?: string;
   category?: string;
   subcategory?: string;
@@ -284,6 +290,8 @@ export function createSupplierReviewDraft(item: SupplierReviewSourceItem): Suppl
   ])) as Record<string, SupplierProductFieldOwner>;
 
   return {
+    productSku: /^ZY-/iu.test(String(payload?.sku || '').trim()) ? String(payload?.sku).trim() : '',
+    supplierItemCode: String(payload?.supplierItemCode || item.supplierCode || '').trim(),
     productName: String(payload?.name || item.productName || ''),
     shortDescription: String(payload?.shortDescription || ''),
     description: String(payload?.description || ''),
@@ -296,6 +304,8 @@ export function createSupplierReviewDraft(item: SupplierReviewSourceItem): Suppl
     slug: String(payload?.slug || ''),
     sellingPrice: finiteNumber(payload?.price, finiteNumber(item.marketPrice)),
     comparePrice: finiteNumber(payload?.originalPrice, finiteNumber(item.marketPrice)),
+    costPrice: finiteNumber(payload?.costPrice, finiteNumber(item.costPrice)),
+    marketPrice: finiteNumber(payload?.marketPrice, finiteNumber(item.marketPrice)),
     stock: Math.max(0, Math.floor(finiteNumber(payload?.stock, finiteNumber(item.stock)))),
     category: String(payload?.category || (item.categoryMapping?.autoSelected ? item.categoryMapping.targetCategoryId : '') || ''),
     subcategory: String(payload?.subcategory || (item.categoryMapping?.autoSelected ? item.categoryMapping.targetSubcategoryId : '') || ''),
@@ -367,6 +377,8 @@ export function validateSupplierReviewDraft(
   if (!Number.isFinite(draft.sellingPrice) || draft.sellingPrice <= 0) errors.sellingPrice = 'Selling price must be greater than zero.';
   if (!Number.isFinite(draft.comparePrice) || draft.comparePrice < 0) errors.comparePrice = 'Compare price cannot be negative.';
   if (draft.comparePrice > 0 && draft.comparePrice < draft.sellingPrice) errors.comparePrice = 'Compare price must be at least the selling price.';
+  if (!Number.isFinite(draft.costPrice) || draft.costPrice < 0) errors.costPrice = 'Cost price cannot be negative.';
+  if (!Number.isFinite(draft.marketPrice) || draft.marketPrice < 0) errors.marketPrice = 'Market price cannot be negative.';
   if (!Number.isInteger(draft.stock) || draft.stock < 0) errors.stock = 'Stock must be a whole number of zero or more.';
   if (!isHttpsSupplierImageUrl(draft.primaryImageUrl)) {
     errors.primaryImageUrl = 'A valid supplier product image using HTTPS is required before publishing.';
@@ -486,6 +498,8 @@ export function buildSupplierApprovalItem(
       slug: String(draft.slug || '').trim(),
       price: sellingPrice,
       originalPrice: normalizedComparePrice,
+      costPrice: finiteNumber(draft.costPrice),
+      marketPrice: finiteNumber(draft.marketPrice),
       discount,
       stock: draft.stock,
       category: draft.category.trim(),

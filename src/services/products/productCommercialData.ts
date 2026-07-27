@@ -3,6 +3,7 @@ import type { Product } from '../../types';
 export const PRODUCT_PRIVATE_COLLECTION = 'product_private';
 
 export const COMMERCIAL_PRODUCT_FIELDS = [
+  'sku',
   'supplierItemCode',
   'supplierItemCodeNormalized',
   'supplierId',

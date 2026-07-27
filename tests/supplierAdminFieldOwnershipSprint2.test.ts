@@ -23,7 +23,7 @@ const timestamp = '2026-07-26T12:00:00.000Z';
 test('Sprint 2 ownership contract covers every Supplier Review editable destination', () => {
   for (const field of [
     'name', 'shortDescription', 'description', 'model', 'barcode', 'productType', 'tags', 'keyFeatures',
-    'whatsIncluded', 'slug', 'price', 'originalPrice', 'stock', 'category', 'subcategory', 'brand', 'specs',
+    'whatsIncluded', 'slug', 'price', 'originalPrice', 'costPrice', 'marketPrice', 'stock', 'category', 'subcategory', 'brand', 'specs',
     'isActive', 'isNew', 'isFeatured', 'isBestSeller', 'imageUrl', 'imageUrls',
   ]) assert.ok(SUPPLIER_PRODUCT_OWNERSHIP_FIELDS.includes(field), field);
   assert.throws(() => parseSupplierProductFieldOwnershipDecision({ rating: 'supplier' }), /ownership is invalid/i);

@@ -63,7 +63,7 @@ const toMillis = (value: unknown): number => {
 };
 
 const importantValue = (
-  field: "price" | "stock" | "supplierSku" | "supplierCost" | "status" | "category" | "brand",
+  field: "price" | "stock" | "supplierSku" | "supplierCost" | "marketPrice" | "status" | "category" | "brand",
   product: Record<string, unknown>,
   privateProduct: Record<string, unknown>,
   queueItem: Record<string, unknown>,
@@ -74,6 +74,7 @@ const importantValue = (
     case "stock": return product.stock;
     case "supplierSku": return privateProduct.supplierItemCode ?? privateProduct.supplierSku ?? queueItem.supplierSku ?? queueItem.supplierCode;
     case "supplierCost": return privateProduct.supplierPurchasePrice ?? privateProduct.costPrice ?? privateProduct.supplierPrice ?? queueItem.supplierPurchasePrice;
+    case "marketPrice": return privateProduct.marketPrice;
     case "status": return product.status ?? (product.published === true ? "published" : product.approved === true ? "approved" : product.isActive === false ? "inactive" : undefined);
     case "category": return product.category;
     case "brand": return product.brand ?? specs.brand;
@@ -122,7 +123,7 @@ export function buildSupplierImportantFieldChanges(input: Pick<SupplierAuditEven
   const beforePrivate = input.beforePrivateProduct || {};
   const afterPrivate = input.afterPrivateProduct || {};
   const changed: Record<string, { before: unknown; after: unknown }> = {};
-  for (const field of ["price", "stock", "supplierSku", "supplierCost", "status", "category", "brand"] as const) {
+  for (const field of ["price", "stock", "supplierSku", "supplierCost", "marketPrice", "status", "category", "brand"] as const) {
     const before = importantValue(field, beforePublic, beforePrivate, input.queueItem);
     const after = importantValue(field, afterPublic, afterPrivate, input.queueItem);
     if (!equal(before, after)) changed[field] = { before: before ?? null, after: after ?? null };

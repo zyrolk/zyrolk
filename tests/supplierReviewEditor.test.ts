@@ -43,6 +43,8 @@ const queueItem = {
 
 test('supplier review draft projects editable product values with safe defaults', () => {
   assert.deepEqual(createSupplierReviewDraft(queueItem), {
+    productSku: '',
+    supplierItemCode: 'A2Z-100',
     productName: 'Supplier Watch',
     shortDescription: '',
     description: 'Supplier description',
@@ -55,6 +57,8 @@ test('supplier review draft projects editable product values with safe defaults'
     slug: '',
     sellingPrice: 1500,
     comparePrice: 1700,
+    costPrice: 1000,
+    marketPrice: 1500,
     stock: 5,
     category: 'electronics',
     subcategory: '',
@@ -69,7 +73,7 @@ test('supplier review draft projects editable product values with safe defaults'
     fieldOwnership: {
       name: 'admin', shortDescription: 'admin', description: 'admin', model: 'admin', barcode: 'admin',
       productType: 'admin', tags: 'admin', keyFeatures: 'admin', whatsIncluded: 'admin', slug: 'admin',
-      price: 'admin', originalPrice: 'admin', stock: 'admin', category: 'admin', subcategory: 'admin',
+      price: 'admin', originalPrice: 'admin', costPrice: 'admin', marketPrice: 'admin', stock: 'admin', category: 'admin', subcategory: 'admin',
       brand: 'admin', specs: 'admin', isActive: 'admin', isNew: 'admin', isFeatured: 'admin',
       isBestSeller: 'admin', imageUrl: 'admin', imageUrls: 'admin',
     },
@@ -132,6 +136,8 @@ test('approval publishes edited values and preserves immutable supplier values f
     productName: 'Zyro Smart Watch',
     sellingPrice: 2200,
     comparePrice: 2500,
+    costPrice: 1100,
+    marketPrice: 2600,
     stock: 8,
     category: 'wearables',
     brand: 'Zyro Select',
@@ -148,6 +154,8 @@ test('approval publishes edited values and preserves immutable supplier values f
   assert.equal(approved.productPayload?.name, 'Zyro Smart Watch');
   assert.equal(approved.productPayload?.price, 2200);
   assert.equal(approved.productPayload?.originalPrice, 2500);
+  assert.equal(approved.productPayload?.costPrice, 1100);
+  assert.equal(approved.productPayload?.marketPrice, 2600);
   assert.equal(approved.productPayload?.discount, 12);
   assert.equal(approved.productPayload?.stock, 8);
   assert.equal(approved.productPayload?.category, 'wearables');

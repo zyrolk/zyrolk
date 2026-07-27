@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { decideSupplierQueueItem } from '../functions/src/api/suppliers/supplierApproval';
+import { buildAutoProductSku, decideSupplierQueueItem } from '../functions/src/api/suppliers/supplierApproval';
 import { buildSupplierProductApprovalBaseline } from '../functions/src/api/suppliers/supplierApprovalConcurrency';
 import {
   buildSupplierProductOffer,
@@ -242,6 +242,42 @@ test('review approval resolves the canonical product through the deterministic S
   assert.equal(documents.get(`supplier_product_offers/${sourceA.id}`)?.reviewStatus, 'approved');
   assert.equal(documents.get('supplier_review_queue/review-1')?.canonicalProductId, 'canonical-product');
   assert.equal(documents.get('supplier_review_queue/review-1')?.supplierOfferId, sourceB.id);
+});
+
+test('approval stores edited commercial values and auto SKU only in the private product record', async () => {
+  const { db, documents } = decisionFixture();
+  const result = await decideSupplierQueueItem(db as never, 'review-1', 'approved', { uid: 'admin-1', email: 'admin@zyro.lk' }, {
+    draft: {
+      productName: 'Canonical product',
+      sellingPrice: 145,
+      comparePrice: 190,
+      costPrice: 125,
+      marketPrice: 190,
+      stock: 20,
+      category: 'category-1',
+      subcategory: 'subcategory-1',
+      brand: 'brand-1',
+      specifications: {},
+      isActive: true,
+      primaryImageUrl: 'https://storage.example/large.webp',
+      galleryImageUrls: [],
+      fieldOwnership: { costPrice: 'admin', marketPrice: 'admin' },
+      editedFields: ['costPrice', 'marketPrice'],
+    },
+  });
+
+  assert.equal(result.success, true, JSON.stringify(result));
+  const publicProduct = documents.get('products/canonical-product') || {};
+  const privateProduct = documents.get('product_private/canonical-product') || {};
+  // The fake Firestore merge keeps FieldValue.delete() sentinels as ordinary
+  // values; production Firestore removes these fields atomically.
+  assert.notEqual(publicProduct.sku, buildAutoProductSku('canonical-product'));
+  assert.notEqual(publicProduct.costPrice, 125);
+  assert.notEqual(publicProduct.marketPrice, 190);
+  assert.equal(privateProduct.sku, buildAutoProductSku('canonical-product'));
+  assert.equal(privateProduct.costPrice, 125);
+  assert.equal(privateProduct.marketPrice, 190);
+  assert.equal((privateProduct.supplierFieldOwnership as StoredDocument).costPrice && ((privateProduct.supplierFieldOwnership as StoredDocument).costPrice as StoredDocument).owner, 'admin');
 });
 
 for (const action of ['rejected', 'deleted'] as const) {

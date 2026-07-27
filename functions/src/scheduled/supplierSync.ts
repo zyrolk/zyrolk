@@ -588,7 +588,9 @@ function buildProductPayload(
     published: isNewProduct ? true : match?.published !== false,
     approved: isNewProduct ? true : match?.approved !== false,
     visible: reviewVisibility.visible,
-    sku: product.sku,
+    // Supplier identity remains private. Existing Zyro SKUs are preserved and
+    // new catalogue SKUs are assigned server-side during approval.
+    sku: match?.sku || "",
     ...(acceptsField("barcode") && product.barcode ? { barcode: product.barcode } : match?.barcode ? { barcode: match.barcode } : {}),
     supplierId: source.supplierId || source.id,
     supplierSourceId: source.id,

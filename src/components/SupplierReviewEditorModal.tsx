@@ -51,6 +51,7 @@ const OWNERSHIP_LABELS: Record<SupplierReviewEditableField, string> = {
   name: 'Product name', shortDescription: 'Short description', description: 'Description', model: 'Model',
   barcode: 'Barcode', productType: 'Product type', tags: 'Tags', keyFeatures: 'Key features',
   whatsIncluded: "What's included", slug: 'SEO slug', price: 'Selling price', originalPrice: 'Compare price',
+  costPrice: 'Cost price', marketPrice: 'Market price',
   stock: 'Stock', category: 'Category', subcategory: 'Subcategory', brand: 'Brand', specs: 'Specifications',
   isActive: 'Storefront status', isNew: 'New arrival', isFeatured: 'Featured', isBestSeller: 'Best seller',
   imageUrl: 'Primary image', imageUrls: 'Gallery images',
@@ -104,8 +105,8 @@ export default function SupplierReviewEditorModal({
   );
   const missingFields = useMemo(() => Object.keys(validationErrors), [validationErrors]);
   const profit = useMemo(
-    () => calculateSupplierProfit(draft.sellingPrice, item.costPrice),
-    [draft.sellingPrice, item.costPrice],
+    () => calculateSupplierProfit(draft.sellingPrice, draft.costPrice),
+    [draft.costPrice, draft.sellingPrice],
   );
   const metadataSections = useMemo(() => buildSupplierReviewMetadataSections(item), [item]);
   const fieldChanges = useMemo(() => buildSupplierReviewFieldChanges(item), [item]);
@@ -138,8 +139,12 @@ export default function SupplierReviewEditorModal({
     };
   }, [isPublishing, onClose]);
 
-  const setNumber = (field: 'sellingPrice' | 'comparePrice' | 'stock', value: string) => {
-    const ownershipField = field === 'sellingPrice' ? 'price' : field === 'comparePrice' ? 'originalPrice' : 'stock';
+  const setNumber = (field: 'sellingPrice' | 'comparePrice' | 'costPrice' | 'marketPrice' | 'stock', value: string) => {
+    const ownershipField = field === 'sellingPrice'
+      ? 'price'
+      : field === 'comparePrice'
+        ? 'originalPrice'
+        : field;
     setDraft((current) => updateSupplierReviewDraftField(current, ownershipField, { [field]: value === '' ? Number.NaN : Number(value) }));
   };
 
@@ -348,16 +353,43 @@ export default function SupplierReviewEditorModal({
               {errorFor('productName') && <span className="text-[10px] font-semibold text-red-500">{errorFor('productName')}</span>}
             </label>
 
+            <div className="space-y-1.5 text-xs">
+              <span className="font-bold text-slate-600 dark:text-slate-300">Zyro SKU <span className="font-normal text-slate-400">(Admin only)</span></span>
+              <div className="flex min-h-11 items-center rounded-xl border border-slate-200 bg-slate-100 px-3 font-mono text-slate-500 dark:border-slate-700 dark:bg-slate-900/60">
+                {draft.productSku || 'Auto-assigned on approval'}
+              </div>
+            </div>
+
+            <div className="space-y-1.5 text-xs">
+              <span className="font-bold text-slate-600 dark:text-slate-300">Supplier Product Code <span className="font-normal text-slate-400">(Admin only · Read-only)</span></span>
+              <div className="flex min-h-11 items-center rounded-xl border border-slate-200 bg-slate-100 px-3 font-mono text-slate-500 dark:border-slate-700 dark:bg-slate-900/60">
+                {draft.supplierItemCode || 'Not supplied'}
+              </div>
+              <p className="text-[9px] text-slate-400">Retained as the supplier matching identity for future updates.</p>
+            </div>
+
             <label className="space-y-1.5 text-xs">
-              <span className="font-bold text-slate-600 dark:text-slate-300">Selling Price</span>
+              <span className="font-bold text-slate-600 dark:text-slate-300">Selling Price <span className="font-normal text-slate-400">(Customer visible)</span></span>
               <input type="number" min="0.01" step="0.01" value={Number.isFinite(draft.sellingPrice) ? draft.sellingPrice : ''} onChange={(event) => setNumber('sellingPrice', event.target.value)} aria-invalid={Boolean(errorFor('sellingPrice'))} className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 dark:border-slate-700 dark:bg-slate-900" />
               {errorFor('sellingPrice') && <span className="text-[10px] font-semibold text-red-500">{errorFor('sellingPrice')}</span>}
             </label>
 
             <label className="space-y-1.5 text-xs">
-              <span className="font-bold text-slate-600 dark:text-slate-300">Compare Price</span>
+              <span className="font-bold text-slate-600 dark:text-slate-300">Compare Price <span className="font-normal text-slate-400">(Customer visible)</span></span>
               <input type="number" min="0" step="0.01" value={Number.isFinite(draft.comparePrice) ? draft.comparePrice : ''} onChange={(event) => setNumber('comparePrice', event.target.value)} aria-invalid={Boolean(errorFor('comparePrice'))} className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 dark:border-slate-700 dark:bg-slate-900" />
               {errorFor('comparePrice') && <span className="text-[10px] font-semibold text-red-500">{errorFor('comparePrice')}</span>}
+            </label>
+
+            <label className="space-y-1.5 text-xs">
+              <span className="font-bold text-slate-600 dark:text-slate-300">Cost Price <span className="font-normal text-slate-400">(Admin only)</span></span>
+              <input type="number" min="0" step="0.01" value={Number.isFinite(draft.costPrice) ? draft.costPrice : ''} onChange={(event) => setNumber('costPrice', event.target.value)} aria-invalid={Boolean(errorFor('costPrice'))} className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 dark:border-slate-700 dark:bg-slate-900" />
+              {errorFor('costPrice') && <span className="text-[10px] font-semibold text-red-500">{errorFor('costPrice')}</span>}
+            </label>
+
+            <label className="space-y-1.5 text-xs">
+              <span className="font-bold text-slate-600 dark:text-slate-300">Market Price <span className="font-normal text-slate-400">(Admin only)</span></span>
+              <input type="number" min="0" step="0.01" value={Number.isFinite(draft.marketPrice) ? draft.marketPrice : ''} onChange={(event) => setNumber('marketPrice', event.target.value)} aria-invalid={Boolean(errorFor('marketPrice'))} className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 dark:border-slate-700 dark:bg-slate-900" />
+              {errorFor('marketPrice') && <span className="text-[10px] font-semibold text-red-500">{errorFor('marketPrice')}</span>}
             </label>
 
             <label className="space-y-1.5 text-xs">

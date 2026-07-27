@@ -19,8 +19,8 @@ test('Sprint 5 records an allowlisted before/after change set and rollback prepa
   };
   const beforePublic = { price: 1200, stock: 3, category: 'audio', specs: { brand: 'Old Brand' }, published: false };
   const afterPublic = { price: 1400, stock: 3, category: 'audio', specs: { brand: 'New Brand' }, published: true };
-  const beforePrivate = { supplierItemCode: 'SUP-OLD', supplierPurchasePrice: 800 };
-  const afterPrivate = { supplierItemCode: 'SUP-NEW', supplierPurchasePrice: 900 };
+  const beforePrivate = { supplierItemCode: 'SUP-OLD', supplierPurchasePrice: 800, marketPrice: 1500 };
+  const afterPrivate = { supplierItemCode: 'SUP-NEW', supplierPurchasePrice: 900, marketPrice: 1600 };
 
   const changes = buildSupplierImportantFieldChanges({
     queueItem,
@@ -31,7 +31,7 @@ test('Sprint 5 records an allowlisted before/after change set and rollback prepa
     previousState: 'review_pending',
     newState: 'approved',
   });
-  assert.deepEqual(Object.keys(changes).sort(), ['brand', 'price', 'status', 'supplierCost', 'supplierSku']);
+  assert.deepEqual(Object.keys(changes).sort(), ['brand', 'marketPrice', 'price', 'status', 'supplierCost', 'supplierSku']);
   assert.deepEqual(changes.price, { before: 1200, after: 1400 });
   assert.deepEqual(changes.stock, undefined);
 
