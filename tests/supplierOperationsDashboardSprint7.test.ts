@@ -110,18 +110,18 @@ test("operations APIs are admin protected and preserve existing Supplier Hub rou
   assert.match(routes, /app\.post\("\/api\/supplier-review-queue\/:queueItemId\/approve", requireSupplierHubAdmin/);
 });
 
-test("activity page exposes business history and recovery with technical monitoring collapsed", () => {
+test("Activity stays business-focused while recovery and monitoring remain under Advanced", () => {
   const component = projectFile("src/components/supplier-operations/SupplierOperationsDashboard.tsx");
-  assert.match(component, />Activity</);
+  assert.match(component, /mode === 'activity' \? 'Activity' : 'Advanced Operations'/);
+  assert.match(component, /'Current sync'/);
+  assert.match(component, /'Last successful sync'/);
+  assert.match(component, />Sync History</);
   assert.match(component, /Advanced Diagnostics/);
   assert.match(component, /Queue monitoring/);
   assert.match(component, /Bulk retry/);
   assert.match(component, /Bulk reopen/);
   assert.match(component, /Bulk resolve conflicts/);
   assert.match(component, /Load more/);
-  assert.match(component, />Issues</);
-  assert.match(component, />Ignore</);
-  assert.match(component, />Resolved</);
   assert.match(component, /Advanced Media Diagnostics/);
   assert.match(component, /Approval & Activity History/);
   assert.match(component, /downloadCsv/);

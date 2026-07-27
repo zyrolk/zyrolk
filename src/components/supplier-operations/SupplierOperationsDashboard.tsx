@@ -14,7 +14,6 @@ import {
   Search,
   Server,
   ShieldAlert,
-  UserCheck,
   Users,
   XCircle,
 } from 'lucide-react';
@@ -25,6 +24,7 @@ interface SupplierOperationsDashboardProps {
   requestApi: SupplierApiRequest;
   activeSyncJob: { id: string; state: string; updatedAt: string } | null;
   refreshKey: number;
+  mode: 'activity' | 'advanced';
 }
 
 interface OperationsSummary {
@@ -151,6 +151,7 @@ function SupplierOperationsDashboard({
   requestApi,
   activeSyncJob,
   refreshKey,
+  mode,
 }: SupplierOperationsDashboardProps) {
   const [snapshot, setSnapshot] = useState<OperationsSnapshot | null>(null);
   const [queueItems, setQueueItems] = useState<QueueItem[]>([]);
@@ -200,17 +201,19 @@ function SupplierOperationsDashboard({
       const [summaryResponse, historyResponse, auditResponse] = await Promise.all([
         requestApi('/api/supplier-operations/summary', 'GET'),
         requestApi('/api/supplier-operations/sync-history?limit=40', 'GET'),
-        requestApi('/api/supplier-operations/audit?limit=40', 'GET'),
+        mode === 'advanced' ? requestApi('/api/supplier-operations/audit?limit=40', 'GET') : null,
       ]);
       const summaryResult = await readJson<OperationsSnapshot & { success: boolean }>(summaryResponse);
       const historyResult = await readJson<PageResponse>(historyResponse);
-      const auditResult = await readJson<PageResponse>(auditResponse);
+      const auditResult = auditResponse ? await readJson<PageResponse>(auditResponse) : null;
       if (requestId !== snapshotRequestIdRef.current) return;
       setSnapshot(summaryResult);
       setHistoryItems(historyResult.items);
       setHistoryCursor(historyResult.nextCursor);
-      setAuditItems(auditResult.items);
-      setAuditCursor(auditResult.nextCursor);
+      if (auditResult) {
+        setAuditItems(auditResult.items);
+        setAuditCursor(auditResult.nextCursor);
+      }
       setSnapshotError(null);
     } catch (loadError) {
       if (requestId === snapshotRequestIdRef.current) {
@@ -222,7 +225,7 @@ function SupplierOperationsDashboard({
         setRefreshing(false);
       }
     }
-  }, [readJson, requestApi]);
+  }, [mode, readJson, requestApi]);
 
   useEffect(() => {
     let cancelled = false;
@@ -297,19 +300,6 @@ function SupplierOperationsDashboard({
     }
   };
 
-  const updateErrorDisposition = async (queueItemId: string, action: 'ignore' | 'resolved') => {
-    setActionId(`${queueItemId}:${action}`);
-    setActionError(null);
-    try {
-      await readJson(await requestApi(`/api/supplier-operations/errors/${encodeURIComponent(queueItemId)}/action`, 'POST', { action }));
-      await loadQueue(false);
-    } catch (actionError) {
-      setActionError(actionError instanceof Error ? actionError.message : 'Error center status could not be updated.');
-    } finally {
-      setActionId(null);
-    }
-  };
-
   const retryError = async (queueItemId: string) => {
     setActionId(`${queueItemId}:retry`);
     setActionError(null);
@@ -339,10 +329,13 @@ function SupplierOperationsDashboard({
       .some((value) => String(value || '').toLowerCase().includes(needle)));
   }, [auditItems, auditSearch]);
 
-  const cards = [
-    ['Active sync', activeSyncJob && ['pending', 'running', 'waiting'].includes(activeSyncJob.state) ? 1 : 0, RefreshCw, 'text-blue-500'],
-    ['Awaiting product review', Number(queueCounts.pending || 0), UserCheck, 'text-violet-500'],
-    ['Retry available', Number(queueCounts.retry || 0) + Number(queueCounts.dead_letter || 0), RefreshCw, 'text-amber-500'],
+  const activityCards = [
+    ['Current sync', activeSyncJob && ['pending', 'running', 'waiting'].includes(activeSyncJob.state) ? stateLabel(activeSyncJob.state) : 'None', RefreshCw, 'text-blue-500'],
+    ['Last successful sync', dateTime(summary.lastSuccessfulSync), CheckCircle2, 'text-emerald-500'],
+    ['Failed sync', summary.failedImports, XCircle, 'text-red-500'],
+    ['Retry', Number(queueCounts.retry || 0) + Number(queueCounts.dead_letter || 0), RefreshCw, 'text-amber-500'],
+  ] as const;
+  const advancedCards = [
     ['Total suppliers', summary.totalSuppliers, Users, 'text-blue-500'],
     ['Active suppliers', summary.activeSuppliers, CheckCircle2, 'text-emerald-500'],
     ['Disabled suppliers', summary.disabledSuppliers, Pause, 'text-slate-500'],
@@ -352,6 +345,7 @@ function SupplierOperationsDashboard({
     ['Failed updates', summary.failedImports, XCircle, 'text-red-500'],
     ['Approval conflicts', summary.failedApprovals, ShieldAlert, 'text-amber-500'],
   ] as const;
+  const cards = mode === 'activity' ? activityCards : advancedCards;
 
   if (loading) {
     return <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4" aria-label="Loading supplier activity"><div className="h-28 animate-pulse rounded-3xl bg-slate-100 dark:bg-slate-800" /><div className="h-28 animate-pulse rounded-3xl bg-slate-100 dark:bg-slate-800" /><div className="h-28 animate-pulse rounded-3xl bg-slate-100 dark:bg-slate-800" /><div className="h-28 animate-pulse rounded-3xl bg-slate-100 dark:bg-slate-800" /></div>;
@@ -361,8 +355,8 @@ function SupplierOperationsDashboard({
     <div className="space-y-8" data-testid="supplier-operations-dashboard">
       <div className="flex flex-col gap-3 rounded-3xl border border-slate-200/70 bg-white p-5 dark:border-slate-800 dark:bg-slate-950 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <div className="flex items-center gap-2"><Activity className="h-5 w-5 text-blue-500" /><h3 className="font-display text-lg font-black text-slate-900 dark:text-white">Activity</h3></div>
-          <p className="mt-1 text-xs text-slate-500">Supplier updates, product decisions, and issues · Refreshed {dateTime(snapshot?.generatedAt)}</p>
+          <div className="flex items-center gap-2"><Activity className="h-5 w-5 text-blue-500" /><h3 className="font-display text-lg font-black text-slate-900 dark:text-white">{mode === 'activity' ? 'Activity' : 'Advanced Operations'}</h3></div>
+          <p className="mt-1 text-xs text-slate-500">{mode === 'activity' ? 'Current and previous supplier synchronization activity.' : 'Diagnostics, recovery, scheduling, and queue information.'} · Refreshed {dateTime(snapshot?.generatedAt)}</p>
         </div>
         <button type="button" onClick={() => void loadAll(true)} disabled={refreshing} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 text-xs font-black text-white disabled:opacity-60" aria-label="Refresh supplier activity">
           <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} /> Refresh
@@ -376,16 +370,16 @@ function SupplierOperationsDashboard({
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {cards.map(([label, value, Icon, color]) => <div key={label} className="rounded-3xl border border-slate-200/70 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-950"><div className="flex items-center justify-between"><span className="text-[10px] font-black uppercase tracking-widest text-slate-400">{label}</span><Icon className={`h-5 w-5 ${color}`} /></div><p className="mt-4 text-2xl font-black text-slate-900 dark:text-white">{value}</p></div>)}
         </div>
-        <div className="mt-3 grid gap-3 text-xs text-slate-500 sm:grid-cols-2"><p>Last successful sync: <strong className="text-slate-700 dark:text-slate-200">{dateTime(summary.lastSuccessfulSync)}</strong></p><p>Next scheduled sync: <strong className="text-slate-700 dark:text-slate-200">{dateTime(summary.nextScheduledSync)}</strong></p></div>
+        {mode === 'advanced' && <div className="mt-3 grid gap-3 text-xs text-slate-500 sm:grid-cols-2"><p>Last successful sync: <strong className="text-slate-700 dark:text-slate-200">{dateTime(summary.lastSuccessfulSync)}</strong></p><p>Next scheduled sync: <strong className="text-slate-700 dark:text-slate-200">{dateTime(summary.nextScheduledSync)}</strong></p></div>}
       </section>
 
-      <section aria-labelledby="alerts-title" className="rounded-3xl border border-slate-200/70 bg-white p-5 dark:border-slate-800 dark:bg-slate-950">
+      {mode === 'advanced' && <section aria-labelledby="alerts-title" className="rounded-3xl border border-slate-200/70 bg-white p-5 dark:border-slate-800 dark:bg-slate-950">
         <div className="mb-4 flex items-center gap-2"><AlertTriangle className="h-5 w-5 text-amber-500" /><h4 id="alerts-title" className="font-black text-slate-900 dark:text-white">Active alerts</h4><span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black text-amber-700">{snapshot?.alerts.length || 0}</span></div>
         {snapshot?.alerts.length ? <div className="grid gap-3 lg:grid-cols-2">{snapshot.alerts.map((alert) => <div key={alert.id} className="rounded-2xl border border-amber-200/70 bg-amber-50/70 p-4 dark:border-amber-900/50 dark:bg-amber-950/20"><div className="flex items-center justify-between gap-2"><strong className="text-sm text-slate-900 dark:text-white">{alert.title}</strong><span className="text-[9px] font-black uppercase text-amber-700">{alert.severity}</span></div><p className="mt-1 text-xs text-slate-600 dark:text-slate-300">{alert.message}</p></div>)}</div> : <p className="text-sm text-slate-500">No active alerts.</p>}
-      </section>
+      </section>}
 
-      <details className="rounded-3xl border border-slate-200/70 bg-white p-5 dark:border-slate-800 dark:bg-slate-950">
-        <summary className="cursor-pointer text-sm font-black text-slate-700 dark:text-slate-200">Advanced Diagnostics</summary>
+      {mode === 'advanced' && <details open className="rounded-3xl border border-slate-200/70 bg-white p-5 dark:border-slate-800 dark:bg-slate-950">
+        <summary className="cursor-pointer text-sm font-black text-slate-700 dark:text-slate-200">Advanced Diagnostics & Recovery</summary>
       <section aria-labelledby="queue-monitor-title" className="mt-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between"><div><div className="flex items-center gap-2"><Server className="h-5 w-5 text-blue-500" /><h4 id="queue-monitor-title" className="font-black text-slate-900 dark:text-white">Queue monitoring</h4></div><p className="mt-1 text-xs text-slate-500">Oldest eligible item: {duration(queueCounts.queueAgeMs)}</p></div><div className="flex flex-wrap gap-2"><div className="relative"><Search className="absolute left-3 top-3 h-4 w-4 text-slate-400" /><input value={search} onChange={(event) => setSearch(event.target.value)} className="min-h-10 rounded-xl border border-slate-200 bg-transparent pl-9 pr-3 text-xs dark:border-slate-700" placeholder="Search queue" aria-label="Search queue" /></div><select value={queueState} onChange={(event) => setQueueState(event.target.value)} className="min-h-10 rounded-xl border border-slate-200 bg-white px-3 text-xs dark:border-slate-700 dark:bg-slate-900" aria-label="Filter queue state"><option value="all">All states</option>{['review_pending', 'processing', 'approved', 'rejected', 'conflict', 'retryable_failure', 'dead_letter'].map((state) => <option key={state} value={state}>{stateLabel(state)}</option>)}</select></div></div>
         <div className="mt-4 flex flex-wrap gap-2">{['pending', 'processing', 'approved', 'rejected', 'conflict', 'retry', 'dead_letter'].map((state) => <span key={state} className="rounded-full bg-slate-100 px-3 py-1 text-[10px] font-black text-slate-600 dark:bg-slate-800 dark:text-slate-300">{stateLabel(state)} {Number(queueCounts[state] || 0)}</span>)}</div>
@@ -393,22 +387,22 @@ function SupplierOperationsDashboard({
         <div className="mt-4 overflow-x-auto"><table className="w-full min-w-[760px] text-left text-xs"><thead><tr className="border-b border-slate-200 text-[9px] uppercase tracking-widest text-slate-400 dark:border-slate-800"><th className="p-3"><span className="sr-only">Select</span></th><th className="p-3">Product</th><th className="p-3">Supplier</th><th className="p-3">State</th><th className="p-3">Age</th><th className="p-3">Retries</th><th className="p-3">Failure</th></tr></thead><tbody>{queueItems.map((item) => <tr key={item.id} className="border-b border-slate-100 dark:border-slate-900"><td className="p-3"><input type="checkbox" checked={selected.includes(item.id)} onChange={(event) => setSelected((current) => event.target.checked ? [...current, item.id] : current.filter((id) => id !== item.id))} aria-label={`Select ${item.productName}`} /></td><td className="p-3 font-bold text-slate-800 dark:text-slate-100">{item.productName}<span className="block font-normal text-slate-400">{item.supplierCode || item.id}</span></td><td className="p-3">{item.supplierName}</td><td className="p-3"><span className="rounded-full bg-slate-100 px-2 py-1 font-bold dark:bg-slate-800">{stateLabel(item.state)}</span></td><td className="p-3">{dateTime(item.createdAt)}</td><td className="p-3">{item.retryCount}</td><td className="max-w-56 truncate p-3 text-red-500" title={item.failureReason || ''}>{item.failureReason || '—'}</td></tr>)}</tbody></table>{!queueItems.length && <p className="py-8 text-center text-sm text-slate-500">No queue items match this view.</p>}</div>
         {queueCursor && <button type="button" onClick={() => void loadQueue(true, queueCursor)} className="mt-4 min-h-10 rounded-xl bg-slate-100 px-4 text-xs font-black dark:bg-slate-800">Load more</button>}
       </section>
-      </details>
+      </details>}
 
-      <div className="grid gap-6 xl:grid-cols-2">
+      {mode === 'activity' && <div className="grid gap-6 xl:grid-cols-2">
         <section aria-labelledby="sync-history-title" className="rounded-3xl border border-slate-200/70 bg-white p-5 dark:border-slate-800 dark:bg-slate-950">
-          <div className="mb-4 flex items-center justify-between"><div className="flex items-center gap-2"><History className="h-5 w-5 text-violet-500" /><h4 id="sync-history-title" className="font-black text-slate-900 dark:text-white">Sync history</h4></div><button type="button" onClick={() => downloadCsv('supplier-sync-history', historyItems)} className="min-h-10 rounded-xl bg-slate-100 px-3 text-[10px] font-black dark:bg-slate-800"><Download className="mr-1 inline h-3.5 w-3.5" />Export</button></div>
+          <div className="mb-4 flex items-center gap-2"><History className="h-5 w-5 text-violet-500" /><h4 id="sync-history-title" className="font-black text-slate-900 dark:text-white">Sync History</h4></div>
           <div className="space-y-3">{historyItems.map((item) => <div key={item.id} className="rounded-2xl border border-slate-100 p-3 text-xs dark:border-slate-800"><div className="flex justify-between gap-3"><strong>{item.supplier || 'Supplier sync'}</strong><span className={item.status === 'Success' ? 'text-emerald-500' : 'text-red-500'}>{item.status}</span></div><p className="mt-1 text-slate-500">{dateTime(item.createdAt)} · {duration(item.durationMs)} · imported {Number(item.productsImported || 0)} · updated {Number(item.productsUpdated || 0)} · deleted {Number(item.productsDeleted || 0)} · failed {Number(item.productsFailed || 0)}</p></div>)}</div>
           {historyCursor && <button type="button" onClick={async () => { const result = await readJson<PageResponse>(await requestApi(`/api/supplier-operations/sync-history?limit=40&after=${encodeURIComponent(historyCursor)}`, 'GET')); setHistoryItems((current) => [...current, ...result.items]); setHistoryCursor(result.nextCursor); }} className="mt-4 min-h-10 rounded-xl bg-slate-100 px-4 text-xs font-black dark:bg-slate-800">Load more</button>}
         </section>
 
         <section aria-labelledby="error-center-title" className="rounded-3xl border border-slate-200/70 bg-white p-5 dark:border-slate-800 dark:bg-slate-950">
-          <div className="mb-4 flex items-center justify-between"><div className="flex items-center gap-2"><ShieldAlert className="h-5 w-5 text-red-500" /><h4 id="error-center-title" className="font-black text-slate-900 dark:text-white">Issues</h4></div><button type="button" onClick={() => downloadCsv('supplier-errors', failedItems as unknown as Array<Record<string, unknown>>)} className="min-h-10 rounded-xl bg-slate-100 px-3 text-[10px] font-black dark:bg-slate-800"><Download className="mr-1 inline h-3.5 w-3.5" />Export</button></div>
-          {failedItems.length ? <div className="space-y-3">{failedItems.map((item) => <div key={item.id} className="rounded-2xl border border-red-100 bg-red-50/40 p-3 text-xs dark:border-red-950 dark:bg-red-950/10"><div className="flex justify-between gap-3"><strong>{item.supplierName} · Needs attention</strong><span>{dateTime(item.updatedAt)}</span></div><p className="mt-1 text-red-700 dark:text-red-300">{item.failureReason || 'Recovery is required.'}</p>{item.stack && <details className="mt-2"><summary className="cursor-pointer font-bold text-slate-600 dark:text-slate-300">Advanced diagnostics</summary><pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap rounded-lg bg-slate-950 p-2 text-[10px] text-slate-200">{item.stack}</pre></details>}<div className="mt-3 flex flex-wrap gap-2">{['retryable_failure', 'dead_letter'].includes(item.state) && <button type="button" onClick={() => void retryError(item.id)} className="min-h-9 rounded-lg bg-red-600 px-3 text-[10px] font-black text-white">Retry</button>}<button type="button" onClick={() => void updateErrorDisposition(item.id, 'ignore')} disabled={Boolean(actionId)} className="min-h-9 rounded-lg bg-slate-100 px-3 text-[10px] font-black text-slate-700 disabled:opacity-40">Ignore</button><button type="button" onClick={() => void updateErrorDisposition(item.id, 'resolved')} disabled={Boolean(actionId)} className="min-h-9 rounded-lg bg-emerald-100 px-3 text-[10px] font-black text-emerald-700 disabled:opacity-40">Resolved</button></div></div>)}</div> : <p className="text-sm text-slate-500">No unresolved issues.</p>}
+          <div className="mb-4 flex items-center gap-2"><ShieldAlert className="h-5 w-5 text-red-500" /><h4 id="error-center-title" className="font-black text-slate-900 dark:text-white">Retry</h4></div>
+          {failedItems.length ? <div className="space-y-3">{failedItems.map((item) => <div key={item.id} className="rounded-2xl border border-red-100 bg-red-50/40 p-3 text-xs dark:border-red-950 dark:bg-red-950/10"><div className="flex justify-between gap-3"><strong>{item.supplierName} · Failed sync</strong><span>{dateTime(item.updatedAt)}</span></div><p className="mt-1 text-red-700 dark:text-red-300">{item.failureReason || 'Retry is available.'}</p>{['retryable_failure', 'dead_letter'].includes(item.state) && <button type="button" onClick={() => void retryError(item.id)} className="mt-3 min-h-9 rounded-lg bg-red-600 px-3 text-[10px] font-black text-white">Retry</button>}</div>)}</div> : <p className="text-sm text-slate-500">No failed syncs need a retry.</p>}
         </section>
-      </div>
+      </div>}
 
-      <details className="rounded-3xl border border-slate-200/70 bg-white p-5 dark:border-slate-800 dark:bg-slate-950"><summary className="cursor-pointer text-sm font-black text-slate-700 dark:text-slate-200">Advanced Media Diagnostics</summary><section aria-labelledby="media-monitor-title" className="mt-5"><div className="mb-4 flex items-center gap-2"><Image className="h-5 w-5 text-cyan-500" /><h4 id="media-monitor-title" className="font-black text-slate-900 dark:text-white">Media processing</h4></div><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">{[['Downloaded', media.downloaded], ['Failed', media.failedDownloads], ['Duplicate reuse', media.duplicateReuse], ['Storage', bytes(media.storageBytes)], ['Broken', media.brokenImages], ['Missing', media.missingImages]].map(([label, value]) => <div key={String(label)} className="rounded-2xl bg-slate-50 p-3 dark:bg-slate-900"><p className="text-[9px] font-black uppercase tracking-widest text-slate-400">{label}</p><p className="mt-2 text-lg font-black">{String(value ?? 0)}</p></div>)}</div></section></details>
+      {mode === 'advanced' && <><details className="rounded-3xl border border-slate-200/70 bg-white p-5 dark:border-slate-800 dark:bg-slate-950"><summary className="cursor-pointer text-sm font-black text-slate-700 dark:text-slate-200">Advanced Media Diagnostics</summary><section aria-labelledby="media-monitor-title" className="mt-5"><div className="mb-4 flex items-center gap-2"><Image className="h-5 w-5 text-cyan-500" /><h4 id="media-monitor-title" className="font-black text-slate-900 dark:text-white">Media processing</h4></div><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">{[['Downloaded', media.downloaded], ['Failed', media.failedDownloads], ['Duplicate reuse', media.duplicateReuse], ['Storage', bytes(media.storageBytes)], ['Broken', media.brokenImages], ['Missing', media.missingImages]].map(([label, value]) => <div key={String(label)} className="rounded-2xl bg-slate-50 p-3 dark:bg-slate-900"><p className="text-[9px] font-black uppercase tracking-widest text-slate-400">{label}</p><p className="mt-2 text-lg font-black">{String(value ?? 0)}</p></div>)}</div></section></details>
 
       <details className="rounded-3xl border border-slate-200/70 bg-white p-5 dark:border-slate-800 dark:bg-slate-950">
         <summary className="cursor-pointer text-sm font-black text-slate-700 dark:text-slate-200">Advanced Performance Diagnostics</summary>
@@ -428,7 +422,7 @@ function SupplierOperationsDashboard({
       </section>
       </details>
 
-      <section aria-labelledby="audit-center-title" className="rounded-3xl border border-slate-200/70 bg-white p-5 dark:border-slate-800 dark:bg-slate-950"><div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-center gap-2"><Activity className="h-5 w-5 text-emerald-500" /><h4 id="audit-center-title" className="font-black text-slate-900 dark:text-white">Approval & Activity History</h4></div><div className="flex gap-2"><label className="relative"><span className="sr-only">Search activity history</span><Search className="absolute left-3 top-3 h-4 w-4 text-slate-400" /><input value={auditSearch} onChange={(event) => setAuditSearch(event.target.value)} className="min-h-10 rounded-xl border border-slate-200 bg-transparent pl-9 pr-3 text-xs dark:border-slate-700" placeholder="Search activity" /></label><button type="button" onClick={() => downloadCsv('supplier-activity', visibleAuditItems)} className="min-h-10 rounded-xl bg-slate-100 px-3 text-[10px] font-black dark:bg-slate-800"><Download className="mr-1 inline h-3.5 w-3.5" />Export</button></div></div><div className="space-y-2">{visibleAuditItems.map((item) => <div key={`${item.module}:${item.id}`} className="grid gap-1 rounded-2xl border border-slate-100 p-3 text-xs dark:border-slate-800 sm:grid-cols-[1fr_auto]"><div><strong>{stateLabel(String(item.action || item.event || item.status || 'event'))}</strong><span className="ml-2 text-slate-400">{item.supplierId || item.sourceId || item.supplier || 'system'}</span><p className="mt-1 text-slate-500">{item.reason || item.details || `${item.previousState || 'new'} → ${item.newState || 'recorded'}`}</p></div><time className="text-slate-400">{dateTime(item.timestamp || item.createdAt)}</time></div>)}</div>{auditCursor && <button type="button" onClick={async () => { const result = await readJson<PageResponse>(await requestApi(`/api/supplier-operations/audit?limit=40&after=${encodeURIComponent(auditCursor)}`, 'GET')); setAuditItems((current) => [...current, ...result.items]); setAuditCursor(result.nextCursor); }} className="mt-4 min-h-10 rounded-xl bg-slate-100 px-4 text-xs font-black dark:bg-slate-800">Load more</button>}</section>
+      <section aria-labelledby="audit-center-title" className="rounded-3xl border border-slate-200/70 bg-white p-5 dark:border-slate-800 dark:bg-slate-950"><div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-center gap-2"><Activity className="h-5 w-5 text-emerald-500" /><h4 id="audit-center-title" className="font-black text-slate-900 dark:text-white">Approval & Activity History</h4></div><div className="flex gap-2"><label className="relative"><span className="sr-only">Search activity history</span><Search className="absolute left-3 top-3 h-4 w-4 text-slate-400" /><input value={auditSearch} onChange={(event) => setAuditSearch(event.target.value)} className="min-h-10 rounded-xl border border-slate-200 bg-transparent pl-9 pr-3 text-xs dark:border-slate-700" placeholder="Search activity" /></label><button type="button" onClick={() => downloadCsv('supplier-activity', visibleAuditItems)} className="min-h-10 rounded-xl bg-slate-100 px-3 text-[10px] font-black dark:bg-slate-800"><Download className="mr-1 inline h-3.5 w-3.5" />Export</button></div></div><div className="space-y-2">{visibleAuditItems.map((item) => <div key={`${item.module}:${item.id}`} className="grid gap-1 rounded-2xl border border-slate-100 p-3 text-xs dark:border-slate-800 sm:grid-cols-[1fr_auto]"><div><strong>{stateLabel(String(item.action || item.event || item.status || 'event'))}</strong><span className="ml-2 text-slate-400">{item.supplierId || item.sourceId || item.supplier || 'system'}</span><p className="mt-1 text-slate-500">{item.reason || item.details || `${item.previousState || 'new'} → ${item.newState || 'recorded'}`}</p></div><time className="text-slate-400">{dateTime(item.timestamp || item.createdAt)}</time></div>)}</div>{auditCursor && <button type="button" onClick={async () => { const result = await readJson<PageResponse>(await requestApi(`/api/supplier-operations/audit?limit=40&after=${encodeURIComponent(auditCursor)}`, 'GET')); setAuditItems((current) => [...current, ...result.items]); setAuditCursor(result.nextCursor); }} className="mt-4 min-h-10 rounded-xl bg-slate-100 px-4 text-xs font-black dark:bg-slate-800">Load more</button>}</section></>}
     </div>
   );
 }

@@ -6,7 +6,14 @@ import { normalizeSupplierSourceConfig } from "./supplierSourceCompatibility";
 const MAX_ID_LENGTH = 160;
 const MAX_TEXT_LENGTH = 2_000;
 const SOURCE_TYPES = new Set(["a2z", "api", "csv", "http", "rest", "shopify", "website", "whatsapp", "woocommerce", "xml"]);
-const AUTO_SYNC_VALUES = new Set(["Off", "15 minutes", "30 minutes", "1 hour", "6 hours", "daily"]);
+const AUTO_SYNC_VALUES = new Map([
+  ["off", "Off"],
+  ["15 minutes", "15 Minutes"],
+  ["30 minutes", "30 Minutes"],
+  ["1 hour", "1 Hour"],
+  ["6 hours", "6 Hours"],
+  ["daily", "Daily"],
+]);
 const FORBIDDEN_CREDENTIAL_KEYS = new Set([
   "apikey", "apiheaders", "apitoken", "authorization", "bearertoken", "clientsecret", "cookie", "password", "secret", "token", "username",
 ]);
@@ -24,6 +31,9 @@ export function projectSupplierSourceForAdmin(value: Record<string, unknown>, so
   const projected = omitCredentialFields(value) as Record<string, unknown>;
   if (!sourceId) return projected;
   const normalized = normalizeSupplierSourceConfig(sourceId, projected as FirebaseFirestore.DocumentData);
+  const projectedSettings = projected.settings && typeof projected.settings === "object" && !Array.isArray(projected.settings)
+    ? projected.settings as Record<string, unknown>
+    : {};
   return {
     ...projected,
     supplierId: normalized.supplierId,
@@ -36,6 +46,10 @@ export function projectSupplierSourceForAdmin(value: Record<string, unknown>, so
     currency: normalized.currency,
     timezone: normalized.timezone,
     syncSchedule: normalized.syncSchedule,
+    settings: {
+      ...projectedSettings,
+      autoSync: projectedSettings.autoSync || normalized.syncSchedule || "Off",
+    },
     capabilities: projected.capabilities || normalized.capabilities,
     websiteUrl: projected.websiteUrl || normalized.websiteUrl,
     endpoint: projected.endpoint || normalized.endpoint,
@@ -118,8 +132,9 @@ const cleanSettings = (value: unknown): Record<string, unknown> => {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new ApiError("Supplier source settings are invalid.", 400);
   assertNoCredentialValues(value, "settings");
   const settings = value as Record<string, unknown>;
-  const autoSync = cleanText(settings.autoSync, "settings.autoSync", 30) || "Off";
-  if (!AUTO_SYNC_VALUES.has(autoSync)) throw new ApiError("settings.autoSync is invalid.", 400);
+  const requestedAutoSync = (cleanText(settings.autoSync, "settings.autoSync", 30) || "Off").toLowerCase();
+  const autoSync = AUTO_SYNC_VALUES.get(requestedAutoSync);
+  if (!autoSync) throw new ApiError("settings.autoSync is invalid.", 400);
   const productLimit = cleanText(settings.productLimit, "settings.productLimit", 20) || "All";
   if (productLimit !== "All" && (!Number.isInteger(Number(productLimit)) || Number(productLimit) < 1 || Number(productLimit) > 250)) {
     throw new ApiError("settings.productLimit is invalid.", 400);

@@ -165,7 +165,7 @@ test('Sprint 4 queue UX exposes suggestion acceptance, confidence, missing field
   assert.match(sync, /suggestSupplierCategory/);
   assert.match(sync, /suggestSupplierBrand/);
   assert.match(sync, /readyToPublish/);
-  assert.match(hub, /Catalog readiness/);
+  assert.match(hub, /Validation Problems/);
   assert.match(editor, /Accept category suggestion/);
   assert.match(editor, /Accept brand suggestion/);
   assert.match(editor, /Category specifications/);

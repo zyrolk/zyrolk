@@ -7,8 +7,8 @@ import {
   SUPPLIER_SCHEDULER_SCHEDULE,
 } from '../functions/src/scheduled/supplierSync';
 
-test('Sprint 6 defaults to hourly scheduler execution and derives per-source next execution safely', () => {
-  assert.equal(SUPPLIER_SCHEDULER_SCHEDULE, 'every 60 minutes');
+test('Sprint 6 dispatches often enough for the shortest supported per-source schedule', () => {
+  assert.equal(SUPPLIER_SCHEDULER_SCHEDULE, 'every 15 minutes');
   assert.equal(getSupplierSourceSyncIntervalMs('Off'), null);
   assert.equal(getSupplierSourceSyncIntervalMs('1 hour'), 60 * 60 * 1_000);
   assert.equal(getSupplierSourceSyncIntervalMs('daily'), 24 * 60 * 60 * 1_000);

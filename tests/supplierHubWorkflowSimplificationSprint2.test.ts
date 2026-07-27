@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import {
+  hasSupplierHubAdvancedAccess,
   matchesProductChangeFilter,
   matchesProductReviewFilter,
   PRODUCT_REVIEW_FILTERS,
@@ -18,7 +19,7 @@ test('Supplier Hub exposes only the four business navigation sections', () => {
     component.indexOf('{/* SUB-TAB CONTENTS */}'),
   );
 
-  for (const label of ['Suppliers', 'Product Review', 'Activity', 'Settings']) {
+  for (const label of ['Suppliers', 'Product Review', 'Activity', 'Advanced']) {
     assert.match(navigation, new RegExp(`label: '${label}'`));
   }
   for (const internalLabel of ['Review Queue', 'Import Queue', 'Pending Changes', 'Operations']) {
@@ -53,21 +54,26 @@ test('supplier cards use business health labels and retain existing actions', ()
   assert.equal(supplierHealthLabel({ lastError: 'timeout' }), 'Needs attention');
 
   const component = projectFile('src/components/SupplierHubFiveStars.tsx');
-  for (const control of ['Add Supplier', 'Edit', 'Test Connection', 'Update Now']) {
+  for (const control of ['Add Supplier', 'Edit', 'Test Connection', 'Run Initial Sync', 'Sync Now']) {
     assert.match(component, new RegExp(control));
   }
   assert.match(component, /handleSupplierPauseAction/);
-  assert.match(component, /\? 'Resume' : 'Pause'/);
-  assert.match(component, /Advanced supplier details/);
+  assert.match(component, /const action = isPaused \? 'resume' : 'pause'/);
+  assert.match(component, /Auto Sync/);
+  assert.match(component, /Last Successful Sync/);
+  assert.match(component, /Health/);
+  assert.doesNotMatch(component, /Advanced supplier details/);
 });
 
-test('Activity keeps business history and issues visible while diagnostics are collapsed', () => {
+test('Activity exposes only business sync state while technical operations stay Advanced', () => {
   const component = projectFile('src/components/supplier-operations/SupplierOperationsDashboard.tsx');
-  assert.match(component, />Activity</);
-  assert.match(component, />Sync history</);
-  assert.match(component, />Issues</);
+  assert.match(component, /'Current sync'/);
+  assert.match(component, /'Last successful sync'/);
+  assert.match(component, /'Failed sync'/);
+  assert.match(component, /'Retry'/);
+  assert.match(component, />Sync History</);
   assert.match(component, /Approval & Activity History/);
-  assert.match(component, /<details[^>]*>[\s\S]*Advanced Diagnostics/);
+  assert.match(component, /mode === 'advanced'[\s\S]*Advanced Diagnostics/);
   assert.match(component, /Advanced Media Diagnostics/);
   assert.match(component, /Advanced Performance Diagnostics/);
 });
@@ -83,12 +89,13 @@ test('product review editor prioritizes storefront fields and collapses supplier
   assert.match(editor, /Advanced field protection/);
 });
 
-test('settings expose business choices first and place technical limits in Advanced sections', () => {
+test('Advanced is claim-restricted and contains technical controls', () => {
   const component = projectFile('src/components/SupplierHubFiveStars.tsx');
-  assert.match(component, /Supplier Settings/);
+  assert.equal(hasSupplierHubAdvancedAccess({ role: 'super_admin' }), true);
+  assert.equal(hasSupplierHubAdvancedAccess({ role: 'admin' }), false);
+  assert.match(component, /activeSubTab === 'advanced' && canAccessAdvanced/);
   assert.match(component, /Automatic updates/);
-  assert.match(component, /Automatic update schedule/);
   assert.match(component, /Advanced scheduling details/);
   assert.match(component, /Advanced image settings/);
-  assert.match(component, /Advanced supplier scope/);
+  assert.match(component, /Supplier Restrictions & Limits/);
 });

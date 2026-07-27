@@ -1,4 +1,4 @@
-export type SupplierHubSection = 'suppliers' | 'review' | 'activity' | 'settings';
+export type SupplierHubSection = 'suppliers' | 'review' | 'activity' | 'advanced';
 
 export type ProductReviewFilter =
   | 'new_products'
@@ -24,6 +24,34 @@ interface ReviewPresentationItem {
   productValidation?: { readyToPublish?: unknown; missingFields?: unknown[]; errors?: unknown[] } | null;
 }
 
+const normalized = (value: unknown): string => String(value || '').trim().toLowerCase();
+
+export function supplierReviewDecisionReady(item: ReviewPresentationItem): boolean {
+  const state = normalized(item.queueState);
+  return state === 'review_pending' || state === 'conflict' || (!state && normalized(item.status) === 'pending');
+}
+
+export function supplierReviewStatusLabel(item: ReviewPresentationItem): string {
+  const state = normalized(item.queueState);
+  if (state === 'queued' || state === 'leased' || state === 'processing') return 'Preparing';
+  if (state === 'review_pending') return 'Ready for Review';
+  if (state === 'retryable_failure') return 'Needs Attention';
+  if (state === 'dead_letter') return 'Needs Attention';
+  if (state === 'conflict') return 'Needs Attention';
+  if (state === 'approved') return 'Approved';
+  if (state === 'rejected' || state === 'suppressed') return 'Rejected';
+  if (!state && normalized(item.status) === 'pending') return 'Ready for Review';
+  return String(item.status || 'Preparing');
+}
+
+export function hasSupplierHubAdvancedAccess(claims: Record<string, unknown>): boolean {
+  const role = normalized(claims.role).replace('-', '_');
+  return claims.superAdmin === true
+    || claims.supplierHubSuperAdmin === true
+    || role === 'super_admin'
+    || role === 'owner';
+}
+
 interface ReviewChangeSummary {
   comparisonStatus?: unknown;
   changedFields?: unknown[];
@@ -35,8 +63,6 @@ interface ChangePresentationItem {
   queueState?: unknown;
   changeType?: unknown;
 }
-
-const normalized = (value: unknown): string => String(value || '').trim().toLowerCase();
 
 const isRemovedChange = (value: unknown): boolean => {
   const state = normalized(value);
@@ -80,7 +106,9 @@ export function matchesProductChangeFilter(item: ChangePresentationItem, filter:
 
 export function supplierHealthLabel(source: Record<string, unknown>): string {
   const enabled = source.enabled !== false && source.isEnabled !== false;
+  const operationalState = normalized(source.operationalState);
   const status = normalized(source.sourceStatus || source.status);
+  if (operationalState === 'paused') return 'Paused';
   if (!enabled || status === 'disabled' || status === 'inactive') return 'Disabled';
   if (status === 'paused') return 'Paused';
   if (source.lastError) return 'Needs attention';

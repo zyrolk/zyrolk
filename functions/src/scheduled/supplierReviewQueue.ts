@@ -617,7 +617,17 @@ const reviewStatusValues = (state: SupplierReviewQueuePageState): string[] => {
 
 const reviewRecordMatchesState = (record: SupplierQueueRecord, state: SupplierReviewQueuePageState): boolean => {
   const queueState = stateFor(record);
-  if (state === "active") return queueState === "review_pending" || queueState === "conflict";
+  if (state === "active") {
+    return [
+      "queued",
+      "leased",
+      "processing",
+      "review_pending",
+      "conflict",
+      "retryable_failure",
+      "dead_letter",
+    ].includes(queueState);
+  }
   return queueState === state;
 };
 

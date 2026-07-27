@@ -128,6 +128,16 @@ async function testStoredSupplierSource(sourceId: string) {
   return result;
 }
 
+async function testProposedSupplierSource(sourceId: string, value: unknown) {
+  const source = sanitizeSupplierSource(value);
+  const connector = await SupplierRegistry.createConnectorForSourceRecord(sourceId, source, { allowProposedHost: true });
+  const result = await connector.testConnection();
+  if (!result.success) {
+    throw new ApiError(result.error || "Supplier connection test failed.", 422);
+  }
+  return { source, result };
+}
+
 export function registerSupplierRoutes(app: express.Express): void {
   const reviewerFor = (res: express.Response) => {
     const reviewer = res.locals.supplierAdmin as { uid?: unknown; email?: unknown } | undefined;
@@ -180,17 +190,36 @@ export function registerSupplierRoutes(app: express.Express): void {
   app.post("/api/supplier-sources", requireSupplierHubAdmin, async (req, res) => {
     try {
       const sourceId = cleanSupplierSourceId(req.body?.id);
-      await saveSupplierSource(adminDb, sourceId, req.body?.source, reviewerFor(res), { createOnly: true });
-      const connectionTest = req.body?.testConnection === true
-        ? await testStoredSupplierSource(sourceId)
-        : undefined;
+      const reviewer = reviewerFor(res);
+      const { source, result: connectionTest } = await testProposedSupplierSource(sourceId, req.body?.source);
+      await saveSupplierSource(adminDb, sourceId, source, reviewer, { createOnly: true });
+      await adminDb.collection("supplierSources").doc(sourceId).set({
+        connectionStatus: "connected",
+        lastError: "None",
+        lastConnectionTestAt: new Date().toISOString(),
+      }, { merge: true });
+      const startInitialSync = req.body?.startInitialSync !== false;
+      const initialSync = startInitialSync
+        ? await createSupplierSyncJob(adminDb, {
+          trigger: "manual",
+          sourceIds: [sourceId],
+          requestedBy: reviewer,
+          dedupeKey: `initial-sync-${sourceId}`,
+        })
+        : null;
       const savedSource = await adminDb.collection("supplierSources").doc(sourceId).get();
       res.status(201).json({
         success: true,
         sourceId,
         source: { id: sourceId, ...projectSupplierSourceForAdmin(savedSource.data() || {}, sourceId) },
-        ...(connectionTest ? { connectionTest } : {}),
+        connectionTest,
+        accepted: startInitialSync,
+        ...(initialSync ? {
+          jobId: initialSync.job.id,
+          job: projectSupplierSyncJobForAdmin(initialSync.job),
+        } : {}),
       });
+      if (initialSync) startLocalSupplierSyncJob(initialSync.job.id);
     } catch (error: unknown) {
       sendSupplierFailure(res, error, {
         logMessage: "Supplier source creation failed.",

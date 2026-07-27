@@ -33,7 +33,7 @@ test("visible supplier sync controls invoke the real queue synchronization pipel
   const scheduledSync = readFileSync("functions/src/scheduled/supplierSync.ts", "utf8");
   assert.equal(source.includes("Placeholder Action Only"), false);
   assert.match(source, /await handleSyncSupplier\(\[id\]\)/);
-  assert.match(source, /onClick=\{\(\) => handleSyncSupplier\(\)\}/);
+  assert.match(source, /onClick=\{\(\) => handleTriggerSync\(source\.id\)\}/);
   assert.match(source, /postSupplierApi\('\/api\/supplier-sync'/);
   assert.match(scheduledSync, /selectSupplierComparisonForReview/);
   assert.match(scheduledSync, /resolveSupplierProductLimit/);
@@ -138,12 +138,12 @@ test("bulk delete decisions preserve audit and never write products", () => {
   assert.equal(plan.deletes.length, 3);
 });
 
-test("Supplier Hub exposes audited bulk actions while Functions own synchronization and category mapping", () => {
+test("Supplier Hub exposes only business approval actions while Functions own synchronization and category mapping", () => {
   const supplierHub = readFileSync("src/components/SupplierHubFiveStars.tsx", "utf8");
   const scheduledSync = readFileSync("functions/src/scheduled/supplierSync.ts", "utf8");
   assert.match(supplierHub, /Bulk Approve/);
   assert.match(supplierHub, /Bulk Reject/);
-  assert.match(supplierHub, /Bulk Delete/);
+  assert.doesNotMatch(supplierHub, /Bulk Delete/);
   assert.match(supplierHub, /postSupplierApi\('\/api\/supplier-sync'/);
   assert.doesNotMatch(supplierHub, /runLocalSupplierSync|commitSupplierSyncWrites|resolveSupplierCategory/);
   assert.match(scheduledSync, /suggestSupplierCategory/);
@@ -170,8 +170,8 @@ test("Supplier Hub production settings and catalog limits are enforced by the Fu
   const supplierApi = readFileSync("functions/src/api/routes/supplier.ts", "utf8");
   assert.doesNotMatch(supplierHub, /supplierSettings\.websiteSyncEnabled === false|limitSupplierProducts|commitSupplierSyncWrites/);
   assert.match(supplierHub, /postSupplierApi\('\/api\/supplier-sync'/);
-  assert.match(scheduledSync, /settings\.websiteSyncEnabled === false/);
-  assert.match(scheduledSync, /enabledSupplierIdsConfigured === true/);
+  assert.doesNotMatch(scheduledSync, /settings\.websiteSyncEnabled === false/);
+  assert.doesNotMatch(scheduledSync, /trigger === "manual" \? \[\] : settings\.enabledSupplierIds/);
   assert.match(scheduledSync, /resolveSupplierProductLimit/);
   assert.match(scheduledSync, /normalizeSupplierCatalogPageSize\(sourcePageSize\)/);
   assert.match(scheduledSync, /runSupplierCatalogTraversal/);

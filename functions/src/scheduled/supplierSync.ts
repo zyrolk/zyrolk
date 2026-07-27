@@ -63,6 +63,7 @@ import {
 type SyncStatus = "Success" | "Failed" | "Partial" | "Skipped";
 
 interface SupplierSettings {
+  /** Legacy fields are accepted for stored-document compatibility but are not scheduling authorities. */
   websiteSyncEnabled?: boolean;
   autoSyncEnabled?: boolean;
   syncInterval?: string;
@@ -92,6 +93,7 @@ interface SupplierSource {
   priority?: unknown;
   capabilities?: string[];
   sourceStatus?: string;
+  syncSchedule?: string;
   websiteUrl?: string;
   endpoint?: string;
   config?: {
@@ -210,8 +212,9 @@ const LOCK_ID = "scheduled_supplier_sync";
 const LOCK_TTL_MS = 30 * 60 * 1000;
 const DEFAULT_MAX_PRODUCTS = 5;
 const DEFAULT_SYNC_RUNTIME_BUDGET_MS = 7 * 60 * 1000;
-/** Deploy-time override; the safe production default is one invocation per hour. */
-export const SUPPLIER_SCHEDULER_SCHEDULE = String(process.env.SUPPLIER_SYNC_SCHEDULE || "every 60 minutes").trim() || "every 60 minutes";
+const DEFAULT_SCHEDULER_INTERVAL_MS = 15 * 60 * 1000;
+/** Dispatcher cadence only; each supplier's configured interval remains authoritative. */
+export const SUPPLIER_SCHEDULER_SCHEDULE = String(process.env.SUPPLIER_SYNC_SCHEDULE || "every 15 minutes").trim() || "every 15 minutes";
 
 function generateSlug(name: string): string {
   return name
@@ -229,64 +232,27 @@ export function generateQueueDocId(sourceId: string, supplierCode: string, produ
   return `${sourcePart}-${productPart}`;
 }
 
-function parseIntervalMs(interval: string | undefined): number | null {
-  switch ((interval || "").trim().toLowerCase()) {
-    case "15 minutes":
-      return 15 * 60 * 1000;
-    case "30 minutes":
-      return 30 * 60 * 1000;
-    case "1 hour":
-      return 60 * 60 * 1000;
-    case "6 hours":
-      return 6 * 60 * 60 * 1000;
-    case "daily":
-      return 24 * 60 * 60 * 1000;
-    case "manual":
-      return null;
-    default:
-      return 60 * 60 * 1000;
-  }
-}
-
 function toMillis(value: unknown): number | null {
-  if (!value) {
-    return null;
-  }
-
+  if (!value) return null;
   if (typeof value === "string") {
-    const parsed = new Date(value).getTime();
-    return Number.isNaN(parsed) ? null : parsed;
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : null;
   }
-
-  if (typeof value === "number") {
-    return value;
-  }
-
+  if (typeof value === "number") return value;
   if (typeof value === "object" && "toMillis" in value && typeof value.toMillis === "function") {
     return value.toMillis();
   }
-
   return null;
 }
 
-function isSyncDue(settings: SupplierSettings, nowMs: number): boolean {
-  const intervalMs = parseIntervalMs(settings.syncInterval);
-  if (!settings.autoSyncEnabled || !intervalMs) {
-    return false;
-  }
-
-  const nextSyncMs = toMillis(settings.nextSync);
-  if (nextSyncMs) {
-    return nextSyncMs <= nowMs;
-  }
-
-  const lastSyncMs = toMillis(settings.lastSync);
-  return !lastSyncMs || lastSyncMs + intervalMs <= nowMs;
+function isSyncDue(settings: SupplierSettings): boolean {
+  return settings.autoSyncEnabled !== false;
 }
 
 function getNextSyncIso(settings: SupplierSettings, finishedAtMs: number): string | null {
-  const intervalMs = parseIntervalMs(settings.syncInterval);
-  return intervalMs ? new Date(finishedAtMs + intervalMs).toISOString() : null;
+  return settings.autoSyncEnabled !== false
+    ? new Date(finishedAtMs + DEFAULT_SCHEDULER_INTERVAL_MS).toISOString()
+    : null;
 }
 
 export function getSupplierSourceSyncIntervalMs(autoSync: unknown): number | null {
@@ -307,6 +273,12 @@ export function getNextSupplierSourceSyncIso(autoSync: unknown, completedAtMs: n
 
 const sourceLastSuccessfulSync = (source: SupplierSource): unknown => source.lastSuccessfulSyncAt ?? source.lastSync;
 
+/** `settings.autoSync` is canonical; `syncSchedule` is retained as a legacy read fallback. */
+export const supplierSourceAutoSyncSchedule = (source: SupplierSource): string => {
+  const configured = String(source.settings?.autoSync || "").trim();
+  return configured || String(source.syncSchedule || "Off").trim() || "Off";
+};
+
 const supplierPriority = (source: SupplierSource): number => {
   const priority = Number(source.priority ?? source.settings?.priority ?? 100);
   return Number.isFinite(priority) ? Math.max(0, Math.min(Math.floor(priority), 10_000)) : 100;
@@ -322,8 +294,7 @@ function getMaxProducts(settings: SupplierSettings): number {
   return Math.min(Math.floor(configured), 250);
 }
 
-export function isSupplierSourceEnabled(source: SupplierSource, settings: SupplierSettings): boolean {
-  const enabledIds = settings.enabledSupplierIds || settings.enabledSuppliers || [];
+export function isSupplierSourceEnabled(source: SupplierSource, _settings: SupplierSettings): boolean {
   const declaredType = String(source.supplierType || source.type || "").trim().toLowerCase();
   const connectorType = String(source.connectorType || "").trim().toLowerCase();
   const type = declaredType
@@ -331,8 +302,7 @@ export function isSupplierSourceEnabled(source: SupplierSource, settings: Suppli
     : (["a2z", "http"].includes(connectorType) ? "website" : connectorType || "website");
   const status = String(source.sourceStatus || "active").trim().toLowerCase();
   const isActiveWebsite = status === "active" && type === "website";
-  const usesExplicitScope = settings.enabledSupplierIdsConfigured === true;
-  return isActiveWebsite && ((!usesExplicitScope && enabledIds.length === 0) || enabledIds.includes(source.id));
+  return isActiveWebsite && source.enabled !== false;
 }
 
 export function isSupplierSourceEligibleForSync(
@@ -355,7 +325,7 @@ export function isSupplierSourceEligibleForSync(
   }
 
   return isSupplierSourceEnabled(source, settings)
-    && isSupplierSourceAutoSyncDue(source.settings?.autoSync, sourceLastSuccessfulSync(source), nowMs);
+    && isSupplierSourceAutoSyncDue(supplierSourceAutoSyncSchedule(source), sourceLastSuccessfulSync(source), nowMs);
 }
 
 export function selectSupplierSourcesForSync(
@@ -1385,18 +1355,12 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
   appLogger.info("Scheduled supplier sync evaluated.", {
     batchId,
     autoSyncEnabled: !!settings.autoSyncEnabled,
-    syncInterval: settings.syncInterval || "unspecified",
+    scheduler: SUPPLIER_SCHEDULER_SCHEDULE,
   });
 
-  if (trigger === "scheduled" && !isSyncDue(settings, startedAt.getTime())) {
-    appLogger.info("Scheduled supplier sync skipped because it is not due.", { batchId });
-    await writeHistory(batchId, trigger, "Skipped", startedAt, new Date(), metrics, "Scheduled supplier sync was not due yet.");
-    return buildRunResult(batchId, "Skipped", metrics, startedAt.getTime());
-  }
-
-  if (settings.websiteSyncEnabled === false) {
-    appLogger.info("Scheduled supplier sync skipped because the Website Sync Channel is disabled.", { batchId });
-    await writeHistory(batchId, trigger, "Skipped", startedAt, new Date(), metrics, "Supplier website sync is disabled.");
+  if (trigger === "scheduled" && !isSyncDue(settings)) {
+    appLogger.info("Scheduled supplier sync skipped because automatic updates are disabled.", { batchId });
+    await writeHistory(batchId, trigger, "Skipped", startedAt, new Date(), metrics, "Automatic supplier updates are disabled.");
     return buildRunResult(batchId, "Skipped", metrics, startedAt.getTime());
   }
 
@@ -1480,7 +1444,7 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
         id: source.id,
         data: projectSupplierSourceForConnector(source, trigger) as FirebaseFirestore.DocumentData,
       })),
-      trigger === "manual" ? [] : settings.enabledSupplierIds || settings.enabledSuppliers || [],
+      [],
     );
     const connectorBySourceId = new Map(connectors.map((connector) => [connector.id, connector]));
     const queuedWrites: SupplierSyncWrite[] = [];
@@ -1538,7 +1502,7 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
               lastError: "Missing website URL",
               lastFailureClassification: "validation",
               lastFailedSyncAt: new Date().toISOString(),
-              nextScheduledSyncAt: getNextSupplierSourceSyncIso(sourceSettings.autoSync, Date.now()),
+              nextScheduledSyncAt: getNextSupplierSourceSyncIso(supplierSourceAutoSyncSchedule(source), Date.now()),
               currentlySyncing: false,
               syncLeaseExpiresAt: FieldValue.delete(),
               syncMetrics: {
@@ -2097,7 +2061,7 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
             } : {
               lastPartialSyncAt: new Date(sourceFinishedAt).toISOString(),
             }),
-            nextScheduledSyncAt: getNextSupplierSourceSyncIso(sourceSettings.autoSync, sourceFinishedAt),
+            nextScheduledSyncAt: getNextSupplierSourceSyncIso(supplierSourceAutoSyncSchedule(source), sourceFinishedAt),
             currentlySyncing: false,
             syncLeaseExpiresAt: FieldValue.delete(),
             connectionStatus: traversalResult.complete ? "connected" : "Partial",
@@ -2157,7 +2121,7 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
             lastError: message,
             lastFailureClassification: failureClassification,
             lastFailedSyncAt: new Date().toISOString(),
-            nextScheduledSyncAt: getNextSupplierSourceSyncIso(sourceSettings.autoSync, Date.now()),
+            nextScheduledSyncAt: getNextSupplierSourceSyncIso(supplierSourceAutoSyncSchedule(source), Date.now()),
             currentlySyncing: false,
             syncLeaseExpiresAt: FieldValue.delete(),
             syncMetrics: {

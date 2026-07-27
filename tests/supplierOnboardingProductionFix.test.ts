@@ -93,7 +93,7 @@ test('new sources still cannot claim Secret Manager authentication without a ref
   }), /Secret Manager reference or credential profile is required/);
 });
 
-test('new active sources join an existing explicit sync scope without changing implicit-scope behavior', () => {
+test('legacy explicit sync scope remains writable for compatibility', () => {
   assert.deepEqual(addSupplierSourceToConfiguredScope({
     enabledSupplierIdsConfigured: true,
     enabledSupplierIds: ['existing-source'],
@@ -114,7 +114,16 @@ test('connection testing uses the exact source registry record while retaining t
   assert.match(routes, /allowProposedHost: true/);
   assert.match(routes, /createConnectorForTarget\(websiteUrl, endpoint\)/);
   assert.match(routes, /createOnly: true/);
-  assert.match(routes, /testConnection === true[\s\S]*testStoredSupplierSource\(sourceId\)/);
+  assert.match(routes, /testProposedSupplierSource\(sourceId, req\.body\?\.source\)/);
+  assert.match(routes, /const startInitialSync = req\.body\?\.startInitialSync !== false/);
+  assert.match(routes, /startInitialSync[\s\S]*createSupplierSyncJob\(adminDb, \{[\s\S]*trigger: "manual",[\s\S]*sourceIds: \[sourceId\]/);
+  assert.ok(routes.indexOf('testProposedSupplierSource(sourceId, req.body?.source)') < routes.indexOf('saveSupplierSource(adminDb, sourceId, source'));
+  assert.ok(routes.indexOf('saveSupplierSource(adminDb, sourceId, source') < routes.indexOf('createSupplierSyncJob(adminDb'));
   assert.match(hub, /sourceId: source\.id/);
   assert.match(hub, /source: buildNewSupplierSource\('Not Synced'\)/);
+  assert.match(hub, /newSupplierConfigurationVerified/);
+  assert.match(hub, /startInitialSync: false/);
+  assert.match(hub, /Save Supplier/);
+  assert.match(hub, /Run Initial Sync/);
+  assert.doesNotMatch(hub, /Save & Start Initial Sync/);
 });

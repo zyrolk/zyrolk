@@ -11,9 +11,6 @@ export interface SupplierOnboardingInput {
   endpoint?: string;
   apiMethod?: string;
   apiDataPath?: string;
-  cssPriceSelector?: string;
-  cssStockSelector?: string;
-  cssImageSelector?: string;
   connectionStatus?: string;
   lastError?: string | null;
 }
@@ -44,11 +41,6 @@ export function buildSupplierOnboardingSource(input: SupplierOnboardingInput): R
     setConfig('apiDataPath', input.apiDataPath);
   } else {
     setConfig('targetUrl', input.websiteUrl);
-    if (input.supplierType === 'website') {
-      setConfig('cssPriceSelector', input.cssPriceSelector);
-      setConfig('cssStockSelector', input.cssStockSelector);
-      setConfig('cssImageSelector', input.cssImageSelector);
-    }
   }
 
   return {
@@ -66,6 +58,16 @@ export function buildSupplierOnboardingSource(input: SupplierOnboardingInput): R
     currency: 'LKR',
     timezone: 'Asia/Colombo',
     syncSchedule: 'Off',
+    settings: {
+      autoSync: 'Off',
+      productLimit: 'All',
+      syncNewProducts: true,
+      syncPriceUpdates: true,
+      syncStockUpdates: true,
+      syncDescriptionUpdates: true,
+      syncImageUpdates: true,
+      dryRunMode: false,
+    },
     capabilities: ['catalog.fetch', 'connection.test'],
     authentication: connectorType === 'a2z'
       ? { mode: 'secret_manager', credentialProfile: A2Z_GLOBAL_SECRET_PROFILE }

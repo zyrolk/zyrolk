@@ -7,7 +7,7 @@ test("Supplier Hub waits for Firebase Auth restoration and attaches the ID token
   const supplierApi = readFileSync("src/services/supplierHubApi.ts", "utf8");
 
   assert.match(supplierHub, /onIdTokenChanged\(auth, \(currentUser\) =>/);
-  assert.match(supplierHub, /if \(currentUser\) void loadSources\(\)/);
+  assert.match(supplierHub, /if \(!currentUser\) \{[\s\S]*return;[\s\S]*void loadSources\(\)/);
   assert.match(supplierApi, /await auth\.authStateReady\(\)/);
   assert.match(supplierApi, /user\.getIdToken\(forceRefresh\)/);
   assert.match(supplierApi, /Authorization: `Bearer \$\{token\}`/);
