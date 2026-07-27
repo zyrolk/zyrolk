@@ -80,6 +80,7 @@ interface SupplierSettings {
 interface SupplierSource {
   id: string;
   enabled?: boolean;
+  operationalState?: string;
   supplierName?: string;
   name?: string;
   supplierType?: string;
@@ -344,12 +345,37 @@ export function isSupplierSourceEligibleForSync(
     const type = declaredType
       ? (["a2z", "http"].includes(declaredType) ? "website" : declaredType)
       : (["a2z", "http"].includes(connectorType) ? "website" : connectorType || "website");
+    const operationalState = String(source.operationalState || "").trim().toLowerCase();
     const status = String(source.sourceStatus || (source.enabled === false ? "inactive" : "active")).trim().toLowerCase();
-    return source.enabled !== false && status === "active" && type === "website";
+    const manuallyAvailable = operationalState === "paused"
+      || (operationalState !== "disabled" && source.enabled !== false && status === "active");
+    return manuallyAvailable && type === "website";
   }
 
   return isSupplierSourceEnabled(source, settings)
     && isSupplierSourceAutoSyncDue(source.settings?.autoSync, sourceLastSuccessfulSync(source), nowMs);
+}
+
+export function selectSupplierSourcesForSync(
+  sources: readonly SupplierSource[],
+  requestedSourceIds: readonly string[],
+  settings: SupplierSettings,
+  trigger: "scheduled" | "manual",
+  nowMs: number,
+): SupplierSource[] {
+  return sources
+    .filter((source) => isSupplierSourceEligibleForSync(source, settings, trigger, nowMs))
+    .filter((source) => requestedSourceIds.length === 0 || requestedSourceIds.includes(source.id));
+}
+
+export function projectSupplierSourceForConnector(
+  source: SupplierSource,
+  trigger: "scheduled" | "manual",
+): SupplierSource {
+  if (trigger !== "manual" || String(source.operationalState || "").trim().toLowerCase() !== "paused") {
+    return source;
+  }
+  return { ...source, enabled: true, sourceStatus: "active" };
 }
 
 function normalizeSupplierProducts(products: any[]): { products: RawA2ZProduct[]; failed: number } {
@@ -1327,9 +1353,13 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
     return buildRunResult(batchId, "Skipped", metrics, startedAt.getTime());
   }
 
-  let sources = (await loadSupplierSources(requestedSourceIds))
-    .filter((source) => isSupplierSourceEligibleForSync(source, settings, trigger, startedAt.getTime()))
-    .filter((source) => requestedSourceIds.length === 0 || requestedSourceIds.includes(source.id))
+  let sources = selectSupplierSourcesForSync(
+    await loadSupplierSources(requestedSourceIds),
+    requestedSourceIds,
+    settings,
+    trigger,
+    startedAt.getTime(),
+  )
     .sort((left, right) => supplierPriority(right) - supplierPriority(left) || left.id.localeCompare(right.id));
   await reportProgress({ phase: "preparing", totalSources: sources.length, currentSourceId: null });
 
@@ -1399,8 +1429,11 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
     const maxProducts = getMaxProducts(settings);
     const imageLimit = getSupplierImageLimit(settings.defaultImageLimit);
     const connectors = await SupplierRegistry.createConnectorsForSources(
-      sources.map((source) => ({ id: source.id, data: source as FirebaseFirestore.DocumentData })),
-      settings.enabledSupplierIds || settings.enabledSuppliers || [],
+      sources.map((source) => ({
+        id: source.id,
+        data: projectSupplierSourceForConnector(source, trigger) as FirebaseFirestore.DocumentData,
+      })),
+      trigger === "manual" ? [] : settings.enabledSupplierIds || settings.enabledSuppliers || [],
     );
     const connectorBySourceId = new Map(connectors.map((connector) => [connector.id, connector]));
     const queuedWrites: SupplierSyncWrite[] = [];

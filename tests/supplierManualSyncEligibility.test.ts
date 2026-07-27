@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import { isSupplierSourceEligibleForSync } from '../functions/src/scheduled/supplierSync';
+import {
+  isSupplierSourceEligibleForSync,
+  projectSupplierSourceForConnector,
+  selectSupplierSourcesForSync,
+} from '../functions/src/scheduled/supplierSync';
 
 const activeManualSource = {
   id: 'a2z-traders',
@@ -18,6 +23,31 @@ test('manual sync ignores automatic schedule timing and scheduled supplier scope
     enabledSupplierIdsConfigured: true,
     enabledSupplierIds: [],
   }, 'manual', Date.now()), true);
+});
+
+test('an explicitly requested manual source bypasses paused scheduling state', () => {
+  const pausedSource = {
+    ...activeManualSource,
+    enabled: false,
+    sourceStatus: 'inactive',
+    operationalState: 'paused',
+  };
+  const selected = selectSupplierSourcesForSync([pausedSource, {
+    ...activeManualSource,
+    id: 'other-source',
+  }], ['a2z-traders'], {
+    autoSyncEnabled: false,
+    syncInterval: 'Manual',
+    enabledSupplierIdsConfigured: true,
+    enabledSupplierIds: [],
+  }, 'manual', Date.now());
+
+  assert.deepEqual(selected.map((source) => source.id), ['a2z-traders']);
+  assert.deepEqual(projectSupplierSourceForConnector(selected[0], 'manual'), {
+    ...pausedSource,
+    enabled: true,
+    sourceStatus: 'active',
+  });
 });
 
 test('scheduled sync retains automatic timing and explicit source scope rules', () => {
@@ -49,4 +79,31 @@ test('manual sync still rejects administratively disabled or inactive sources', 
     ...activeManualSource,
     sourceStatus: 'inactive',
   }, {}, 'manual', Date.now()), false);
+
+  assert.equal(isSupplierSourceEligibleForSync({
+    ...activeManualSource,
+    operationalState: 'disabled',
+  }, {}, 'manual', Date.now()), false);
+});
+
+test('scheduled sync still rejects a paused source and the worker forwards requested source IDs', () => {
+  const pausedSource = {
+    ...activeManualSource,
+    enabled: false,
+    sourceStatus: 'inactive',
+    operationalState: 'paused',
+    settings: { autoSync: '1 Hour' },
+  };
+  assert.deepEqual(selectSupplierSourcesForSync([pausedSource], ['a2z-traders'], {
+    autoSyncEnabled: true,
+    syncInterval: '1 Hour',
+    enabledSupplierIdsConfigured: false,
+    enabledSupplierIds: [],
+  }, 'scheduled', Date.now()), []);
+
+  const worker = readFileSync('functions/src/scheduled/supplierSyncWorker.ts', 'utf8');
+  const sync = readFileSync('functions/src/scheduled/supplierSync.ts', 'utf8');
+  assert.match(worker, /runSupplierSync\(\{[\s\S]*?trigger: lease\.job\.trigger,[\s\S]*?sourceIds: lease\.job\.sourceIds/);
+  assert.match(sync, /selectSupplierSourcesForSync\([\s\S]*?await loadSupplierSources\(requestedSourceIds\),[\s\S]*?requestedSourceIds,[\s\S]*?trigger/);
+  assert.match(sync, /data: projectSupplierSourceForConnector\(source, trigger\)[\s\S]*?trigger === "manual" \? \[\] : settings\.enabledSupplierIds/);
 });
