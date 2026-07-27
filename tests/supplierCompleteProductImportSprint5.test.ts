@@ -209,8 +209,8 @@ test('Sprint 5 review UI exposes all imported-data sections, media diagnostics, 
   assert.equal(sections.find((section) => section.id === 'extra-attributes')?.fields[0]?.label, 'customPayload');
 
   const editor = readFileSync('src/components/SupplierReviewEditorModal.tsx', 'utf8');
-  assert.match(editor, /Complete imported supplier data/);
-  assert.match(editor, /Import validation warnings/);
+  assert.match(editor, /Supplier metadata/);
+  assert.match(editor, /Product details needing attention/);
   assert.match(editor, /Image count:/);
   assert.match(editor, /Broken images:/);
   assert.match(editor, /Supplier video URLs/);

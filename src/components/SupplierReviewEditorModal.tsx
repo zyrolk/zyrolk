@@ -244,14 +244,19 @@ export default function SupplierReviewEditorModal({
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-5">
-          <div className="grid gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-xs dark:border-slate-800 dark:bg-slate-900/40 sm:grid-cols-3">
+        <form onSubmit={handleSubmit} className="flex flex-col gap-5">
+          <details className="order-[80] rounded-2xl border border-slate-200 bg-slate-50 p-4 text-xs dark:border-slate-800 dark:bg-slate-900/40">
+            <summary className="cursor-pointer font-black text-slate-700 outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-slate-200">Supplier information</summary>
+          <div className="mt-3 grid gap-3 sm:grid-cols-3">
             <div><span className="block text-[9px] font-black uppercase tracking-wider text-slate-400">Supplier</span><strong>{item.supplierName || 'Unknown Supplier'}</strong></div>
             <div><span className="block text-[9px] font-black uppercase tracking-wider text-slate-400">Supplier SKU</span><strong className="font-mono">{item.supplierCode}</strong></div>
             <div><span className="block text-[9px] font-black uppercase tracking-wider text-slate-400">Wholesale Price</span><strong>{money(item.costPrice)}</strong></div>
           </div>
+          </details>
 
-          <section className="grid gap-3 rounded-2xl border border-blue-500/20 bg-blue-500/5 p-4 text-xs sm:grid-cols-2" aria-labelledby="supplier-mapping-summary-title">
+          <details className="order-[81] rounded-2xl border border-blue-500/20 bg-blue-500/5 p-4 text-xs">
+            <summary className="cursor-pointer font-black text-slate-700 outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-slate-200">Category and brand suggestions</summary>
+          <section className="mt-3 grid gap-3 sm:grid-cols-2" aria-labelledby="supplier-mapping-summary-title">
             <div className="sm:col-span-2">
               <h4 id="supplier-mapping-summary-title" className="flex items-center gap-2 font-black text-slate-800 dark:text-white"><Sparkles className="h-4 w-4 text-blue-500" />Intelligent mapping</h4>
             </div>
@@ -270,8 +275,8 @@ export default function SupplierReviewEditorModal({
           </section>
 
           {importWarnings.length > 0 && (
-            <section className="rounded-2xl border border-amber-500/25 bg-amber-500/10 p-4 text-xs" aria-labelledby="supplier-import-warnings-title">
-              <h4 id="supplier-import-warnings-title" className="flex items-center gap-2 font-black text-amber-700 dark:text-amber-300"><AlertTriangle className="h-4 w-4" />Import validation warnings</h4>
+            <section className="order-0 rounded-2xl border border-amber-500/25 bg-amber-500/10 p-4 text-xs" aria-labelledby="supplier-import-warnings-title">
+              <h4 id="supplier-import-warnings-title" className="flex items-center gap-2 font-black text-amber-700 dark:text-amber-300"><AlertTriangle className="h-4 w-4" />Product details needing attention</h4>
               <ul className="mt-2 space-y-1 text-[10px] font-semibold text-amber-700/90 dark:text-amber-200/90">
                 {importWarnings.map((warning) => <li key={`${warning.field}-${warning.code}`}>{warning.message}</li>)}
               </ul>
@@ -279,9 +284,9 @@ export default function SupplierReviewEditorModal({
           )}
 
           {fieldChanges.length > 0 && (
-            <section className="rounded-2xl border border-blue-500/20 bg-blue-500/5 p-4" aria-labelledby="supplier-proposed-changes-title">
-              <h4 id="supplier-proposed-changes-title" className="text-xs font-black uppercase tracking-wider text-blue-700 dark:text-blue-300">Supplier proposed changes</h4>
-              <p className="mt-1 text-[10px] text-slate-500 dark:text-slate-400">Every connector field change captured for this review item is listed with its previous and proposed value.</p>
+            <section className="order-[70] rounded-2xl border border-blue-500/20 bg-blue-500/5 p-4" aria-labelledby="supplier-proposed-changes-title">
+              <h4 id="supplier-proposed-changes-title" className="text-xs font-black uppercase tracking-wider text-blue-700 dark:text-blue-300">What changed</h4>
+              <p className="mt-1 text-[10px] text-slate-500 dark:text-slate-400">Review the previous value beside the supplier's latest value.</p>
               <dl className="mt-3 space-y-2">
                 {fieldChanges.map((change) => (
                   <div key={`${change.field}-${change.auditKey || change.label}`} className="rounded-xl border border-blue-500/10 bg-white p-3 dark:bg-slate-950/60">
@@ -305,10 +310,12 @@ export default function SupplierReviewEditorModal({
             </section>
           )}
 
-          <section aria-labelledby="supplier-imported-data-title" className="space-y-3">
+          <details className="order-[82] rounded-2xl border border-slate-200 p-4 dark:border-slate-800">
+            <summary className="cursor-pointer text-xs font-black uppercase tracking-wider text-slate-700 outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-slate-200">Supplier metadata</summary>
+          <section aria-labelledby="supplier-imported-data-title" className="mt-3 space-y-3">
             <div>
-              <h4 id="supplier-imported-data-title" className="text-xs font-black uppercase tracking-wider text-slate-700 dark:text-slate-200">Complete imported supplier data</h4>
-              <p className="mt-1 text-[10px] text-slate-400">Only fields supplied by the connector are shown. Expand a section to inspect its original values.</p>
+              <h4 id="supplier-imported-data-title" className="sr-only">Supplier metadata details</h4>
+              <p className="mt-1 text-[10px] text-slate-400">Original supplier values are retained here for reference.</p>
             </div>
             <div className="grid gap-2 sm:grid-cols-2">
               {metadataSections.map((section) => (
@@ -332,8 +339,9 @@ export default function SupplierReviewEditorModal({
               ))}
             </div>
           </section>
+          </details>
 
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="order-20 grid gap-4 sm:grid-cols-2">
             <label className="space-y-1.5 text-xs sm:col-span-2">
               <span className="font-bold text-slate-600 dark:text-slate-300">Product Name</span>
               <input ref={firstInputRef} value={draft.productName} onChange={(event) => editDraft('name', { productName: event.target.value })} aria-invalid={Boolean(errorFor('productName'))} className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 dark:border-slate-700 dark:bg-slate-900" />
@@ -391,7 +399,7 @@ export default function SupplierReviewEditorModal({
             </label>
           </div>
 
-          <section className="space-y-3 rounded-2xl border border-blue-500/20 bg-blue-500/5 p-4" aria-labelledby="supplier-offers-title">
+          <section className="order-[60] space-y-3 rounded-2xl border border-blue-500/20 bg-blue-500/5 p-4" aria-labelledby="supplier-offers-title">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <h4 id="supplier-offers-title" className="text-xs font-black uppercase tracking-wider text-blue-700 dark:text-blue-200">Supplier offers</h4>
@@ -448,8 +456,9 @@ export default function SupplierReviewEditorModal({
               </div>
             )}
           </section>
+          </details>
 
-          <section className="space-y-4 rounded-2xl border border-slate-200 p-4 dark:border-slate-800" aria-labelledby="supplier-review-content-title">
+          <section className="order-30 space-y-4 rounded-2xl border border-slate-200 p-4 dark:border-slate-800" aria-labelledby="supplier-review-content-title">
             <div>
               <h4 id="supplier-review-content-title" className="text-xs font-black uppercase tracking-wider text-slate-700 dark:text-slate-200">Content, identity & merchandising</h4>
               <p className="mt-1 text-[10px] text-slate-400">These are the same customer-facing controls available for manually managed products.</p>
@@ -472,7 +481,7 @@ export default function SupplierReviewEditorModal({
             </div>
           </section>
 
-          <fieldset className="grid gap-4 rounded-2xl border border-slate-200 p-4 dark:border-slate-800 sm:grid-cols-2">
+          <fieldset className="order-40 grid gap-4 rounded-2xl border border-slate-200 p-4 dark:border-slate-800 sm:grid-cols-2">
               <legend className="px-2 text-xs font-black text-slate-700 dark:text-slate-200">Category specifications</legend>
               {(selectedCategory?.specificationTemplate || []).map((field) => (
                 <label key={field.name} className="space-y-1.5 text-xs">
@@ -494,7 +503,9 @@ export default function SupplierReviewEditorModal({
               {errorFor('specifications') && <span className="text-[10px] font-semibold text-red-500 sm:col-span-2">{errorFor('specifications')}</span>}
           </fieldset>
 
-          <section className="space-y-3 rounded-2xl border border-violet-500/20 bg-violet-500/5 p-4" aria-labelledby="supplier-field-ownership-title">
+          <details className="order-[90] rounded-2xl border border-violet-500/20 bg-violet-500/5 p-4">
+            <summary className="cursor-pointer text-xs font-black text-violet-700 outline-none focus-visible:ring-2 focus-visible:ring-violet-500 dark:text-violet-200">Advanced field protection</summary>
+          <section className="mt-3 space-y-3" aria-labelledby="supplier-field-ownership-title">
             <div>
               <h4 id="supplier-field-ownership-title" className="text-xs font-black uppercase tracking-wider text-violet-700 dark:text-violet-200">Field ownership</h4>
               <p className="mt-1 text-[10px] text-slate-500">Admin-owned values remain protected during later supplier approvals. Supplier-owned values may follow approved supplier updates.</p>
@@ -511,8 +522,9 @@ export default function SupplierReviewEditorModal({
               ))}
             </div>
           </section>
+          </details>
 
-          <section className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-900/40" aria-labelledby="supplier-product-images-title">
+          <section className="order-10 space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-900/40" aria-labelledby="supplier-product-images-title">
             <div>
               <h4 id="supplier-product-images-title" className="text-xs font-black uppercase tracking-wider text-slate-700 dark:text-slate-200">Product Images</h4>
               <p className="mt-1 text-[10px] text-slate-400">Edit the storefront primary image and gallery order before publishing.</p>
@@ -589,7 +601,7 @@ export default function SupplierReviewEditorModal({
             )}
           </section>
 
-          <div className="grid gap-3 sm:grid-cols-2" aria-live="polite">
+          <div className="order-50 grid gap-3 sm:grid-cols-2" aria-live="polite">
             <div className={`rounded-2xl border p-4 ${profit.profit >= 0 ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-600' : 'border-red-500/20 bg-red-500/10 text-red-600'}`}>
               <span className="block text-[9px] font-black uppercase tracking-wider">Profit</span><strong className="text-lg">{money(profit.profit)}</strong>
             </div>
@@ -598,12 +610,12 @@ export default function SupplierReviewEditorModal({
             </div>
           </div>
 
-          <div className={`rounded-2xl border p-4 text-xs ${missingFields.length === 0 ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-700' : 'border-amber-500/20 bg-amber-500/10 text-amber-700'}`} aria-live="polite">
+          <div className={`order-[55] rounded-2xl border p-4 text-xs ${missingFields.length === 0 ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-700' : 'border-amber-500/20 bg-amber-500/10 text-amber-700'}`} aria-live="polite">
             <strong className="flex items-center gap-2">{missingFields.length === 0 ? <Check className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}{missingFields.length === 0 ? 'Ready to publish' : 'Missing required product data'}</strong>
             {missingFields.length > 0 && <p className="mt-1 text-[10px]">Complete: {missingFields.join(', ')}.</p>}
           </div>
 
-          <div className="flex justify-end gap-2 border-t border-slate-100 pt-4 dark:border-slate-800">
+          <div className="order-[100] flex justify-end gap-2 border-t border-slate-100 pt-4 dark:border-slate-800">
             <button type="button" onClick={onClose} disabled={isPublishing} className="min-h-11 rounded-xl border border-slate-200 px-4 text-xs font-bold text-slate-500 disabled:opacity-50 dark:border-slate-700">Cancel</button>
             <button type="submit" disabled={isPublishing || missingFields.length > 0} className="flex min-h-11 items-center gap-2 rounded-xl bg-emerald-600 px-5 text-xs font-black text-white disabled:bg-slate-600">
               <Check className="h-4 w-4" />{isPublishing ? 'Publishing...' : 'Approve & Publish'}

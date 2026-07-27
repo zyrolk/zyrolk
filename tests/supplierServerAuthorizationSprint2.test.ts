@@ -63,7 +63,8 @@ test('Supplier Hub queue decisions are Functions-authoritative and transaction g
   assert.doesNotMatch(legacyDashboard, /approveSupplierQueueItem\(/);
   assert.doesNotMatch(legacyDashboard, /rejectSupplierQueueItem\(/);
   assert.match(hub, /postSupplierApi\('\/api\/supplier-review-queue\/bulk-approve'/);
-  assert.match(legacyDashboard, /\/api\/supplier-review-queue\/\$\{encodeURIComponent\(queueItemId\)\}/);
+  assert.match(hub, /\/api\/supplier-review-queue\/\$\{encodeURIComponent\(queueItemId\)\}/);
+  assert.doesNotMatch(legacyDashboard, /\/api\/supplier-review-queue\//);
   assert.doesNotMatch(legacyDecisionService, /writeBatch\(|batch\.commit\(/);
   assert.match(legacyDecisionService, /\/api\/supplier-review-queue\//);
 });

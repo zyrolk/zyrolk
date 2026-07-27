@@ -4,7 +4,6 @@ import {
   Activity, 
   RefreshCw, 
   UserCheck, 
-  History, 
   PlusCircle, 
   Tag, 
   Boxes, 
@@ -23,7 +22,6 @@ import {
   User,
   Clock,
   ArrowRight,
-  Phone,
   ShieldCheck,
   AlertTriangle,
   Search,
@@ -32,7 +30,7 @@ import {
   Trash2
 } from 'lucide-react';
 import { isValidSupplierImageUrl } from '../services/connectors/a2z-website/productImages';
-import { collection, doc, limit, onSnapshot, orderBy, query } from 'firebase/firestore';
+import { collection, doc, onSnapshot } from 'firebase/firestore';
 import { onIdTokenChanged } from 'firebase/auth';
 import { auth, db, handleFirestoreError, OperationType } from '../firebase';
 import { Product } from '../types';
@@ -63,8 +61,16 @@ import {
   supplierSyncJobStateLabel,
   SupplierSyncJobView,
 } from '../services/supplierSyncJobs';
+import {
+  matchesProductChangeFilter,
+  matchesProductReviewFilter,
+  PRODUCT_REVIEW_FILTERS,
+  ProductReviewFilter,
+  supplierHealthLabel,
+  SupplierHubSection,
+  supplierReviewApiState,
+} from '../services/supplierHubPresentation';
 
-const SYNC_HISTORY_LIMIT = 100;
 interface SupplierHubFiveStarsProps {
   isDarkMode?: boolean;
 }
@@ -102,7 +108,7 @@ function SupplierImagePreview({ src, alt }: { src?: string; alt: string }) {
 export interface ComparisonResult {
   matchFound: boolean;
   matchedProductId: string | null;
-  comparisonStatus: 'NEW_PRODUCT' | 'PRICE_CHANGED' | 'STOCK_CHANGED' | 'DESCRIPTION_CHANGED' | 'IMAGE_CHANGED' | 'UNCHANGED';
+  comparisonStatus: 'NEW_PRODUCT' | 'PRICE_CHANGED' | 'STOCK_CHANGED' | 'DESCRIPTION_CHANGED' | 'IMAGE_CHANGED' | 'SUPPLIER_OFFER_REMOVED' | 'UNCHANGED';
   changedFields: string[];
   fieldChanges?: Array<{
     field: string;
@@ -130,7 +136,7 @@ export interface ReviewQueueItem {
   imageUrl?: string;
   currentValue?: string | number;
   supplierValue?: string | number;
-  comparisonStatus?: 'NEW_PRODUCT' | 'PRICE_CHANGED' | 'STOCK_CHANGED' | 'DESCRIPTION_CHANGED' | 'IMAGE_CHANGED' | 'UNCHANGED';
+  comparisonStatus?: 'NEW_PRODUCT' | 'PRICE_CHANGED' | 'STOCK_CHANGED' | 'DESCRIPTION_CHANGED' | 'IMAGE_CHANGED' | 'SUPPLIER_OFFER_REMOVED' | 'UNCHANGED';
   comparison?: ComparisonResult;
   productPayload?: Product & Record<string, unknown>; // Full product data to be written on approval
   matchedProductId?: string | null; // ID of existing product if match found
@@ -179,18 +185,6 @@ export interface ReviewQueueItem {
   };
 }
 
-export interface SyncHistoryItem {
-  id: string;
-  timestamp: string;
-  createdAt?: string;
-  batchId?: string;
-  supplierCode: string;
-  productsSynced: number;
-  productsQueued?: number;
-  status: 'Success' | 'Failed' | 'Partial' | 'Skipped';
-  details: string;
-}
-
 type SupplierQueueView = 'review' | 'import' | 'changes';
 
 interface SupplierQueuePageResponse {
@@ -208,10 +202,9 @@ const mergeSupplierQueuePage = <T extends { id: string }>(current: T[], page: T[
 };
 
 function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) {
-  // Core review queue and sync history states
+  // Product review workspace state
   const [reviewQueue, setReviewQueue] = useState<ReviewQueueItem[]>([]);
   const [importQueue, setImportQueue] = useState<any[]>([]);
-  const [syncHistory, setSyncHistory] = useState<SyncHistoryItem[]>([]);
   const [supplierQueueCursors, setSupplierQueueCursors] = useState<Record<SupplierQueueView, string | null>>({
     review: null,
     import: null,
@@ -245,10 +238,10 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
   }, []);
 
   // Supplier Hub navigation and interaction state
-  const [activeSubTab, setActiveSubTab] = useState<'operations' | 'review' | 'import_queue' | 'sources' | 'changes' | 'settings'>('operations');
+  const [activeSubTab, setActiveSubTab] = useState<SupplierHubSection>('suppliers');
+  const [reviewFilter, setReviewFilter] = useState<ProductReviewFilter>('new_products');
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [reviewSearch, setReviewSearch] = useState<string>('');
-  const [importSearch, setImportSearch] = useState<string>('');
   const [selectedReviewIds, setSelectedReviewIds] = useState<string[]>([]);
   const [bulkAction, setBulkAction] = useState<'approve' | 'reject' | 'delete' | null>(null);
 
@@ -283,50 +276,47 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
 
   // Supplier source definitions are deliberately projected by Functions. This
   // keeps legacy credential fields out of every browser response.
+  const loadSources = useCallback(async () => {
+    const [response, jobsResponse] = await Promise.all([
+      getSupplierApi('/api/supplier-sources'),
+      getSupplierApi('/api/supplier-sync/jobs?limit=20'),
+    ]);
+    const result = await response.json().catch(() => ({})) as { success?: boolean; sources?: any[]; error?: string };
+    const jobsResult = await jobsResponse.json().catch(() => ({})) as { success?: boolean; jobs?: SupplierSyncJobView[] };
+    if (!response.ok || result.success !== true || !Array.isArray(result.sources)) {
+      throw new Error(result.error || 'Supplier sources could not be loaded.');
+    }
+    setSupplierSources(result.sources.map(normalizeSupplierSourceForUi));
+    if (jobsResponse.ok && jobsResult.success === true && Array.isArray(jobsResult.jobs)) {
+      const selectedJob = selectSupplierSyncJobForDisplay(jobsResult.jobs);
+      if (selectedJob && isSupplierSyncJobActive(selectedJob)) {
+        applyActiveSyncJob(selectedJob);
+        setSyncStatusMsg(formatSupplierSyncProgress(selectedJob));
+      } else applyActiveSyncJob(null);
+    }
+  }, [applyActiveSyncJob]);
+
   useEffect(() => {
     let cancelled = false;
-    const loadSources = async () => {
-      try {
-        const [response, jobsResponse] = await Promise.all([
-          getSupplierApi('/api/supplier-sources'),
-          getSupplierApi('/api/supplier-sync/jobs?limit=20'),
-        ]);
-        const result = await response.json().catch(() => ({})) as { success?: boolean; sources?: any[]; error?: string };
-        const jobsResult = await jobsResponse.json().catch(() => ({})) as { success?: boolean; jobs?: SupplierSyncJobView[] };
-        if (!response.ok || result.success !== true || !Array.isArray(result.sources)) {
-          throw new Error(result.error || 'Supplier sources could not be loaded.');
-        }
-        if (!cancelled) {
-          setSupplierSources(result.sources.map(normalizeSupplierSourceForUi));
-          if (jobsResponse.ok && jobsResult.success === true && Array.isArray(jobsResult.jobs)) {
-            const selectedJob = selectSupplierSyncJobForDisplay(jobsResult.jobs);
-            if (selectedJob && isSupplierSyncJobActive(selectedJob)) {
-              applyActiveSyncJob(selectedJob);
-              setSyncStatusMsg(formatSupplierSyncProgress(selectedJob));
-            } else applyActiveSyncJob(null);
-          }
-        }
-      } catch (error) {
-        if (!cancelled) handleFirestoreError(error, OperationType.GET, 'supplierSources API');
-      }
-    };
     // Firebase may restore a persisted session after this lazy panel mounts.
     // Load once the ID-token observer confirms an authenticated user, and load
     // again after a token refresh so requests never depend on a stale snapshot.
     const unsubscribeAuth = onIdTokenChanged(auth, (currentUser) => {
-      if (currentUser) void loadSources();
+      if (currentUser) void loadSources().catch((error) => {
+        if (!cancelled) handleFirestoreError(error, OperationType.GET, 'supplierSources API');
+      });
     });
     return () => {
       cancelled = true;
       unsubscribeAuth();
     };
-  }, []);
+  }, [loadSources]);
 
   const [categories, setCategories] = useState<any[]>([]);
   const [brands, setBrands] = useState<any[]>([]);
 
   useEffect(() => {
-    if (!['review', 'sources'].includes(activeSubTab)) return;
+    if (!['review', 'suppliers'].includes(activeSubTab)) return;
     const unsubscribe = onSnapshot(
       collection(db, "categories"),
       (snapshot) => {
@@ -342,7 +332,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
   }, [activeSubTab]);
 
   useEffect(() => {
-    if (!['review', 'sources'].includes(activeSubTab)) return;
+    if (!['review', 'suppliers'].includes(activeSubTab)) return;
     const unsubscribe = onSnapshot(
       collection(db, "brands"),
       (snapshot) => setBrands(snapshot.docs.map((brand) => ({ id: brand.id, ...brand.data() }))),
@@ -378,55 +368,15 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
     return () => unsubscribe();
   }, [activeSubTab]);
 
-  useEffect(() => {
-    if (activeSubTab !== 'review') return;
-    const sortByCreatedAtDesc = <T extends { createdAt?: string; detectedAt?: string; timestamp?: string }>(items: T[]): T[] => {
-      return items.sort((a, b) => {
-        const aTime = new Date(a.createdAt || a.detectedAt || a.timestamp || 0).getTime();
-        const bTime = new Date(b.createdAt || b.detectedAt || b.timestamp || 0).getTime();
-        return bTime - aTime;
-      });
-    };
-
-    const unsubscribeSyncHistory = onSnapshot(
-      query(
-        collection(db, "supplier_sync_history"),
-        orderBy("createdAt", "desc"),
-        limit(SYNC_HISTORY_LIMIT),
-      ),
-      (snapshot) => {
-        const items: SyncHistoryItem[] = [];
-        snapshot.forEach((queueDoc) => {
-          items.push({ id: queueDoc.id, ...queueDoc.data() } as SyncHistoryItem);
-        });
-        setSyncHistory(sortByCreatedAtDesc(items));
-      },
-      (error) => {
-        handleFirestoreError(error, OperationType.GET, "supplier_sync_history");
-      }
-    );
-
-    return () => {
-      unsubscribeSyncHistory();
-    };
-  }, [activeSubTab]);
-
-  const reviewStatistics = useMemo(() => reviewQueue.reduce((totals, item) => {
-    const status = item.comparison?.comparisonStatus;
-    if (status === 'NEW_PRODUCT') totals.newProducts += 1;
-    if (status === 'PRICE_CHANGED') totals.priceChanges += 1;
-    if (status === 'STOCK_CHANGED') totals.stockChanges += 1;
-    if (status === 'IMAGE_CHANGED' || status === 'DESCRIPTION_CHANGED') totals.imageChanges += 1;
-    return totals;
-  }, { newProducts: 0, priceChanges: 0, stockChanges: 0, imageChanges: 0 }), [reviewQueue]);
-
   const visibleReviewItems = useMemo(
-    () => reviewQueue.filter((item) => matchesSupplierSearch(item, reviewSearch)),
-    [reviewQueue, reviewSearch],
+    () => reviewQueue.filter((item) => (
+      matchesProductReviewFilter(item, reviewFilter) && matchesSupplierSearch(item, reviewSearch)
+    )),
+    [reviewFilter, reviewQueue, reviewSearch],
   );
   const selectedReviewItems = useMemo(
-    () => reviewQueue.filter((item) => item.status === 'Pending' && selectedReviewIds.includes(item.id)),
-    [reviewQueue, selectedReviewIds],
+    () => visibleReviewItems.filter((item) => item.status === 'Pending' && selectedReviewIds.includes(item.id)),
+    [selectedReviewIds, visibleReviewItems],
   );
   const validCategoryIds = useMemo(() => categories.map((category) => String(category.id)), [categories]);
   const supplierCategoryOptions = useMemo(() => {
@@ -480,8 +430,6 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
 
   // 2. Pending Changes states
   const [supplierPendingChanges, setSupplierPendingChanges] = useState<any[]>([]);
-  const [pendingChangesFilter, setPendingChangesFilter] = useState<'All' | 'Pending' | 'Approved' | 'Rejected'>('All');
-  const [pendingChangesSearch, setPendingChangesSearch] = useState<string>('');
   const [processingChangeId, setProcessingChangeId] = useState<string | null>(null);
   const [comparingChange, setComparingChange] = useState<any | null>(null);
   const [editingReviewItem, setEditingReviewItem] = useState<ReviewQueueItem | null>(null);
@@ -492,6 +440,10 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
   const [supplierOfferError, setSupplierOfferError] = useState<string | null>(null);
   const [rejectingReviewItem, setRejectingReviewItem] = useState<ReviewQueueItem | null>(null);
   const [rejectionReasonDraft, setRejectionReasonDraft] = useState('');
+  const visibleProductChanges = useMemo(() => supplierPendingChanges.filter((change) => (
+    matchesProductChangeFilter(change, reviewFilter) && matchesSupplierSearch(change, reviewSearch)
+  )), [reviewFilter, reviewSearch, supplierPendingChanges]);
+  const productsBeingPrepared = useMemo(() => importQueue.filter((item) => matchesSupplierSearch(item, reviewSearch)), [importQueue, reviewSearch]);
 
   // 3. Settings states
   const [supplierSettings, setSupplierSettings] = useState<any>({
@@ -533,7 +485,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
 
   const loadSupplierQueueView = async (
     view: SupplierQueueView,
-    options: { append?: boolean; after?: string | null } = {},
+    options: { append?: boolean; after?: string | null; reviewState?: 'active' | 'conflict' | 'approved' } = {},
   ): Promise<void> => {
     const append = options.append === true;
     const after = options.after === undefined ? (append ? supplierQueueCursors[view] : null) : options.after;
@@ -542,12 +494,12 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
     setSupplierQueueLoading((current) => ({ ...current, [view]: true }));
     try {
       const parameters = new URLSearchParams({ view, limit: '50' });
-      if (view === 'review') parameters.set('state', 'active');
+      if (view === 'review') parameters.set('state', options.reviewState || supplierReviewApiState(reviewFilter));
       if (after) parameters.set('after', after);
       const response = await getSupplierApi(`/api/supplier-review-queue?${parameters.toString()}`);
       const result = await response.json().catch(() => ({})) as SupplierQueuePageResponse;
       if (!response.ok || result.success !== true || !Array.isArray(result.items)) {
-        throw new Error(result.error || 'Supplier queue items could not be loaded.');
+        throw new Error(result.error || 'Supplier products could not be loaded.');
       }
       if (requestId !== supplierQueueRequestIdRef.current[view]) return;
       if (view === 'review') {
@@ -562,7 +514,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
       setSupplierQueueError(null);
     } catch (error) {
       if (requestId === supplierQueueRequestIdRef.current[view]) {
-        setSupplierQueueError(error instanceof Error ? error.message : 'Supplier queue items could not be loaded.');
+        setSupplierQueueError(error instanceof Error ? error.message : 'Supplier products could not be loaded.');
       }
     } finally {
       if (requestId === supplierQueueRequestIdRef.current[view]) {
@@ -572,22 +524,21 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
   };
 
   const refreshSupplierQueueViews = async (): Promise<void> => {
-    await Promise.all((['review', 'import', 'changes'] as const).map((view) => loadSupplierQueueView(view)));
+    const views: SupplierQueueView[] = ['review', 'changes'];
+    if (reviewFilter === 'needs_attention') views.push('import');
+    await Promise.all(views.map((view) => loadSupplierQueueView(view)));
   };
 
   useEffect(() => onIdTokenChanged(auth, (currentUser) => {
-    if (currentUser) void loadSupplierQueueView('review');
+    if (currentUser) void Promise.all([loadSupplierQueueView('review'), loadSupplierQueueView('changes')]);
   }), []);
 
   useEffect(() => {
-    const view: SupplierQueueView | null = activeSubTab === 'review'
-      ? 'review'
-      : activeSubTab === 'import_queue' ? 'import' : activeSubTab === 'changes' ? 'changes' : null;
-    if (!view || !auth.currentUser) return;
+    if (activeSubTab !== 'review' || !auth.currentUser) return;
     let cancelled = false;
     let refreshTimer: number | null = null;
     const poll = async () => {
-      await loadSupplierQueueView(view);
+      await refreshSupplierQueueViews();
       if (!cancelled) refreshTimer = window.setTimeout(() => {
         if (auth.currentUser) void poll();
       }, 30_000);
@@ -597,7 +548,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
       cancelled = true;
       if (refreshTimer !== null) window.clearTimeout(refreshTimer);
     };
-  }, [activeSubTab]);
+  }, [activeSubTab, reviewFilter]);
 
   useEffect(() => {
     const jobId = activeSyncJob?.id;
@@ -765,7 +716,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
     syncStartInFlightRef.current = true;
     setIsSyncing(true);
     setSyncErrorMsg(null);
-    setSyncStatusMsg('Starting the supplier synchronization job...');
+      setSyncStatusMsg('Starting the supplier product update...');
     try {
       const response = await postSupplierApi('/api/supplier-sync', sourceIds?.length ? { sourceIds } : {});
       const result = await response.json().catch(() => ({})) as {
@@ -780,7 +731,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
         throw new Error(result.error || 'Supplier synchronization could not be completed.');
       }
       applyActiveSyncJob(result.job);
-      setSyncStatusMsg(`Synchronization job ${result.jobId || result.job.id} was accepted and is pending.`);
+      setSyncStatusMsg('Supplier product update started.');
       accepted = true;
       return true;
     } catch (error: any) {
@@ -971,11 +922,11 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
 
   const handleTriggerSync = async (id: string) => {
     setSyncingSourceId(id);
-    setSuccessMsg(`Supplier synchronization started for feed ID: ${id}...`);
+    setSuccessMsg('Checking this supplier for catalog updates...');
     try {
       const succeeded = await handleSyncSupplier([id]);
       if (succeeded) {
-        setSuccessMsg(`Supplier synchronization job accepted for feed ID: ${id}. Progress will update automatically.`);
+        setSuccessMsg('Supplier update started. Progress will update automatically.');
       } else {
         setSuccessMsg(null);
       }
@@ -1241,7 +1192,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
       }
       setSelectedReviewIds([]);
       void refreshSupplierQueueViews();
-      setSuccessMsg(`${selectedReviewItems.length} queue items deleted with audit records.`);
+      setSuccessMsg(`${selectedReviewItems.length} products removed from review.`);
       setTimeout(() => setSuccessMsg(null), 3000);
     } catch (error: any) {
       setErrorMsg(`Bulk delete stopped: ${error.message || 'Unknown error'}`);
@@ -1369,6 +1320,25 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
     }
   };
 
+  const handleSupplierPauseAction = async (source: any) => {
+    const isPaused = String(source.sourceStatus || source.status || '').toLowerCase() === 'paused';
+    const action = isPaused ? 'resume' : 'pause';
+    setSavingSettingsSourceId(source.id);
+    setErrorMsg(null);
+    try {
+      const response = await postSupplierApi(`/api/supplier-operations/suppliers/${encodeURIComponent(source.id)}/action`, { action });
+      const result = await response.json().catch(() => ({})) as { success?: boolean; error?: string };
+      if (!response.ok || result.success === false) throw new Error(result.error || `Supplier could not be ${action}d.`);
+      await loadSources();
+      setSuccessMsg(isPaused ? 'Supplier resumed.' : 'Supplier paused.');
+      setTimeout(() => setSuccessMsg(null), 3000);
+    } catch (error) {
+      setErrorMsg(error instanceof Error ? error.message : `Supplier could not be ${action}d.`);
+    } finally {
+      setSavingSettingsSourceId(null);
+    }
+  };
+
   const visibleErrorMsg = errorMsg || syncErrorMsg;
 
   return (
@@ -1381,10 +1351,10 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-slate-100 dark:border-slate-800/60 pb-5">
         <div>
           <h2 className="text-xl md:text-2xl font-black tracking-tight text-slate-900 dark:text-white font-display flex items-center gap-2">
-            Supplier Hub ⭐⭐⭐⭐⭐
+            Supplier Hub
           </h2>
           <p className="text-xs text-slate-400 mt-1">
-            Pragmatic distributor workflow panel for automated catalog feed synchronization.
+            Manage suppliers, review product changes, and keep your catalog current.
           </p>
         </div>
 
@@ -1397,15 +1367,15 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
               className="w-full sm:w-auto px-5 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-700 text-white font-extrabold rounded-xl text-xs transition-all shadow-lg shadow-blue-500/20 flex items-center justify-center space-x-2 cursor-pointer"
             >
               <RefreshCw className={`h-4 w-4 ${isSyncing ? 'animate-spin' : ''}`} />
-              <span>{isSyncing ? 'Syncing...' : 'Sync Supplier'}</span>
+              <span>{isSyncing ? 'Updating...' : 'Update Products'}</span>
             </button>
-          ) : activeSubTab === 'sources' ? (
+          ) : activeSubTab === 'suppliers' ? (
             <button
               onClick={() => setShowConnectModal(true)}
               className="w-full sm:w-auto px-5 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-xl text-xs transition-all shadow-lg shadow-emerald-500/20 flex items-center justify-center space-x-2 cursor-pointer"
             >
               <Plus className="h-4 w-4" />
-              <span>Connect Supplier</span>
+              <span>Add Supplier</span>
             </button>
           ) : null}
         </div>
@@ -1425,7 +1395,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
 
       {activeSyncJob && (
         <section
-          aria-label="Supplier synchronization progress"
+          aria-label="Supplier catalog update progress"
           className="rounded-2xl border border-slate-200/70 bg-white/80 p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900/60"
         >
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -1433,20 +1403,19 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
               <div className="flex items-center gap-2">
                 <Activity className="h-4 w-4 text-blue-500" aria-hidden="true" />
                 <p className="text-xs font-extrabold text-slate-900 dark:text-white">
-                  Sync job · {supplierSyncJobStateLabel(activeSyncJob.state)}
+                  Catalog update · {supplierSyncJobStateLabel(activeSyncJob.state)}
                 </p>
               </div>
-              <p className="truncate font-mono text-[10px] text-slate-400">{activeSyncJob.id}</p>
               <p className="text-[11px] text-slate-500 dark:text-slate-400" aria-live="polite">
                 {isSupplierSyncJobActive(activeSyncJob) && activeSyncJob.progress.percent <= 0 && activeSyncJob.progress.pagesProcessed > 0
                   ? 'In progress · '
                   : activeSyncJob.progress.percent > 0 ? `${activeSyncJob.progress.percent}% · ` : ''}
-                {activeSyncJob.progress.productsScanned} scanned · {activeSyncJob.progress.productsQueued} queued · {activeSyncJob.progress.pagesProcessed} pages
+                {activeSyncJob.progress.productsScanned} products checked · {activeSyncJob.progress.productsQueued} changes found
                 {isSupplierSyncJobActive(activeSyncJob) ? ` · ${formatSupplierSyncEta(activeSyncJob.progress.etaMs)}` : ''}
               </p>
               {activeSyncJob.state === 'waiting' && activeSyncJob.waitingReason ? (
                 <p className="text-[11px] font-semibold text-amber-600 dark:text-amber-400">
-                  {activeSyncJob.waitingReason}
+                  Supplier update is waiting to continue.
                 </p>
               ) : null}
             </div>
@@ -1486,7 +1455,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
           <div
             className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800"
             role="progressbar"
-            aria-label="Supplier synchronization progress"
+            aria-label="Supplier catalog update progress"
             aria-valuemin={0}
             aria-valuemax={100}
             aria-valuenow={activeSyncJob.progress.percent}
@@ -1522,14 +1491,12 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
         </motion.div>
       )}
 
-      {/* WORKFLOW SUB-TABS NAVIGATION BAR */}
+      {/* Business navigation */}
       <div className="flex flex-wrap items-center gap-1.5 border-b border-slate-100 dark:border-slate-800 pb-1.5 overflow-x-auto">
         {[
-          { id: 'operations', label: 'Operations', badge: null, icon: Activity },
-          { id: 'review', label: 'Review Queue & Ingestion', badge: reviewQueue.length, icon: UserCheck, badgeColor: 'bg-blue-500 text-white animate-pulse' },
-          { id: 'import_queue', label: 'Import Queue', badge: importQueue.length, icon: FileText, badgeColor: 'bg-slate-500 text-white' },
-          { id: 'sources', label: 'Supplier Sources', badge: supplierSources.length, icon: Globe },
-          { id: 'changes', label: 'Pending Changes', badge: supplierPendingChanges.filter(c => c.status === 'Pending').length, icon: SlidersHorizontal, badgeColor: 'bg-amber-500 text-slate-900' },
+          { id: 'suppliers', label: 'Suppliers', badge: supplierSources.length, icon: Globe },
+          { id: 'review', label: 'Product Review', badge: reviewQueue.length + supplierPendingChanges.filter(c => c.status === 'Pending').length, icon: UserCheck, badgeColor: 'bg-blue-500 text-white' },
+          { id: 'activity', label: 'Activity', badge: null, icon: Activity },
           { id: 'settings', label: 'Settings', badge: null, icon: Settings },
         ].map((tab) => {
           const TabIcon = tab.icon;
@@ -1537,7 +1504,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
           return (
             <button
               key={tab.id}
-              onClick={() => setActiveSubTab(tab.id as any)}
+              onClick={() => setActiveSubTab(tab.id as SupplierHubSection)}
               className={`px-4 py-2.5 rounded-xl font-bold text-xs transition-all flex items-center space-x-2 border cursor-pointer whitespace-nowrap ${
                 isSubActive 
                   ? 'bg-blue-600 text-white border-blue-600 shadow-md shadow-blue-500/10' 
@@ -1559,11 +1526,9 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
       {/* SUB-TAB CONTENTS */}
       <div className="min-h-[400px]">
 
-        {activeSubTab === 'operations' && (
+        {activeSubTab === 'activity' && (
           <SupplierOperationsDashboard
             requestApi={requestSupplierApi}
-            onSyncSupplier={handleSyncSupplier}
-            syncInProgress={isSyncing}
             activeSyncJob={activeSyncJob}
             refreshKey={operationsRefreshKey}
           />
@@ -1572,85 +1537,42 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
         {/* VIEW 1: REVIEW QUEUE & INGESTION (Existing view) */}
         {activeSubTab === 'review' && (
           <div className="space-y-8">
-            {/* statistics cards */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-              {/* Card 1: New Products */}
-              <div className={`rounded-3xl p-5 border flex flex-col justify-between transition-all hover:shadow-xl relative overflow-hidden group ${
-                isDarkMode ? 'bg-gradient-to-b from-[#111c30] to-[#0d1424] border-slate-800/80' : 'bg-white border-slate-200/60 shadow-xs'
-              }`}>
-                <div className="absolute top-0 right-0 w-24 h-24 bg-blue-500/5 rounded-full blur-xl group-hover:bg-blue-500/10 transition-all duration-500" />
-                <div className="flex items-center justify-between relative z-10">
-                  <span className="text-[10px] font-extrabold uppercase tracking-widest text-slate-400 dark:text-slate-500">New Products</span>
-                  <div className="w-9 h-9 rounded-xl bg-blue-500/10 text-blue-500 flex items-center justify-center font-black">
-                    <PlusCircle className="h-4.5 w-4.5" />
-                  </div>
+            <section aria-labelledby="product-review-filters-title" className="rounded-3xl border border-slate-200/70 bg-white p-4 dark:border-slate-800 dark:bg-slate-950">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                  <h3 id="product-review-filters-title" className="text-sm font-black text-slate-900 dark:text-white">Product Review</h3>
+                  <p className="mt-1 text-[11px] text-slate-400">Review supplier products and changes before they appear in your store.</p>
                 </div>
-                <div className="mt-4 text-left relative z-10">
-                  <p className="text-2xl font-black tracking-tight text-slate-900 dark:text-white">
-                    {reviewStatistics.newProducts}
-                  </p>
-                  <p className="text-[10px] text-slate-400 mt-1">Pending approval to import</p>
+                <div className="relative w-full max-w-sm">
+                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="search"
+                    value={reviewSearch}
+                    onChange={(event) => setReviewSearch(event.target.value)}
+                    placeholder="Search products or supplier codes..."
+                    aria-label="Search products awaiting review"
+                    className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-9 pr-3 text-xs focus:outline-none dark:border-slate-800 dark:bg-slate-900/50"
+                  />
                 </div>
               </div>
-
-              {/* Card 2: Price Changes */}
-              <div className={`rounded-3xl p-5 border flex flex-col justify-between transition-all hover:shadow-xl relative overflow-hidden group ${
-                isDarkMode ? 'bg-gradient-to-b from-[#111c30] to-[#0d1424] border-slate-800/80' : 'bg-white border-slate-200/60 shadow-xs'
-              }`}>
-                <div className="absolute top-0 right-0 w-24 h-24 bg-purple-500/5 rounded-full blur-xl group-hover:bg-purple-500/10 transition-all duration-500" />
-                <div className="flex items-center justify-between relative z-10">
-                  <span className="text-[10px] font-extrabold uppercase tracking-widest text-slate-400 dark:text-slate-500">Price Changes</span>
-                  <div className="w-9 h-9 rounded-xl bg-purple-500/10 text-purple-500 flex items-center justify-center font-black">
-                    <Tag className="h-4.5 w-4.5" />
-                  </div>
-                </div>
-                <div className="mt-4 text-left relative z-10">
-                  <p className="text-2xl font-black tracking-tight text-slate-900 dark:text-white">
-                    {reviewStatistics.priceChanges}
-                  </p>
-                  <p className="text-[10px] text-slate-400 mt-1">Updates to catalog pricing</p>
-                </div>
+              <div className="mt-4 flex gap-2 overflow-x-auto pb-1" role="tablist" aria-label="Product review filters">
+                {PRODUCT_REVIEW_FILTERS.map((filter) => (
+                  <button
+                    key={filter.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={reviewFilter === filter.id}
+                    onClick={() => {
+                      setReviewFilter(filter.id);
+                      setSelectedReviewIds([]);
+                    }}
+                    className={`min-h-10 shrink-0 rounded-xl px-3 text-[11px] font-black transition-colors ${reviewFilter === filter.id ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800'}`}
+                  >
+                    {filter.label}
+                  </button>
+                ))}
               </div>
-
-              {/* Card 3: Stock Changes */}
-              <div className={`rounded-3xl p-5 border flex flex-col justify-between transition-all hover:shadow-xl relative overflow-hidden group ${
-                isDarkMode ? 'bg-gradient-to-b from-[#111c30] to-[#0d1424] border-slate-800/80' : 'bg-white border-slate-200/60 shadow-xs'
-              }`}>
-                <div className="absolute top-0 right-0 w-24 h-24 bg-amber-500/5 rounded-full blur-xl group-hover:bg-amber-500/10 transition-all duration-500" />
-                <div className="flex items-center justify-between relative z-10">
-                  <span className="text-[10px] font-extrabold uppercase tracking-widest text-slate-400 dark:text-slate-500">Stock Changes</span>
-                  <div className="w-9 h-9 rounded-xl bg-amber-500/10 text-amber-500 flex items-center justify-center font-black">
-                    <Boxes className="h-4.5 w-4.5" />
-                  </div>
-                </div>
-                <div className="mt-4 text-left relative z-10">
-                  <p className="text-2xl font-black tracking-tight text-slate-900 dark:text-white">
-                    {reviewStatistics.stockChanges}
-                  </p>
-                  <p className="text-[10px] text-slate-400 mt-1">Inventory level fluctuations</p>
-                </div>
-              </div>
-
-              {/* Card 4: Image Changes */}
-              <div className={`rounded-3xl p-5 border flex flex-col justify-between transition-all hover:shadow-xl relative overflow-hidden group ${
-                isDarkMode ? 'bg-gradient-to-b from-[#111c30] to-[#0d1424] border-slate-800/80' : 'bg-white border-slate-200/60 shadow-xs'
-              }`}>
-                <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-500/5 rounded-full blur-xl group-hover:bg-emerald-500/10 transition-all duration-500" />
-                <div className="flex items-center justify-between relative z-10">
-                  <span className="text-[10px] font-extrabold uppercase tracking-widest text-slate-400 dark:text-slate-500">Image Changes</span>
-                  <div className="w-9 h-9 rounded-xl bg-emerald-500/10 text-emerald-500 flex items-center justify-center font-black">
-                    <Camera className="h-4.5 w-4.5" />
-                  </div>
-                </div>
-                <div className="mt-4 text-left relative z-10">
-                  <p className="text-2xl font-black tracking-tight text-slate-900 dark:text-white">
-                    {reviewStatistics.imageChanges}
-                  </p>
-                  <p className="text-[10px] text-slate-400 mt-1">New media files identified</p>
-                </div>
-              </div>
-            </div>
-
+            </section>
             {/* Review Queue Table card */}
             <div className={`rounded-3xl border p-6 ${
               isDarkMode ? 'bg-[#0d1424] border-slate-800/80' : 'bg-white border-slate-200/60 shadow-xs'
@@ -1659,20 +1581,9 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                 <div className="text-left">
                   <h3 className="text-sm font-extrabold text-slate-900 dark:text-white uppercase tracking-wider flex items-center gap-1.5">
                     <UserCheck className="h-4 w-4 text-blue-500" />
-                    <span>Review Queue</span>
+                    <span>{PRODUCT_REVIEW_FILTERS.find((filter) => filter.id === reviewFilter)?.label}</span>
                   </h3>
-                  <p className="text-[11px] text-slate-400">Incoming products or changes awaiting admin action.</p>
-                </div>
-                <div className="relative w-full max-w-xs">
-                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                  <input
-                    type="search"
-                    value={reviewSearch}
-                    onChange={(event) => setReviewSearch(event.target.value)}
-                    placeholder="Search product or supplier code..."
-                    aria-label="Search Review Queue"
-                    className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-3 text-xs focus:outline-none dark:border-slate-800 dark:bg-slate-900/50"
-                  />
+                  <p className="text-[11px] text-slate-400">Only products matching this business filter are shown.</p>
                 </div>
               </div>
 
@@ -1698,13 +1609,13 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
               )}
 
               {supplierQueueLoading.review && reviewQueue.length === 0 ? (
-                <div className="p-12 text-center text-xs font-bold text-slate-400" role="status">Loading review queue…</div>
+                <div className="p-12 text-center text-xs font-bold text-slate-400" role="status">Loading products…</div>
               ) : visibleReviewItems.length === 0 ? (
                 <div className="p-12 text-center rounded-2xl border border-dashed border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/10 space-y-3">
                   <UserCheck className="h-10 w-10 text-slate-300 mx-auto" />
                   <div className="space-y-1">
                     <p className="text-sm font-bold text-slate-900 dark:text-white">No supplier updates found.</p>
-                    <p className="text-xs text-slate-400">Check back later or run a new sync to search for updates.</p>
+                    <p className="text-xs text-slate-400">Check back later or update products to look for supplier changes.</p>
                   </div>
                 </div>
               ) : (
@@ -1730,9 +1641,9 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                         <th className="py-3 px-3 text-right">Margin</th>
                         <th className="py-3 px-4 text-right">Stock</th>
                         <th className="py-3 px-4">Catalog readiness</th>
-                        <th className="py-3 px-4 text-right">Comparison</th>
+                        <th className="py-3 px-4 text-right">Changes</th>
                         <th className="py-3 px-4 text-right">Status</th>
-                        <th className="py-3 px-4 text-right">Edit Action</th>
+                        <th className="py-3 px-4 text-right">Action</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1796,6 +1707,8 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                                     ? 'bg-blue-500/10 text-blue-500 border-blue-500/20'
                                     : item.comparison.comparisonStatus === 'DESCRIPTION_CHANGED'
                                     ? 'bg-purple-500/10 text-purple-500 border-purple-500/20'
+                                    : item.comparison.comparisonStatus === 'SUPPLIER_OFFER_REMOVED'
+                                    ? 'bg-red-500/10 text-red-500 border-red-500/20'
                                     : 'bg-slate-500/10 text-slate-500 border-slate-500/20'
                                 }`}>
                                   <span className={`w-1.5 h-1.5 rounded-full ${
@@ -1809,6 +1722,8 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                                       ? 'bg-blue-500'
                                       : item.comparison.comparisonStatus === 'DESCRIPTION_CHANGED'
                                       ? 'bg-purple-500'
+                                      : item.comparison.comparisonStatus === 'SUPPLIER_OFFER_REMOVED'
+                                      ? 'bg-red-500'
                                       : 'bg-slate-500'
                                   }`} />
                                   {item.comparison.comparisonStatus === 'NEW_PRODUCT' && 'NEW'}
@@ -1816,6 +1731,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                                   {item.comparison.comparisonStatus === 'STOCK_CHANGED' && 'STOCK CHANGED'}
                                   {item.comparison.comparisonStatus === 'IMAGE_CHANGED' && 'IMAGE CHANGED'}
                                   {item.comparison.comparisonStatus === 'DESCRIPTION_CHANGED' && 'DESC CHANGED'}
+                                  {item.comparison.comparisonStatus === 'SUPPLIER_OFFER_REMOVED' && 'REMOVED'}
                                   {item.comparison.comparisonStatus === 'UNCHANGED' && 'UNCHANGED'}
                                 </span>
                                 
@@ -1833,7 +1749,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                                 )}
                               </div>
                             ) : (
-                              <span className="text-slate-400 font-bold text-[10px]">Pending Compare</span>
+                              <span className="text-slate-400 font-bold text-[10px]">Preparing details</span>
                             )}
                           </td>
                           <td className="py-3 px-4 text-right">
@@ -1892,102 +1808,42 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                     disabled={supplierQueueLoading.review}
                     className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-black text-slate-600 transition-colors hover:bg-slate-50 disabled:opacity-50 dark:border-slate-800 dark:text-slate-300 dark:hover:bg-slate-900"
                   >
-                    {supplierQueueLoading.review ? 'Loading…' : 'Load more reviews'}
+                    {supplierQueueLoading.review ? 'Loading…' : 'Load more products'}
                   </button>
                 </div>
               )}
             </div>
 
-            {/* Sync History Table card */}
-            <div className={`rounded-3xl border p-6 ${
-              isDarkMode ? 'bg-[#0d1424] border-slate-800/80' : 'bg-white border-slate-200/60 shadow-xs'
-            }`}>
-              <div className="flex items-center justify-between mb-5">
-                <div className="text-left">
-                  <h3 className="text-sm font-extrabold text-slate-900 dark:text-white uppercase tracking-wider flex items-center gap-1.5">
-                    <History className="h-4 w-4 text-blue-500" />
-                    <span>Sync History</span>
-                  </h3>
-                  <p className="text-[11px] text-slate-400">History log of automated execution runs and manual sync sessions.</p>
-                </div>
-              </div>
-
-              {syncHistory.length === 0 ? (
-                <div className="p-12 text-center rounded-2xl border border-dashed border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/10 space-y-3">
-                  <History className="h-10 w-10 text-slate-300 mx-auto" />
-                  <div className="space-y-1">
-                    <p className="text-sm font-bold text-slate-900 dark:text-white">No data available.</p>
-                    <p className="text-xs text-slate-400">There are no records in the synchronization logs yet.</p>
-                  </div>
-                </div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-xs text-left border-collapse">
-                    <thead>
-                      <tr className="border-b border-slate-100 dark:border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
-                        <th className="py-3 px-4">Timestamp</th>
-                        <th className="py-3 px-4">Supplier Code</th>
-                        <th className="py-3 px-4">Products Synced</th>
-                        <th className="py-3 px-4">Status</th>
-                        <th className="py-3 px-4">Details</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {syncHistory.map((log) => (
-                        <tr key={log.id} className="border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50/50 dark:hover:bg-slate-900/30">
-                          <td className="py-3 px-4 text-slate-500">{log.timestamp}</td>
-                          <td className="py-3 px-4 font-mono font-bold">{log.supplierCode}</td>
-                          <td className="py-3 px-4 font-medium">{log.productsSynced}</td>
-                          <td className="py-3 px-4 font-bold">{log.status}</td>
-                          <td className="py-3 px-4 text-slate-400">{log.details}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
           </div>
         )}
 
-        {/* VIEW: IMPORT QUEUE */}
-        {activeSubTab === 'import_queue' && (
+        {/* Products not yet ready for an administrator decision */}
+        {activeSubTab === 'review' && reviewFilter === 'needs_attention' && (
           <div className="space-y-6">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-slate-50 dark:bg-slate-900/20 p-5 rounded-3xl border border-slate-100 dark:border-slate-800/40">
               <div>
-                <h3 className="text-sm font-extrabold text-slate-900 dark:text-white uppercase tracking-wider">Import Ingestion Queue</h3>
-                <p className="text-[11px] text-slate-400">Temporary workspace for staging, validating, and pre-comparing downloaded supplier items before commit.</p>
+                <h3 className="text-sm font-extrabold text-slate-900 dark:text-white uppercase tracking-wider">Products Being Prepared</h3>
+                <p className="text-[11px] text-slate-400">These products were received from suppliers but are not ready for a review decision yet.</p>
               </div>
               <div className="shrink-0">
                 <span className="text-[10px] text-slate-400 font-mono bg-slate-100 dark:bg-slate-800/50 px-2.5 py-1 rounded-lg border border-slate-200/50 dark:border-slate-800">
-                  {importQueue.length} Items in Queue
+                  {importQueue.length} Products
                 </span>
-              </div>
-              <div className="relative w-full max-w-xs">
-                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                <input
-                  type="search"
-                  value={importSearch}
-                  onChange={(event) => setImportSearch(event.target.value)}
-                  placeholder="Search product or supplier code..."
-                  aria-label="Search Import Queue"
-                  className="w-full rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-3 text-xs focus:outline-none dark:border-slate-800 dark:bg-slate-900/50"
-                />
               </div>
             </div>
 
             {supplierQueueLoading.import && importQueue.length === 0 ? (
-              <div className="p-12 text-center text-xs font-bold text-slate-400" role="status">Loading import queue…</div>
-            ) : importQueue.filter((item) => matchesSupplierSearch(item, importSearch)).length === 0 ? (
+              <div className="p-12 text-center text-xs font-bold text-slate-400" role="status">Checking products…</div>
+            ) : productsBeingPrepared.length === 0 ? (
               /* Empty State */
               <div className="p-16 text-center rounded-3xl border border-dashed border-slate-250 dark:border-slate-800 bg-slate-50/30 dark:bg-[#111928]/30 space-y-4 max-w-xl mx-auto my-6">
                 <div className="w-14 h-14 bg-blue-500/10 text-blue-500 rounded-2xl flex items-center justify-center mx-auto shadow-inner">
                   <FileText className="h-6 w-6" />
                 </div>
                 <div className="space-y-1.5">
-                  <h4 className="text-sm font-black text-slate-900 dark:text-white">Import Queue is Empty</h4>
+                  <h4 className="text-sm font-black text-slate-900 dark:text-white">No products need preparation</h4>
                   <p className="text-[11.5px] text-slate-400 max-w-sm mx-auto leading-relaxed">
-                    No supplier feed products are currently staged in the queue. Trigger a synchronization task from the <strong>Supplier Sources</strong> tab to pull items into this view before comparison.
+                    All received supplier products have progressed to a review decision or need no action.
                   </p>
                 </div>
               </div>
@@ -2005,7 +1861,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                     </tr>
                   </thead>
                   <tbody>
-                    {importQueue.filter((item) => matchesSupplierSearch(item, importSearch)).map((item) => (
+                    {productsBeingPrepared.map((item) => (
                       <tr key={item.sku} className="border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50/50 dark:hover:bg-slate-900/30">
                         <td className="py-3 px-4">
                           <SupplierImagePreview src={item.mediaGallery?.[0]} alt={item.title} />
@@ -2035,37 +1891,37 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                   disabled={supplierQueueLoading.import}
                   className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-black text-slate-600 transition-colors hover:bg-slate-50 disabled:opacity-50 dark:border-slate-800 dark:text-slate-300 dark:hover:bg-slate-900"
                 >
-                  {supplierQueueLoading.import ? 'Loading…' : 'Load more imports'}
+                    {supplierQueueLoading.import ? 'Loading…' : 'Load more products'}
                 </button>
               </div>
             )}
           </div>
         )}
 
-        {/* VIEW 2: SUPPLIER SOURCES & CONNECT */}
-        {activeSubTab === 'sources' && (
+        {/* Suppliers */}
+        {activeSubTab === 'suppliers' && (
           <div className="space-y-6">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div>
-                <h3 className="text-sm font-extrabold text-slate-900 dark:text-white uppercase tracking-wider">Connected Feeds</h3>
-                <p className="text-[11px] text-slate-400">Direct endpoints parsed for catalog updates, inventory streams, and pricing matrices.</p>
+                <h3 className="text-sm font-extrabold text-slate-900 dark:text-white uppercase tracking-wider">Connected Suppliers</h3>
+                <p className="text-[11px] text-slate-400">Manage supplier connections and catalog update schedules.</p>
               </div>
               <div className="flex items-center gap-3">
                 <span className="text-[10px] text-slate-400 font-mono bg-slate-100 dark:bg-slate-800/50 px-2.5 py-1 rounded-lg border border-slate-200/50 dark:border-slate-800">
-                  {supplierSources.length || 0} Connected Feed(s)
+                  {supplierSources.length || 0} Supplier(s)
                 </span>
               </div>
             </div>
 
-            {/* Sync All Feeds Action Bar */}
+            {/* Update all suppliers */}
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 p-4 rounded-3xl bg-slate-50 dark:bg-[#101827]/40 border border-slate-200/50 dark:border-slate-800/60">
               <div className="flex items-center gap-3">
                 <div className="p-2.5 bg-blue-500/10 text-blue-500 rounded-xl">
                   <Activity className="h-5 w-5" />
                 </div>
                 <div>
-                  <h4 className="text-xs font-bold text-slate-900 dark:text-white">Batch Synchronization Controls</h4>
-                  <p className="text-[10px] text-slate-400 font-medium">Trigger sync tasks for all active distributor feeds simultaneously.</p>
+                  <h4 className="text-xs font-bold text-slate-900 dark:text-white">Update All Suppliers</h4>
+                  <p className="text-[10px] text-slate-400 font-medium">Check every active supplier for product and stock changes.</p>
                 </div>
               </div>
               <button
@@ -2075,7 +1931,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                 className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-extrabold rounded-xl text-xs flex items-center justify-center space-x-2 cursor-pointer transition-all shadow-md shadow-blue-500/10 hover:shadow-lg hover:shadow-blue-500/20"
               >
                 <RefreshCw className="h-3.5 w-3.5 animate-pulse" />
-                <span>Sync All Feeds</span>
+                <span>Update All</span>
               </button>
             </div>
 
@@ -2102,31 +1958,12 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                       <div className="space-y-1">
                         <div className="flex items-center gap-2">
                           <span className="font-extrabold text-sm text-slate-900 dark:text-white">{source.name}</span>
-                          {source.type === 'whatsapp' ? (
-                            <span className="px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-500 text-[9px] font-bold uppercase tracking-wider flex items-center gap-1 border border-emerald-500/20">
-                              <Phone className="h-2.5 w-2.5" /> WhatsApp
-                            </span>
-                          ) : source.type === 'api' ? (
-                            <span className="px-2 py-0.5 rounded-md bg-blue-500/10 text-blue-500 text-[9px] font-bold uppercase tracking-wider flex items-center gap-1 border border-blue-500/20">
-                              <Activity className="h-2.5 w-2.5" /> API Feed
-                            </span>
-                          ) : (
-                            <span className="px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-500 text-[9px] font-bold uppercase tracking-wider flex items-center gap-1 border border-amber-500/20">
-                              <Globe className="h-2.5 w-2.5" /> Website
-                            </span>
-                          )}
                         </div>
-                        <p className="text-[10px] text-slate-400 font-mono">ID: {source.id}</p>
                         {source.websiteUrl && (
                           <p className="text-[10px] text-blue-500 hover:underline break-all mt-1 flex items-center gap-1 font-medium">
                             <a href={source.websiteUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1">
                               <Globe className="h-3 w-3 shrink-0" /> {source.websiteUrl}
                             </a>
-                          </p>
-                        )}
-                        {source.endpoint && (
-                          <p className="text-[9px] text-slate-400/80 font-mono mt-0.5 break-all">
-                            Endpoint: {source.endpoint}
                           </p>
                         )}
                       </div>
@@ -2147,26 +1984,31 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
 
                     <div className="grid grid-cols-2 gap-4 mt-6 p-3 bg-slate-50 dark:bg-slate-900/40 rounded-2xl border border-slate-100/50 dark:border-slate-800/40 text-xs">
                       <div className="space-y-0.5">
-                        <span className="text-slate-400 font-bold block text-[10px] uppercase">Last Synchronization</span>
+                        <span className="text-slate-400 font-bold block text-[10px] uppercase">Last Update</span>
                         <span className="text-slate-700 dark:text-slate-200 font-medium font-mono">{source.lastSync || 'Never'}</span>
                       </div>
                       <div className="space-y-0.5">
-                        <span className="text-slate-400 font-bold block text-[10px] uppercase">Operational Status</span>
-                        <span className="font-bold text-emerald-500 capitalize">{source.sourceStatus || 'active'}</span>
+                        <span className="text-slate-400 font-bold block text-[10px] uppercase">Health</span>
+                        <span className="font-bold text-emerald-500">{supplierHealthLabel(source)}</span>
                       </div>
                       <div className="col-span-2 space-y-0.5 border-t border-slate-100 dark:border-slate-800/40 pt-2">
-                        <span className="text-slate-400 font-bold block text-[10px] uppercase">Last Recorded Error</span>
+                        <span className="text-slate-400 font-bold block text-[10px] uppercase">Latest Notice</span>
                         <span className="text-slate-400 font-medium block truncate">
                           {source.lastError || 'None'}
                         </span>
                       </div>
                     </div>
 
-                    <div className="mt-5 flex items-center justify-between gap-3 flex-wrap sm:flex-nowrap">
-                      <div className="flex items-center gap-1 text-[10px] text-slate-400">
-                        <Info className="h-3.5 w-3.5 text-slate-400 shrink-0" />
-                        <span>Connected via server proxy link</span>
-                      </div>
+                    <details className="mt-4 rounded-xl border border-slate-200/70 px-3 py-2 text-[10px] text-slate-500 dark:border-slate-800">
+                      <summary className="cursor-pointer font-bold">Advanced supplier details</summary>
+                      <dl className="mt-2 space-y-1 font-mono">
+                        <div><dt className="inline font-bold">Supplier ID: </dt><dd className="inline">{source.id}</dd></div>
+                        <div><dt className="inline font-bold">Connection type: </dt><dd className="inline">{source.type || source.connectorType || 'website'}</dd></div>
+                        {source.endpoint && <div><dt className="inline font-bold">Endpoint: </dt><dd className="inline break-all">{source.endpoint}</dd></div>}
+                      </dl>
+                    </details>
+
+                    <div className="mt-5 flex items-center justify-end gap-3 flex-wrap">
                       <div className="flex items-center gap-2 shrink-0 ml-auto">
                         <button
                           onClick={() => handleOpenSettings(source)}
@@ -2177,7 +2019,15 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                           }`}
                         >
                           <Settings className={`h-3.5 w-3.5 ${editingSourceId === source.id ? 'animate-spin' : ''}`} />
-                          <span>Settings</span>
+                          <span>Edit</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleSupplierPauseAction(source)}
+                          disabled={savingSettingsSourceId !== null}
+                          className="px-3.5 py-1.5 bg-amber-100 hover:bg-amber-200 disabled:opacity-50 text-amber-700 font-bold rounded-lg text-[10px] flex items-center gap-1.5 cursor-pointer transition-colors"
+                        >
+                          {String(source.sourceStatus || source.status || '').toLowerCase() === 'paused' ? 'Resume' : 'Pause'}
                         </button>
                         <button
                           onClick={() => handleTestExistingConnection(source)}
@@ -2193,7 +2043,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                           className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-700 disabled:opacity-50 text-white font-bold rounded-lg text-[10px] flex items-center gap-1.5 cursor-pointer transition-colors"
                         >
                           <RefreshCw className={`h-3 w-3 ${syncingSourceId === source.id ? 'animate-spin' : ''}`} />
-                          <span>{syncingSourceId === source.id ? 'Syncing...' : 'Sync Now'}</span>
+                          <span>{syncingSourceId === source.id ? 'Updating...' : 'Update Now'}</span>
                         </button>
                       </div>
                     </div>
@@ -2208,7 +2058,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                         <div className="flex items-center gap-2 mb-2">
                           <Settings className="h-4 w-4 text-amber-500" />
                           <h4 className="text-xs font-black text-slate-900 dark:text-white uppercase tracking-wider">
-                            Supplier Settings Engine
+                            Edit Supplier
                           </h4>
                         </div>
 
@@ -2269,18 +2119,19 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                               />
                             </div>
 
-                            <div className="space-y-1 col-span-1 sm:col-span-2">
-                              <label className="text-[10px] font-bold text-slate-400 dark:text-slate-500">
-                                Endpoint
-                              </label>
-                              <input
-                                type="text"
-                                value={editEndpoint}
-                                onChange={(e) => setEditEndpoint(e.target.value)}
-                                className="w-full px-3 py-2 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl focus:outline-hidden focus:border-amber-500 transition-colors text-xs dark:text-white font-mono"
-                                placeholder="/api/products"
-                              />
-                            </div>
+                            <details className="col-span-1 rounded-xl border border-slate-200 p-3 dark:border-slate-800 sm:col-span-2">
+                              <summary className="cursor-pointer text-[10px] font-bold text-slate-500">Advanced connection settings</summary>
+                              <div className="mt-3 space-y-1">
+                                <label className="text-[10px] font-bold text-slate-400 dark:text-slate-500">Catalog path</label>
+                                <input
+                                  type="text"
+                                  value={editEndpoint}
+                                  onChange={(e) => setEditEndpoint(e.target.value)}
+                                  className="w-full px-3 py-2 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl focus:outline-hidden focus:border-amber-500 transition-colors text-xs dark:text-white font-mono"
+                                  placeholder="/api/products"
+                                />
+                              </div>
+                            </details>
                           </div>
                         </div>
 
@@ -2288,7 +2139,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                         <div className="space-y-4">
                           <div className="border-b border-slate-100 dark:border-slate-800 pb-1.5">
                             <span className="text-[10px] font-extrabold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
-                              Sync Settings
+                              Products to Update
                             </span>
                           </div>
 
@@ -2345,11 +2196,10 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                             />
                           </div>
 
-                          {/* Product Limit */}
-                          <div className="space-y-2">
-                            <label className="text-[10px] font-bold text-slate-400 dark:text-slate-500 block">
-                              Product Limit
-                            </label>
+                          {/* Advanced product limit */}
+                          <details className="rounded-xl border border-slate-200 p-3 dark:border-slate-800">
+                            <summary className="cursor-pointer text-[10px] font-bold text-slate-500">Advanced product limit</summary>
+                            <div className="mt-3 space-y-2">
                             <div className="flex flex-wrap gap-1 bg-slate-100 dark:bg-slate-900/50 p-1 rounded-xl border border-slate-200/50 dark:border-slate-800/40 w-fit">
                               {['5', '20', '50', '100', '250', 'All'].map((limit) => (
                                 <button
@@ -2366,12 +2216,13 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                                 </button>
                               ))}
                             </div>
-                          </div>
+                            </div>
+                          </details>
 
                           {/* Sync Mode */}
                           <div className="space-y-2">
                             <label className="text-[10px] font-bold text-slate-400 dark:text-slate-500 block">
-                              Sync Mode
+                              Products to update
                             </label>
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 bg-slate-50 dark:bg-slate-900/20 border border-slate-100 dark:border-slate-800/60 rounded-xl">
                               {[
@@ -2397,7 +2248,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                           {/* Auto Sync */}
                           <div className="space-y-2">
                             <label className="text-[10px] font-bold text-slate-400 dark:text-slate-500 block">
-                              Auto Sync
+                              Automatic updates
                             </label>
                             <div className="flex flex-wrap gap-1 bg-slate-100 dark:bg-slate-900/50 p-1 rounded-xl border border-slate-200/50 dark:border-slate-800/40 w-fit">
                               {['Off', '15 Minutes', '30 Minutes', '1 Hour', '6 Hours', 'Daily'].map((interval) => (
@@ -2417,11 +2268,13 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                             </div>
                           </div>
 
-                          {/* Dry Run Mode */}
-                          <div className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-900/20 border border-slate-100 dark:border-slate-800/60 rounded-xl">
+                          {/* Advanced preview mode */}
+                          <details className="rounded-xl border border-slate-200 p-3 dark:border-slate-800">
+                            <summary className="cursor-pointer text-[10px] font-bold text-slate-500">Advanced preview mode</summary>
+                          <div className="mt-3 flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-900/20 border border-slate-100 dark:border-slate-800/60 rounded-xl">
                             <div className="space-y-0.5">
-                              <span className="text-xs font-bold text-slate-800 dark:text-slate-200 block">Dry Run Mode</span>
-                              <span className="text-[10px] text-slate-400 font-medium">Staged comparison only, do not write database logs.</span>
+                              <span className="text-xs font-bold text-slate-800 dark:text-slate-200 block">Preview changes only</span>
+                              <span className="text-[10px] text-slate-400 font-medium">Check supplier changes without saving them for review.</span>
                             </div>
                             <div className="flex items-center">
                               <label className="relative inline-flex items-center cursor-pointer">
@@ -2438,6 +2291,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                               </label>
                             </div>
                           </div>
+                          </details>
                         </div>
 
                         {/* ACTION BUTTONS */}
@@ -2472,85 +2326,27 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
           </div>
         )}
 
-        {/* VIEW 3: PENDING CHANGES */}
-        {activeSubTab === 'changes' && (
+        {/* Product updates from already published products */}
+        {activeSubTab === 'review' && reviewFilter !== 'new_products' && (
           <div className="space-y-6">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-slate-50 dark:bg-slate-900/20 p-5 rounded-3xl border border-slate-100 dark:border-slate-800/40">
               <div>
-                <h3 className="text-sm font-extrabold text-slate-900 dark:text-white uppercase tracking-wider">Pending Changes</h3>
-                <p className="text-[11px] text-slate-400">Streamed fluctuations detected in supplier feeds comparing real-time feed elements against live catalog listings.</p>
+                <h3 className="text-sm font-extrabold text-slate-900 dark:text-white uppercase tracking-wider">Published Product Changes</h3>
+                <p className="text-[11px] text-slate-400">Supplier changes affecting products that already exist in your store.</p>
               </div>
               <div className="flex items-center gap-2 shrink-0">
                 <span className="text-[10px] text-blue-500 font-bold bg-blue-500/10 px-2.5 py-1 rounded-lg border border-blue-500/20 font-mono">
-                  {supplierPendingChanges.length} Total Logs
+                  {supplierPendingChanges.length} Changes
                 </span>
                 <span className="text-[10px] text-amber-500 font-bold bg-amber-500/10 px-2.5 py-1 rounded-lg border border-amber-500/20 font-mono">
-                  {supplierPendingChanges.filter(x => x.status === 'Pending').length} Pending
+                  {visibleProductChanges.length} Shown
                 </span>
-              </div>
-            </div>
-
-            {/* Filter and Search Bar */}
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-              <div className="flex flex-wrap items-center gap-1.5 bg-slate-100 dark:bg-[#111928] p-1.5 rounded-2xl border border-slate-200/50 dark:border-slate-800/60 w-fit">
-                {(['All', 'Pending', 'Approved', 'Rejected'] as const).map((tab) => {
-                  const count = tab === 'All' 
-                    ? supplierPendingChanges.length 
-                    : supplierPendingChanges.filter(x => x.status === tab).length;
-                  return (
-                    <button
-                      key={tab}
-                      onClick={() => setPendingChangesFilter(tab)}
-                      className={`px-4 py-1.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2 cursor-pointer ${
-                        pendingChangesFilter === tab
-                          ? 'bg-blue-600 text-white shadow-md shadow-blue-500/10'
-                          : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                      }`}
-                    >
-                      <span>{tab}</span>
-                      <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded-md ${
-                        pendingChangesFilter === tab
-                          ? 'bg-white/20 text-white'
-                          : 'bg-slate-200 dark:bg-slate-800 text-slate-500'
-                      }`}>{count}</span>
-                    </button>
-                  );
-                })}
-              </div>
-
-              <div className="relative flex-1 max-w-md w-full">
-                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-                <input
-                  type="text"
-                  placeholder="Search by Product Name or Supplier Code..."
-                  value={pendingChangesSearch}
-                  onChange={(e) => setPendingChangesSearch(e.target.value)}
-                  className="w-full pl-10 pr-10 py-2.5 text-xs bg-slate-100 dark:bg-[#111928] text-slate-900 dark:text-white border border-slate-200/50 dark:border-slate-800/60 rounded-2xl focus:outline-hidden focus:border-blue-500/50"
-                />
-                {pendingChangesSearch && (
-                  <button
-                    onClick={() => setPendingChangesSearch('')}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                )}
               </div>
             </div>
 
             {/* Pending Changes List */}
             {(() => {
-              const filteredChanges = supplierPendingChanges.filter((change) => {
-                const matchesSearch = 
-                  matchesSupplierSearch(change, pendingChangesSearch);
-
-                if (!matchesSearch) return false;
-
-                if (pendingChangesFilter !== 'All') {
-                  return change.status === pendingChangesFilter;
-                }
-                return true;
-              });
+              const filteredChanges = visibleProductChanges;
 
               if (filteredChanges.length === 0) {
                 return (
@@ -2558,7 +2354,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                     <SlidersHorizontal className="h-10 w-10 text-slate-300 mx-auto" />
                     <div className="space-y-1">
                       <p className="text-sm font-bold text-slate-900 dark:text-white">No matches found</p>
-                      <p className="text-xs text-slate-400">All processed updates match live configurations perfectly.</p>
+                      <p className="text-xs text-slate-400">No published product changes match this filter.</p>
                     </div>
                   </div>
                 );
@@ -2671,7 +2467,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                   disabled={supplierQueueLoading.changes}
                   className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-black text-slate-600 transition-colors hover:bg-slate-50 disabled:opacity-50 dark:border-slate-800 dark:text-slate-300 dark:hover:bg-slate-900"
                 >
-                  {supplierQueueLoading.changes ? 'Loading…' : 'Load more changes'}
+                  {supplierQueueLoading.changes ? 'Loading…' : 'Load more product changes'}
                 </button>
               </div>
             )}
@@ -2683,16 +2479,16 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
           <div className="space-y-6 text-left">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-slate-50 dark:bg-slate-900/20 p-5 rounded-3xl border border-slate-100 dark:border-slate-800/40">
               <div>
-                <h3 className="text-sm font-extrabold text-slate-900 dark:text-white uppercase tracking-wider">Hub Control Settings</h3>
-                <p className="text-[11px] text-slate-400">Configure synchronization scope, pricing rules, image limits, and category mappings.</p>
+                <h3 className="text-sm font-extrabold text-slate-900 dark:text-white uppercase tracking-wider">Supplier Settings</h3>
+                <p className="text-[11px] text-slate-400">Choose how supplier products are updated, priced, and organized.</p>
               </div>
               {supplierSettings && (supplierSettings.lastUpdated || supplierSettings.updatedBy) && (
                 <div className="text-left sm:text-right text-[10px] text-slate-400 font-mono">
                   {supplierSettings.lastUpdated && (
-                    <div>Last Config Update: {new Date(supplierSettings.lastUpdated).toLocaleString()}</div>
+                    <div>Last updated: {new Date(supplierSettings.lastUpdated).toLocaleString()}</div>
                   )}
                   {supplierSettings.updatedBy && (
-                    <div>Updated By: {supplierSettings.updatedBy}</div>
+                    <div>Updated by: {supplierSettings.updatedBy}</div>
                   )}
                 </div>
               )}
@@ -2702,7 +2498,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
               
               {/* Section 1: Ingestion Channels */}
               <div className="space-y-4">
-                <h4 className="text-[10px] font-black uppercase text-blue-500 tracking-wider">Sync Channels & Automation</h4>
+                <h4 className="text-[10px] font-black uppercase text-blue-500 tracking-wider">Catalog Updates</h4>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   
                   {/* Website Sync Channel */}
@@ -2710,9 +2506,9 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                     <div className="space-y-1 pr-4">
                       <div className="flex items-center gap-1.5 font-bold text-slate-900 dark:text-white text-xs">
                         <Globe className="h-4 w-4 text-sky-500" />
-                        <span>Website Sync Channel</span>
+                        <span>Supplier updates enabled</span>
                       </div>
-                      <p className="text-[10px] text-slate-400">Allow manual and scheduled synchronization from website supplier feeds.</p>
+                      <p className="text-[10px] text-slate-400">Allow product updates from connected suppliers.</p>
                     </div>
                     <label className="relative inline-flex items-center cursor-pointer shrink-0">
                       <input 
@@ -2730,9 +2526,9 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                     <div className="space-y-1 pr-4">
                       <div className="flex items-center gap-1.5 font-bold text-slate-900 dark:text-white text-xs">
                         <SlidersHorizontal className="h-4 w-4 text-blue-500" />
-                        <span>Automated Sync Engine</span>
+                        <span>Automatic updates</span>
                       </div>
-                      <p className="text-[10px] text-slate-400">Run background crawler and ingest pipelines on the scheduled interval.</p>
+                      <p className="text-[10px] text-slate-400">Check connected suppliers automatically on your chosen schedule.</p>
                     </div>
                     <label className="relative inline-flex items-center cursor-pointer shrink-0">
                       <input 
@@ -2750,12 +2546,12 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
 
               {/* Section 2: Financial Margins */}
               <div className="space-y-4">
-                <h4 className="text-[10px] font-black uppercase text-blue-500 tracking-wider">Sync Schedule & Financial Margins</h4>
+                <h4 className="text-[10px] font-black uppercase text-blue-500 tracking-wider">Update Schedule & Pricing</h4>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   
                   {/* Sync Interval */}
                   <div className="space-y-1 text-slate-900 dark:text-white">
-                    <label className="text-slate-400 font-bold block">Synchronize Job Interval</label>
+                    <label className="text-slate-400 font-bold block">Automatic update schedule</label>
                     <select
                       value={supplierSettings.syncInterval || "1 Hour"}
                       onChange={(e) => setSupplierSettings(prev => ({ ...prev, syncInterval: e.target.value }))}
@@ -2770,6 +2566,9 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                     </select>
                   </div>
 
+                  <details className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-[#111928] md:col-span-2">
+                    <summary className="cursor-pointer font-bold text-slate-600 outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-slate-300">Advanced scheduling details</summary>
+                    <div className="mt-4 grid gap-4 md:grid-cols-3">
                   {/* Scheduled Product Limit */}
                   <div className="space-y-1">
                     <label className="text-slate-400 font-bold block">Scheduled Max Products</label>
@@ -2804,6 +2603,8 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                       className="w-full px-3.5 py-2.5 bg-white dark:bg-[#111928] border border-slate-200 dark:border-slate-800 rounded-xl focus:outline-hidden focus:border-blue-500/50 transition-colors text-xs text-slate-900 dark:text-white font-mono font-bold text-left"
                     />
                   </div>
+                    </div>
+                  </details>
 
                   {/* Profit Margin */}
                   <div className="space-y-1">
@@ -2840,7 +2641,9 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                   </div>
 
                   {/* Max Image Limit */}
-                  <div className="space-y-1">
+                  <details className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-[#111928] md:col-span-2">
+                    <summary className="cursor-pointer font-bold text-slate-600 outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-slate-300">Advanced image settings</summary>
+                  <div className="mt-4 space-y-1">
                     <label className="text-slate-400 font-bold block">Maximum Image Limit per Product</label>
                     <input
                       type="number"
@@ -2851,6 +2654,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                       className="w-full px-3.5 py-2.5 bg-white dark:bg-[#111928] border border-slate-200 dark:border-slate-800 rounded-xl focus:outline-hidden focus:border-blue-500/50 transition-colors text-xs text-slate-900 dark:text-white font-mono font-bold text-left"
                     />
                   </div>
+                  </details>
 
                 </div>
               </div>
@@ -2858,8 +2662,8 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
               {/* Section 3: Supplier Category Mapping */}
               <div className="space-y-4">
                 <div>
-                  <h4 className="text-[10px] font-black uppercase text-blue-500 tracking-wider">Supplier Category → Zyro Category Mapping</h4>
-                  <p className="mt-1 text-[10px] text-slate-400">Mappings are saved in Supplier Hub settings and applied to both manual and scheduled sync queues.</p>
+                  <h4 className="text-[10px] font-black uppercase text-blue-500 tracking-wider">Supplier Category → Store Category</h4>
+                  <p className="mt-1 text-[10px] text-slate-400">Choose where supplier categories appear in the Zyro catalog.</p>
                 </div>
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                   {supplierCategoryOptions.map(({ key, label }) => (
@@ -2887,15 +2691,17 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                   ))}
                   {supplierCategoryOptions.length === 0 && (
                     <div className="rounded-xl border border-dashed border-slate-200 p-4 text-[11px] text-slate-400 dark:border-slate-800 md:col-span-2">
-                      Run a supplier sync to discover supplier categories for mapping.
+                      Update a supplier to discover categories for mapping.
                     </div>
                   )}
                 </div>
               </div>
 
-              {/* Section 4: Scheduled Supplier Scope */}
-              <div className="space-y-4">
-                <h4 className="text-[10px] font-black uppercase text-blue-500 tracking-wider">Enabled Suppliers for Scheduled Sync</h4>
+              {/* Advanced supplier scope */}
+              <details className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-[#111928]">
+                <summary className="cursor-pointer text-[10px] font-black uppercase tracking-wider text-blue-500 outline-none focus-visible:ring-2 focus-visible:ring-blue-500">Advanced supplier scope</summary>
+              <div className="mt-4 space-y-4">
+                <h4 className="text-[10px] font-black uppercase text-slate-500 tracking-wider">Suppliers included in automatic updates</h4>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {supplierSources.filter(source => (source.supplierType || source.type) === 'website').map((source) => {
                     const enabledIds = supplierSettings.enabledSupplierIds || [];
@@ -2938,6 +2744,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                   )}
                 </div>
               </div>
+              </details>
 
               {/* Actions Row */}
               <div className="pt-4 border-t border-slate-200/50 dark:border-slate-800/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -3248,7 +3055,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
 
               <div className="p-3 bg-blue-500/10 text-blue-500 text-[11px] rounded-xl border border-blue-500/20 flex items-start gap-2">
                 <Info className="h-4 w-4 shrink-0 mt-0.5" />
-                <span>Approving this item will queue it for direct catalog ingestion and auto-publish. This operation requires admin authorization.</span>
+                <span>Approving this item will publish it to the Zyro catalog. This action requires administrator authorization.</span>
               </div>
 
               <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex justify-end gap-2">

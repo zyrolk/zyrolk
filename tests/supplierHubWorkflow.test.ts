@@ -156,11 +156,11 @@ test("Supplier Hub exposes audited bulk actions while Functions own synchronizat
   assert.match(scheduledSync, /dryRunMode/);
 });
 
-test("Supplier Hub limits sync history queries and retries expired admin tokens", () => {
-  const supplierHub = readFileSync("src/components/SupplierHubFiveStars.tsx", "utf8");
+test("Supplier Hub loads bounded sync history through the protected API and retries expired admin tokens", () => {
+  const operations = readFileSync("src/components/supplier-operations/SupplierOperationsDashboard.tsx", "utf8");
   const supplierApi = readFileSync("src/services/supplierHubApi.ts", "utf8");
-  assert.match(supplierHub, /limit\(SYNC_HISTORY_LIMIT\)/);
-  assert.match(supplierHub, /orderBy\("createdAt", "desc"\)/);
+  assert.match(operations, /supplier-operations\/sync-history\?limit=40/);
+  assert.match(operations, /setHistoryCursor\(historyResult\.nextCursor\)/);
   assert.match(supplierApi, /if \(response\.status === 401\) response = await request\(true\)/);
 });
 

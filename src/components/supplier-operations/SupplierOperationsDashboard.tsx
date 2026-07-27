@@ -6,13 +6,11 @@ import {
   Clock3,
   Database,
   Download,
-  Gauge,
   History,
   Image,
   Pause,
   Play,
   RefreshCw,
-  RotateCcw,
   Search,
   Server,
   ShieldAlert,
@@ -24,8 +22,6 @@ type SupplierApiRequest = (path: string, method: 'GET' | 'POST', body?: Record<s
 
 interface SupplierOperationsDashboardProps {
   requestApi: SupplierApiRequest;
-  onSyncSupplier: (sourceIds?: string[]) => Promise<boolean>;
-  syncInProgress: boolean;
   activeSyncJob: { id: string; state: string; updatedAt: string } | null;
   refreshKey: number;
 }
@@ -152,8 +148,6 @@ const downloadCsv = (name: string, records: Array<Record<string, unknown>>): voi
 
 function SupplierOperationsDashboard({
   requestApi,
-  onSyncSupplier,
-  syncInProgress,
   activeSyncJob,
   refreshKey,
 }: SupplierOperationsDashboardProps) {
@@ -181,7 +175,7 @@ function SupplierOperationsDashboard({
 
   const readJson = useCallback(async <T,>(response: Response): Promise<T> => {
     const result = await response.json().catch(() => ({})) as T & { success?: boolean; error?: string };
-    if (!response.ok || result.success === false) throw new Error(result.error || 'Supplier operations request failed.');
+    if (!response.ok || result.success === false) throw new Error(result.error || 'Supplier activity could not be loaded.');
     return result;
   }, []);
 
@@ -219,7 +213,7 @@ function SupplierOperationsDashboard({
       setSnapshotError(null);
     } catch (loadError) {
       if (requestId === snapshotRequestIdRef.current) {
-        setSnapshotError(loadError instanceof Error ? loadError.message : 'Supplier operations could not be loaded.');
+        setSnapshotError(loadError instanceof Error ? loadError.message : 'Supplier activity could not be loaded.');
       }
     } finally {
       if (requestId === snapshotRequestIdRef.current) {
@@ -285,26 +279,6 @@ function SupplierOperationsDashboard({
     ]);
   }, [loadAll, loadQueue, refreshKey]);
 
-  const runSupplierAction = async (supplierId: string, action: string) => {
-    setActionId(`${supplierId}:${action}`);
-    setActionError(null);
-    try {
-      if (action === 'sync' || action === 'retry') {
-        const accepted = await onSyncSupplier([supplierId]);
-        if (!accepted) return;
-        await loadAll(true);
-        return;
-      }
-
-      await readJson(await requestApi(`/api/supplier-operations/suppliers/${encodeURIComponent(supplierId)}/action`, 'POST', { action }));
-      await loadAll(true);
-    } catch (actionError) {
-      setActionError(actionError instanceof Error ? actionError.message : 'Supplier action failed.');
-    } finally {
-      setActionId(null);
-    }
-  };
-
   const runQueueAction = async (action: 'bulk-retry' | 'bulk-reopen' | 'bulk-resolve') => {
     if (!selected.length) return;
     setActionId(action);
@@ -368,25 +342,25 @@ function SupplierOperationsDashboard({
     ['Total suppliers', summary.totalSuppliers, Users, 'text-blue-500'],
     ['Active suppliers', summary.activeSuppliers, CheckCircle2, 'text-emerald-500'],
     ['Disabled suppliers', summary.disabledSuppliers, Pause, 'text-slate-500'],
-    ['Imported today', summary.productsImportedToday, Database, 'text-violet-500'],
+    ['New products today', summary.productsImportedToday, Database, 'text-violet-500'],
     ['Updated today', summary.productsUpdatedToday, RefreshCw, 'text-cyan-500'],
     ['Published today', summary.productsPublishedToday, Play, 'text-emerald-500'],
-    ['Failed imports', summary.failedImports, XCircle, 'text-red-500'],
+    ['Failed updates', summary.failedImports, XCircle, 'text-red-500'],
     ['Approval conflicts', summary.failedApprovals, ShieldAlert, 'text-amber-500'],
   ] as const;
 
   if (loading) {
-    return <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4" aria-label="Loading Supplier Hub operations"><div className="h-28 animate-pulse rounded-3xl bg-slate-100 dark:bg-slate-800" /><div className="h-28 animate-pulse rounded-3xl bg-slate-100 dark:bg-slate-800" /><div className="h-28 animate-pulse rounded-3xl bg-slate-100 dark:bg-slate-800" /><div className="h-28 animate-pulse rounded-3xl bg-slate-100 dark:bg-slate-800" /></div>;
+    return <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4" aria-label="Loading supplier activity"><div className="h-28 animate-pulse rounded-3xl bg-slate-100 dark:bg-slate-800" /><div className="h-28 animate-pulse rounded-3xl bg-slate-100 dark:bg-slate-800" /><div className="h-28 animate-pulse rounded-3xl bg-slate-100 dark:bg-slate-800" /><div className="h-28 animate-pulse rounded-3xl bg-slate-100 dark:bg-slate-800" /></div>;
   }
 
   return (
     <div className="space-y-8" data-testid="supplier-operations-dashboard">
       <div className="flex flex-col gap-3 rounded-3xl border border-slate-200/70 bg-white p-5 dark:border-slate-800 dark:bg-slate-950 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <div className="flex items-center gap-2"><Activity className="h-5 w-5 text-blue-500" /><h3 className="font-display text-lg font-black text-slate-900 dark:text-white">Operations & Monitoring</h3></div>
-          <p className="mt-1 text-xs text-slate-500">Auto-refreshes every 30 seconds · Last snapshot {dateTime(snapshot?.generatedAt)}</p>
+          <div className="flex items-center gap-2"><Activity className="h-5 w-5 text-blue-500" /><h3 className="font-display text-lg font-black text-slate-900 dark:text-white">Activity</h3></div>
+          <p className="mt-1 text-xs text-slate-500">Supplier updates, product decisions, and issues · Refreshed {dateTime(snapshot?.generatedAt)}</p>
         </div>
-        <button type="button" onClick={() => void loadAll(true)} disabled={refreshing} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 text-xs font-black text-white disabled:opacity-60" aria-label="Refresh operations dashboard">
+        <button type="button" onClick={() => void loadAll(true)} disabled={refreshing} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 text-xs font-black text-white disabled:opacity-60" aria-label="Refresh supplier activity">
           <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} /> Refresh
         </button>
       </div>
@@ -403,28 +377,19 @@ function SupplierOperationsDashboard({
 
       <section aria-labelledby="alerts-title" className="rounded-3xl border border-slate-200/70 bg-white p-5 dark:border-slate-800 dark:bg-slate-950">
         <div className="mb-4 flex items-center gap-2"><AlertTriangle className="h-5 w-5 text-amber-500" /><h4 id="alerts-title" className="font-black text-slate-900 dark:text-white">Active alerts</h4><span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black text-amber-700">{snapshot?.alerts.length || 0}</span></div>
-        {snapshot?.alerts.length ? <div className="grid gap-3 lg:grid-cols-2">{snapshot.alerts.map((alert) => <div key={alert.id} className="rounded-2xl border border-amber-200/70 bg-amber-50/70 p-4 dark:border-amber-900/50 dark:bg-amber-950/20"><div className="flex items-center justify-between gap-2"><strong className="text-sm text-slate-900 dark:text-white">{alert.title}</strong><span className="text-[9px] font-black uppercase text-amber-700">{alert.severity}</span></div><p className="mt-1 text-xs text-slate-600 dark:text-slate-300">{alert.message}</p></div>)}</div> : <p className="text-sm text-slate-500">No active operational alerts.</p>}
+        {snapshot?.alerts.length ? <div className="grid gap-3 lg:grid-cols-2">{snapshot.alerts.map((alert) => <div key={alert.id} className="rounded-2xl border border-amber-200/70 bg-amber-50/70 p-4 dark:border-amber-900/50 dark:bg-amber-950/20"><div className="flex items-center justify-between gap-2"><strong className="text-sm text-slate-900 dark:text-white">{alert.title}</strong><span className="text-[9px] font-black uppercase text-amber-700">{alert.severity}</span></div><p className="mt-1 text-xs text-slate-600 dark:text-slate-300">{alert.message}</p></div>)}</div> : <p className="text-sm text-slate-500">No active alerts.</p>}
       </section>
 
-      <section aria-labelledby="supplier-health-title" className="space-y-4">
-        <div className="flex items-center gap-2"><Gauge className="h-5 w-5 text-emerald-500" /><h4 id="supplier-health-title" className="font-black text-slate-900 dark:text-white">Supplier health</h4></div>
-        <div className="grid gap-4 lg:grid-cols-2">
-          {(snapshot?.suppliers || []).map((supplier) => <article key={supplier.id} className="rounded-3xl border border-slate-200/70 bg-white p-5 dark:border-slate-800 dark:bg-slate-950">
-            <div className="flex items-start justify-between gap-3"><div><h5 className="font-black text-slate-900 dark:text-white">{supplier.name}</h5><p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{supplier.status}</p></div><div className={`rounded-full px-3 py-1 text-xs font-black ${supplier.healthScore >= 80 ? 'bg-emerald-100 text-emerald-700' : supplier.healthScore >= 50 ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'}`}>{supplier.healthScore}%</div></div>
-            <dl className="mt-4 grid grid-cols-2 gap-3 text-xs"><div><dt className="text-slate-400">Last success</dt><dd className="font-semibold text-slate-700 dark:text-slate-200">{dateTime(supplier.lastSuccess)}</dd></div><div><dt className="text-slate-400">Average sync</dt><dd className="font-semibold text-slate-700 dark:text-slate-200">{duration(supplier.syncDurationMs)}</dd></div><div><dt className="text-slate-400">Products</dt><dd className="font-semibold text-slate-700 dark:text-slate-200">{supplier.productCount}</dd></div><div><dt className="text-slate-400">Queue</dt><dd className="font-semibold text-slate-700 dark:text-slate-200">{supplier.queueSize}</dd></div></dl>
-            {supplier.failureReason && supplier.failureReason !== 'None' && <p className="mt-3 rounded-xl bg-red-50 p-2 text-xs text-red-700 dark:bg-red-950/30 dark:text-red-300">{supplier.failureReason}</p>}
-            <div className="mt-4 flex flex-wrap gap-2"><button type="button" onClick={() => void runSupplierAction(supplier.id, 'sync')} disabled={syncInProgress || Boolean(actionId)} className="min-h-10 rounded-xl bg-blue-600 px-3 text-[10px] font-black text-white disabled:cursor-not-allowed disabled:opacity-50"><RefreshCw className="mr-1 inline h-3.5 w-3.5" />Sync</button>{supplier.enabled ? <><button type="button" onClick={() => void runSupplierAction(supplier.id, 'pause')} disabled={Boolean(actionId)} className="min-h-10 rounded-xl bg-amber-100 px-3 text-[10px] font-black text-amber-700"><Pause className="mr-1 inline h-3.5 w-3.5" />Pause</button><button type="button" onClick={() => void runSupplierAction(supplier.id, 'disable')} disabled={Boolean(actionId)} className="min-h-10 rounded-xl bg-slate-100 px-3 text-[10px] font-black text-slate-700"><XCircle className="mr-1 inline h-3.5 w-3.5" />Disable</button></> : <button type="button" onClick={() => void runSupplierAction(supplier.id, 'resume')} disabled={Boolean(actionId)} className="min-h-10 rounded-xl bg-emerald-100 px-3 text-[10px] font-black text-emerald-700"><Play className="mr-1 inline h-3.5 w-3.5" />Resume</button>}{supplier.lastFailure && <button type="button" onClick={() => void runSupplierAction(supplier.id, 'retry')} disabled={syncInProgress || Boolean(actionId)} className="min-h-10 rounded-xl bg-red-100 px-3 text-[10px] font-black text-red-700 disabled:cursor-not-allowed disabled:opacity-50"><RotateCcw className="mr-1 inline h-3.5 w-3.5" />Retry failed sync</button>}</div>
-          </article>)}
-        </div>
-      </section>
-
-      <section aria-labelledby="queue-monitor-title" className="rounded-3xl border border-slate-200/70 bg-white p-5 dark:border-slate-800 dark:bg-slate-950">
+      <details className="rounded-3xl border border-slate-200/70 bg-white p-5 dark:border-slate-800 dark:bg-slate-950">
+        <summary className="cursor-pointer text-sm font-black text-slate-700 dark:text-slate-200">Advanced Diagnostics</summary>
+      <section aria-labelledby="queue-monitor-title" className="mt-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between"><div><div className="flex items-center gap-2"><Server className="h-5 w-5 text-blue-500" /><h4 id="queue-monitor-title" className="font-black text-slate-900 dark:text-white">Queue monitoring</h4></div><p className="mt-1 text-xs text-slate-500">Oldest eligible item: {duration(queueCounts.queueAgeMs)}</p></div><div className="flex flex-wrap gap-2"><div className="relative"><Search className="absolute left-3 top-3 h-4 w-4 text-slate-400" /><input value={search} onChange={(event) => setSearch(event.target.value)} className="min-h-10 rounded-xl border border-slate-200 bg-transparent pl-9 pr-3 text-xs dark:border-slate-700" placeholder="Search queue" aria-label="Search queue" /></div><select value={queueState} onChange={(event) => setQueueState(event.target.value)} className="min-h-10 rounded-xl border border-slate-200 bg-white px-3 text-xs dark:border-slate-700 dark:bg-slate-900" aria-label="Filter queue state"><option value="all">All states</option>{['review_pending', 'processing', 'approved', 'rejected', 'conflict', 'retryable_failure', 'dead_letter'].map((state) => <option key={state} value={state}>{stateLabel(state)}</option>)}</select></div></div>
         <div className="mt-4 flex flex-wrap gap-2">{['pending', 'processing', 'approved', 'rejected', 'conflict', 'retry', 'dead_letter'].map((state) => <span key={state} className="rounded-full bg-slate-100 px-3 py-1 text-[10px] font-black text-slate-600 dark:bg-slate-800 dark:text-slate-300">{stateLabel(state)} {Number(queueCounts[state] || 0)}</span>)}</div>
         <div className="mt-4 flex flex-wrap gap-2"><button type="button" onClick={() => void runQueueAction('bulk-retry')} disabled={!selected.length || Boolean(actionId)} className="min-h-10 rounded-xl bg-red-100 px-3 text-[10px] font-black text-red-700 disabled:opacity-40">Bulk retry</button><button type="button" onClick={() => void runQueueAction('bulk-reopen')} disabled={!selected.length || Boolean(actionId)} className="min-h-10 rounded-xl bg-blue-100 px-3 text-[10px] font-black text-blue-700 disabled:opacity-40">Bulk reopen</button><button type="button" onClick={() => void runQueueAction('bulk-resolve')} disabled={!selected.length || Boolean(actionId)} className="min-h-10 rounded-xl bg-amber-100 px-3 text-[10px] font-black text-amber-700 disabled:opacity-40">Bulk resolve conflicts</button></div>
         <div className="mt-4 overflow-x-auto"><table className="w-full min-w-[760px] text-left text-xs"><thead><tr className="border-b border-slate-200 text-[9px] uppercase tracking-widest text-slate-400 dark:border-slate-800"><th className="p-3"><span className="sr-only">Select</span></th><th className="p-3">Product</th><th className="p-3">Supplier</th><th className="p-3">State</th><th className="p-3">Age</th><th className="p-3">Retries</th><th className="p-3">Failure</th></tr></thead><tbody>{queueItems.map((item) => <tr key={item.id} className="border-b border-slate-100 dark:border-slate-900"><td className="p-3"><input type="checkbox" checked={selected.includes(item.id)} onChange={(event) => setSelected((current) => event.target.checked ? [...current, item.id] : current.filter((id) => id !== item.id))} aria-label={`Select ${item.productName}`} /></td><td className="p-3 font-bold text-slate-800 dark:text-slate-100">{item.productName}<span className="block font-normal text-slate-400">{item.supplierCode || item.id}</span></td><td className="p-3">{item.supplierName}</td><td className="p-3"><span className="rounded-full bg-slate-100 px-2 py-1 font-bold dark:bg-slate-800">{stateLabel(item.state)}</span></td><td className="p-3">{dateTime(item.createdAt)}</td><td className="p-3">{item.retryCount}</td><td className="max-w-56 truncate p-3 text-red-500" title={item.failureReason || ''}>{item.failureReason || '—'}</td></tr>)}</tbody></table>{!queueItems.length && <p className="py-8 text-center text-sm text-slate-500">No queue items match this view.</p>}</div>
         {queueCursor && <button type="button" onClick={() => void loadQueue(true, queueCursor)} className="mt-4 min-h-10 rounded-xl bg-slate-100 px-4 text-xs font-black dark:bg-slate-800">Load more</button>}
       </section>
+      </details>
 
       <div className="grid gap-6 xl:grid-cols-2">
         <section aria-labelledby="sync-history-title" className="rounded-3xl border border-slate-200/70 bg-white p-5 dark:border-slate-800 dark:bg-slate-950">
@@ -434,14 +399,16 @@ function SupplierOperationsDashboard({
         </section>
 
         <section aria-labelledby="error-center-title" className="rounded-3xl border border-slate-200/70 bg-white p-5 dark:border-slate-800 dark:bg-slate-950">
-          <div className="mb-4 flex items-center justify-between"><div className="flex items-center gap-2"><ShieldAlert className="h-5 w-5 text-red-500" /><h4 id="error-center-title" className="font-black text-slate-900 dark:text-white">Error center</h4></div><button type="button" onClick={() => downloadCsv('supplier-errors', failedItems as unknown as Array<Record<string, unknown>>)} className="min-h-10 rounded-xl bg-slate-100 px-3 text-[10px] font-black dark:bg-slate-800"><Download className="mr-1 inline h-3.5 w-3.5" />Export</button></div>
-          {failedItems.length ? <div className="space-y-3">{failedItems.map((item) => <div key={item.id} className="rounded-2xl border border-red-100 bg-red-50/40 p-3 text-xs dark:border-red-950 dark:bg-red-950/10"><div className="flex justify-between gap-3"><strong>{item.supplierName} · {stateLabel(item.state)}</strong><span>{dateTime(item.updatedAt)}</span></div><p className="mt-1 text-red-700 dark:text-red-300">{item.failureReason || 'Recovery is required.'}</p>{item.stack && <details className="mt-2"><summary className="cursor-pointer font-bold text-slate-600 dark:text-slate-300">Admin stack trace</summary><pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap rounded-lg bg-slate-950 p-2 text-[10px] text-slate-200">{item.stack}</pre></details>}<div className="mt-3 flex flex-wrap gap-2">{['retryable_failure', 'dead_letter'].includes(item.state) && <button type="button" onClick={() => void retryError(item.id)} className="min-h-9 rounded-lg bg-red-600 px-3 text-[10px] font-black text-white">Retry</button>}<button type="button" onClick={() => void updateErrorDisposition(item.id, 'ignore')} disabled={Boolean(actionId)} className="min-h-9 rounded-lg bg-slate-100 px-3 text-[10px] font-black text-slate-700 disabled:opacity-40">Ignore</button><button type="button" onClick={() => void updateErrorDisposition(item.id, 'resolved')} disabled={Boolean(actionId)} className="min-h-9 rounded-lg bg-emerald-100 px-3 text-[10px] font-black text-emerald-700 disabled:opacity-40">Resolved</button></div></div>)}</div> : <p className="text-sm text-slate-500">No failures on the current queue page.</p>}
+          <div className="mb-4 flex items-center justify-between"><div className="flex items-center gap-2"><ShieldAlert className="h-5 w-5 text-red-500" /><h4 id="error-center-title" className="font-black text-slate-900 dark:text-white">Issues</h4></div><button type="button" onClick={() => downloadCsv('supplier-errors', failedItems as unknown as Array<Record<string, unknown>>)} className="min-h-10 rounded-xl bg-slate-100 px-3 text-[10px] font-black dark:bg-slate-800"><Download className="mr-1 inline h-3.5 w-3.5" />Export</button></div>
+          {failedItems.length ? <div className="space-y-3">{failedItems.map((item) => <div key={item.id} className="rounded-2xl border border-red-100 bg-red-50/40 p-3 text-xs dark:border-red-950 dark:bg-red-950/10"><div className="flex justify-between gap-3"><strong>{item.supplierName} · Needs attention</strong><span>{dateTime(item.updatedAt)}</span></div><p className="mt-1 text-red-700 dark:text-red-300">{item.failureReason || 'Recovery is required.'}</p>{item.stack && <details className="mt-2"><summary className="cursor-pointer font-bold text-slate-600 dark:text-slate-300">Advanced diagnostics</summary><pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap rounded-lg bg-slate-950 p-2 text-[10px] text-slate-200">{item.stack}</pre></details>}<div className="mt-3 flex flex-wrap gap-2">{['retryable_failure', 'dead_letter'].includes(item.state) && <button type="button" onClick={() => void retryError(item.id)} className="min-h-9 rounded-lg bg-red-600 px-3 text-[10px] font-black text-white">Retry</button>}<button type="button" onClick={() => void updateErrorDisposition(item.id, 'ignore')} disabled={Boolean(actionId)} className="min-h-9 rounded-lg bg-slate-100 px-3 text-[10px] font-black text-slate-700 disabled:opacity-40">Ignore</button><button type="button" onClick={() => void updateErrorDisposition(item.id, 'resolved')} disabled={Boolean(actionId)} className="min-h-9 rounded-lg bg-emerald-100 px-3 text-[10px] font-black text-emerald-700 disabled:opacity-40">Resolved</button></div></div>)}</div> : <p className="text-sm text-slate-500">No unresolved issues.</p>}
         </section>
       </div>
 
-      <section aria-labelledby="media-monitor-title" className="rounded-3xl border border-slate-200/70 bg-white p-5 dark:border-slate-800 dark:bg-slate-950"><div className="mb-4 flex items-center gap-2"><Image className="h-5 w-5 text-cyan-500" /><h4 id="media-monitor-title" className="font-black text-slate-900 dark:text-white">Media monitoring</h4></div><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">{[['Downloaded', media.downloaded], ['Failed', media.failedDownloads], ['Duplicate reuse', media.duplicateReuse], ['Storage', bytes(media.storageBytes)], ['Broken', media.brokenImages], ['Missing', media.missingImages]].map(([label, value]) => <div key={String(label)} className="rounded-2xl bg-slate-50 p-3 dark:bg-slate-900"><p className="text-[9px] font-black uppercase tracking-widest text-slate-400">{label}</p><p className="mt-2 text-lg font-black">{String(value ?? 0)}</p></div>)}</div></section>
+      <details className="rounded-3xl border border-slate-200/70 bg-white p-5 dark:border-slate-800 dark:bg-slate-950"><summary className="cursor-pointer text-sm font-black text-slate-700 dark:text-slate-200">Advanced Media Diagnostics</summary><section aria-labelledby="media-monitor-title" className="mt-5"><div className="mb-4 flex items-center gap-2"><Image className="h-5 w-5 text-cyan-500" /><h4 id="media-monitor-title" className="font-black text-slate-900 dark:text-white">Media processing</h4></div><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">{[['Downloaded', media.downloaded], ['Failed', media.failedDownloads], ['Duplicate reuse', media.duplicateReuse], ['Storage', bytes(media.storageBytes)], ['Broken', media.brokenImages], ['Missing', media.missingImages]].map(([label, value]) => <div key={String(label)} className="rounded-2xl bg-slate-50 p-3 dark:bg-slate-900"><p className="text-[9px] font-black uppercase tracking-widest text-slate-400">{label}</p><p className="mt-2 text-lg font-black">{String(value ?? 0)}</p></div>)}</div></section></details>
 
-      <section aria-labelledby="performance-title" className="rounded-3xl border border-slate-200/70 bg-white p-5 dark:border-slate-800 dark:bg-slate-950">
+      <details className="rounded-3xl border border-slate-200/70 bg-white p-5 dark:border-slate-800 dark:bg-slate-950">
+        <summary className="cursor-pointer text-sm font-black text-slate-700 dark:text-slate-200">Advanced Performance Diagnostics</summary>
+      <section aria-labelledby="performance-title" className="mt-5">
         <div className="mb-4 flex items-center gap-2"><Clock3 className="h-5 w-5 text-blue-500" /><h4 id="performance-title" className="font-black text-slate-900 dark:text-white">Performance</h4></div>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{[
           ['Queue throughput', `${String(performance.queueThroughputPerHour ?? 0)}/hour`],
@@ -455,8 +422,9 @@ function SupplierOperationsDashboard({
         ].map(([label, value]) => <div key={label} className="rounded-2xl bg-slate-50 p-3 dark:bg-slate-900"><p className="text-[9px] font-black uppercase text-slate-400">{label}</p><p className="mt-2 font-black">{value}</p></div>)}</div>
         <p className="mt-3 text-[10px] text-slate-400">Firestore billing counters are intentionally not estimated when Cloud Monitoring metrics are unavailable.</p>
       </section>
+      </details>
 
-      <section aria-labelledby="audit-center-title" className="rounded-3xl border border-slate-200/70 bg-white p-5 dark:border-slate-800 dark:bg-slate-950"><div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-center gap-2"><Activity className="h-5 w-5 text-emerald-500" /><h4 id="audit-center-title" className="font-black text-slate-900 dark:text-white">Audit center</h4></div><div className="flex gap-2"><label className="relative"><span className="sr-only">Search audit history</span><Search className="absolute left-3 top-3 h-4 w-4 text-slate-400" /><input value={auditSearch} onChange={(event) => setAuditSearch(event.target.value)} className="min-h-10 rounded-xl border border-slate-200 bg-transparent pl-9 pr-3 text-xs dark:border-slate-700" placeholder="Search audit" /></label><button type="button" onClick={() => downloadCsv('supplier-audit', visibleAuditItems)} className="min-h-10 rounded-xl bg-slate-100 px-3 text-[10px] font-black dark:bg-slate-800"><Download className="mr-1 inline h-3.5 w-3.5" />Export</button></div></div><div className="space-y-2">{visibleAuditItems.map((item) => <div key={`${item.module}:${item.id}`} className="grid gap-1 rounded-2xl border border-slate-100 p-3 text-xs dark:border-slate-800 sm:grid-cols-[1fr_auto]"><div><strong>{stateLabel(String(item.action || item.event || item.status || 'event'))}</strong><span className="ml-2 text-slate-400">{item.supplierId || item.sourceId || item.supplier || 'system'}</span><p className="mt-1 text-slate-500">{item.reason || item.details || `${item.previousState || 'new'} → ${item.newState || 'recorded'}`}</p></div><time className="text-slate-400">{dateTime(item.timestamp || item.createdAt)}</time></div>)}</div>{auditCursor && <button type="button" onClick={async () => { const result = await readJson<PageResponse>(await requestApi(`/api/supplier-operations/audit?limit=40&after=${encodeURIComponent(auditCursor)}`, 'GET')); setAuditItems((current) => [...current, ...result.items]); setAuditCursor(result.nextCursor); }} className="mt-4 min-h-10 rounded-xl bg-slate-100 px-4 text-xs font-black dark:bg-slate-800">Load more</button>}</section>
+      <section aria-labelledby="audit-center-title" className="rounded-3xl border border-slate-200/70 bg-white p-5 dark:border-slate-800 dark:bg-slate-950"><div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-center gap-2"><Activity className="h-5 w-5 text-emerald-500" /><h4 id="audit-center-title" className="font-black text-slate-900 dark:text-white">Approval & Activity History</h4></div><div className="flex gap-2"><label className="relative"><span className="sr-only">Search activity history</span><Search className="absolute left-3 top-3 h-4 w-4 text-slate-400" /><input value={auditSearch} onChange={(event) => setAuditSearch(event.target.value)} className="min-h-10 rounded-xl border border-slate-200 bg-transparent pl-9 pr-3 text-xs dark:border-slate-700" placeholder="Search activity" /></label><button type="button" onClick={() => downloadCsv('supplier-activity', visibleAuditItems)} className="min-h-10 rounded-xl bg-slate-100 px-3 text-[10px] font-black dark:bg-slate-800"><Download className="mr-1 inline h-3.5 w-3.5" />Export</button></div></div><div className="space-y-2">{visibleAuditItems.map((item) => <div key={`${item.module}:${item.id}`} className="grid gap-1 rounded-2xl border border-slate-100 p-3 text-xs dark:border-slate-800 sm:grid-cols-[1fr_auto]"><div><strong>{stateLabel(String(item.action || item.event || item.status || 'event'))}</strong><span className="ml-2 text-slate-400">{item.supplierId || item.sourceId || item.supplier || 'system'}</span><p className="mt-1 text-slate-500">{item.reason || item.details || `${item.previousState || 'new'} → ${item.newState || 'recorded'}`}</p></div><time className="text-slate-400">{dateTime(item.timestamp || item.createdAt)}</time></div>)}</div>{auditCursor && <button type="button" onClick={async () => { const result = await readJson<PageResponse>(await requestApi(`/api/supplier-operations/audit?limit=40&after=${encodeURIComponent(auditCursor)}`, 'GET')); setAuditItems((current) => [...current, ...result.items]); setAuditCursor(result.nextCursor); }} className="mt-4 min-h-10 rounded-xl bg-slate-100 px-4 text-xs font-black dark:bg-slate-800">Load more</button>}</section>
     </div>
   );
 }
