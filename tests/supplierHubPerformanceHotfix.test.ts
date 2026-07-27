@@ -118,12 +118,32 @@ test('operations sync delegates to the canonical parent job state and shared dup
   assert.match(operations, /disabled=\{syncInProgress \|\| Boolean\(actionId\)\}/);
 });
 
-test('operations refresh does not duplicate queue requests or rerender on unchanged parent props', () => {
+test('operations refresh serializes polling and ignores stale responses', () => {
   const component = projectFile('src/components/supplier-operations/SupplierOperationsDashboard.tsx');
   const loadAllStart = component.indexOf('const loadAll = useCallback');
   const loadAllEnd = component.indexOf('useEffect(() =>', loadAllStart);
   assert.ok(loadAllStart >= 0 && loadAllEnd > loadAllStart);
   assert.doesNotMatch(component.slice(loadAllStart, loadAllEnd), /loadQueue\(false\)/);
-  assert.match(component, /window\.setInterval\(\(\) => void loadQueue\(false\)/);
+  assert.match(component, /snapshotRequestIdRef/);
+  assert.match(component, /queueRequestIdRef/);
+  assert.match(component, /requestId !== snapshotRequestIdRef\.current/);
+  assert.match(component, /requestId !== queueRequestIdRef\.current/);
+  assert.doesNotMatch(component, /window\.setInterval/);
+  assert.match(component, /window\.setTimeout\(\(\) => void poll\(\), 30_000\)/);
   assert.match(component, /export default React\.memo\(SupplierOperationsDashboard\)/);
+});
+
+test('settings, terminal jobs, queue actions, and retry banners update their canonical frontend state', () => {
+  const parent = projectFile('src/components/SupplierHubFiveStars.tsx');
+  const operations = projectFile('src/components/supplier-operations/SupplierOperationsDashboard.tsx');
+
+  assert.match(parent, /setSupplierSettings\(\(current: any\) => \(\{/);
+  assert.match(parent, /pendingSupplierSettingsRef\.current = submittedSettings/);
+  assert.match(parent, /setSupplierSources\(\(current\) => current\.map/);
+  assert.match(parent, /setSyncErrorMsg\(null\);[\s\S]*setSyncStatusMsg\(formatSupplierSyncProgress\(result\.job\)\)/);
+  assert.match(parent, /applyActiveSyncJob\(null\)/);
+  assert.match(parent, /refreshKey=\{operationsRefreshKey\}/);
+  assert.match(operations, /setSnapshotError\(null\)/);
+  assert.match(operations, /setQueueError\(null\)/);
+  assert.match(operations, /Promise\.all\(\[loadAll\(true\), loadQueue\(false\)\]\)/);
 });

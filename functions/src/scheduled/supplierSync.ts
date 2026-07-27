@@ -79,6 +79,7 @@ interface SupplierSettings {
 
 interface SupplierSource {
   id: string;
+  enabled?: boolean;
   supplierName?: string;
   name?: string;
   supplierType?: string;
@@ -329,6 +330,26 @@ export function isSupplierSourceEnabled(source: SupplierSource, settings: Suppli
   const isActiveWebsite = status === "active" && type === "website";
   const usesExplicitScope = settings.enabledSupplierIdsConfigured === true;
   return isActiveWebsite && ((!usesExplicitScope && enabledIds.length === 0) || enabledIds.includes(source.id));
+}
+
+export function isSupplierSourceEligibleForSync(
+  source: SupplierSource,
+  settings: SupplierSettings,
+  trigger: "scheduled" | "manual",
+  nowMs: number,
+): boolean {
+  if (trigger === "manual") {
+    const declaredType = String(source.supplierType || source.type || "").trim().toLowerCase();
+    const connectorType = String(source.connectorType || "").trim().toLowerCase();
+    const type = declaredType
+      ? (["a2z", "http"].includes(declaredType) ? "website" : declaredType)
+      : (["a2z", "http"].includes(connectorType) ? "website" : connectorType || "website");
+    const status = String(source.sourceStatus || (source.enabled === false ? "inactive" : "active")).trim().toLowerCase();
+    return source.enabled !== false && status === "active" && type === "website";
+  }
+
+  return isSupplierSourceEnabled(source, settings)
+    && isSupplierSourceAutoSyncDue(source.settings?.autoSync, sourceLastSuccessfulSync(source), nowMs);
 }
 
 function normalizeSupplierProducts(products: any[]): { products: RawA2ZProduct[]; failed: number } {
@@ -1307,9 +1328,8 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
   }
 
   let sources = (await loadSupplierSources(requestedSourceIds))
-    .filter((source) => isSupplierSourceEnabled(source, settings))
+    .filter((source) => isSupplierSourceEligibleForSync(source, settings, trigger, startedAt.getTime()))
     .filter((source) => requestedSourceIds.length === 0 || requestedSourceIds.includes(source.id))
-    .filter((source) => trigger === "manual" || isSupplierSourceAutoSyncDue(source.settings?.autoSync, sourceLastSuccessfulSync(source), startedAt.getTime()))
     .sort((left, right) => supplierPriority(right) - supplierPriority(left) || left.id.localeCompare(right.id));
   await reportProgress({ phase: "preparing", totalSources: sources.length, currentSourceId: null });
 

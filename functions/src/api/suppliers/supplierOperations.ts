@@ -98,6 +98,24 @@ export function calculateOperationsPerformance(input: {
   };
 }
 
+export function isUnresolvedSupplierMediaFailure(record: Record<string, unknown>): boolean {
+  const mediaStatus = String(record.mediaStatus || "").trim().toLowerCase();
+  if (mediaStatus === "failed" || mediaStatus === "partial") return true;
+  const queueState = String(record.queueState || "").trim().toLowerCase();
+  return ["retryable_failure", "dead_letter"].includes(queueState)
+    && /image|media|storage/iu.test(String(record.lastFailureReason || ""));
+}
+
+export function supplierMediaFailureMentionsStorage(record: Record<string, unknown>): boolean {
+  const failureText = [
+    record.lastFailureReason,
+    ...(Array.isArray(record.mediaFailures) ? record.mediaFailures.map((failure) => (
+      failure && typeof failure === "object" ? (failure as Record<string, unknown>).reason : failure
+    )) : []),
+  ].map(String).join(" ").toLowerCase();
+  return failureText.includes("storage");
+}
+
 function readLimit(value: unknown): number {
   const parsed = Number(value || OPERATIONS_PAGE_LIMIT);
   return Number.isInteger(parsed) ? Math.max(1, Math.min(OPERATIONS_MAX_PAGE_LIMIT, parsed)) : OPERATIONS_PAGE_LIMIT;
@@ -124,8 +142,8 @@ export async function loadSupplierOperationsSummary(db: Firestore): Promise<Reco
     mediaPublishedSnapshot,
     mediaBrokenSnapshot,
     mediaStorageSnapshot,
-    mediaFailureCountSnapshot,
-    mediaFailureSnapshot,
+    mediaFailureQueueSnapshot,
+    mediaStatusFailureSnapshot,
     mediaReuseSnapshot,
     missingImageSnapshot,
     mediaDurationSnapshot,
@@ -140,8 +158,8 @@ export async function loadSupplierOperationsSummary(db: Firestore): Promise<Reco
     db.collection("supplier_media_assets").where("imageStatus", "==", "published").count().get(),
     db.collection("supplier_media_assets").where("imageStatus", "==", "failed").count().get(),
     db.collection("supplier_media_assets").aggregate({ storageBytes: AggregateField.sum("fileSize") }).get(),
-    db.collection("supplier_media_audit").where("event", "==", "supplier_media_failed").count().get(),
-    db.collection("supplier_media_audit").where("event", "==", "supplier_media_failed").limit(500).get(),
+    db.collection("supplier_review_queue").where("queueState", "in", ["retryable_failure", "dead_letter"]).limit(500).get(),
+    db.collection("supplier_review_queue").where("mediaStatus", "in", ["failed", "partial"]).limit(500).get(),
     db.collection("supplier_media_audit").where("event", "==", "supplier_media_reused").count().get(),
     db.collection("supplier_review_queue").where("productValidation.missingFields", "array-contains", "images").count().get(),
     db.collection("supplier_media_audit").where("processingDurationMs", ">", 0).limit(500).get(),
@@ -158,8 +176,12 @@ export async function loadSupplierOperationsSummary(db: Firestore): Promise<Reco
   const todayHistories = todayHistorySnapshot.docs.map((document) => document.data());
   const importedToday = todayHistories.reduce((sum, history) => sum + number(history.productsImported), 0);
   const updatedToday = todayHistories.reduce((sum, history) => sum + number(history.productsUpdated), 0);
-  const mediaFailures = mediaFailureCountSnapshot.data().count;
-  const storageFailures = mediaFailureSnapshot.docs.filter((document) => String(document.data().failureReason || "").toLowerCase().includes("storage")).length;
+  const unresolvedMediaFailureDocuments = [...new Map([
+    ...mediaFailureQueueSnapshot.docs.filter((document) => isUnresolvedSupplierMediaFailure(document.data())),
+    ...mediaStatusFailureSnapshot.docs.filter((document) => isUnresolvedSupplierMediaFailure(document.data())),
+  ].map((document) => [document.id, document])).values()];
+  const mediaFailures = unresolvedMediaFailureDocuments.length;
+  const storageFailures = unresolvedMediaFailureDocuments.filter((document) => supplierMediaFailureMentionsStorage(document.data())).length;
   const now = Date.now();
   const oldestQueue = await db.collection("supplier_review_queue")
     .where("queueState", "in", ["queued", "review_pending", "retryable_failure"])

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   AlertTriangle,
@@ -26,6 +26,8 @@ interface SupplierOperationsDashboardProps {
   requestApi: SupplierApiRequest;
   onSyncSupplier: (sourceIds?: string[]) => Promise<boolean>;
   syncInProgress: boolean;
+  activeSyncJob: { id: string; state: string; updatedAt: string } | null;
+  refreshKey: number;
 }
 
 interface OperationsSummary {
@@ -152,6 +154,8 @@ function SupplierOperationsDashboard({
   requestApi,
   onSyncSupplier,
   syncInProgress,
+  activeSyncJob,
+  refreshKey,
 }: SupplierOperationsDashboardProps) {
   const [snapshot, setSnapshot] = useState<OperationsSnapshot | null>(null);
   const [queueItems, setQueueItems] = useState<QueueItem[]>([]);
@@ -167,7 +171,13 @@ function SupplierOperationsDashboard({
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [actionId, setActionId] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [snapshotError, setSnapshotError] = useState<string | null>(null);
+  const [queueError, setQueueError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const snapshotRequestIdRef = useRef(0);
+  const queueRequestIdRef = useRef(0);
+  const previousSyncStateRef = useRef<string | null>(activeSyncJob?.state || null);
+  const refreshKeyRef = useRef(refreshKey);
 
   const readJson = useCallback(async <T,>(response: Response): Promise<T> => {
     const result = await response.json().catch(() => ({})) as T & { success?: boolean; error?: string };
@@ -176,18 +186,21 @@ function SupplierOperationsDashboard({
   }, []);
 
   const loadQueue = useCallback(async (append = false, after?: string | null) => {
+    const requestId = ++queueRequestIdRef.current;
     const params = new URLSearchParams({ limit: '50' });
     if (queueState !== 'all') params.set('state', queueState);
     if (search.trim()) params.set('search', search.trim());
     if (after) params.set('after', after);
     const result = await readJson<PageResponse>(await requestApi(`/api/supplier-operations/queue?${params}`, 'GET'));
+    if (requestId !== queueRequestIdRef.current) return;
     setQueueItems((current) => append ? [...current, ...(result.items as QueueItem[])] : result.items as QueueItem[]);
     setQueueCursor(result.nextCursor);
+    setQueueError(null);
   }, [queueState, readJson, requestApi, search]);
 
   const loadAll = useCallback(async (quiet = false) => {
+    const requestId = ++snapshotRequestIdRef.current;
     quiet ? setRefreshing(true) : setLoading(true);
-    setError(null);
     try {
       const [summaryResponse, historyResponse, auditResponse] = await Promise.all([
         requestApi('/api/supplier-operations/summary', 'GET'),
@@ -197,41 +210,84 @@ function SupplierOperationsDashboard({
       const summaryResult = await readJson<OperationsSnapshot & { success: boolean }>(summaryResponse);
       const historyResult = await readJson<PageResponse>(historyResponse);
       const auditResult = await readJson<PageResponse>(auditResponse);
+      if (requestId !== snapshotRequestIdRef.current) return;
       setSnapshot(summaryResult);
       setHistoryItems(historyResult.items);
       setHistoryCursor(historyResult.nextCursor);
       setAuditItems(auditResult.items);
       setAuditCursor(auditResult.nextCursor);
+      setSnapshotError(null);
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : 'Supplier operations could not be loaded.');
+      if (requestId === snapshotRequestIdRef.current) {
+        setSnapshotError(loadError instanceof Error ? loadError.message : 'Supplier operations could not be loaded.');
+      }
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (requestId === snapshotRequestIdRef.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }, [readJson, requestApi]);
 
   useEffect(() => {
-    void loadAll();
-    const interval = window.setInterval(() => void loadAll(true), 30_000);
-    return () => window.clearInterval(interval);
+    let cancelled = false;
+    let timer: number | null = null;
+    const poll = async (quiet: boolean) => {
+      await loadAll(quiet);
+      if (!cancelled) timer = window.setTimeout(() => void poll(true), 30_000);
+    };
+    void poll(false);
+    return () => {
+      cancelled = true;
+      if (timer !== null) window.clearTimeout(timer);
+    };
   }, [loadAll]);
 
   useEffect(() => {
-    const timeout = window.setTimeout(() => void loadQueue(false).catch((loadError) => {
-      setError(loadError instanceof Error ? loadError.message : 'Queue could not be loaded.');
-    }), 250);
-    const interval = window.setInterval(() => void loadQueue(false).catch((loadError) => {
-      setError(loadError instanceof Error ? loadError.message : 'Queue could not be loaded.');
-    }), 30_000);
+    let cancelled = false;
+    let timer: number | null = null;
+    const poll = async () => {
+      try {
+        await loadQueue(false);
+      } catch (loadError) {
+        if (!cancelled) setQueueError(loadError instanceof Error ? loadError.message : 'Queue could not be loaded.');
+      }
+      if (!cancelled) timer = window.setTimeout(() => void poll(), 30_000);
+    };
+    timer = window.setTimeout(() => void poll(), 250);
     return () => {
-      window.clearTimeout(timeout);
-      window.clearInterval(interval);
+      cancelled = true;
+      if (timer !== null) window.clearTimeout(timer);
     };
   }, [loadQueue]);
 
+  useEffect(() => {
+    const previousState = previousSyncStateRef.current;
+    const nextState = activeSyncJob?.state || null;
+    previousSyncStateRef.current = nextState;
+    if (!nextState || nextState === previousState || ['pending', 'running', 'waiting'].includes(nextState)) return;
+    void Promise.all([
+      loadAll(true),
+      loadQueue(false).catch((loadError) => {
+        setQueueError(loadError instanceof Error ? loadError.message : 'Queue could not be loaded.');
+      }),
+    ]);
+  }, [activeSyncJob?.id, activeSyncJob?.state, activeSyncJob?.updatedAt, loadAll, loadQueue]);
+
+  useEffect(() => {
+    if (refreshKeyRef.current === refreshKey) return;
+    refreshKeyRef.current = refreshKey;
+    void Promise.all([
+      loadAll(true),
+      loadQueue(false).catch((loadError) => {
+        setQueueError(loadError instanceof Error ? loadError.message : 'Queue could not be loaded.');
+      }),
+    ]);
+  }, [loadAll, loadQueue, refreshKey]);
+
   const runSupplierAction = async (supplierId: string, action: string) => {
     setActionId(`${supplierId}:${action}`);
-    setError(null);
+    setActionError(null);
     try {
       if (action === 'sync' || action === 'retry') {
         const accepted = await onSyncSupplier([supplierId]);
@@ -243,7 +299,7 @@ function SupplierOperationsDashboard({
       await readJson(await requestApi(`/api/supplier-operations/suppliers/${encodeURIComponent(supplierId)}/action`, 'POST', { action }));
       await loadAll(true);
     } catch (actionError) {
-      setError(actionError instanceof Error ? actionError.message : 'Supplier action failed.');
+      setActionError(actionError instanceof Error ? actionError.message : 'Supplier action failed.');
     } finally {
       setActionId(null);
     }
@@ -252,15 +308,15 @@ function SupplierOperationsDashboard({
   const runQueueAction = async (action: 'bulk-retry' | 'bulk-reopen' | 'bulk-resolve') => {
     if (!selected.length) return;
     setActionId(action);
-    setError(null);
+    setActionError(null);
     try {
       await readJson(await requestApi(`/api/supplier-operations/queue/${action}`, 'POST', action === 'bulk-resolve'
         ? { items: selected.map((queueItemId) => ({ queueItemId })) }
         : { queueItemIds: selected }));
       setSelected([]);
-      await loadAll(true);
+      await Promise.all([loadAll(true), loadQueue(false)]);
     } catch (actionError) {
-      setError(actionError instanceof Error ? actionError.message : 'Queue recovery failed.');
+      setActionError(actionError instanceof Error ? actionError.message : 'Queue recovery failed.');
     } finally {
       setActionId(null);
     }
@@ -268,12 +324,12 @@ function SupplierOperationsDashboard({
 
   const updateErrorDisposition = async (queueItemId: string, action: 'ignore' | 'resolved') => {
     setActionId(`${queueItemId}:${action}`);
-    setError(null);
+    setActionError(null);
     try {
       await readJson(await requestApi(`/api/supplier-operations/errors/${encodeURIComponent(queueItemId)}/action`, 'POST', { action }));
       await loadQueue(false);
     } catch (actionError) {
-      setError(actionError instanceof Error ? actionError.message : 'Error center status could not be updated.');
+      setActionError(actionError instanceof Error ? actionError.message : 'Error center status could not be updated.');
     } finally {
       setActionId(null);
     }
@@ -281,18 +337,19 @@ function SupplierOperationsDashboard({
 
   const retryError = async (queueItemId: string) => {
     setActionId(`${queueItemId}:retry`);
-    setError(null);
+    setActionError(null);
     try {
       await readJson(await requestApi('/api/supplier-operations/queue/bulk-retry', 'POST', { queueItemIds: [queueItemId] }));
-      await loadAll(true);
+      await Promise.all([loadAll(true), loadQueue(false)]);
     } catch (actionError) {
-      setError(actionError instanceof Error ? actionError.message : 'Error retry failed.');
+      setActionError(actionError instanceof Error ? actionError.message : 'Error retry failed.');
     } finally {
       setActionId(null);
     }
   };
 
   const summary = snapshot?.summary || EMPTY_SUMMARY;
+  const error = actionError || snapshotError || queueError;
   const queueCounts = snapshot?.queues || {};
   const media = snapshot?.media || {};
   const performance = snapshot?.performance || {};

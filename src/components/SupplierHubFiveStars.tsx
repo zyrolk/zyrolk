@@ -272,16 +272,20 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
     changes: false,
   });
   const [supplierQueueError, setSupplierQueueError] = useState<string | null>(null);
+  const supplierQueueRequestIdRef = useRef<Record<SupplierQueueView, number>>({ review: 0, import: 0, changes: 0 });
   
   // Syncing state
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [syncStatusMsg, setSyncStatusMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [syncErrorMsg, setSyncErrorMsg] = useState<string | null>(null);
   const [activeSyncJob, setActiveSyncJob] = useState<SupplierSyncJobView | null>(null);
+  const [operationsRefreshKey, setOperationsRefreshKey] = useState(0);
   const [syncJobAction, setSyncJobAction] = useState<'cancel' | 'retry' | 'resume' | null>(null);
   const syncStartInFlightRef = useRef(false);
   const activeSyncJobRef = useRef<SupplierSyncJobView | null>(null);
-  const applyActiveSyncJob = useCallback((job: SupplierSyncJobView) => {
+  const pendingSupplierSettingsRef = useRef<Record<string, unknown> | null>(null);
+  const applyActiveSyncJob = useCallback((job: SupplierSyncJobView | null) => {
     const active = isSupplierSyncJobActive(job);
     activeSyncJobRef.current = job;
     syncStartInFlightRef.current = active;
@@ -345,11 +349,10 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
           setSupplierSources(result.sources.map(normalizeSupplierSourceForUi));
           if (jobsResponse.ok && jobsResult.success === true && Array.isArray(jobsResult.jobs)) {
             const selectedJob = selectSupplierSyncJobForDisplay(jobsResult.jobs);
-            if (selectedJob) {
-              const active = isSupplierSyncJobActive(selectedJob);
+            if (selectedJob && isSupplierSyncJobActive(selectedJob)) {
               applyActiveSyncJob(selectedJob);
-              if (active) setSyncStatusMsg(formatSupplierSyncProgress(selectedJob));
-            }
+              setSyncStatusMsg(formatSupplierSyncProgress(selectedJob));
+            } else applyActiveSyncJob(null);
           }
         }
       } catch (error) {
@@ -401,7 +404,16 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
       (snapshot) => {
         if (snapshot.exists()) {
           const persistedSettings = snapshot.data();
-          setSupplierSettings(prev => ({ ...prev, ...persistedSettings }));
+          const pendingSettings = pendingSupplierSettingsRef.current;
+          const pendingConfirmed = pendingSettings !== null && Object.entries(pendingSettings).every(([key, value]) => (
+            JSON.stringify(persistedSettings[key]) === JSON.stringify(value)
+          ));
+          if (pendingConfirmed) pendingSupplierSettingsRef.current = null;
+          setSupplierSettings(prev => ({
+            ...prev,
+            ...persistedSettings,
+            ...(pendingSettings && !pendingConfirmed ? pendingSettings : {}),
+          }));
         }
       },
       (error) => {
@@ -612,8 +624,8 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
     const append = options.append === true;
     const after = options.after === undefined ? (append ? supplierQueueCursors[view] : null) : options.after;
     if (append && !after) return;
+    const requestId = ++supplierQueueRequestIdRef.current[view];
     setSupplierQueueLoading((current) => ({ ...current, [view]: true }));
-    setSupplierQueueError(null);
     try {
       const parameters = new URLSearchParams({ view, limit: '50' });
       if (view === 'review') parameters.set('state', 'active');
@@ -623,6 +635,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
       if (!response.ok || result.success !== true || !Array.isArray(result.items)) {
         throw new Error(result.error || 'Supplier queue items could not be loaded.');
       }
+      if (requestId !== supplierQueueRequestIdRef.current[view]) return;
       if (view === 'review') {
         const items = result.items as unknown as ReviewQueueItem[];
         setReviewQueue((current) => append ? mergeSupplierQueuePage(current, items) : items);
@@ -632,10 +645,15 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
         setSupplierPendingChanges((current: any[]) => append ? mergeSupplierQueuePage(current, result.items as any[]) : result.items);
       }
       setSupplierQueueCursors((current) => ({ ...current, [view]: result.nextCursor || null }));
+      setSupplierQueueError(null);
     } catch (error) {
-      setSupplierQueueError(error instanceof Error ? error.message : 'Supplier queue items could not be loaded.');
+      if (requestId === supplierQueueRequestIdRef.current[view]) {
+        setSupplierQueueError(error instanceof Error ? error.message : 'Supplier queue items could not be loaded.');
+      }
     } finally {
-      setSupplierQueueLoading((current) => ({ ...current, [view]: false }));
+      if (requestId === supplierQueueRequestIdRef.current[view]) {
+        setSupplierQueueLoading((current) => ({ ...current, [view]: false }));
+      }
     }
   };
 
@@ -652,11 +670,19 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
       ? 'review'
       : activeSubTab === 'import_queue' ? 'import' : activeSubTab === 'changes' ? 'changes' : null;
     if (!view || !auth.currentUser) return;
-    void loadSupplierQueueView(view);
-    const refreshTimer = window.setInterval(() => {
-      if (auth.currentUser) void loadSupplierQueueView(view);
-    }, 30_000);
-    return () => window.clearInterval(refreshTimer);
+    let cancelled = false;
+    let refreshTimer: number | null = null;
+    const poll = async () => {
+      await loadSupplierQueueView(view);
+      if (!cancelled) refreshTimer = window.setTimeout(() => {
+        if (auth.currentUser) void poll();
+      }, 30_000);
+    };
+    void poll();
+    return () => {
+      cancelled = true;
+      if (refreshTimer !== null) window.clearTimeout(refreshTimer);
+    };
   }, [activeSubTab]);
 
   useEffect(() => {
@@ -671,10 +697,12 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
         const result = await response.json().catch(() => ({})) as { success?: boolean; job?: SupplierSyncJobView; error?: string };
         if (!response.ok || result.success !== true || !result.job) throw new Error(result.error || 'Synchronization status could not be loaded.');
         if (cancelled) return;
-        applyActiveSyncJob(result.job);
         const active = isSupplierSyncJobActive(result.job);
+        if (active) applyActiveSyncJob(result.job);
+        setSyncErrorMsg(null);
         setSyncStatusMsg(formatSupplierSyncProgress(result.job));
         if (!active) {
+          setOperationsRefreshKey((current) => current + 1);
           void refreshSupplierQueueViews();
           const jobsResponse = await getSupplierApi('/api/supplier-sync/jobs?limit=20');
           const jobsResult = await jobsResponse.json().catch(() => ({})) as {
@@ -686,13 +714,13 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
             if (nextJob && nextJob.id !== result.job.id && isSupplierSyncJobActive(nextJob)) {
               applyActiveSyncJob(nextJob);
               setSyncStatusMsg(formatSupplierSyncProgress(nextJob));
-            }
-          }
+            } else if (activeSyncJobRef.current?.id === jobId) applyActiveSyncJob(null);
+          } else if (activeSyncJobRef.current?.id === jobId) applyActiveSyncJob(null);
         }
         if (active) timer = setTimeout(poll, 2_000);
       } catch (error) {
         if (cancelled) return;
-        setErrorMsg(error instanceof Error ? error.message : 'Synchronization status could not be loaded.');
+        setSyncErrorMsg(error instanceof Error ? error.message : 'Synchronization status could not be loaded.');
         timer = setTimeout(poll, 5_000);
       }
     };
@@ -707,7 +735,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
   const handleSyncJobAction = async (action: 'cancel' | 'retry' | 'resume') => {
     if (!activeSyncJob) return;
     setSyncJobAction(action);
-    setErrorMsg(null);
+    setSyncErrorMsg(null);
     try {
       const response = await postSupplierApi(`/api/supplier-sync/jobs/${encodeURIComponent(activeSyncJob.id)}/${action}`, {});
       const result = await response.json().catch(() => ({})) as { success?: boolean; job?: SupplierSyncJobView; error?: string };
@@ -715,7 +743,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
       applyActiveSyncJob(result.job);
       setSyncStatusMsg(`${supplierSyncJobStateLabel(result.job.state)} · ${result.job.progress.percent}%`);
     } catch (error) {
-      setErrorMsg(error instanceof Error ? error.message : `Synchronization could not ${action}.`);
+      setSyncErrorMsg(error instanceof Error ? error.message : `Synchronization could not ${action}.`);
     } finally {
       setSyncJobAction(null);
     }
@@ -1319,7 +1347,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
     let accepted = false;
     syncStartInFlightRef.current = true;
     setIsSyncing(true);
-    setErrorMsg(null);
+    setSyncErrorMsg(null);
     setSyncStatusMsg('Starting the supplier synchronization job...');
     try {
       const response = await postSupplierApi('/api/supplier-sync', sourceIds?.length ? { sourceIds } : {});
@@ -1339,7 +1367,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
       accepted = true;
       return true;
     } catch (error: any) {
-      setErrorMsg(error.message || 'Supplier synchronization failed.');
+      setSyncErrorMsg(error.message || 'Supplier synchronization failed.');
       setSyncStatusMsg(null);
       return false;
     } finally {
@@ -1607,7 +1635,16 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
       const response = await patchSupplierApi(`/api/supplier-sources/${encodeURIComponent(sourceId)}`, { source: updatedData });
       const result = await response.json().catch(() => ({})) as { success?: boolean; error?: string };
       if (!response.ok || result.success !== true) throw new Error(result.error || 'Supplier source could not be updated.');
-      
+      setSupplierSources((current) => current.map((source) => source.id === sourceId
+        ? normalizeSupplierSourceForUi({
+            ...source,
+            ...updatedData,
+            enabled: editIsEnabled,
+            settings: { ...(source.settings || {}), ...updatedData.settings },
+          })
+        : source));
+      setErrorMsg(null);
+
       setSuccessMsg("Supplier settings successfully saved and persisted!");
       setTimeout(() => setSuccessMsg(null), 3000);
       setEditingSourceId(null); // collapse panel after saving
@@ -1801,6 +1838,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
   const handleSaveSupplierSettings = async (e: React.FormEvent) => {
     e.preventDefault();
     setSavingSupplierSettings(true);
+    let submittedSettings: Record<string, unknown> | null = null;
     try {
       const maxProducts = Number(supplierSettings.maxProducts);
       const imageLimit = Number(supplierSettings.defaultImageLimit);
@@ -1833,13 +1871,34 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
             )
           : supplierSettings.categoryMappings || {},
       };
+      submittedSettings = {
+        websiteSyncEnabled: payload.websiteSyncEnabled !== false,
+        autoSyncEnabled: payload.autoSyncEnabled !== false,
+        syncInterval: payload.syncInterval,
+        maxProducts: payload.maxProducts,
+        enabledSupplierIds: payload.enabledSupplierIds,
+        enabledSupplierIdsConfigured: payload.enabledSupplierIdsConfigured === true,
+        defaultProfitMargin: payload.defaultProfitMargin,
+        defaultMarkup: payload.defaultMarkup,
+        defaultImageLimit: payload.defaultImageLimit,
+        categoryMappings: payload.categoryMappings,
+      };
+      pendingSupplierSettingsRef.current = submittedSettings;
       const response = await postSupplierApi('/api/supplier-settings', { settings: payload });
       const result = await response.json().catch(() => ({})) as { success?: boolean; error?: string };
       if (!response.ok || result.success !== true) throw new Error(result.error || 'Supplier Hub settings could not be saved.');
+      setSupplierSettings((current: any) => ({
+        ...current,
+        ...submittedSettings,
+        lastUpdated: new Date().toISOString(),
+        updatedBy: auth.currentUser?.uid || current.updatedBy,
+      }));
+      setErrorMsg(null);
       setSavingSupplierSettings(false);
       setSuccessMsg("Supplier Hub control settings saved successfully.");
       setTimeout(() => setSuccessMsg(null), 3000);
     } catch (error: any) {
+      if (pendingSupplierSettingsRef.current === submittedSettings) pendingSupplierSettingsRef.current = null;
       console.error("Save supplier settings failed:", error);
       setErrorMsg(error.message || "Failed to save supplier settings.");
       setTimeout(() => setErrorMsg(null), 4000);
@@ -1866,6 +1925,18 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
     };
 
     try {
+      pendingSupplierSettingsRef.current = {
+        websiteSyncEnabled: defaults.websiteSyncEnabled,
+        autoSyncEnabled: defaults.autoSyncEnabled,
+        syncInterval: defaults.syncInterval,
+        maxProducts: defaults.maxProducts,
+        enabledSupplierIds: defaults.enabledSupplierIds,
+        enabledSupplierIdsConfigured: defaults.enabledSupplierIdsConfigured,
+        defaultProfitMargin: defaults.defaultProfitMargin,
+        defaultMarkup: defaults.defaultMarkup,
+        defaultImageLimit: defaults.defaultImageLimit,
+        categoryMappings: defaults.categoryMappings,
+      };
       const response = await postSupplierApi('/api/supplier-settings', { settings: defaults });
       const result = await response.json().catch(() => ({})) as { success?: boolean; error?: string };
       if (!response.ok || result.success !== true) throw new Error(result.error || 'Supplier Hub settings could not be reset.');
@@ -1874,11 +1945,14 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
       setSuccessMsg("Supplier Hub control settings reset to system defaults.");
       setTimeout(() => setSuccessMsg(null), 3000);
     } catch (error: any) {
+      pendingSupplierSettingsRef.current = null;
       console.error("Reset supplier settings failed:", error);
       setErrorMsg(error.message || "Failed to reset supplier settings.");
       setTimeout(() => setErrorMsg(null), 4000);
     }
   };
+
+  const visibleErrorMsg = errorMsg || syncErrorMsg;
 
   return (
     <motion.div 
@@ -2020,14 +2094,14 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
         </motion.div>
       )}
 
-      {errorMsg && (
+      {visibleErrorMsg && (
         <motion.div 
           initial={{ opacity: 0, y: -5 }}
           animate={{ opacity: 1, y: 0 }}
           className="p-3.5 bg-red-500/10 text-red-500 text-xs font-semibold rounded-2xl border border-red-500/20 flex items-center gap-2"
         >
           <AlertCircle className="h-4 w-4 shrink-0 text-red-500" />
-          <span>{errorMsg}</span>
+          <span>{visibleErrorMsg}</span>
         </motion.div>
       )}
 
@@ -2073,6 +2147,8 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
             requestApi={requestSupplierApi}
             onSyncSupplier={handleSyncSupplier}
             syncInProgress={isSyncing}
+            activeSyncJob={activeSyncJob}
+            refreshKey={operationsRefreshKey}
           />
         )}
 

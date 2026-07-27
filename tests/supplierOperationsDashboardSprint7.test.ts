@@ -5,6 +5,8 @@ import {
   calculateOperationsPerformance,
   calculateSupplierHealthScore,
   generateSupplierOperationsAlerts,
+  isUnresolvedSupplierMediaFailure,
+  supplierMediaFailureMentionsStorage,
   toOperationsIso,
 } from "../functions/src/api/suppliers/supplierOperations";
 
@@ -68,6 +70,30 @@ test("operations performance calculations do not fabricate unavailable values", 
     averageMediaProcessingDurationMs: null,
   });
   assert.equal(toOperationsIso("not-a-date"), null);
+});
+
+test("media monitoring reports unresolved current failures instead of immutable historical attempts", () => {
+  assert.equal(isUnresolvedSupplierMediaFailure({
+    event: "supplier_media_failed",
+    timestamp: "2026-07-24T01:00:00.000Z",
+  }), false);
+  assert.equal(isUnresolvedSupplierMediaFailure({
+    queueState: "retryable_failure",
+    lastFailureReason: "Supplier media acquisition failed.",
+  }), true);
+  assert.equal(isUnresolvedSupplierMediaFailure({
+    queueState: "review_pending",
+    mediaStatus: "ready",
+    lastFailureReason: "An earlier image request failed.",
+  }), false);
+  assert.equal(isUnresolvedSupplierMediaFailure({ mediaStatus: "partial" }), true);
+  assert.equal(supplierMediaFailureMentionsStorage({
+    mediaFailures: [{ reason: "Firebase Storage upload failed." }],
+  }), true);
+
+  const operations = projectFile("functions/src/api/suppliers/supplierOperations.ts");
+  assert.doesNotMatch(operations, /supplier_media_failed"\)\.count\(\)\.get\(\)/);
+  assert.match(operations, /unresolvedMediaFailureDocuments/);
 });
 
 test("operations APIs are admin protected and preserve existing Supplier Hub routes", () => {
