@@ -1,4 +1,5 @@
 import { useAIManagerSnapshot } from './hooks/useAIManagerSnapshot';
+import { useAIManagerSupplierData } from './hooks/useAIManagerSupplierData';
 import type { AIManagerPanelProps } from './types/view-model';
 import { AIManagerGuardrails } from './components/AIManagerGuardrails';
 import { AIManagerHeader } from './components/AIManagerHeader';
@@ -13,7 +14,8 @@ import { PricingIntelligenceDashboard } from './components/pricing/PricingIntell
 import { CustomerIntelligenceDashboard } from './components/customer/CustomerIntelligenceDashboard';
 
 export default function AIManagerPanel({ sourceData, isDarkMode }: AIManagerPanelProps) {
-  const snapshot = useAIManagerSnapshot(sourceData);
+  const supplierData = useAIManagerSupplierData();
+  const snapshot = useAIManagerSnapshot({ ...sourceData, ...supplierData });
 
   return (
     <div className={`space-y-6 rounded-3xl p-1 ${isDarkMode ? 'text-slate-100' : 'text-slate-800'}`}>

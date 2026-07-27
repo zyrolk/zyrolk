@@ -24,19 +24,21 @@ test("supplier sync regression: sync code does not queue direct writes to produc
 
   assert.equal(/batch\.set\(doc\(db,\s*["']products["']/.test(supplierHub), false);
   assert.equal(/queuedWrites\.push\(\{\s*collection:\s*["']products["']/.test(scheduledSync), false);
-  assert.match(supplierHub, /if \(!enabledComparison\) continue/);
+  assert.doesNotMatch(supplierHub, /runLocalSupplierSync|filterSupplierComparison|commitSupplierSyncWrites/);
   assert.match(scheduledSync, /if \(!comparison\) \{[\s\S]*metrics\.productsSkipped \+= 1;[\s\S]*continue;/);
 });
 
 test("visible supplier sync controls invoke the real queue synchronization pipeline", () => {
   const source = readFileSync("src/components/SupplierHubFiveStars.tsx", "utf8");
+  const scheduledSync = readFileSync("functions/src/scheduled/supplierSync.ts", "utf8");
   assert.equal(source.includes("Placeholder Action Only"), false);
   assert.match(source, /await handleSyncSupplier\(\[id\]\)/);
   assert.match(source, /onClick=\{\(\) => handleSyncSupplier\(\)\}/);
-  assert.match(source, /filterSupplierComparison/);
-  assert.match(source, /resolveSupplierProductLimit/);
-  assert.match(source, /dryRunMode/);
-  assert.match(source, /discoveredCategories/);
+  assert.match(source, /postSupplierApi\('\/api\/supplier-sync'/);
+  assert.match(scheduledSync, /selectSupplierComparisonForReview/);
+  assert.match(scheduledSync, /resolveSupplierProductLimit/);
+  assert.match(scheduledSync, /dryRunMode/);
+  assert.match(scheduledSync, /discoveredCategories/);
 });
 
 test("A2Z secrets are bound to both HTTPS and scheduled Functions", () => {
@@ -136,14 +138,14 @@ test("bulk delete decisions preserve audit and never write products", () => {
   assert.equal(plan.deletes.length, 3);
 });
 
-test("Supplier Hub exposes audited bulk actions and both sync paths resolve persistent category mappings", () => {
+test("Supplier Hub exposes audited bulk actions while Functions own synchronization and category mapping", () => {
   const supplierHub = readFileSync("src/components/SupplierHubFiveStars.tsx", "utf8");
   const scheduledSync = readFileSync("functions/src/scheduled/supplierSync.ts", "utf8");
   assert.match(supplierHub, /Bulk Approve/);
   assert.match(supplierHub, /Bulk Reject/);
   assert.match(supplierHub, /Bulk Delete/);
-  assert.match(supplierHub, /resolveSupplierCategory/);
-  assert.match(supplierHub, /matchesSupplierCategoryFilter/);
+  assert.match(supplierHub, /postSupplierApi\('\/api\/supplier-sync'/);
+  assert.doesNotMatch(supplierHub, /runLocalSupplierSync|commitSupplierSyncWrites|resolveSupplierCategory/);
   assert.match(scheduledSync, /suggestSupplierCategory/);
   assert.match(scheduledSync, /categoryMappingRecords/);
   assert.match(scheduledSync, /matchesSupplierCategoryFilter/);
@@ -156,40 +158,32 @@ test("Supplier Hub exposes audited bulk actions and both sync paths resolve pers
 
 test("Supplier Hub limits sync history queries and retries expired admin tokens", () => {
   const supplierHub = readFileSync("src/components/SupplierHubFiveStars.tsx", "utf8");
+  const supplierApi = readFileSync("src/services/supplierHubApi.ts", "utf8");
   assert.match(supplierHub, /limit\(SYNC_HISTORY_LIMIT\)/);
   assert.match(supplierHub, /orderBy\("createdAt", "desc"\)/);
-  assert.match(supplierHub, /if \(response\.status === 401\) response = await request\(true\)/);
+  assert.match(supplierApi, /if \(response\.status === 401\) response = await request\(true\)/);
 });
 
-test("Supplier Hub production settings are enforced in both active sync paths", () => {
+test("Supplier Hub production settings and catalog limits are enforced by the Functions sync path", () => {
   const supplierHub = readFileSync("src/components/SupplierHubFiveStars.tsx", "utf8");
   const scheduledSync = readFileSync("functions/src/scheduled/supplierSync.ts", "utf8");
   const supplierApi = readFileSync("functions/src/api/routes/supplier.ts", "utf8");
-  assert.match(supplierHub, /supplierSettings\.websiteSyncEnabled === false/);
+  assert.doesNotMatch(supplierHub, /supplierSettings\.websiteSyncEnabled === false|limitSupplierProducts|commitSupplierSyncWrites/);
+  assert.match(supplierHub, /postSupplierApi\('\/api\/supplier-sync'/);
   assert.match(scheduledSync, /settings\.websiteSyncEnabled === false/);
   assert.match(scheduledSync, /enabledSupplierIdsConfigured === true/);
-  assert.match(supplierHub, /resolveSupplierProductLimit/);
   assert.match(scheduledSync, /resolveSupplierProductLimit/);
-  assert.match(supplierHub, /limitSupplierProducts<RawA2ZProduct>\(fetched as RawA2ZProduct\[\], limitNum\)/);
   assert.match(scheduledSync, /normalizeSupplierCatalogPageSize\(sourcePageSize\)/);
   assert.match(scheduledSync, /runSupplierCatalogTraversal/);
-  assert.match(supplierHub, /productLimit: limitNum/);
-  assert.match(supplierHub, /for \(const prod of slicedProducts\)/);
   assert.match(scheduledSync, /for \(const product of productsToProcess\)/);
-  assert.match(supplierHub, /\[SupplierLimitTrace\] queue-writer-input/);
   assert.match(supplierApi, /requestedProductLimit/);
-  assert.match(supplierHub, /existingQueueIds\.has\(queueItemId\)/);
   assert.match(scheduledSync, /existingQueueIds\.has\(queueItemId\)/);
-  assert.match(supplierHub, /calculateSupplierInitialPricing/);
   assert.match(scheduledSync, /calculateSupplierInitialPricing/);
   assert.equal(supplierHub.includes("{ id: 'electronics', name: 'Electronics' }"), false);
 });
 
 test("A2Z keeps active zero-stock products so stock changes can reach review", () => {
-  const localConnector = readFileSync("src/services/connectors/a2z-website/A2ZConnectorService.ts", "utf8");
   const functionConnector = readFileSync("functions/src/api/suppliers/a2z/A2ZConnectorService.ts", "utf8");
-  for (const connector of [localConnector, functionConnector]) {
-    assert.equal(connector.includes("parsed.inventoryLevel > 0"), false);
-    assert.match(connector, /parsed\.sku && parsed\.title && isLiveStatus/);
-  }
+  assert.equal(functionConnector.includes("parsed.inventoryLevel > 0"), false);
+  assert.match(functionConnector, /parsed\.sku && parsed\.title && isLiveStatus/);
 });

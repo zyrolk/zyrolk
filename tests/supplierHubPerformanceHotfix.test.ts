@@ -87,9 +87,10 @@ test('job selection hands off to queued work after the tracked job completes', (
 
 test('Supplier Hub keeps its authenticated API callback stable across progress renders', () => {
   const component = projectFile('src/components/SupplierHubFiveStars.tsx');
-  assert.match(component, /const getSupplierApiHeaders = useCallback\(/);
-  assert.match(component, /const requestSupplierApi = useCallback\(/);
-  assert.match(component, /\}, \[getSupplierApiHeaders\]\);/);
+  const supplierApi = projectFile('src/services/supplierHubApi.ts');
+  assert.match(component, /requestSupplierApi/);
+  assert.match(supplierApi, /export async function requestSupplierApi/);
+  assert.match(supplierApi, /getSupplierApiHeaders/);
   assert.match(component, /export default React\.memo\(SupplierHubFiveStars\)/);
 });
 

@@ -28,6 +28,6 @@ test('server.ts exposes canonical Supplier routes only in a local runtime', () =
 
   assert.match(server, /const isLocalSupplierApiRuntime = process\.env\.NODE_ENV !== "production";/);
   assert.match(server, /if \(isLocalSupplierApiRuntime\) \{\s+registerSupplierRoutes\(app\);\s+registerSupplierPortalRoutes\(app/);
-  assert.match(server, /if \(isLocalSupplierApiRuntime && process\.env\.USE_LEGACY_SUPPLIER_SERVER === "true"\)/);
+  assert.doesNotMatch(server, /USE_LEGACY_SUPPLIER_SERVER|\/api\/fetch-supplier/);
   assert.match(hosting, /"source": "\/api\/\*\*"[\s\S]*"function": "api"/);
 });

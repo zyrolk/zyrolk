@@ -199,8 +199,7 @@ test('App Check, rate limits, safe telemetry and launch SEO are connected withou
   assert.match(seo, /BreadcrumbList/);
   assert.match(seo, /Product/);
   assert.match(readFileSync('src/features/reviews/reviewApi.ts', 'utf8'), /getAppCheckRequestHeaders/);
-  assert.match(readFileSync('src/components/AdminDashboard.tsx', 'utf8'), /getAppCheckRequestHeaders/);
-  assert.match(readFileSync('src/components/SupplierHubFiveStars.tsx', 'utf8'), /getAppCheckRequestHeaders/);
+  assert.match(readFileSync('src/services/supplierHubApi.ts', 'utf8'), /getAppCheckRequestHeaders/);
 });
 
 test('payment return UI includes polling, focus, screen-reader status and reduced-motion support', () => {

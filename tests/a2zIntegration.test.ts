@@ -225,7 +225,6 @@ test("A2Z credentials reject BOM, CRLF, newlines, and boundary whitespace withou
 test("A2Z deployment cannot package the legacy bootstrap endpoint or stale Functions output", () => {
   const auditedFiles = [
     "functions/src/api/suppliers/a2z/A2ZConnectorService.ts",
-    "src/services/connectors/a2z-website/A2ZConnectorService.ts",
     "server.ts",
   ];
 

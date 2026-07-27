@@ -4,13 +4,14 @@ import test from "node:test";
 
 test("Supplier Hub waits for Firebase Auth restoration and attaches the ID token", () => {
   const supplierHub = readFileSync("src/components/SupplierHubFiveStars.tsx", "utf8");
+  const supplierApi = readFileSync("src/services/supplierHubApi.ts", "utf8");
 
   assert.match(supplierHub, /onIdTokenChanged\(auth, \(currentUser\) =>/);
   assert.match(supplierHub, /if \(currentUser\) void loadSources\(\)/);
-  assert.match(supplierHub, /await auth\.authStateReady\(\)/);
-  assert.match(supplierHub, /user\.getIdToken\(forceRefresh\)/);
-  assert.match(supplierHub, /'Authorization': `Bearer \$\{token\}`/);
-  assert.match(supplierHub, /if \(response\.status === 401\) response = await request\(true\)/);
+  assert.match(supplierApi, /await auth\.authStateReady\(\)/);
+  assert.match(supplierApi, /user\.getIdToken\(forceRefresh\)/);
+  assert.match(supplierApi, /Authorization: `Bearer \$\{token\}`/);
+  assert.match(supplierApi, /if \(response\.status === 401\) response = await request\(true\)/);
 });
 
 test("local Admin Auth uses the same Firebase project while production keeps environment authority", () => {
