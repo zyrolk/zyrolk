@@ -19,14 +19,16 @@ import {
 } from 'lucide-react';
 import { formatSupplierTimestamp, supplierBusinessErrorMessage } from '../../services/supplierHubPresentation';
 import { reportClientIssue } from '../../services/observability/clientDiagnostics';
+import SupplierConnectionBadge from '../supplier-ui/SupplierConnectionBadge';
 
 type SupplierApiRequest = (path: string, method: 'GET' | 'POST', body?: Record<string, unknown>) => Promise<Response>;
 
 interface SupplierOperationsDashboardProps {
   requestApi: SupplierApiRequest;
-  activeSyncJob: { id: string; state: string; updatedAt: string } | null;
+  activeSyncJob: { id: string; state: string; updatedAt: string; sourceIds?: string[] } | null;
   refreshKey: number;
   mode: 'activity' | 'advanced';
+  supplierSources?: Array<Record<string, any>>;
 }
 
 interface OperationsSummary {
@@ -150,6 +152,7 @@ function SupplierOperationsDashboard({
   activeSyncJob,
   refreshKey,
   mode,
+  supplierSources = [],
 }: SupplierOperationsDashboardProps) {
   const [snapshot, setSnapshot] = useState<OperationsSnapshot | null>(null);
   const [queueItems, setQueueItems] = useState<QueueItem[]>([]);
@@ -161,6 +164,7 @@ function SupplierOperationsDashboard({
   const [queueState, setQueueState] = useState('all');
   const [search, setSearch] = useState('');
   const [auditSearch, setAuditSearch] = useState('');
+  const [activityFilter, setActivityFilter] = useState<'all' | 'success' | 'failed' | 'skipped' | 'running'>('all');
   const [selected, setSelected] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -327,6 +331,23 @@ function SupplierOperationsDashboard({
     return auditItems.filter((item) => [item.action, item.module, item.supplierId, item.sourceId, item.reason]
       .some((value) => String(value || '').toLowerCase().includes(needle)));
   }, [auditItems, auditSearch]);
+  const filteredHistoryItems = useMemo(() => historyItems.filter((item) => {
+    if (activityFilter === 'all') return true;
+    const status = String(item.status || item.state || '').trim().toLowerCase();
+    if (activityFilter === 'success') return ['success', 'completed'].includes(status);
+    if (activityFilter === 'failed') return ['failed', 'error'].includes(status);
+    if (activityFilter === 'skipped') return ['skipped', 'suppressed'].includes(status);
+    return ['running', 'pending', 'waiting', 'processing'].includes(status);
+  }), [activityFilter, historyItems]);
+
+  const historyStatusPresentation = (value: unknown): { label: string; className: string } => {
+    const status = String(value || '').trim().toLowerCase();
+    if (['success', 'completed'].includes(status)) return { label: 'Success', className: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' };
+    if (['failed', 'error'].includes(status)) return { label: 'Failed', className: 'bg-red-500/10 text-red-600 dark:text-red-400' };
+    if (['skipped', 'suppressed'].includes(status)) return { label: 'Skipped', className: 'bg-slate-500/10 text-slate-600 dark:text-slate-300' };
+    if (['running', 'pending', 'waiting', 'processing'].includes(status)) return { label: 'Running', className: 'bg-blue-500/10 text-blue-600 dark:text-blue-400' };
+    return { label: stateLabel(status || 'unknown'), className: 'bg-amber-500/10 text-amber-600 dark:text-amber-400' };
+  };
 
   const activityCards = [
     ['Current sync', activeSyncJob && ['pending', 'running', 'waiting'].includes(activeSyncJob.state) ? stateLabel(activeSyncJob.state) : 'None', RefreshCw, 'text-blue-500'],
@@ -368,6 +389,16 @@ function SupplierOperationsDashboard({
 
       {visibleError && <div role="alert" className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300">{visibleError}</div>}
 
+      {mode === 'activity' && supplierSources.length > 0 && (
+        <section aria-label="Supplier connection status" className="flex flex-wrap gap-2 rounded-2xl border border-slate-200/70 bg-white p-3 dark:border-slate-800 dark:bg-slate-950">
+          {supplierSources.map((source) => {
+            const sourceId = String(source.id || '');
+            const activeForSource = Boolean(activeSyncJob && ['pending', 'running', 'waiting'].includes(activeSyncJob.state) && activeSyncJob.sourceIds?.includes(sourceId));
+            return <div key={sourceId} className="flex min-w-0 items-center gap-2 rounded-xl bg-slate-50 px-3 py-2 dark:bg-slate-900"><span className="max-w-36 truncate text-[10px] font-black text-slate-700 dark:text-slate-200">{String(source.supplierName || source.name || sourceId)}</span><SupplierConnectionBadge source={source} isSyncing={activeForSource} compact /></div>;
+          })}
+        </section>
+      )}
+
       <section aria-labelledby="operations-summary-title">
         <h4 id="operations-summary-title" className="sr-only">Operations summary</h4>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -394,8 +425,12 @@ function SupplierOperationsDashboard({
 
       {mode === 'activity' && <div className="grid gap-6 xl:grid-cols-2">
         <section aria-labelledby="sync-history-title" className="rounded-3xl border border-slate-200/70 bg-white p-5 dark:border-slate-800 dark:bg-slate-950">
-          <div className="mb-4 flex items-center gap-2"><History className="h-5 w-5 text-violet-500" /><h4 id="sync-history-title" className="font-black text-slate-900 dark:text-white">Sync History</h4></div>
-          <div className="space-y-3">{historyItems.map((item) => <div key={item.id} className="rounded-2xl border border-slate-100 p-3 text-xs dark:border-slate-800"><div className="flex justify-between gap-3"><strong>{item.supplier || 'Supplier sync'}</strong><span className={item.status === 'Success' ? 'text-emerald-500' : 'text-red-500'}>{item.status}</span></div><p className="mt-1 text-slate-500">{dateTime(item.createdAt)} · {duration(item.durationMs)} · imported {Number(item.productsImported || 0)} · updated {Number(item.productsUpdated || 0)} · deleted {Number(item.productsDeleted || 0)} · failed {Number(item.productsFailed || 0)}</p></div>)}</div>
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><div className="flex items-center gap-2"><History className="h-5 w-5 text-violet-500" /><h4 id="sync-history-title" className="font-black text-slate-900 dark:text-white">Sync History</h4></div><div className="flex flex-wrap gap-1.5" role="group" aria-label="Filter synchronization history">{(['all', 'success', 'failed', 'skipped', 'running'] as const).map((filter) => <button key={filter} type="button" aria-pressed={activityFilter === filter} onClick={() => setActivityFilter(filter)} className={`min-h-9 rounded-full px-3 text-[9px] font-black capitalize ${activityFilter === filter ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'}`}>{filter}</button>)}</div></div>
+          <div className="space-y-3">
+            {activeSyncJob && ['pending', 'running', 'waiting'].includes(activeSyncJob.state) && ['all', 'running'].includes(activityFilter) && <div className="rounded-2xl border border-blue-500/20 bg-blue-500/5 p-3 text-xs"><div className="flex flex-wrap justify-between gap-3"><strong>Current synchronization</strong><span className="rounded-full bg-blue-500/10 px-2 py-0.5 text-[9px] font-black text-blue-600 dark:text-blue-400">Running</span></div><p className="mt-1 text-slate-500">Updated {dateTime(activeSyncJob.updatedAt)}</p></div>}
+            {filteredHistoryItems.map((item) => { const presentation = historyStatusPresentation(item.status || item.state); return <div key={item.id} className="rounded-2xl border border-slate-100 p-3 text-xs dark:border-slate-800"><div className="flex flex-wrap justify-between gap-3"><strong>{item.supplier || 'Supplier sync'}</strong><span className={`rounded-full px-2 py-0.5 text-[9px] font-black ${presentation.className}`}>{presentation.label}</span></div><p className="mt-1 text-slate-500">{dateTime(item.createdAt)} · {duration(item.durationMs)} · imported {Number(item.productsImported || 0)} · updated {Number(item.productsUpdated || 0)} · deleted {Number(item.productsDeleted || 0)} · failed {Number(item.productsFailed || 0)}</p></div>; })}
+          </div>
+          {!filteredHistoryItems.length && !(activeSyncJob && ['pending', 'running', 'waiting'].includes(activeSyncJob.state) && ['all', 'running'].includes(activityFilter)) && <p className="rounded-2xl border border-dashed border-slate-200 py-8 text-center text-sm text-slate-500 dark:border-slate-800">No {activityFilter === 'all' ? '' : `${activityFilter} `}supplier activity found.</p>}
           {historyCursor && <button type="button" onClick={async () => { const result = await readJson<PageResponse>(await requestApi(`/api/supplier-operations/sync-history?limit=40&after=${encodeURIComponent(historyCursor)}`, 'GET')); setHistoryItems((current) => [...current, ...result.items]); setHistoryCursor(result.nextCursor); }} className="mt-4 min-h-10 rounded-xl bg-slate-100 px-4 text-xs font-black dark:bg-slate-800">Load more</button>}
         </section>
 

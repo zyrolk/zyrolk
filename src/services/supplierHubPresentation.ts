@@ -196,6 +196,38 @@ export function supplierHealthLabel(source: Record<string, unknown>): string {
   return 'Not checked';
 }
 
+export type SupplierConnectionState = 'connected' | 'syncing' | 'paused' | 'disabled' | 'problem';
+
+export interface SupplierConnectionPresentation {
+  state: SupplierConnectionState;
+  label: 'Connected' | 'Syncing' | 'Paused' | 'Disabled' | 'Connection Problem';
+}
+
+/** One presentation-only connection state shared by every Supplier Hub screen. */
+export function supplierConnectionPresentation(
+  source: Record<string, unknown> | null | undefined,
+  isSyncing = false,
+): SupplierConnectionPresentation {
+  const record = source || {};
+  const enabled = record.enabled !== false && record.isEnabled !== false;
+  const operationalState = normalized(record.operationalState);
+  const sourceStatus = normalized(record.sourceStatus || record.status);
+  const connectionStatus = normalized(record.connectionStatus);
+  const syncStatus = normalized(record.syncStatus || record.catalogSyncStatus);
+
+  if (!enabled || sourceStatus === 'disabled' || sourceStatus === 'inactive') {
+    return { state: 'disabled', label: 'Disabled' };
+  }
+  if (operationalState === 'paused' || sourceStatus === 'paused') {
+    return { state: 'paused', label: 'Paused' };
+  }
+  if (isSyncing || sourceStatus === 'syncing' || syncStatus === 'syncing' || syncStatus === 'running') {
+    return { state: 'syncing', label: 'Syncing' };
+  }
+  if (connectionStatus === 'connected') return { state: 'connected', label: 'Connected' };
+  return { state: 'problem', label: 'Connection Problem' };
+}
+
 export function supplierReviewApiState(filter: ProductReviewFilter): 'active' | 'conflict' | 'approved' {
   if (filter === 'approved_history') return 'approved';
   if (filter === 'conflicts') return 'conflict';

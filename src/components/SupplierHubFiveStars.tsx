@@ -30,6 +30,7 @@ import { reportSupplierImageFailure } from '../services/supplierImageDiagnostics
 import { reportClientIssue } from '../services/observability/clientDiagnostics';
 import SupplierReviewEditorModal from './SupplierReviewEditorModal';
 import SupplierOperationsDashboard from './supplier-operations/SupplierOperationsDashboard';
+import SupplierConnectionBadge from './supplier-ui/SupplierConnectionBadge';
 import { createSupplierReviewDraft, SupplierReviewDraft } from '../services/supplierReviewEditor';
 import { normalizeSupplierCategory } from '../services/supplierCategoryMapping';
 import {
@@ -224,6 +225,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
   const [reviewSearch, setReviewSearch] = useState<string>('');
   const [selectedReviewIds, setSelectedReviewIds] = useState<string[]>([]);
   const [bulkAction, setBulkAction] = useState<'approve' | 'reject' | null>(null);
+  const [bulkProgressTotal, setBulkProgressTotal] = useState(0);
 
   // 1. Supplier Sources & Connect states
   const [supplierSources, setSupplierSources] = useState<any[]>([]);
@@ -388,6 +390,15 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
       .map(([key, label]) => ({ key, label }))
       .sort((left, right) => left.label.localeCompare(right.label));
   }, [reviewQueue, supplierSources]);
+  const supplierSourceById = useMemo(
+    () => new Map(supplierSources.map((source) => [String(source.id), source])),
+    [supplierSources],
+  );
+  const sourceIsSyncing = useCallback((sourceId: string): boolean => Boolean(
+    activeSyncJob
+    && isSupplierSyncJobActive(activeSyncJob)
+    && (activeSyncJob.sourceIds.includes(sourceId) || activeSyncJob.progress.currentSourceId === sourceId)
+  ), [activeSyncJob]);
 
   useEffect(() => {
     const pendingIds = new Set(reviewQueue.filter((item) => item.status === 'Pending' && supplierReviewDecisionReady(item)).map((item) => item.id));
@@ -1016,6 +1027,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
 
   const handleBulkApproveReviews = async () => {
     if (selectedReviewItems.length === 0) return;
+    setBulkProgressTotal(selectedReviewItems.length);
     setBulkAction('approve');
     setErrorMsg(null);
     try {
@@ -1036,11 +1048,13 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
       setTimeout(() => setErrorMsg(null), 5000);
     } finally {
       setBulkAction(null);
+      setBulkProgressTotal(0);
     }
   };
 
   const handleBulkRejectReviews = async () => {
     if (selectedReviewItems.length === 0) return;
+    setBulkProgressTotal(selectedReviewItems.length);
     setBulkAction('reject');
     setErrorMsg(null);
     try {
@@ -1059,6 +1073,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
       setTimeout(() => setErrorMsg(null), 5000);
     } finally {
       setBulkAction(null);
+      setBulkProgressTotal(0);
     }
   };
 
@@ -1423,7 +1438,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
 
         {activeSubTab === 'activity' && supplierSourcesLoaded && supplierSources.length === 0 && (
           <div className="w-full rounded-3xl border border-dashed border-slate-200 bg-slate-50/50 p-8 text-center dark:border-slate-800 dark:bg-slate-900/10 sm:p-12">
-            <Activity className="mx-auto h-10 w-10 text-slate-300" aria-hidden="true" />
+            <span className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-blue-500/10 text-blue-500"><Activity className="h-8 w-8" aria-hidden="true" /></span>
             <h3 className="mt-3 text-sm font-bold text-slate-900 dark:text-white">No supplier activity yet.</h3>
             <p className="mt-1 text-xs text-slate-400">Activity will appear after your first synchronization.</p>
           </div>
@@ -1435,13 +1450,14 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
             activeSyncJob={activeSyncJob}
             refreshKey={operationsRefreshKey}
             mode="activity"
+            supplierSources={supplierSources}
           />
         )}
 
         {/* Product Review is the only business approval workspace. */}
         {activeSubTab === 'review' && supplierSourcesLoaded && supplierSources.length === 0 && (
           <div className="w-full rounded-3xl border border-dashed border-slate-200 bg-slate-50/50 p-8 text-center dark:border-slate-800 dark:bg-slate-900/10 sm:p-12">
-            <UserCheck className="mx-auto h-10 w-10 text-slate-300" aria-hidden="true" />
+            <span className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-emerald-500/10 text-emerald-500"><UserCheck className="h-8 w-8" aria-hidden="true" /></span>
             <h3 className="mt-3 text-sm font-bold text-slate-900 dark:text-white">No supplier connected</h3>
             <p className="mt-1 text-xs text-slate-400">Connect a supplier and run the initial synchronization.</p>
             <button type="button" onClick={() => { setActiveSubTab('suppliers'); setShowConnectModal(true); }} className="mt-4 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 text-xs font-extrabold text-white transition-colors hover:bg-emerald-700 sm:w-auto">
@@ -1514,6 +1530,19 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                 </button>
               </div>}
 
+              {bulkAction && (
+                <div className="mb-4 rounded-2xl border border-blue-500/20 bg-blue-500/10 p-4" role="status" aria-live="polite">
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-black text-blue-700 dark:text-blue-300">
+                    <span>{bulkAction === 'approve' ? 'Approving products...' : 'Rejecting products...'}</span>
+                    <span>{bulkProgressTotal} products</span>
+                  </div>
+                  <div className="mt-3 h-2 overflow-hidden rounded-full bg-blue-950/10" role="progressbar" aria-label="Bulk review request in progress" aria-valuetext={`Waiting for confirmation for ${bulkProgressTotal} products`}>
+                    <div className="h-full w-2/3 animate-pulse rounded-full bg-blue-600 motion-reduce:animate-none" />
+                  </div>
+                  <p className="mt-2 text-[10px] text-blue-600/80 dark:text-blue-300/80">Actions remain disabled until the server confirms the complete review request.</p>
+                </div>
+              )}
+
               {supplierQueueError && (
                 <p role="alert" className="mb-4 rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs font-semibold text-red-600">
                   {supplierBusinessErrorMessage(supplierQueueError, 'Supplier products could not be loaded.')}
@@ -1531,9 +1560,59 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                   </div>
                 </div>
               ) : (
-                <div className="overflow-x-auto">
+                <>
+                <div className="grid gap-3 md:hidden" aria-label="Products awaiting review">
+                  {visibleReviewItems.map((item) => {
+                    const product = item.productPayload || {};
+                    const sellingPrice = Number(product.price ?? item.marketPrice);
+                    const safeSellingPrice = Number.isFinite(sellingPrice) ? sellingPrice : 0;
+                    const specifications = product.specifications && typeof product.specifications === 'object'
+                      ? Object.keys(product.specifications as Record<string, unknown>)
+                      : [];
+                    const reviewSourceId = String(item.sourceId || item.supplierId || '');
+                    const reviewSource = supplierSourceById.get(reviewSourceId);
+                    return (
+                      <article key={item.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
+                        <div className="flex items-start gap-3 p-4">
+                          <SupplierImagePreview src={item.imageUrl} alt={item.productName} />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <h4 className="break-words text-sm font-black text-slate-900 dark:text-white">{item.productName}</h4>
+                                <p className="mt-1 font-mono text-[9px] text-slate-400">{item.supplierCode}</p>
+                              </div>
+                              <span className="rounded-lg bg-slate-100 px-2 py-1 text-[9px] font-black text-slate-600 dark:bg-slate-800 dark:text-slate-300">{supplierReviewStatusLabel(item)}</span>
+                            </div>
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              <SupplierConnectionBadge source={reviewSource} isSyncing={sourceIsSyncing(reviewSourceId)} compact />
+                              <span className="rounded-full bg-blue-500/10 px-2 py-0.5 text-[9px] font-black text-blue-600">{supplierReviewChangeLabel(item.comparison)}</span>
+                            </div>
+                          </div>
+                        </div>
+                        <dl className="grid grid-cols-2 gap-3 border-y border-slate-100 bg-slate-50/70 p-4 text-[10px] dark:border-slate-800 dark:bg-slate-900/40">
+                          <div><dt className="text-slate-400">Price</dt><dd className="font-black text-blue-600">LKR {safeSellingPrice.toLocaleString()}</dd></div>
+                          <div><dt className="text-slate-400">Stock</dt><dd className="font-black">{item.stock}</dd></div>
+                          <div><dt className="text-slate-400">Brand</dt><dd className="font-bold">{String(product.brand || item.brandMapping?.mappedBrandId || 'Brand needed')}</dd></div>
+                          <div><dt className="text-slate-400">Category</dt><dd className="font-bold">{String(product.category || item.categoryMapping?.targetCategoryId || 'Category needed')}</dd></div>
+                          <div className="col-span-2"><dt className="text-slate-400">Description</dt><dd className="mt-1 line-clamp-2 text-slate-600 dark:text-slate-300">{String(product.shortDescription || product.description || 'Description needed')}</dd></div>
+                          <div><dt className="text-slate-400">Specifications</dt><dd className="font-bold">{specifications.length}</dd></div>
+                          <div><dt className="text-slate-400">Detected</dt><dd className="font-bold">{formatSupplierTimestamp(item.createdAt, 'Recently')}</dd></div>
+                        </dl>
+                        {!item.productValidation?.readyToPublish && <p className="mx-4 mt-3 rounded-xl bg-amber-500/10 p-2 text-[10px] font-bold text-amber-700 dark:text-amber-300">{(item.productValidation?.missingFields || ['Review required']).join(', ')}</p>}
+                        {supplierReviewDecisionReady(item) && (
+                          <div className="sticky bottom-0 z-10 mt-3 grid grid-cols-3 gap-2 border-t border-slate-100 bg-white/95 p-3 backdrop-blur dark:border-slate-800 dark:bg-slate-950/95">
+                            <button type="button" onClick={() => openSupplierReviewEditor(item)} disabled={processingChangeId === item.id || bulkAction !== null} className="min-h-11 rounded-xl bg-emerald-600 text-[10px] font-black text-white disabled:opacity-50">Edit</button>
+                            <button type="button" onClick={() => void handleApproveReviewItem(item, createSupplierReviewDraft(item))} disabled={processingChangeId === item.id || bulkAction !== null || item.productValidation?.readyToPublish === false} className="min-h-11 rounded-xl bg-blue-600 text-[10px] font-black text-white disabled:opacity-50">Approve</button>
+                            <button type="button" onClick={() => { setRejectingReviewItem(item); setRejectionReasonDraft(''); }} disabled={processingChangeId === item.id || bulkAction !== null} className="min-h-11 rounded-xl bg-red-600 text-[10px] font-black text-white disabled:opacity-50">Reject</button>
+                          </div>
+                        )}
+                      </article>
+                    );
+                  })}
+                </div>
+                <div className="hidden overflow-x-auto md:block">
                   <table className="w-full text-xs text-left border-collapse">
-                    <thead>
+                    <thead className="sticky top-0 z-10 bg-white dark:bg-[#0d1424]">
                       <tr className="border-b border-slate-100 dark:border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
                         <th className="py-3 px-2">
                           <input
@@ -1552,7 +1631,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                         <th className="py-3 px-4">Supplier & Detection Time</th>
                         <th className="py-3 px-4">Validation Problems</th>
                         <th className="py-3 px-4">Status</th>
-                        <th className="py-3 px-4 text-right">Actions</th>
+                        <th className="sticky right-0 bg-white py-3 px-4 text-right dark:bg-[#0d1424]">Actions</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1585,7 +1664,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                           <td className="py-3 px-4 text-[10px]"><strong className="block text-slate-700 dark:text-slate-200">{String(product.brand || item.brandMapping?.mappedBrandId || 'Brand needed')}</strong><span className="mt-1 block text-slate-400">{String(product.category || item.categoryMapping?.targetCategoryId || 'Category needed')}</span></td>
                           <td className="py-3 px-4 text-[10px]"><strong className="block text-blue-600">LKR {safeSellingPrice.toLocaleString()}</strong><span className="mt-1 block text-slate-400">{item.stock} in stock</span></td>
                           <td className="max-w-64 py-3 px-4 text-[10px]"><p className="line-clamp-2 text-slate-600 dark:text-slate-300">{String(product.shortDescription || product.description || 'Description needed')}</p><p className="mt-1 font-bold text-slate-400">{specifications.length} specifications</p></td>
-                          <td className="py-3 px-4 text-[10px]"><strong className="block">{item.supplierName || item.sourceId || 'Supplier'}</strong><span className="mt-1 block text-slate-400">{formatSupplierTimestamp(item.createdAt, 'Recently')}</span></td>
+                          <td className="py-3 px-4 text-[10px]"><strong className="block">{item.supplierName || item.sourceId || 'Supplier'}</strong><span className="mt-1 block text-slate-400">{formatSupplierTimestamp(item.createdAt, 'Recently')}</span><span className="mt-2 block"><SupplierConnectionBadge source={supplierSourceById.get(String(item.sourceId || item.supplierId || ''))} isSyncing={sourceIsSyncing(String(item.sourceId || item.supplierId || ''))} compact /></span></td>
                           <td className="py-3 px-4">
                             <p className={item.productValidation?.readyToPublish ? 'text-[10px] font-black text-emerald-600' : 'text-[10px] font-black text-amber-600'}>
                               {item.productValidation?.readyToPublish ? 'No validation problems' : (item.productValidation?.missingFields || ['Review required']).join(', ')}
@@ -1650,12 +1729,12 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                               </p>
                             ) : null}
                           </td>
-                          <td className="py-3 px-4 text-right">
+                          <td className="sticky right-0 bg-white py-3 px-4 text-right dark:bg-[#0d1424]">
                             {supplierReviewDecisionReady(item) && (
                               <div className="flex items-center justify-end gap-2">
                                 <button
                                   onClick={() => openSupplierReviewEditor(item)}
-                                  disabled={processingChangeId === item.id}
+                                  disabled={processingChangeId === item.id || bulkAction !== null}
                                   className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-700 text-white font-bold rounded-lg text-[10px] transition-colors flex items-center gap-1 cursor-pointer"
                                 >
                                   <Check className="h-3 w-3" />
@@ -1663,7 +1742,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                                 </button>
                                 <button
                                   onClick={() => void handleApproveReviewItem(item, createSupplierReviewDraft(item))}
-                                  disabled={processingChangeId === item.id || item.productValidation?.readyToPublish === false}
+                                  disabled={processingChangeId === item.id || bulkAction !== null || item.productValidation?.readyToPublish === false}
                                   className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-400 text-white font-bold rounded-lg text-[10px] transition-colors flex items-center gap-1"
                                 >
                                   <Check className="h-3 w-3" /> Approve
@@ -1673,7 +1752,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                                     setRejectingReviewItem(item);
                                     setRejectionReasonDraft('');
                                   }}
-                                  disabled={processingChangeId === item.id}
+                                  disabled={processingChangeId === item.id || bulkAction !== null}
                                   className="px-3 py-1.5 bg-red-600 hover:bg-red-700 disabled:bg-slate-700 text-white font-bold rounded-lg text-[10px] transition-colors flex items-center gap-1 cursor-pointer"
                                 >
                                   <X className="h-3 w-3" />
@@ -1694,6 +1773,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                     </tbody>
                   </table>
                 </div>
+                </>
               )}
               {supplierReviewCursor && (
                 <div className="mt-4 flex justify-center">
@@ -1729,7 +1809,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
 
             {supplierSources.length === 0 ? (
               <div className="p-12 text-center rounded-3xl border border-dashed border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/10 space-y-3">
-                <Globe className="h-10 w-10 text-slate-300 mx-auto" />
+                <span className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-emerald-500/10 text-emerald-500"><Globe className="h-8 w-8" aria-hidden="true" /></span>
                 <div className="space-y-1">
                   <p className="text-sm font-bold text-slate-900 dark:text-white">No suppliers connected</p>
                   <p className="text-xs text-slate-400">Add your first supplier, test the connection and run the initial sync to begin importing products.</p>
@@ -1745,10 +1825,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                     key={source.id}
                     className={`p-5 rounded-3xl border ${isDarkMode ? 'bg-[#101827]/75 border-slate-800/60 shadow-xl shadow-slate-950/20' : 'bg-white border-slate-200 shadow-xs'} transition-all relative overflow-hidden`}
                   >
-                    <div className={`absolute top-0 bottom-0 left-0 w-1 ${
-                      String(source.connectionStatus || '').toLowerCase() === 'connected' ? 'bg-emerald-500' :
-                      String(source.connectionStatus || '').toLowerCase() === 'not synced' ? 'bg-amber-500' : 'bg-rose-500'
-                    }`} />
+                    <div className="absolute bottom-0 left-0 top-0 w-1 bg-blue-500" aria-hidden="true" />
                     
                     <div className="flex items-start justify-between">
                       <div className="space-y-1">
@@ -1760,18 +1837,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                         </p>
                       </div>
 
-                      <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold border flex items-center gap-1 uppercase tracking-wider ${
-                        String(source.connectionStatus || '').toLowerCase() === 'connected' ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' :
-                        String(source.connectionStatus || '').toLowerCase() === 'not synced' ? 'bg-amber-500/10 text-amber-500 border-amber-500/20' :
-                        'bg-rose-500/10 text-rose-500 border-rose-500/20'
-                      }`}>
-                        <span className={`h-1.5 w-1.5 rounded-full ${
-                          String(source.connectionStatus || '').toLowerCase() === 'connected' ? 'bg-emerald-500 animate-pulse' :
-                          String(source.connectionStatus || '').toLowerCase() === 'not synced' ? 'bg-amber-500' :
-                          'bg-rose-500'
-                        }`} />
-                        {String(source.connectionStatus || '').toLowerCase() === 'connected' ? 'Connected' : 'Connection Problem'}
-                      </span>
+                      <SupplierConnectionBadge source={source} isSyncing={sourceIsSyncing(String(source.id))} />
                     </div>
 
                     <div className="grid grid-cols-2 gap-4 mt-6 p-3 bg-slate-50 dark:bg-slate-900/40 rounded-2xl border border-slate-100/50 dark:border-slate-800/40 text-xs">
@@ -1793,8 +1859,14 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                       </div>
                       <div className="space-y-0.5 border-t border-slate-100 pt-2 dark:border-slate-800/40">
                         <span className="text-slate-400 font-bold block text-[10px] uppercase">Health</span>
-                        <span className="font-bold text-emerald-500">{supplierHealthLabel(source)}</span>
+                        <span className={`inline-flex rounded-full px-2 py-0.5 font-black ${supplierHealthLabel(source) === 'Needs attention' ? 'bg-rose-500/10 text-rose-500' : supplierHealthLabel(source) === 'Healthy' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-slate-500/10 text-slate-500'}`}>{supplierHealthLabel(source) === 'Needs attention' ? 'Needs Attention' : supplierHealthLabel(source)}</span>
                       </div>
+                      {(source.nextScheduledSync || source.nextSyncAt || source.schedule?.nextRunAt) && (
+                        <div className="col-span-2 border-t border-slate-100 pt-2 dark:border-slate-800/40">
+                          <span className="block text-[10px] font-bold uppercase text-slate-400">Next Scheduled Sync</span>
+                          <span className="font-medium text-slate-700 dark:text-slate-200">{formatSupplierTimestamp(source.nextScheduledSync || source.nextSyncAt || source.schedule?.nextRunAt)}</span>
+                        </div>
+                      )}
                     </div>
 
                     <div className="mt-5 flex w-full flex-wrap items-center gap-3 sm:justify-end">
