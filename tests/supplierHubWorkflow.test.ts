@@ -25,7 +25,7 @@ test("supplier sync regression: sync code does not queue direct writes to produc
   assert.equal(/batch\.set\(doc\(db,\s*["']products["']/.test(supplierHub), false);
   assert.equal(/queuedWrites\.push\(\{\s*collection:\s*["']products["']/.test(scheduledSync), false);
   assert.doesNotMatch(supplierHub, /runLocalSupplierSync|filterSupplierComparison|commitSupplierSyncWrites/);
-  assert.match(scheduledSync, /if \(!comparison\) \{[\s\S]*metrics\.productsSkipped \+= 1;[\s\S]*continue;/);
+  assert.match(scheduledSync, /if \(!selectedComparison\) \{[\s\S]*metrics\.productsSkipped \+= 1;[\s\S]*continue;/);
 });
 
 test("visible supplier sync controls invoke the real queue synchronization pipeline", () => {

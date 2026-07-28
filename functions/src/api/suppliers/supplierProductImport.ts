@@ -3,6 +3,7 @@ import { isDeepStrictEqual } from "node:util";
 import {
   CanonicalSupplierFieldDefinition,
   CanonicalSupplierFieldId,
+  SUPPLIER_FIELD_BY_ID,
   SUPPLIER_FIELD_MANIFEST,
   SupplierFieldAuditRepresentation,
   SupplierFieldDestination,
@@ -57,6 +58,31 @@ export interface SupplierProductComparison {
   fieldChanges: SupplierFieldChange[];
 }
 
+const COMPARISON_STATUSES = new Set<SupplierProductComparisonStatus>([
+  "NEW_PRODUCT",
+  "PRICE_CHANGED",
+  "STOCK_CHANGED",
+  "DESCRIPTION_CHANGED",
+  "IMAGE_CHANGED",
+  "UNCHANGED",
+]);
+
+const comparisonFromUnknown = (value: unknown): SupplierProductComparison | null => {
+  const comparison = asRecord(value);
+  const rawStatus = String(comparison.status || comparison.comparisonStatus || "").trim() as SupplierProductComparisonStatus;
+  if (!COMPARISON_STATUSES.has(rawStatus)) return null;
+  const fieldChanges = Array.isArray(comparison.fieldChanges)
+    ? comparison.fieldChanges.filter((change): change is SupplierFieldChange => {
+      const field = asRecord(change).field;
+      return typeof field === "string" && SUPPLIER_FIELD_BY_ID.has(field as CanonicalSupplierFieldId);
+    })
+    : [];
+  const changedFields = Array.isArray(comparison.changedFields)
+    ? comparison.changedFields.filter((field): field is string => typeof field === "string" && Boolean(field.trim()))
+    : [];
+  return { status: rawStatus, changedFields, fieldChanges };
+};
+
 const pathValue = (record: Readonly<Record<string, unknown>>, path: string): unknown => {
   let current: unknown = record;
   for (const segment of path.split(".")) {
@@ -107,6 +133,66 @@ const valuesEqual = (
   right: unknown,
   comparison: CanonicalSupplierFieldDefinition["comparison"],
 ): boolean => isDeepStrictEqual(canonicalize(left, comparison), canonicalize(right, comparison));
+
+/**
+ * Accumulates repeated supplier observations into one deterministic review.
+ * The first approved-catalog value remains the `before` value while the most
+ * recent supplier observation becomes `after`.
+ */
+export function accumulateSupplierProductComparison(
+  previousValue: unknown,
+  latest: SupplierProductComparison,
+): SupplierProductComparison {
+  const previous = comparisonFromUnknown(previousValue);
+  if (!previous) return latest;
+
+  const changes = new Map<CanonicalSupplierFieldId, SupplierFieldChange>();
+  previous.fieldChanges.forEach((change) => changes.set(change.field, change));
+  latest.fieldChanges.forEach((change) => {
+    const pending = changes.get(change.field);
+    if (!pending) {
+      changes.set(change.field, change);
+      return;
+    }
+    const definition = SUPPLIER_FIELD_BY_ID.get(change.field);
+    if (definition && valuesEqual(pending.before, change.after, definition.comparison)) {
+      changes.delete(change.field);
+      return;
+    }
+    changes.set(change.field, {
+      ...change,
+      before: pending.before,
+      changeType: change.changeType === "invalid_removal"
+        ? "invalid_removal"
+        : hasValue(pending.before) ? "changed" : "added",
+    });
+  });
+
+  const fieldChanges = [...changes.values()];
+  const structuredLabels = new Set([...previous.fieldChanges, ...latest.fieldChanges].map((change) => change.label));
+  const legacyLabels = [...previous.changedFields, ...latest.changedFields]
+    .filter((label) => !structuredLabels.has(label));
+  const changedFields = [...new Set([...fieldChanges.map((change) => change.label), ...legacyLabels])];
+  if (previous.status === "NEW_PRODUCT" || latest.status === "NEW_PRODUCT") {
+    return { status: "NEW_PRODUCT", changedFields, fieldChanges };
+  }
+  if (fieldChanges.length === 0) {
+    return {
+      status: changedFields.length > 0 ? latest.status : "UNCHANGED",
+      changedFields,
+      fieldChanges,
+    };
+  }
+  const groups = new Set(fieldChanges.map((change) => change.syncGroup));
+  const status: SupplierProductComparisonStatus = groups.has("pricing")
+    ? "PRICE_CHANGED"
+    : groups.has("inventory")
+      ? "STOCK_CHANGED"
+      : groups.has("media")
+        ? "IMAGE_CHANGED"
+        : "DESCRIPTION_CHANGED";
+  return { status, changedFields, fieldChanges };
+}
 
 const fieldWasProvided = (product: RawA2ZProduct, field: CanonicalSupplierFieldDefinition): boolean => {
   const providedFields = new Set(product.providedFields || []);

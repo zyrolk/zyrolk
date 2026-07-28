@@ -8,6 +8,7 @@ import { SupplierRegistry } from "../api/suppliers/SupplierRegistry";
 import { isValidSupplierImageUrl, ProductParser } from "../api/suppliers/a2z/ProductParser";
 import { RawA2ZProduct } from "../api/suppliers/a2z/types";
 import {
+  accumulateSupplierProductComparison,
   buildSupplierImportWarnings,
   buildSupplierLifecycleFieldChange,
   buildSupplierProductComparison,
@@ -286,6 +287,10 @@ const supplierPriority = (source: SupplierSource): number => {
 
 const normalizeConflictValue = (value: unknown): string => String(value || "").trim().toLocaleLowerCase();
 
+const asRecord = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value)
+  ? value as Record<string, unknown>
+  : {};
+
 function getMaxProducts(settings: SupplierSettings): number {
   const configured = Number(settings.maxProducts || DEFAULT_MAX_PRODUCTS);
   if (!Number.isFinite(configured) || configured < 1) {
@@ -437,7 +442,7 @@ interface SupplierQueueCandidateSnapshot {
 async function loadSupplierQueueCandidates(products: readonly RawA2ZProduct[]): Promise<SupplierQueueCandidateSnapshot> {
   const supplierCodes = [...new Set(products.map((product) => product.sku.trim()).filter(Boolean))];
   const snapshots = await Promise.all(chunkValues(supplierCodes).flatMap((codes) => [
-    adminDb.collection("supplier_review_queue").select("supplierCode", "barcode", "sourceId", "supplierId", "supplierPriority", "queueState", "status", "canonicalProductId", "productId", "matchedProductId", "supplierOfferId", "productPayload", "supplierSnapshot").where("supplierCode", "in", codes).get(),
+    adminDb.collection("supplier_review_queue").select("supplierCode", "barcode", "sourceId", "supplierId", "supplierPriority", "queueState", "status", "canonicalProductId", "productId", "matchedProductId", "supplierOfferId", "productPayload", "supplierSnapshot", "comparison", "comparisonStatus", "approvalBaseline", "reconciliationAction", "createdAt", "queueCreatedAt").where("supplierCode", "in", codes).get(),
     adminDb.collection("supplier_import_queue").select("supplierCode", "sku").where("supplierCode", "in", codes).get(),
     adminDb.collection("supplier_import_queue").select("supplierCode", "sku").where("sku", "in", codes).get(),
   ]));
@@ -1016,6 +1021,81 @@ async function heartbeatSyncExecutionLocks(sources: readonly SupplierSource[], b
   }
 }
 
+export function buildPreApprovalSupplierRemovalQueueItem(input: {
+  queueItemId: string;
+  queueItem: Record<string, unknown>;
+  offer: SupplierProductOffer;
+  source: SupplierSource;
+  traversal: SupplierCatalogTraversalCheckpoint;
+  batchId: string;
+  detectedAt: string;
+}): { id: string; data: Record<string, unknown> } | null {
+  const current = input.queueItem;
+  if (!input.offer.productId || String(current.reconciliationAction || "") === "supplier_offer_unavailable") return null;
+  const queueCreatedAt = String(current.createdAt || current.queueCreatedAt || input.detectedAt);
+  const currentPayload = asRecord(current.productPayload);
+  const productPayload = buildSupplierRemovalProductPayload(input.offer.productId, currentPayload, {});
+  const supplierSnapshot = {
+    ...input.offer.supplierSnapshot,
+    ...asRecord(current.supplierSnapshot),
+    supplierId: input.offer.supplierId,
+    sourceId: input.offer.sourceId,
+    supplierSku: input.offer.sku,
+    supplierProductId: input.offer.supplierProductId,
+    reconciliationAction: "supplier_offer_unavailable",
+    missingFromTraversalId: input.traversal.traversalId,
+  };
+  const fieldChanges = [
+    buildSupplierLifecycleFieldChange("availability", input.offer.availability, "unavailable"),
+    buildSupplierLifecycleFieldChange("stock", input.offer.stock, 0),
+  ];
+  return {
+    id: input.queueItemId,
+    data: {
+      ...current,
+      id: input.queueItemId,
+      status: "Pending",
+      supplierCode: input.offer.sku,
+      supplierName: input.source.supplierName || input.source.name || input.source.id,
+      source: "Website",
+      connector: String(input.source.connectorType || input.source.supplierType || input.source.type || "website"),
+      sourceId: input.offer.sourceId,
+      supplierId: input.offer.supplierId,
+      supplierPriority: input.offer.priority,
+      supplierOfferId: input.offer.id,
+      canonicalProductId: input.offer.productId,
+      productId: input.offer.productId,
+      batchId: input.batchId,
+      productName: String(current.productName || currentPayload.name || input.offer.productId),
+      costPrice: input.offer.cost,
+      marketPrice: input.offer.price,
+      stock: 0,
+      imageUrl: String(currentPayload.imageUrl || current.imageUrl || ""),
+      comparisonStatus: "SUPPLIER_OFFER_REMOVED",
+      comparison: {
+        matchFound: false,
+        matchedProductId: null,
+        comparisonStatus: "SUPPLIER_OFFER_REMOVED",
+        changedFields: fieldChanges.map((change) => change.label),
+        fieldChanges,
+      },
+      reconciliationAction: "supplier_offer_unavailable",
+      productPayload,
+      supplierSnapshot,
+      matchedProductId: null,
+      approvalBaseline: current.approvalBaseline || buildSupplierProductApprovalBaseline(
+        input.offer.productId,
+        undefined,
+        queueCreatedAt,
+      ),
+      ...buildSupplierQueueLifecycle(queueCreatedAt),
+      correlationId: String(current.correlationId || input.queueItemId),
+      createdAt: queueCreatedAt,
+      updatedAt: input.detectedAt,
+    },
+  };
+}
+
 async function queueMissingSupplierOffersForReview(
   source: SupplierSource,
   traversal: SupplierCatalogTraversalCheckpoint,
@@ -1059,14 +1139,29 @@ async function queueMissingSupplierOffersForReview(
         ? await adminDb.getAll(...candidateQueueIds.map((id) => adminDb.collection("supplier_review_queue").doc(id)))
         : [];
       const existingQueueIds = new Set(existingQueueSnapshots.filter((document) => document.exists).map((document) => document.id));
+      const activeReviewSnapshots = await Promise.all(chunkValues(missing.map((offer) => offer.id)).map((offerIds) => (
+        adminDb.collection("supplier_review_queue").where("supplierOfferId", "in", offerIds).get()
+      )));
+      const activeReviewByOfferId = new Map<string, FirebaseFirestore.QueryDocumentSnapshot>();
+      activeReviewSnapshots.flatMap((snapshot) => snapshot.docs).forEach((document) => {
+        const data = document.data();
+        const state = String(data.queueState || "").toLowerCase();
+        const status = String(data.status || "").toLowerCase();
+        if (["approved", "rejected", "suppressed"].includes(state) || ["approved", "rejected"].includes(status)) return;
+        const offerId = String(data.supplierOfferId || "");
+        if (offerId && !activeReviewByOfferId.has(offerId)) activeReviewByOfferId.set(offerId, document);
+      });
       const writes: SupplierSyncWrite[] = [];
       for (let index = 0; index < missing.length; index += 1) {
         const offer = missing[index];
         const queueItemId = candidateQueueIds[index];
+        const productSnapshot = offer.productId ? products.get(offer.productId) : undefined;
+        const activePreApprovalReview = !productSnapshot?.exists ? activeReviewByOfferId.get(offer.id) : undefined;
+        const atomicGroup = activePreApprovalReview?.id || queueItemId;
         writes.push({
           collection: SUPPLIER_PRODUCT_OFFERS_COLLECTION,
           id: offer.id,
-          atomicGroup: queueItemId,
+          atomicGroup,
           data: {
             stock: 0,
             availability: "unavailable",
@@ -1078,8 +1173,40 @@ async function queueMissingSupplierOffersForReview(
           },
         });
         if (!offer.productId || existingQueueIds.has(queueItemId)) continue;
-        const productSnapshot = products.get(offer.productId);
-        if (!productSnapshot?.exists) continue;
+        if (!productSnapshot?.exists) {
+          const activeReview = activePreApprovalReview;
+          if (!activeReview) continue;
+          const detectedAt = new Date().toISOString();
+          const removal = buildPreApprovalSupplierRemovalQueueItem({
+            queueItemId: activeReview.id,
+            queueItem: activeReview.data(),
+            offer,
+            source,
+            traversal,
+            batchId,
+            detectedAt,
+          });
+          if (!removal) continue;
+          writes.push({ collection: "supplier_review_queue", id: removal.id, data: removal.data, atomicGroup: removal.id });
+          const auditReference = adminDb.collection("supplier_approval_audit").doc();
+          writes.push({
+            collection: "supplier_approval_audit",
+            id: auditReference.id,
+            create: true,
+            atomicGroup: removal.id,
+            data: buildSupplierAuditEvent({
+              queueItemId: removal.id,
+              queueItem: removal.data,
+              action: "queued",
+              previousState: String(activeReview.data().queueState || activeReview.data().status || "review_pending").toLowerCase(),
+              newState: "queued",
+              reason: "An unapproved supplier product was absent from a verified complete catalog traversal.",
+            }, auditReference.id),
+          });
+          queueItemIds.push(removal.id);
+          queued += 1;
+          continue;
+        }
         const currentProduct = productSnapshot.data() || {};
         const privateProduct = privateProducts.get(offer.productId) || {};
         const productPayload = { ...currentProduct, ...privateProduct, id: offer.productId };
@@ -1805,6 +1932,7 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
             stock: ownOffer.stock,
           } : match ? { ...match } : undefined;
           const hasActiveReviewQueueItem = Boolean(activeReviewQueueDoc);
+          const activeReviewQueueData = activeReviewQueueDoc?.data();
           const detectedComparison = buildSupplierProductComparison(product, comparisonBaseline);
           const reactivation = buildSupplierReactivationComparison(
             detectedComparison,
@@ -1812,13 +1940,13 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
             initialOffer.availability,
           );
           const reactivatingSupplierOffer = reactivation.reactivating;
-          const comparison = selectSupplierComparisonForReview(
+          const selectedComparison = selectSupplierComparisonForReview(
             reactivation.comparison,
             sourceSettings,
             ownOffer?.reviewStatus,
             hasActiveReviewQueueItem,
           );
-          if (!comparison) {
+          if (!selectedComparison) {
             queuedWrites.push({
               collection: SUPPLIER_PRODUCT_OFFERS_COLLECTION,
               id: initialOffer.id,
@@ -1831,6 +1959,20 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
             metrics.productsSkipped += 1;
             continue;
           }
+          const canonicalSelectedComparison: SupplierProductComparison = {
+            ...selectedComparison,
+            fieldChanges: selectedComparison.fieldChanges || [],
+          };
+          const comparison = activeReviewQueueData
+            ? accumulateSupplierProductComparison(
+              activeReviewQueueData.comparison || {
+                comparisonStatus: activeReviewQueueData.comparisonStatus,
+                changedFields: [],
+                fieldChanges: [],
+              },
+              canonicalSelectedComparison,
+            )
+            : canonicalSelectedComparison;
           const supplierBrand = String(product.brand || product.specifications?.brand || product.specifications?.Brand || "").trim();
           const supplierKeywords = product.keywords || String(product.specifications?.keywords || product.specifications?.Keywords || "")
             .split(/[,|]/gu)
@@ -1852,9 +1994,12 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
             brands: storeBrands,
             mappings: storedMappings.brandMappings,
           });
+          const productPayloadBase = match && activeReviewQueueData
+            ? { ...match, ...asRecord(activeReviewQueueData.productPayload), id: match.id } as ExistingProduct
+            : match;
           const productPayload = buildProductPayload(
             product,
-            match,
+            productPayloadBase,
             categoryMapping,
             brandMapping,
             storeBrands,
@@ -1914,6 +2059,7 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
               supplierCatalogSeenAt: createdAt,
             },
           });
+          const queueCreatedAt = String(activeReviewQueueData?.createdAt || activeReviewQueueData?.queueCreatedAt || createdAt);
           const queueItem = {
             id: queueItemId,
             status: "Pending",
@@ -1955,12 +2101,12 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
               warnings: productImportWarnings,
             },
             matchedProductId: match?.id || ownOffer?.productId || duplicateOffer?.productId || skuWinner?.productId || barcodeWinner?.productId || null,
-            approvalBaseline: buildSupplierProductApprovalBaseline(
+            approvalBaseline: activeReviewQueueData?.approvalBaseline || buildSupplierProductApprovalBaseline(
               String(productPayload.id),
               match ? { ...match } : undefined,
-              createdAt,
+              queueCreatedAt,
             ),
-            createdAt,
+            createdAt: queueCreatedAt,
             updatedAt: createdAt,
           };
 
@@ -1970,7 +2116,7 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
             const pendingChange = buildPendingChange(queueItem, comparison);
             const queueData = {
               ...queueItem,
-              ...buildSupplierQueueLifecycle(createdAt),
+              ...buildSupplierQueueLifecycle(queueCreatedAt),
               correlationId: queueItemId,
               importPayload: {
                 ...product,
