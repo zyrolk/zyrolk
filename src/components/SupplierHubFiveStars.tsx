@@ -197,6 +197,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
   const [supplierReviewLoading, setSupplierReviewLoading] = useState(false);
   const [supplierQueueError, setSupplierQueueError] = useState<string | null>(null);
   const supplierQueueRequestIdRef = useRef(0);
+  const supplierReviewLoadedPagesRef = useRef(1);
   
   // Syncing state
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
@@ -454,26 +455,45 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
   };
 
   const loadSupplierQueueView = async (
-    options: { append?: boolean; after?: string | null; reviewState?: 'active' | 'conflict' | 'approved' } = {},
+    options: {
+      append?: boolean;
+      after?: string | null;
+      reviewState?: 'active' | 'conflict' | 'approved';
+      pageCount?: number;
+    } = {},
   ): Promise<void> => {
     const append = options.append === true;
     const after = options.after === undefined ? (append ? supplierReviewCursor : null) : options.after;
     if (append && !after) return;
+    const requestedPageCount = append ? 1 : Math.max(1, options.pageCount || 1);
     const requestId = ++supplierQueueRequestIdRef.current;
     setSupplierReviewLoading(true);
     try {
-      const parameters = new URLSearchParams({ view: 'review', limit: '50' });
-      parameters.set('state', options.reviewState || supplierReviewApiState(reviewFilter));
-      if (after) parameters.set('after', after);
-      const response = await getSupplierApi(`/api/supplier-review-queue?${parameters.toString()}`);
-      const result = await response.json().catch(() => ({})) as SupplierQueuePageResponse;
-      if (!response.ok || result.success !== true || !Array.isArray(result.items)) {
-        throw new Error(result.error || 'Supplier products could not be loaded.');
+      let scanCursor = after;
+      let nextCursor: string | null = null;
+      let pagesLoaded = 0;
+      let items: ReviewQueueItem[] = [];
+      for (let page = 0; page < requestedPageCount; page += 1) {
+        const parameters = new URLSearchParams({ view: 'review', limit: '50', filter: reviewFilter });
+        parameters.set('state', options.reviewState || supplierReviewApiState(reviewFilter));
+        if (scanCursor) parameters.set('after', scanCursor);
+        const response = await getSupplierApi(`/api/supplier-review-queue?${parameters.toString()}`);
+        const result = await response.json().catch(() => ({})) as SupplierQueuePageResponse;
+        if (!response.ok || result.success !== true || !Array.isArray(result.items)) {
+          throw new Error(result.error || 'Supplier products could not be loaded.');
+        }
+        if (requestId !== supplierQueueRequestIdRef.current) return;
+        items = mergeSupplierQueuePage(items, result.items as unknown as ReviewQueueItem[]);
+        pagesLoaded += 1;
+        nextCursor = result.nextCursor || null;
+        if (!nextCursor) break;
+        scanCursor = nextCursor;
       }
-      if (requestId !== supplierQueueRequestIdRef.current) return;
-      const items = result.items as unknown as ReviewQueueItem[];
       setReviewQueue((current) => append ? mergeSupplierQueuePage(current, items) : items);
-      setSupplierReviewCursor(result.nextCursor || null);
+      setSupplierReviewCursor(nextCursor);
+      supplierReviewLoadedPagesRef.current = append
+        ? supplierReviewLoadedPagesRef.current + pagesLoaded
+        : pagesLoaded;
       setSupplierQueueError(null);
     } catch (error) {
       if (requestId === supplierQueueRequestIdRef.current) {
@@ -487,7 +507,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
   };
 
   const refreshSupplierQueueViews = async (): Promise<void> => {
-    await loadSupplierQueueView();
+    await loadSupplierQueueView({ pageCount: supplierReviewLoadedPagesRef.current });
   };
 
   useEffect(() => onIdTokenChanged(auth, (currentUser) => {
@@ -496,6 +516,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
 
   useEffect(() => {
     if (activeSubTab !== 'review' || !auth.currentUser) return;
+    supplierReviewLoadedPagesRef.current = 1;
     let cancelled = false;
     let refreshTimer: number | null = null;
     const poll = async () => {

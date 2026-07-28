@@ -51,6 +51,6 @@ test('production exports cannot automatically project supplier offer changes to 
   const supplierHub = readFileSync('src/components/SupplierHubFiveStars.tsx', 'utf8');
   assert.doesNotMatch(functionsEntry, /reconcileSupplierOfferFailover/);
   assert.doesNotMatch(functionsEntry, /reconcileSupplierSourceOfferAvailability/);
-  assert.match(supplierHub, /await loadSupplierQueueView\(\)/);
+  assert.match(supplierHub, /await loadSupplierQueueView\(\{ pageCount: supplierReviewLoadedPagesRef\.current \}\)/);
   assert.doesNotMatch(supplierHub, /Promise\.all\(\[loadSupplierQueueView\('review'\), loadSupplierQueueView\('changes'\)\]\)/);
 });

@@ -599,6 +599,13 @@ export async function getSupplierReviewQueueMetrics(db: Firestore, now = Date.no
 
 export type SupplierQueuePageView = "review" | "import" | "changes";
 export type SupplierReviewQueuePageState = "active" | "review_pending" | "conflict" | "approved" | "rejected";
+export type SupplierReviewBusinessFilter =
+  | "new_products"
+  | "product_updates"
+  | "removed_products"
+  | "conflicts"
+  | "needs_attention"
+  | "approved_history";
 
 export interface SupplierQueuePageResult {
   view: SupplierQueuePageView;
@@ -631,6 +638,46 @@ const reviewRecordMatchesState = (record: SupplierQueueRecord, state: SupplierRe
   return queueState === state;
 };
 
+const normalizedReviewValue = (value: unknown): string => String(value || "").trim().toLowerCase();
+
+const reviewRecordIsConflict = (record: SupplierQueueRecord): boolean => (
+  normalizedReviewValue(record.status) === "conflict" || normalizedReviewValue(record.queueState) === "conflict"
+);
+
+const reviewRecordIsApproved = (record: SupplierQueueRecord): boolean => (
+  normalizedReviewValue(record.status) === "approved" || normalizedReviewValue(record.queueState) === "approved"
+);
+
+const reviewComparisonIsRemoval = (value: unknown): boolean => {
+  const comparisonStatus = normalizedReviewValue(value);
+  return comparisonStatus.includes("removed")
+    || comparisonStatus.includes("deleted")
+    || comparisonStatus.includes("deactivat");
+};
+
+/** Mirrors the Product Review business filters on the server pagination boundary. */
+export const reviewRecordMatchesBusinessFilter = (
+  record: SupplierQueueRecord,
+  filter: SupplierReviewBusinessFilter,
+): boolean => {
+  const comparisonStatus = normalizedReviewValue(asRecord(record.comparison).comparisonStatus);
+  if (filter === "approved_history") return reviewRecordIsApproved(record);
+  if (filter === "conflicts") return reviewRecordIsConflict(record);
+  if (filter === "removed_products") return reviewComparisonIsRemoval(comparisonStatus);
+  if (filter === "new_products") return comparisonStatus === "new_product";
+  if (filter === "needs_attention") {
+    const validation = asRecord(record.productValidation);
+    return validation.readyToPublish === false
+      || (Array.isArray(validation.missingFields) && validation.missingFields.length > 0)
+      || (Array.isArray(validation.errors) && validation.errors.length > 0)
+      || ["retryable_failure", "dead_letter"].includes(normalizedReviewValue(record.queueState));
+  }
+  return !reviewRecordIsApproved(record)
+    && !reviewRecordIsConflict(record)
+    && comparisonStatus !== "new_product"
+    && !reviewComparisonIsRemoval(comparisonStatus);
+};
+
 /**
  * Bounded, server-authoritative pagination for the three Supplier Hub queue
  * views. Review status filtering is index-backed; client collection listeners
@@ -641,6 +688,7 @@ export async function listSupplierQueuePage(
   options: {
     view: SupplierQueuePageView;
     state?: SupplierReviewQueuePageState;
+    businessFilter?: SupplierReviewBusinessFilter;
     after?: string;
     limit?: number;
   },
@@ -665,6 +713,59 @@ export async function listSupplierQueuePage(
     if (!cursor.exists) throw new Error("Supplier queue cursor is invalid.");
     query = query.startAfter(cursor);
   }
+
+  if (options.view === "review" && options.businessFilter) {
+    const documents: FirebaseFirestore.QueryDocumentSnapshot[] = [];
+    const batchLimit = Math.min(100, Math.max(50, pageLimit));
+    let nextQuery = query;
+    let nextCursor: string | null = null;
+
+    while (documents.length < pageLimit) {
+      const snapshot = await nextQuery.limit(batchLimit).get();
+      if (snapshot.empty) {
+        nextCursor = null;
+        break;
+      }
+
+      let pageFilledAt = -1;
+      for (let index = 0; index < snapshot.docs.length; index += 1) {
+        const document = snapshot.docs[index];
+        const record = document.data() as SupplierQueueRecord;
+        if (reviewRecordMatchesState(record, state as SupplierReviewQueuePageState)
+          && reviewRecordMatchesBusinessFilter(record, options.businessFilter)) {
+          documents.push(document);
+          if (documents.length === pageLimit) {
+            pageFilledAt = index;
+            break;
+          }
+        }
+      }
+
+      const lastScannedDocument = pageFilledAt >= 0
+        ? snapshot.docs[pageFilledAt]
+        : snapshot.docs.at(-1);
+      const collectionEnded = snapshot.size < batchLimit;
+      if (pageFilledAt >= 0) {
+        nextCursor = collectionEnded && pageFilledAt === snapshot.docs.length - 1
+          ? null
+          : lastScannedDocument?.id || null;
+        break;
+      }
+      if (collectionEnded || !lastScannedDocument) {
+        nextCursor = null;
+        break;
+      }
+      nextQuery = query.startAfter(lastScannedDocument);
+    }
+
+    return {
+      view: options.view,
+      state,
+      items: documents.map((document) => ({ id: document.id, ...document.data() })),
+      nextCursor,
+    };
+  }
+
   const snapshot = await query.limit(scanLimit).get();
   const matched = snapshot.docs.filter((document) => options.view !== "review"
     || reviewRecordMatchesState(document.data() as SupplierQueueRecord, state as SupplierReviewQueuePageState));
