@@ -716,6 +716,114 @@ function buildSupplierConflictRecord(
   };
 }
 
+export function buildSupplierDuplicateConflictReviewItem(input: {
+  queueItemId: string;
+  existingQueueItem?: Record<string, unknown>;
+  currentProduct?: Record<string, unknown>;
+  source: SupplierSource;
+  product: RawA2ZProduct;
+  offer: SupplierProductOffer;
+  winner: SupplierSyncConflictWinner;
+  batchId: string;
+  detectedAt: string;
+}): { id: string; data: Record<string, unknown> } {
+  const existingQueueItem = input.existingQueueItem || {};
+  const currentProduct = input.currentProduct || {};
+  const existingPayload = asRecord(existingQueueItem.productPayload);
+  const productPayload = Object.keys(existingPayload).length > 0 ? existingPayload : currentProduct;
+  const productId = String(
+    existingQueueItem.canonicalProductId
+    || existingQueueItem.productId
+    || productPayload.id
+    || input.winner.productId
+    || input.offer.productId,
+  ).trim();
+  const queueCreatedAt = String(existingQueueItem.createdAt || existingQueueItem.queueCreatedAt || input.detectedAt);
+  const validation = asRecord(existingQueueItem.productValidation);
+  const validationErrors = Array.isArray(validation.errors)
+    ? validation.errors.filter((error) => asRecord(error).code !== "duplicate_supplier_product")
+    : [];
+  const missingFields = Array.isArray(validation.missingFields)
+    ? validation.missingFields.filter((field): field is string => typeof field === "string")
+    : [];
+  const comparison = asRecord(existingQueueItem.comparison);
+  const changedFields = Array.isArray(comparison.changedFields)
+    ? comparison.changedFields.filter((field): field is string => typeof field === "string")
+    : [];
+  const duplicateLabel = "Duplicate supplier product";
+  const supplierSnapshot = {
+    ...input.product,
+    supplierId: input.source.supplierId || input.source.id,
+    sourceId: input.source.id,
+    supplierPriority: supplierPriority(input.source),
+    supplierName: input.source.supplierName || input.source.name || input.source.id,
+    supplierSku: input.product.sku,
+  };
+
+  return {
+    id: input.queueItemId,
+    data: {
+      ...(Object.keys(existingQueueItem).length === 0 ? buildSupplierQueueLifecycle(queueCreatedAt) : {}),
+      ...existingQueueItem,
+      id: input.queueItemId,
+      status: "CONFLICT",
+      queueState: "conflict",
+      supplierCode: input.product.sku,
+      supplierName: input.source.supplierName || input.source.name || input.source.id,
+      source: "Website",
+      connector: String(input.source.supplierType || input.source.type || "website"),
+      sourceId: input.source.id,
+      supplierId: input.source.supplierId || input.source.id,
+      supplierPriority: supplierPriority(input.source),
+      supplierOfferId: input.offer.id,
+      canonicalProductId: productId,
+      productId,
+      matchedProductId: input.winner.productId || productId || null,
+      batchId: input.batchId,
+      productName: String(productPayload.name || input.product.title),
+      costPrice: input.offer.cost,
+      marketPrice: input.product.recommendedRetailPrice || input.offer.price,
+      stock: input.offer.stock,
+      imageUrl: String(productPayload.imageUrl || input.product.mediaGallery?.[0] || ""),
+      comparisonStatus: String(existingQueueItem.comparisonStatus || comparison.comparisonStatus || "UNCHANGED"),
+      comparison: {
+        ...comparison,
+        matchFound: true,
+        matchedProductId: input.winner.productId || productId || null,
+        comparisonStatus: String(existingQueueItem.comparisonStatus || comparison.comparisonStatus || "UNCHANGED"),
+        changedFields: [...new Set([...changedFields, duplicateLabel])],
+      },
+      productPayload: { ...productPayload, id: productId },
+      supplierSnapshot,
+      productValidation: {
+        ...validation,
+        readyToPublish: false,
+        missingFields: [...new Set([...missingFields, duplicateLabel])],
+        errors: [
+          ...validationErrors,
+          {
+            field: "supplierCode",
+            code: "duplicate_supplier_product",
+            message: "This supplier product duplicates another product from the same supplier and requires manual review.",
+          },
+        ],
+      },
+      approvalConflict: {
+        reason: "duplicate_supplier_product",
+        changedFields: [duplicateLabel],
+      },
+      approvalBaseline: existingQueueItem.approvalBaseline || buildSupplierProductApprovalBaseline(
+        productId,
+        Object.keys(currentProduct).length > 0 ? currentProduct : undefined,
+        queueCreatedAt,
+      ),
+      correlationId: String(existingQueueItem.correlationId || input.queueItemId),
+      createdAt: queueCreatedAt,
+      updatedAt: input.detectedAt,
+    },
+  };
+}
+
 async function acquireSyncLock(startedAt: Date, batchId: string, trigger: "scheduled" | "manual"): Promise<boolean> {
   const lockRef = adminDb.collection("supplier_sync_locks").doc(LOCK_ID);
   const nowMs = startedAt.getTime();
@@ -1836,6 +1944,7 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
               );
           });
           if (activeReviewQueueDoc) queueItemId = activeReviewQueueDoc.id;
+          const activeReviewQueueData = activeReviewQueueDoc?.data();
           const currentWinner: SupplierSyncConflictWinner = {
             supplierId: source.supplierId || source.id,
             sourceId: source.id,
@@ -1915,6 +2024,30 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
                 supplierCatalogSeenAt: createdAt,
               },
             });
+            if (!dryRunMode) {
+              const queuedReviewWrite = queuedWrites.slice(pageWriteOffset).reverse().find((write) => (
+                write.collection === "supplier_review_queue" && write.id === queueItemId
+              ));
+              const conflictReview = buildSupplierDuplicateConflictReviewItem({
+                queueItemId,
+                existingQueueItem: queuedReviewWrite?.data || activeReviewQueueData,
+                currentProduct: match ? { ...match } : undefined,
+                source,
+                product,
+                offer: initialOffer,
+                winner: conflict?.winner || currentWinner,
+                batchId,
+                detectedAt: createdAt,
+              });
+              if (queuedReviewWrite) queuedReviewWrite.data = conflictReview.data;
+              else queuedWrites.push({
+                collection: "supplier_review_queue",
+                id: conflictReview.id,
+                data: conflictReview.data,
+                atomicGroup: conflictReview.id,
+              });
+              if (!queuedReviewWrite && !activeReviewQueueDoc) metrics.productsQueued++;
+            }
             metrics.productsSkipped += 1;
             sourceRejected += 1;
             continue;
@@ -1932,7 +2065,6 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
             stock: ownOffer.stock,
           } : match ? { ...match } : undefined;
           const hasActiveReviewQueueItem = Boolean(activeReviewQueueDoc);
-          const activeReviewQueueData = activeReviewQueueDoc?.data();
           const detectedComparison = buildSupplierProductComparison(product, comparisonBaseline);
           const reactivation = buildSupplierReactivationComparison(
             detectedComparison,
