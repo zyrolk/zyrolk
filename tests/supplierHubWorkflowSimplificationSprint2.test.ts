@@ -80,10 +80,10 @@ test('Activity exposes only business sync state while technical operations stay 
 
 test('product review editor prioritizes storefront fields and collapses supplier details', () => {
   const editor = projectFile('src/components/SupplierReviewEditorModal.tsx');
-  assert.match(editor, /order-10[^>]*aria-labelledby="supplier-product-images-title"/);
-  assert.match(editor, /order-20 grid gap-4/);
-  assert.match(editor, /order-30[^>]*aria-labelledby="supplier-review-content-title"/);
-  assert.match(editor, /order-40 grid gap-4/);
+  assert.match(editor, /<details open className="order-10[\s\S]*?aria-labelledby="supplier-product-images-title"/);
+  assert.match(editor, /<details open className="order-20[^\"]*"[\s\S]*?>Product, pricing & catalogue</);
+  assert.match(editor, /<details open className="order-30[\s\S]*?aria-labelledby="supplier-review-content-title"/);
+  assert.match(editor, /<details open className="order-40[\s\S]*?>Category specifications</);
   assert.match(editor, /Supplier information/);
   assert.match(editor, /Supplier metadata/);
   assert.match(editor, /Advanced field protection/);

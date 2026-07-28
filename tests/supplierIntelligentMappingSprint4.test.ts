@@ -166,8 +166,11 @@ test('Sprint 4 queue UX exposes suggestion acceptance, confidence, missing field
   assert.match(sync, /suggestSupplierBrand/);
   assert.match(sync, /readyToPublish/);
   assert.match(hub, /Validation Problems/);
-  assert.match(editor, /Accept category suggestion/);
-  assert.match(editor, /Accept brand suggestion/);
+  assert.match(editor, /Suggested Category/);
+  assert.match(editor, /category: item\.categoryMapping\?\.targetCategoryId/);
+  assert.match(editor, /Suggested Brand/);
+  assert.match(editor, /brand: item\.brandMapping\?\.mappedBrandId/);
+  assert.ok((editor.match(/>Apply<\/button>/g) || []).length >= 2);
   assert.match(editor, /Category specifications/);
   assert.match(editor, /Ready to publish/);
 });

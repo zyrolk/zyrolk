@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   hasSupplierHubAdvancedAccess,
   PRODUCT_REVIEW_FILTERS,
+  supplierConnectionPresentation,
   supplierReviewStatusLabel,
 } from '../src/services/supplierHubPresentation';
 
@@ -41,11 +42,11 @@ test('new supplier save is explicit and never starts Initial Sync from the Sprin
 
 test('supplier cards expose only business controls and delay Auto Sync until Initial Sync completes', () => {
   const hub = projectFile('src/components/SupplierHubFiveStars.tsx');
+  const connectionBadge = projectFile('src/components/supplier-ui/SupplierConnectionBadge.tsx');
 
   for (const label of [
     'Connected Suppliers',
     'Supplier Platform',
-    'Connection Problem',
     'Active',
     'Paused',
     'Auto Sync',
@@ -56,6 +57,9 @@ test('supplier cards expose only business controls and delay Auto Sync until Ini
     'Edit',
   ]) assert.match(hub, new RegExp(label));
 
+  assert.match(hub, /<SupplierConnectionBadge source=\{source\}/);
+  assert.match(connectionBadge, /supplierConnectionPresentation/);
+  assert.equal(supplierConnectionPresentation({ connectionStatus: 'failed' }).label, 'Connection Problem');
   assert.match(hub, /disabled=\{savingSettingsSourceId !== null \|\| !supplierHasCompletedInitialSync\(source\)\}/);
   assert.match(hub, /handleSyncSupplier\(\[id\]\)/);
 });
