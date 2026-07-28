@@ -19,6 +19,7 @@ import {
   supplierOfferIsActive,
   supplierOfferIsLocked,
 } from '../services/supplierOffers';
+import { formatSupplierTimestamp } from '../services/supplierHubPresentation';
 
 interface SupplierReviewEditorModalProps {
   item: SupplierReviewSourceItem;
@@ -470,7 +471,7 @@ export default function SupplierReviewEditorModal({
                         <div><dt className="text-slate-400">Price</dt><dd className="font-black">{money(offer.price)}</dd></div>
                         <div><dt className="text-slate-400">Cost</dt><dd className="font-black">{money(offer.cost)}</dd></div>
                         <div><dt className="text-slate-400">Stock</dt><dd className="font-black">{offer.stock}</dd></div>
-                        <div><dt className="text-slate-400">Last sync</dt><dd className="truncate font-bold" title={offer.lastSyncAt}>{offer.lastSyncAt ? new Date(offer.lastSyncAt).toLocaleString() : '—'}</dd></div>
+                        <div><dt className="text-slate-400">Last sync</dt><dd className="truncate font-bold" title={offer.lastSyncAt}>{formatSupplierTimestamp(offer.lastSyncAt, 'Not updated yet')}</dd></div>
                       </dl>
                       <div className="mt-3 flex flex-wrap items-end gap-2 border-t border-slate-100 pt-3 dark:border-slate-800">
                         <label className="text-[9px] font-bold text-slate-500">Priority<input type="number" min="0" max="10000" defaultValue={offer.priority} disabled={busy} onBlur={(event) => { const priority = Number(event.target.value); if (Number.isInteger(priority) && priority !== offer.priority) void onConfigureOffer(offer.id, { priority }); }} className="mt-1 block h-9 w-24 rounded-lg border border-slate-200 bg-white px-2 text-xs dark:border-slate-700 dark:bg-slate-950" /></label>

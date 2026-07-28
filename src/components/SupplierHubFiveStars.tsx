@@ -58,6 +58,8 @@ import {
   supplierReviewApiState,
   supplierReviewStatusLabel,
   supplierBusinessErrorMessage,
+  formatSupplierTimestamp,
+  supplierAdministratorLabel,
 } from '../services/supplierHubPresentation';
 
 interface SupplierHubFiveStarsProps {
@@ -225,6 +227,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
 
   // 1. Supplier Sources & Connect states
   const [supplierSources, setSupplierSources] = useState<any[]>([]);
+  const [supplierSourcesLoaded, setSupplierSourcesLoaded] = useState(false);
   const [showConnectModal, setShowConnectModal] = useState<boolean>(false);
   const [newSupplierName, setNewSupplierName] = useState<string>("");
   const [newSupplierType, setNewSupplierType] = useState<SupplierOnboardingType>("a2z");
@@ -260,7 +263,10 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
       throw new Error(result.error || 'Supplier sources could not be loaded.');
     }
     setSupplierSources(result.sources.map(normalizeSupplierSourceForUi));
+    setSupplierSourcesLoaded(true);
+    setErrorMsg(null);
     if (jobsResponse.ok && jobsResult.success === true && Array.isArray(jobsResult.jobs)) {
+      setSyncErrorMsg(null);
       const selectedJob = selectSupplierSyncJobForDisplay(jobsResult.jobs);
       if (selectedJob && isSupplierSyncJobActive(selectedJob)) {
         applyActiveSyncJob(selectedJob);
@@ -285,7 +291,11 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
         if (!cancelled) setCanAccessAdvanced(false);
       });
       void loadSources().catch((error) => {
-        if (!cancelled) handleFirestoreError(error, OperationType.GET, 'supplierSources API');
+        if (!cancelled) {
+          setSupplierSourcesLoaded(false);
+          setErrorMsg(supplierBusinessErrorMessage(error, 'Supplier sources could not be loaded.'));
+          handleFirestoreError(error, OperationType.GET, 'supplierSources API');
+        }
       });
     });
     return () => {
@@ -1377,7 +1387,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
       )}
 
       {/* Business navigation */}
-      <div className="flex flex-wrap items-center gap-1.5 border-b border-slate-100 dark:border-slate-800 pb-1.5 overflow-x-auto">
+      <div className="flex w-full flex-wrap items-center gap-1.5 border-b border-slate-100 pb-1.5 dark:border-slate-800">
         {[
           { id: 'suppliers', label: 'Suppliers', badge: supplierSources.length, icon: Globe },
           { id: 'review', label: 'Product Review', badge: reviewQueue.length, icon: UserCheck, badgeColor: 'bg-blue-500 text-white' },
@@ -1411,7 +1421,15 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
       {/* SUB-TAB CONTENTS */}
       <div className="min-h-[400px]">
 
-        {activeSubTab === 'activity' && (
+        {activeSubTab === 'activity' && supplierSourcesLoaded && supplierSources.length === 0 && (
+          <div className="w-full rounded-3xl border border-dashed border-slate-200 bg-slate-50/50 p-8 text-center dark:border-slate-800 dark:bg-slate-900/10 sm:p-12">
+            <Activity className="mx-auto h-10 w-10 text-slate-300" aria-hidden="true" />
+            <h3 className="mt-3 text-sm font-bold text-slate-900 dark:text-white">No supplier activity yet.</h3>
+            <p className="mt-1 text-xs text-slate-400">Activity will appear after your first synchronization.</p>
+          </div>
+        )}
+
+        {activeSubTab === 'activity' && (!supplierSourcesLoaded || supplierSources.length > 0) && (
           <SupplierOperationsDashboard
             requestApi={requestSupplierApi}
             activeSyncJob={activeSyncJob}
@@ -1421,7 +1439,18 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
         )}
 
         {/* Product Review is the only business approval workspace. */}
-        {activeSubTab === 'review' && (
+        {activeSubTab === 'review' && supplierSourcesLoaded && supplierSources.length === 0 && (
+          <div className="w-full rounded-3xl border border-dashed border-slate-200 bg-slate-50/50 p-8 text-center dark:border-slate-800 dark:bg-slate-900/10 sm:p-12">
+            <UserCheck className="mx-auto h-10 w-10 text-slate-300" aria-hidden="true" />
+            <h3 className="mt-3 text-sm font-bold text-slate-900 dark:text-white">No supplier connected</h3>
+            <p className="mt-1 text-xs text-slate-400">Connect a supplier and run the initial synchronization.</p>
+            <button type="button" onClick={() => { setActiveSubTab('suppliers'); setShowConnectModal(true); }} className="mt-4 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 text-xs font-extrabold text-white transition-colors hover:bg-emerald-700 sm:w-auto">
+              <Plus className="h-4 w-4" aria-hidden="true" /> Add Supplier
+            </button>
+          </div>
+        )}
+
+        {activeSubTab === 'review' && (!supplierSourcesLoaded || supplierSources.length > 0) && (
           <div className="space-y-8">
             <section aria-labelledby="product-review-filters-title" className="rounded-3xl border border-slate-200/70 bg-white p-4 dark:border-slate-800 dark:bg-slate-950">
               <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -1441,7 +1470,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                   />
                 </div>
               </div>
-              <div className="mt-4 flex gap-2 overflow-x-auto pb-1" role="tablist" aria-label="Product review filters">
+              <div className="mt-4 flex flex-wrap gap-2 pb-1" role="tablist" aria-label="Product review filters">
                 {PRODUCT_REVIEW_FILTERS.map((filter) => (
                   <button
                     key={filter.id}
@@ -1556,7 +1585,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                           <td className="py-3 px-4 text-[10px]"><strong className="block text-slate-700 dark:text-slate-200">{String(product.brand || item.brandMapping?.mappedBrandId || 'Brand needed')}</strong><span className="mt-1 block text-slate-400">{String(product.category || item.categoryMapping?.targetCategoryId || 'Category needed')}</span></td>
                           <td className="py-3 px-4 text-[10px]"><strong className="block text-blue-600">LKR {safeSellingPrice.toLocaleString()}</strong><span className="mt-1 block text-slate-400">{item.stock} in stock</span></td>
                           <td className="max-w-64 py-3 px-4 text-[10px]"><p className="line-clamp-2 text-slate-600 dark:text-slate-300">{String(product.shortDescription || product.description || 'Description needed')}</p><p className="mt-1 font-bold text-slate-400">{specifications.length} specifications</p></td>
-                          <td className="py-3 px-4 text-[10px]"><strong className="block">{item.supplierName || item.sourceId || 'Supplier'}</strong><span className="mt-1 block text-slate-400">{item.createdAt ? new Date(item.createdAt).toLocaleString() : 'Recently'}</span></td>
+                          <td className="py-3 px-4 text-[10px]"><strong className="block">{item.supplierName || item.sourceId || 'Supplier'}</strong><span className="mt-1 block text-slate-400">{formatSupplierTimestamp(item.createdAt, 'Recently')}</span></td>
                           <td className="py-3 px-4">
                             <p className={item.productValidation?.readyToPublish ? 'text-[10px] font-black text-emerald-600' : 'text-[10px] font-black text-amber-600'}>
                               {item.productValidation?.readyToPublish ? 'No validation problems' : (item.productValidation?.missingFields || ['Review required']).join(', ')}
@@ -1702,9 +1731,12 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
               <div className="p-12 text-center rounded-3xl border border-dashed border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/10 space-y-3">
                 <Globe className="h-10 w-10 text-slate-300 mx-auto" />
                 <div className="space-y-1">
-                  <p className="text-sm font-bold text-slate-900 dark:text-white">No suppliers connected.</p>
-                  <p className="text-xs text-slate-400">Add a supplier, test the connection, and save it to begin.</p>
+                  <p className="text-sm font-bold text-slate-900 dark:text-white">No suppliers connected</p>
+                  <p className="text-xs text-slate-400">Add your first supplier, test the connection and run the initial sync to begin importing products.</p>
                 </div>
+                <button type="button" onClick={() => setShowConnectModal(true)} className="mx-auto mt-4 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 text-xs font-extrabold text-white transition-colors hover:bg-emerald-700 sm:w-auto">
+                  <Plus className="h-4 w-4" aria-hidden="true" /> Add Supplier
+                </button>
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -1757,7 +1789,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                       </div>
                       <div className="space-y-0.5 border-t border-slate-100 pt-2 dark:border-slate-800/40">
                         <span className="text-slate-400 font-bold block text-[10px] uppercase">Last Successful Sync</span>
-                        <span className="text-slate-700 dark:text-slate-200 font-medium">{source.lastSuccessfulSync || source.lastSuccess || source.lastSync || 'Never'}</span>
+                        <span className="text-slate-700 dark:text-slate-200 font-medium">{formatSupplierTimestamp(source.lastSuccessfulSync || source.lastSuccess || source.lastSync, 'Not updated yet')}</span>
                       </div>
                       <div className="space-y-0.5 border-t border-slate-100 pt-2 dark:border-slate-800/40">
                         <span className="text-slate-400 font-bold block text-[10px] uppercase">Health</span>
@@ -1765,14 +1797,14 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                       </div>
                     </div>
 
-                    <div className="mt-5 flex items-center justify-end gap-3 flex-wrap">
-                      <div className="flex items-center gap-2 shrink-0 ml-auto">
+                    <div className="mt-5 flex w-full flex-wrap items-center gap-3 sm:justify-end">
+                      <div className="flex w-full flex-wrap items-center gap-2 sm:ml-auto sm:w-auto">
                         <button
                           onClick={() => handleOpenSettings(source)}
                           className={`px-3.5 py-1.5 font-bold rounded-lg text-[10px] flex items-center gap-1.5 cursor-pointer transition-all border ${
                             editingSourceId === source.id 
-                              ? 'bg-amber-500 text-slate-900 border-amber-500 hover:bg-amber-600' 
-                              : 'bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border-slate-200/50 dark:border-slate-700/50'
+                            ? 'grow bg-amber-500 text-slate-900 border-amber-500 hover:bg-amber-600 sm:grow-0'
+                              : 'grow bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border-slate-200/50 dark:border-slate-700/50 sm:grow-0'
                           }`}
                         >
                           <Settings className={`h-3.5 w-3.5 ${editingSourceId === source.id ? 'animate-spin' : ''}`} />
@@ -1782,7 +1814,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                           type="button"
                           onClick={() => void handleDeleteSupplier(source)}
                           disabled={savingSettingsSourceId !== null || isSyncing}
-                          className="flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3.5 py-1.5 text-[10px] font-bold text-red-600 transition-colors hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-900/60 dark:bg-red-950/20 dark:text-red-400"
+                          className="flex grow items-center justify-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3.5 py-1.5 text-[10px] font-bold text-red-600 transition-colors hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-900/60 dark:bg-red-950/20 dark:text-red-400 sm:grow-0"
                           aria-label={`Delete ${source.supplierName || source.name || 'supplier'}`}
                           title="Disable this supplier while retaining its history"
                         >
@@ -1792,7 +1824,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                         <button
                           onClick={() => handleTestExistingConnection(source)}
                           disabled={testingSourceId !== null || syncingSourceId !== null}
-                          className="px-3.5 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-50 text-slate-700 dark:text-slate-300 font-bold rounded-lg text-[10px] flex items-center gap-1.5 cursor-pointer transition-colors border border-slate-200/50 dark:border-slate-700/50"
+                          className="flex grow cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-slate-200/50 bg-slate-100 px-3.5 py-1.5 text-[10px] font-bold text-slate-700 transition-colors hover:bg-slate-200 disabled:opacity-50 dark:border-slate-700/50 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700 sm:grow-0"
                         >
                           <RefreshCw className={`h-3 w-3 ${testingSourceId === source.id ? 'animate-spin' : ''}`} />
                           <span>{testingSourceId === source.id ? 'Testing...' : 'Test Connection'}</span>
@@ -1800,7 +1832,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                         <button
                           onClick={() => handleTriggerSync(source.id)}
                           disabled={isSyncing || syncingSourceId !== null || testingSourceId !== null}
-                          className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-700 disabled:opacity-50 text-white font-bold rounded-lg text-[10px] flex items-center gap-1.5 cursor-pointer transition-colors"
+                          className="flex grow cursor-pointer items-center justify-center gap-1.5 rounded-lg bg-blue-600 px-3.5 py-1.5 text-[10px] font-bold text-white transition-colors hover:bg-blue-700 disabled:bg-slate-700 disabled:opacity-50 sm:grow-0"
                         >
                           <RefreshCw className={`h-3 w-3 ${syncingSourceId === source.id ? 'animate-spin' : ''}`} />
                           <span>{syncingSourceId === source.id ? 'Syncing...' : supplierHasCompletedInitialSync(source) ? 'Sync Now' : 'Run Initial Sync'}</span>
@@ -1909,11 +1941,9 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
               </div>
               {supplierSettings && (supplierSettings.lastUpdated || supplierSettings.updatedBy) && (
                 <div className="text-left sm:text-right text-[10px] text-slate-400 font-mono">
-                  {supplierSettings.lastUpdated && (
-                    <div>Last updated: {new Date(supplierSettings.lastUpdated).toLocaleString()}</div>
-                  )}
+                  <div>Last updated: {formatSupplierTimestamp(supplierSettings.lastUpdated)}</div>
                   {supplierSettings.updatedBy && (
-                    <div>Updated by: {supplierSettings.updatedBy}</div>
+                    <div>Updated by: {supplierAdministratorLabel(supplierSettings.updatedBy, auth.currentUser)}</div>
                   )}
                 </div>
               )}
@@ -2069,7 +2099,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                   </div>
                 </div>
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                  {supplierCategoryOptions.map(({ key, label }) => (
+                  {supplierSources.length > 0 && supplierCategoryOptions.map(({ key, label }) => (
                     <label key={key} className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-[#111928]">
                       <span className="truncate font-bold text-slate-700 dark:text-slate-200" title={label}>{label}</span>
                       <ArrowRight className="h-3.5 w-3.5 text-slate-400" />
@@ -2092,9 +2122,11 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                       </select>
                     </label>
                   ))}
-                  {supplierCategoryOptions.length === 0 && (
+                  {(supplierSources.length === 0 || supplierCategoryOptions.length === 0) && (
                     <div className="rounded-xl border border-dashed border-slate-200 p-4 text-[11px] text-slate-400 dark:border-slate-800 md:col-span-2">
-                      Update a supplier to discover categories for mapping.
+                      {supplierSources.length === 0
+                        ? 'Connect a supplier to configure category mapping.'
+                        : 'Update a supplier to discover categories for mapping.'}
                     </div>
                   )}
                 </div>
@@ -2123,6 +2155,11 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                       )}
                     </div>
                   ))}
+                  {supplierSources.length === 0 && (
+                    <div className="rounded-xl border border-dashed border-slate-200 p-4 text-[11px] text-slate-400 dark:border-slate-800">
+                      No supplier restrictions configured.
+                    </div>
+                  )}
                 </div>
               </div>
 

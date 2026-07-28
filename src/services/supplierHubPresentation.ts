@@ -26,6 +26,67 @@ interface ReviewPresentationItem {
 
 const normalized = (value: unknown): string => String(value || '').trim().toLowerCase();
 
+interface FirestoreTimestampLike {
+  toDate?: () => Date;
+  seconds?: number;
+  _seconds?: number;
+}
+
+/** Formats Firestore and API timestamps without ever leaking an invalid date label. */
+export function formatSupplierTimestamp(value: unknown, missingLabel = 'Not updated yet'): string {
+  if (value === null || value === undefined || value === '') return missingLabel;
+
+  let parsed: Date | null = null;
+  if (value instanceof Date) {
+    parsed = value;
+  } else if (typeof value === 'object') {
+    const timestamp = value as FirestoreTimestampLike;
+    if (typeof timestamp.toDate === 'function') {
+      try {
+        parsed = timestamp.toDate();
+      } catch {
+        parsed = null;
+      }
+    } else {
+      const seconds = timestamp.seconds ?? timestamp._seconds;
+      if (typeof seconds === 'number' && Number.isFinite(seconds)) parsed = new Date(seconds * 1_000);
+    }
+  } else if (typeof value === 'string' || typeof value === 'number') {
+    parsed = new Date(value);
+  }
+
+  return parsed && Number.isFinite(parsed.getTime()) ? parsed.toLocaleString() : missingLabel;
+}
+
+interface SupplierAdminIdentity {
+  uid?: unknown;
+  displayName?: unknown;
+  email?: unknown;
+}
+
+/** Presents a human administrator identity and never exposes a Firebase UID. */
+export function supplierAdministratorLabel(
+  actor: unknown,
+  currentAdmin?: SupplierAdminIdentity | null,
+): string {
+  const displayName = String(currentAdmin?.displayName || '').trim();
+  const email = String(currentAdmin?.email || '').trim();
+  const currentUid = String(currentAdmin?.uid || '').trim();
+
+  if (actor && typeof actor === 'object') {
+    const record = actor as Record<string, unknown>;
+    const actorName = String(record.displayName || record.name || '').trim();
+    const actorEmail = String(record.email || '').trim();
+    if (actorName) return actorName;
+    if (actorEmail) return actorEmail;
+  }
+
+  const raw = String(actor || '').trim();
+  if (raw.includes('@')) return raw;
+  if (raw && currentUid && raw === currentUid) return displayName || email || 'Administrator';
+  return 'Administrator';
+}
+
 export function supplierReviewDecisionReady(item: ReviewPresentationItem): boolean {
   const state = normalized(item.queueState);
   return state === 'review_pending' || state === 'conflict' || (!state && normalized(item.status) === 'pending');

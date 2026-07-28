@@ -17,7 +17,7 @@ import {
   Users,
   XCircle,
 } from 'lucide-react';
-import { supplierBusinessErrorMessage } from '../../services/supplierHubPresentation';
+import { formatSupplierTimestamp, supplierBusinessErrorMessage } from '../../services/supplierHubPresentation';
 import { reportClientIssue } from '../../services/observability/clientDiagnostics';
 
 type SupplierApiRequest = (path: string, method: 'GET' | 'POST', body?: Record<string, unknown>) => Promise<Response>;
@@ -111,11 +111,7 @@ const EMPTY_SUMMARY: OperationsSummary = {
   failedApprovals: 0,
 };
 
-const dateTime = (value: unknown): string => {
-  if (!value) return 'Not available';
-  const parsed = new Date(String(value));
-  return Number.isNaN(parsed.getTime()) ? 'Not available' : parsed.toLocaleString();
-};
+const dateTime = (value: unknown): string => formatSupplierTimestamp(value, 'Not updated yet');
 
 const duration = (value: unknown): string => {
   const milliseconds = Number(value);
