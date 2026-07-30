@@ -5,8 +5,10 @@ export { syncReviewAggregates } from "./triggers/reviewAggregates";
 export { scheduledSupplierSync } from "./scheduled/supplierSync";
 export { scheduledSupplierSyncJobDispatcher, supplierSyncJobCreated } from "./scheduled/supplierSyncWorker";
 export { scheduledSupplierQueueWorker } from "./scheduled/supplierQueueWorker";
+export { scheduledSupplierOperationalAlerts } from "./scheduled/supplierOperationalAlerts";
 export { expirePaymentReservations } from "./scheduled/paymentReservations";
-export { sendOrderNotifications } from "./triggers/orderNotifications";
+export { sendOrderNotifications, trackOrderNotificationDelivery } from "./triggers/orderNotifications";
+export { retryOrderNotifications } from "./scheduled/orderNotificationRetries";
 
 export const api = onRequest({
   cors: false,

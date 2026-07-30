@@ -1,4 +1,5 @@
-import { Product, WebsiteSettings } from '../../types';
+import { Category, Product, WebsiteSettings } from '../../types';
+import { absoluteStorefrontUrl } from '../navigation/storefrontRoutes';
 
 const DEFAULT_ORIGIN = 'https://zyro.lk';
 const DEFAULT_DESCRIPTION = 'Shop live collections across home, beauty, fashion, electronics, lifestyle, accessories and more from one trusted Sri Lankan marketplace.';
@@ -39,6 +40,7 @@ const PAGE_COPY: Record<string, { title: string; description: string }> = {
   'return-policy': { title: 'Purchase Support Policy', description: 'Read the Zyro.lk purchase support policy.' },
   'terms-conditions': { title: 'Terms & Conditions', description: 'Read the terms and conditions for using Zyro.lk.' },
   'privacy-policy': { title: 'Privacy Policy', description: 'Read how Zyro.lk handles customer and storefront information.' },
+  'warranty-policy': { title: 'Warranty Policy', description: 'Read the Zyro.lk warranty policy for eligible marketplace purchases.' },
   admin: { title: 'Admin Dashboard', description: 'Zyro.lk storefront administration.' },
 };
 
@@ -69,6 +71,10 @@ export interface StorefrontSeoInput {
   currentPage: string;
   product?: Product | null;
   settings?: WebsiteSettings | null;
+  category?: Category | null;
+  requestedCategoryId?: string | null;
+  searchQuery?: string;
+  requestedProductId?: string | null;
   origin?: string;
   isAdminMode?: boolean;
 }
@@ -87,11 +93,24 @@ export interface StorefrontSeoDescriptor {
   structuredData: Record<string, unknown>;
 }
 
-export const buildStorefrontSeo = ({ currentPage, product, settings, origin, isAdminMode = false }: StorefrontSeoInput): StorefrontSeoDescriptor => {
+export const buildStorefrontSeo = ({
+  currentPage,
+  product,
+  settings,
+  category,
+  requestedCategoryId,
+  searchQuery,
+  requestedProductId,
+  origin,
+  isAdminMode = false,
+}: StorefrontSeoInput): StorefrontSeoDescriptor => {
   const resolvedOrigin = safeOrigin(origin);
-  const canonical = product?.id
-    ? `${resolvedOrigin}/?product=${encodeURIComponent(product.id)}`
-    : `${resolvedOrigin}/`;
+  const canonical = absoluteStorefrontUrl(resolvedOrigin, {
+    page: isAdminMode ? 'admin' : currentPage,
+    categoryId: category?.id || requestedCategoryId,
+    productId: product?.id || requestedProductId,
+    searchQuery,
+  });
   const storeName = cleanText(settings?.storeName) || 'Zyro.lk';
   const pageCopy = PAGE_COPY[currentPage === 'legacy-home' ? 'home' : currentPage] || {
     title: 'Page Not Found',
@@ -99,6 +118,10 @@ export const buildStorefrontSeo = ({ currentPage, product, settings, origin, isA
   };
   const productName = cleanText(product?.name);
   const productDescription = cleanText(product?.description);
+  const categoryName = cleanText(category?.name);
+  const isCategory = currentPage === 'products' && Boolean(categoryName);
+  const cleanSearchQuery = cleanText(searchQuery);
+  const isSearchPage = currentPage === 'products' && Boolean(cleanSearchQuery);
   const configuredSeoTitle = cleanText(settings?.seoTitle);
   const settingsDescription = cleanText(settings?.seoDescription);
   const isProduct = Boolean(product && productName);
@@ -107,24 +130,36 @@ export const buildStorefrontSeo = ({ currentPage, product, settings, origin, isA
     ? `Admin Dashboard | ${storeName}`
     : isProduct
       ? `${productName} | ${storeName}`
+      : isCategory
+        ? `${categoryName} Products | ${storeName}`
+        : isSearchPage
+          ? `Search results for ${cleanSearchQuery} | ${storeName}`
       : currentPage === 'home' || currentPage === 'legacy-home'
         ? configuredSeoTitle || `${storeName} | ${pageCopy.title}`
         : `${pageCopy.title} | ${storeName}`;
   const description = truncate(
     isProduct
       ? productDescription || `View current pricing, availability and product details for ${productName} on ${storeName}.`
+      : isCategory
+        ? `Browse currently available ${categoryName} products on ${storeName}. View live pricing, stock and product details.`
+        : isSearchPage
+          ? `Browse current Zyro.lk marketplace results for ${cleanSearchQuery}.`
       : currentPage === 'home' || currentPage === 'legacy-home'
         ? settingsDescription || pageCopy.description
         : pageCopy.description,
     160,
   );
   const image = absoluteHttpUrl(
-    isProduct ? product?.imageUrl : settings?.ogImageUrl || settings?.logoUrl,
+    isProduct ? product?.imageUrl : isCategory ? category?.imageUrl : settings?.ogImageUrl || settings?.logoUrl,
     resolvedOrigin,
   );
   const keywords = cleanText(settings?.seoKeywords) || 'Zyro.lk, online marketplace Sri Lanka, online shopping Sri Lanka';
   const isPrivateCustomerPage = ['wishlist', 'recently-viewed', 'compare', 'payment-return'].includes(currentPage) || currentPage.startsWith('account');
-  const robots = isAdminMode || isMissingPage || isPrivateCustomerPage ? 'noindex, follow' : 'index, follow';
+  const isMissingProduct = Boolean(requestedProductId) && !isProduct;
+  const isMissingCategory = Boolean(requestedCategoryId) && !isCategory;
+  const robots = isAdminMode || isMissingPage || isMissingProduct || isMissingCategory || isPrivateCustomerPage || isSearchPage
+    ? 'noindex, follow'
+    : 'index, follow';
   const socialLinks = [settings?.facebookUrl, settings?.instagramUrl, settings?.tiktokUrl, settings?.youtubeUrl]
     .map(value => absoluteHttpUrl(value, resolvedOrigin))
     .filter((value): value is string => Boolean(value));
@@ -180,11 +215,35 @@ export const buildStorefrontSeo = ({ currentPage, product, settings, origin, isA
     } : {}),
   } : null;
 
-  const breadcrumbData = isProduct && product ? {
+  const productBreadcrumbData = isProduct && product ? {
     '@type': 'BreadcrumbList',
     itemListElement: [
       { '@type': 'ListItem', position: 1, name: 'Home', item: `${resolvedOrigin}/` },
-      { '@type': 'ListItem', position: 2, name: productName, item: canonical },
+      ...(cleanText(product.category) ? [{
+        '@type': 'ListItem',
+        position: 2,
+        name: cleanText(product.category),
+        item: absoluteStorefrontUrl(resolvedOrigin, { page: 'products', categoryId: product.category }),
+      }] : []),
+      { '@type': 'ListItem', position: cleanText(product.category) ? 3 : 2, name: productName, item: canonical },
+    ],
+  } : null;
+
+  const categoryData = isCategory ? {
+    '@type': 'CollectionPage',
+    '@id': `${canonical}#collection`,
+    name: `${categoryName} Products`,
+    description,
+    url: canonical,
+    isPartOf: { '@id': `${resolvedOrigin}/#website` },
+  } : null;
+
+  const categoryBreadcrumbData = isCategory ? {
+    '@type': 'BreadcrumbList',
+    itemListElement: [
+      { '@type': 'ListItem', position: 1, name: 'Home', item: `${resolvedOrigin}/` },
+      { '@type': 'ListItem', position: 2, name: 'Categories', item: absoluteStorefrontUrl(resolvedOrigin, { page: 'categories' }) },
+      { '@type': 'ListItem', position: 3, name: categoryName, item: canonical },
     ],
   } : null;
 
@@ -199,8 +258,16 @@ export const buildStorefrontSeo = ({ currentPage, product, settings, origin, isA
 
   const structuredData: Record<string, unknown> = {
     '@context': 'https://schema.org',
-    ...(productData || storeData),
-    '@graph': [organizationData, websiteData, storeData, ...(breadcrumbData ? [breadcrumbData] : []), ...(productData ? [productData] : [])],
+    ...(productData || categoryData || storeData),
+    '@graph': [
+      organizationData,
+      websiteData,
+      storeData,
+      ...(productBreadcrumbData ? [productBreadcrumbData] : []),
+      ...(categoryBreadcrumbData ? [categoryBreadcrumbData] : []),
+      ...(categoryData ? [categoryData] : []),
+      ...(productData ? [productData] : []),
+    ],
   };
 
   return {
@@ -210,7 +277,7 @@ export const buildStorefrontSeo = ({ currentPage, product, settings, origin, isA
     siteName: storeName,
     locale: 'en_LK',
     image,
-    imageAlt: isProduct ? productName : `${storeName} marketplace`,
+    imageAlt: isProduct ? productName : isCategory ? `${categoryName} products` : `${storeName} marketplace`,
     canonical,
     type: isProduct ? 'product' : 'website',
     robots,

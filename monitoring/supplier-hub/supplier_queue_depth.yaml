@@ -1,0 +1,13 @@
+name: supplier_hub_queue_depth
+description: Distribution of sampled Supplier Hub review queue depth.
+filter: >-
+  jsonPayload.eventType="supplier_hub_operational_metric" AND
+  jsonPayload.metricName="supplier_queue_depth"
+valueExtractor: EXTRACT(jsonPayload.metricValue)
+bucketOptions:
+  explicitBuckets:
+    bounds: [0, 1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000]
+metricDescriptor:
+  metricKind: DELTA
+  valueType: DISTRIBUTION
+  unit: "1"

@@ -262,6 +262,24 @@ const asRecord = (value: unknown): Record<string, unknown> => value && typeof va
   ? value as Record<string, unknown>
   : {};
 
+const optionRequiresSelection = (value: unknown): boolean => {
+  if (Array.isArray(value)) return value.filter((entry) => String(entry ?? "").trim()).length > 1;
+  if (!value || typeof value !== "object") return false;
+  const option = value as Record<string, unknown>;
+  if (option.required === true) return true;
+  return [option.values, option.options, option.choices].some((choices) => Array.isArray(choices) && choices.length > 1);
+};
+
+export function requiresUnsupportedVariantSelection(product: Record<string, unknown>): boolean {
+  if (product.variantSelectionRequired === true) return true;
+  const variants = product.variants;
+  if (Array.isArray(variants) && variants.length > 1) return true;
+  if (variants && typeof variants === "object" && !Array.isArray(variants) && Object.keys(variants).length > 1) return true;
+  const options = product.options;
+  if (Array.isArray(options)) return options.some(optionRequiresSelection);
+  return Object.values(asRecord(options)).some(optionRequiresSelection);
+}
+
 export function validateSupplierProductForApproval(
   product: Record<string, unknown>,
   categories: readonly StoreCategoryMappingCandidate[],
@@ -278,6 +296,13 @@ export function validateSupplierProductForApproval(
   if (!Number.isInteger(stock) || stock < 0) add("stock", "invalid", "Stock must be a non-negative whole number.");
   if (![product.isActive, product.active, product.visible].some((value) => typeof value === "boolean")) {
     add("visibility", "required", "Product visibility must be selected.");
+  }
+  if (requiresUnsupportedVariantSelection(product)) {
+    add(
+      "variants",
+      "unsupported_variant_selection",
+      "This product requires a variant selection that the storefront cannot safely sell yet.",
+    );
   }
 
   const categoryId = String(product.category || "").trim();

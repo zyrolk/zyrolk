@@ -1,4 +1,4 @@
-import React, { Suspense, lazy, useState, useEffect, useMemo, useRef } from 'react';
+import React, { Suspense, lazy, useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { 
   TrendingUp, ShoppingBag, Users, Layers, Plus, Trash2, Edit3, Check, 
   X, RefreshCw, AlertCircle, DollarSign, ArrowUpRight, Upload,
@@ -9,7 +9,8 @@ import {
   ArrowDownRight, AlertTriangle, ArrowRight, History, User
 } from 'lucide-react';
 import { 
-  collection, getDocs, doc, updateDoc, deleteDoc, getDoc, setDoc, onSnapshot, writeBatch, deleteField
+  collection, documentId, getAggregateFromServer, getCountFromServer, getDocs, doc, updateDoc, deleteDoc, getDoc, limit,
+  onSnapshot, orderBy, query, QueryDocumentSnapshot, setDoc, startAfter, sum, where, writeBatch, deleteField
 } from 'firebase/firestore';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { onAuthStateChanged } from 'firebase/auth';
@@ -30,7 +31,6 @@ import {
   isDuplicateBrand,
   normalizeBrandId,
   normalizeBrandName,
-  productReferencesBrand,
   sortBrandsAlphabetically,
 } from '../services/brands/brandUtils';
 import {
@@ -64,6 +64,12 @@ import { changedProductOwnershipFields, claimAdminProductFieldOwnership } from '
 import { isHttpUrl, validateStoreSettings } from '../services/settings/storeSettingsValidation';
 import { getAppCheckRequestHeaders } from '../services/security/appCheck';
 import { normalizeWebsiteSettings } from '../services/settings/websiteSettings';
+import { reportClientIssue } from '../services/observability/clientDiagnostics';
+import {
+  hasBrandProductReference,
+  hasCategoryProductReference,
+  updateBrandProductReferences,
+} from '../services/admin/adminCatalogReferences';
 import { 
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, 
   CartesianGrid, Tooltip, PieChart, Pie, Cell, BarChart, Bar, Legend
@@ -72,6 +78,14 @@ import { motion, AnimatePresence } from 'motion/react';
 
 const SupplierHubFiveStars = lazy(() => import('./SupplierHubFiveStars'));
 const AIManagerPanel = lazy(() => import('../features/ai-manager'));
+
+const ADMIN_PRODUCT_PAGE_SIZE = 120;
+const ADMIN_ORDER_READ_LIMIT = 250;
+const ADMIN_REVIEW_READ_LIMIT = 200;
+const ADMIN_USER_READ_LIMIT = 250;
+const ADMIN_REGISTRY_READ_LIMIT = 100;
+const ADMIN_CMS_READ_LIMIT = 50;
+const FIRESTORE_IN_QUERY_LIMIT = 30;
 
 const AnimatedCounter: React.FC<{ value: number; formatter?: (v: number) => string }> = ({ value, formatter }) => {
   const [count, setCount] = useState(0);
@@ -358,63 +372,40 @@ const generateUniqueSlug = (name: string, existingProducts: Product[], skipId?: 
   return slug;
 };
 
-enum OperationType {
-  CREATE = 'create',
-  UPDATE = 'update',
-  DELETE = 'delete',
-  LIST = 'list',
-  GET = 'get',
-  WRITE = 'write',
-}
-
-interface FirestoreErrorInfo {
-  error: string;
-  operationType: OperationType;
-  path: string | null;
-  authInfo: {
-    userId?: string | null;
-    email?: string | null;
-    emailVerified?: boolean | null;
-    isAnonymous?: boolean | null;
-    tenantId?: string | null;
-    providerInfo?: {
-      providerId?: string | null;
-      email?: string | null;
-    }[];
-  }
-}
-
-function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
-  const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
-    authInfo: {
-      userId: auth.currentUser?.uid,
-      email: auth.currentUser?.email,
-      emailVerified: auth.currentUser?.emailVerified,
-      isAnonymous: auth.currentUser?.isAnonymous,
-      tenantId: auth.currentUser?.tenantId,
-      providerInfo: auth.currentUser?.providerData?.map(provider => ({
-        providerId: provider.providerId,
-        email: provider.email,
-      })) || []
-    },
-    operationType,
-    path
-  };
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
-  throw new Error(JSON.stringify(errInfo));
-}
-
 interface AdminDashboardProps {
   initialTab?: 'stats' | 'aiManager' | 'products' | 'categories' | 'orders' | 'customers' | 'pages' | 'settings' | 'supplierHubFiveStars';
   initialCmsPageId?: string;
 }
+
+interface AdminOperationsSummary {
+  generatedAt: string;
+  emailNotifications: {
+    handed_off: number;
+    delivering: number;
+    delivered: number;
+    retry_pending: number;
+    failed: number;
+    inProgress: number;
+    lastFailure: null | { id: string; kind: string; attemptCount: number; message: string; updatedAt: string | null };
+  };
+  supplierAlerts: { active: number };
+  coupons: { total: number; active: number };
+  audit: { latestSupplierEventAt: string | null };
+}
+
+const formatOperationsTimestamp = (value: string | null): string => {
+  if (!value) return 'No activity recorded';
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toLocaleString() : 'No activity recorded';
+};
 
 export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId = 'about-us' }: AdminDashboardProps = {}) {
   const [activeTab, setActiveTab] = useState<'stats' | 'aiManager' | 'products' | 'categories' | 'orders' | 'customers' | 'pages' | 'settings' | 'supplierHubFiveStars'>(initialTab);
   const [isDarkMode, setIsDarkMode] = useState<boolean>(true);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
   const [showNotifications, setShowNotifications] = useState<boolean>(false);
+  const mobileMenuButtonRef = useRef<HTMLButtonElement>(null);
+  const mobileMenuCloseRef = useRef<HTMLButtonElement>(null);
 
   // States loaded from Firestore
   const [publicProducts, setPublicProducts] = useState<Product[]>([]);
@@ -429,6 +420,25 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
   const [users, setUsers] = useState<any[]>([]);
   const [reviews, setReviews] = useState<any[]>([]);
   const [staticPages, setStaticPages] = useState<any[]>([]);
+  const [adminSummaryCounts, setAdminSummaryCounts] = useState({ orders: 0, users: 0, products: 0, reviews: 0 });
+  const [adminGrossSales, setAdminGrossSales] = useState<number | null>(null);
+  const [operationsSummary, setOperationsSummary] = useState<AdminOperationsSummary | null>(null);
+  const [operationsSummaryError, setOperationsSummaryError] = useState('');
+  const [loadingOperationsSummary, setLoadingOperationsSummary] = useState(false);
+  const [adminDataIssues, setAdminDataIssues] = useState<Record<string, string>>({});
+  const [hasMoreAdminProducts, setHasMoreAdminProducts] = useState(false);
+  const [loadingMoreAdminProducts, setLoadingMoreAdminProducts] = useState(false);
+  const [hasMoreAdminOrders, setHasMoreAdminOrders] = useState(false);
+  const [loadingMoreAdminOrders, setLoadingMoreAdminOrders] = useState(false);
+  const [hasMoreAdminUsers, setHasMoreAdminUsers] = useState(false);
+  const [loadingMoreAdminUsers, setLoadingMoreAdminUsers] = useState(false);
+  const adminProductCursorRef = useRef<QueryDocumentSnapshot | null>(null);
+  const adminOrderCursorRef = useRef<QueryDocumentSnapshot | null>(null);
+  const adminUserCursorRef = useRef<QueryDocumentSnapshot | null>(null);
+  const adminFirstProductPageIdsRef = useRef<Set<string>>(new Set());
+  const adminFirstCommercialPageIdsRef = useRef<Set<string>>(new Set());
+  const adminFirstOrderPageIdsRef = useRef<Set<string>>(new Set());
+  const adminFirstUserPageIdsRef = useRef<Set<string>>(new Set());
   const [settings, setSettings] = useState<WebsiteSettings | null>(DEFAULT_WEBSITE_SETTINGS);
   const [loading, setLoading] = useState(true);
   const [authorized, setAuthorized] = useState<boolean | null>(null);
@@ -467,6 +477,10 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
   const [showProductModal, setShowProductModal] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [productToDelete, setProductToDelete] = useState<Product | null>(null);
+  const productModalRef = useRef<HTMLDivElement>(null);
+  const productModalCloseRef = useRef<HTMLButtonElement>(null);
+  const productModalPreviousFocusRef = useRef<HTMLElement | null>(null);
+  const savingProductRef = useRef(false);
   
   const [newProduct, setNewProduct] = useState<Partial<Product>>(() => createProductDraft('electronics', ''));
 
@@ -504,6 +518,44 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
     type: 'success' | 'error';
     message: string;
   }[]>([]);
+
+  useEffect(() => { savingProductRef.current = savingProduct; }, [savingProduct]);
+
+  useEffect(() => {
+    if (!showProductModal) return;
+    productModalPreviousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const focusFrame = window.requestAnimationFrame(() => productModalCloseRef.current?.focus());
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !savingProductRef.current) {
+        event.preventDefault();
+        setShowProductModal(false);
+        return;
+      }
+      if (event.key !== 'Tab' || !productModalRef.current) return;
+      const focusable = (Array.from(productModalRef.current.querySelectorAll(
+        'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled])',
+      )) as HTMLElement[]).filter((element) => element.offsetParent !== null);
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener('keydown', handleKeyDown);
+      productModalPreviousFocusRef.current?.focus();
+    };
+  }, [showProductModal]);
 
   const showSettingsToast = (type: 'success' | 'error', message: string) => {
     const id = Date.now().toString();
@@ -643,7 +695,11 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
       setCmsSuccessMessage("Page updated and saved successfully in Firestore database!");
       
       // Reload pages
-      const pageSnap = await getDocs(collection(db, "pages"));
+      const pageSnap = await getDocs(query(
+        collection(db, "pages"),
+        orderBy(documentId()),
+        limit(ADMIN_CMS_READ_LIMIT),
+      ));
       const pageList: any[] = [];
       pageSnap.forEach((d) => pageList.push({ id: d.id, ...d.data() }));
       setStaticPages(pageList);
@@ -658,7 +714,11 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
   };
 
   const reloadCmsPages = async (): Promise<void> => {
-    const pageSnap = await getDocs(collection(db, "pages"));
+    const pageSnap = await getDocs(query(
+      collection(db, "pages"),
+      orderBy(documentId()),
+      limit(ADMIN_CMS_READ_LIMIT),
+    ));
     const pageList: any[] = [];
     pageSnap.forEach((pageDoc) => pageList.push({ id: pageDoc.id, ...pageDoc.data() }));
     setStaticPages(pageList);
@@ -733,35 +793,44 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
   const loadData = async () => {
     setLoading(true);
     try {
-      const [prodSnap, commercialSnap] = await Promise.all([
-        getDocs(collection(db, "products")),
-        getDocs(collection(db, PRODUCT_PRIVATE_COLLECTION)),
-      ]);
-      const prodList: Product[] = [];
-      prodSnap.forEach((d) => prodList.push({ id: d.id, ...d.data() } as Product));
-      setPublicProducts(prodList);
-      setProductCommercialById(Object.fromEntries(commercialSnap.docs.map((document) => [document.id, document.data()])));
-    } catch (e) { console.warn("Products load error", e); }
-
-    try {
-      const catSnap = await getDocs(collection(db, "categories"));
+      const catSnap = await getDocs(query(
+        collection(db, "categories"),
+        orderBy(documentId()),
+        limit(ADMIN_REGISTRY_READ_LIMIT),
+      ));
       const catList: Category[] = [];
       catSnap.forEach((d) => catList.push(normalizeCategoryBlueprint({ id: d.id, ...d.data() } as Category)));
       setCategories(sortCategoriesAlphabetically(catList));
     } catch (e) { console.warn("Categories load error", e); }
 
     try {
-      const brandSnap = await getDocs(collection(db, 'brands'));
+      const brandSnap = await getDocs(query(
+        collection(db, 'brands'),
+        orderBy(documentId()),
+        limit(ADMIN_REGISTRY_READ_LIMIT),
+      ));
       const brandList: Brand[] = [];
       brandSnap.forEach((d) => brandList.push({ id: d.id, ...d.data() } as Brand));
       setBrands(sortBrandsAlphabetically(brandList));
     } catch (e) { console.warn('Brands load error', e); }
 
     try {
-      const userSnap = await getDocs(collection(db, "users"));
+      const userSnap = await getDocs(query(
+        collection(db, "users"),
+        orderBy(documentId()),
+        limit(ADMIN_USER_READ_LIMIT),
+      ));
       const userList: any[] = [];
       userSnap.forEach((d) => userList.push({ id: d.id, ...d.data() }));
-      setUsers(userList);
+      const previousFirstPageIds = adminFirstUserPageIdsRef.current;
+      const nextFirstPageIds = new Set(userList.map((user) => user.id));
+      setUsers((current) => [
+        ...userList,
+        ...current.filter((user) => !previousFirstPageIds.has(user.id) && !nextFirstPageIds.has(user.id)),
+      ]);
+      adminFirstUserPageIdsRef.current = nextFirstPageIds;
+      adminUserCursorRef.current = userSnap.docs.at(-1) || null;
+      setHasMoreAdminUsers(userSnap.docs.length === ADMIN_USER_READ_LIMIT);
     } catch (e) { console.warn("Users load error", e); }
 
     try {
@@ -784,7 +853,11 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
     }
 
     try {
-      const pageSnap = await getDocs(collection(db, "pages"));
+      const pageSnap = await getDocs(query(
+        collection(db, "pages"),
+        orderBy(documentId()),
+        limit(ADMIN_CMS_READ_LIMIT),
+      ));
       const pageList: any[] = [];
       pageSnap.forEach((d) => pageList.push({ id: d.id, ...d.data() }));
       setStaticPages(pageList);
@@ -794,6 +867,71 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
 
     setLoading(false);
   };
+
+  useEffect(() => {
+    if (!isMobileMenuOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const focusFrame = window.requestAnimationFrame(() => mobileMenuCloseRef.current?.focus());
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setIsMobileMenuOpen(false);
+    };
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener('keydown', handleEscape);
+      mobileMenuButtonRef.current?.focus();
+    };
+  }, [isMobileMenuOpen]);
+
+  const reportAdminDataIssue = (key: string, message: string, error: unknown): void => {
+    reportClientIssue(`admin-${key}`, error, 'error');
+    setAdminDataIssues((current) => ({ ...current, [key]: message }));
+  };
+
+  const clearAdminDataIssue = (key: string): void => {
+    setAdminDataIssues((current) => {
+      if (!(key in current)) return current;
+      const next = { ...current };
+      delete next[key];
+      return next;
+    });
+  };
+
+  const loadOperationsSummary = useCallback(async (): Promise<void> => {
+    if (!authorized || loadingOperationsSummary) return;
+    setLoadingOperationsSummary(true);
+    setOperationsSummaryError('');
+    try {
+      const [token, appCheckHeaders] = await Promise.all([
+        auth.currentUser?.getIdToken(),
+        getAppCheckRequestHeaders(),
+      ]);
+      if (!token) throw new Error('Admin authentication is required.');
+      const response = await fetch('/api/admin/operations-summary', {
+        headers: { Authorization: `Bearer ${token}`, ...appCheckHeaders },
+      });
+      const payload = await response.json().catch(() => ({})) as {
+        success?: boolean;
+        summary?: AdminOperationsSummary;
+        error?: string;
+      };
+      if (!response.ok || !payload.success || !payload.summary) {
+        throw new Error(payload.error || 'Operational status is unavailable.');
+      }
+      setOperationsSummary(payload.summary);
+    } catch (error) {
+      console.warn('Admin operations summary could not be loaded.', error);
+      setOperationsSummaryError('Operational status could not be refreshed. Existing administration tools remain available.');
+    } finally {
+      setLoadingOperationsSummary(false);
+    }
+  }, [authorized, loadingOperationsSummary]);
+
+  useEffect(() => {
+    if (authorized) void loadOperationsSummary();
+  }, [authorized]);
 
   // Sync users & orders into customers
   useEffect(() => {
@@ -842,8 +980,13 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
   useEffect(() => {
     if (!authorized) return;
     let isInitial = true;
+    let isMounted = true;
 
-    const unsubscribeOrders = onSnapshot(collection(db, "orders"), async (snapshot) => {
+    const unsubscribeOrders = onSnapshot(query(
+      collection(db, "orders"),
+      orderBy('createdAt', 'desc'),
+      limit(ADMIN_ORDER_READ_LIMIT),
+    ), async (snapshot) => {
       const orderList: Order[] = [];
       snapshot.forEach((d) => {
         orderList.push({ id: d.id, ...d.data() } as Order);
@@ -855,22 +998,25 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
         return (isNaN(timeA) ? 0 : timeA) - (isNaN(timeB) ? 0 : timeB);
       });
 
-      for (let i = 0; i < orderList.length; i++) {
-        const orderNum = `ZY${100001 + i}`;
-        if (!orderList[i].orderNumber) {
-          orderList[i].orderNumber = orderNum;
-          try {
-            await updateDoc(doc(db, "orders", orderList[i].id), { orderNumber: orderNum });
-          } catch (e) { console.warn("Order number generation error", e); }
-        }
-      }
-
       orderList.sort((a, b) => {
         const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
         const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
         return (isNaN(timeB) ? 0 : timeB) - (isNaN(timeA) ? 0 : timeA);
       });
-      setOrders(orderList);
+      const previousFirstPageIds = adminFirstOrderPageIdsRef.current;
+      const nextFirstPageIds = new Set(orderList.map((order) => order.id));
+      setOrders((current) => [
+        ...orderList,
+        ...current.filter((order) => !previousFirstPageIds.has(order.id) && !nextFirstPageIds.has(order.id)),
+      ].sort((left, right) => {
+        const leftTime = left.createdAt ? new Date(left.createdAt).getTime() : 0;
+        const rightTime = right.createdAt ? new Date(right.createdAt).getTime() : 0;
+        return (Number.isNaN(rightTime) ? 0 : rightTime) - (Number.isNaN(leftTime) ? 0 : leftTime);
+      }));
+      adminFirstOrderPageIdsRef.current = nextFirstPageIds;
+      adminOrderCursorRef.current = snapshot.docs.at(-1) || null;
+      setHasMoreAdminOrders(snapshot.docs.length === ADMIN_ORDER_READ_LIMIT);
+      clearAdminDataIssue('orders');
 
       if (!isInitial) {
         snapshot.docChanges().forEach((change) => {
@@ -894,9 +1040,13 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
         });
       }
       isInitial = false;
-    });
+    }, (error) => reportAdminDataIssue('orders', 'Live order updates are temporarily unavailable.', error));
 
-    const unsubscribeReviews = onSnapshot(collection(db, "reviews"), (snapshot) => {
+    const unsubscribeReviews = onSnapshot(query(
+      collection(db, "reviews"),
+      orderBy('createdAt', 'desc'),
+      limit(ADMIN_REVIEW_READ_LIMIT),
+    ), (snapshot) => {
       const revList: any[] = [];
       snapshot.forEach((d) => {
         revList.push({ id: d.id, ...d.data() });
@@ -907,33 +1057,189 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
         return tB - tA;
       });
       setReviews(revList);
-    });
+      clearAdminDataIssue('reviews');
+    }, (error) => reportAdminDataIssue('reviews', 'Live review updates are temporarily unavailable.', error));
 
-    const unsubscribeProducts = onSnapshot(collection(db, "products"), (snapshot) => {
+    const unsubscribeProducts = onSnapshot(query(
+      collection(db, "products"),
+      orderBy(documentId()),
+      limit(ADMIN_PRODUCT_PAGE_SIZE),
+    ), (snapshot) => {
       const prodList: Product[] = [];
       snapshot.forEach((d) => {
         prodList.push({ id: d.id, ...d.data() } as Product);
       });
-      setPublicProducts(prodList);
+      const previousFirstPageIds = adminFirstProductPageIdsRef.current;
+      const nextFirstPageIds = new Set(prodList.map((product) => product.id));
+      setPublicProducts((current) => [
+        ...prodList,
+        ...current.filter((product) => !previousFirstPageIds.has(product.id) && !nextFirstPageIds.has(product.id)),
+      ]);
+      adminFirstProductPageIdsRef.current = nextFirstPageIds;
+      adminProductCursorRef.current = snapshot.docs.at(-1) || null;
+      setHasMoreAdminProducts(snapshot.docs.length === ADMIN_PRODUCT_PAGE_SIZE);
+      clearAdminDataIssue('products');
     }, (error) => {
-      handleFirestoreError(error, OperationType.GET, "products");
+      reportAdminDataIssue('products', 'Live product updates are temporarily unavailable.', error);
     });
 
-    const unsubscribeProductCommercial = onSnapshot(collection(db, PRODUCT_PRIVATE_COLLECTION), (snapshot) => {
-      setProductCommercialById(Object.fromEntries(snapshot.docs.map((document) => [document.id, document.data()])));
+    const unsubscribeProductCommercial = onSnapshot(query(
+      collection(db, PRODUCT_PRIVATE_COLLECTION),
+      orderBy(documentId()),
+      limit(ADMIN_PRODUCT_PAGE_SIZE),
+    ), (snapshot) => {
+      const nextPage = Object.fromEntries(snapshot.docs.map((document) => [document.id, document.data()]));
+      const previousFirstPageIds = adminFirstCommercialPageIdsRef.current;
+      setProductCommercialById((current) => ({
+        ...Object.fromEntries(Object.entries(current).filter(([id]) => !previousFirstPageIds.has(id))),
+        ...nextPage,
+      }));
+      adminFirstCommercialPageIdsRef.current = new Set(snapshot.docs.map((document) => document.id));
+      clearAdminDataIssue('product-commercial');
     }, (error) => {
-      handleFirestoreError(error, OperationType.GET, PRODUCT_PRIVATE_COLLECTION);
+      reportAdminDataIssue('product-commercial', 'Private product controls are temporarily unavailable.', error);
     });
+
+    void Promise.all([
+      getCountFromServer(collection(db, 'orders')),
+      getCountFromServer(collection(db, 'users')),
+      getCountFromServer(collection(db, 'products')),
+      getCountFromServer(collection(db, 'reviews')),
+    ]).then(([orderCount, userCount, productCount, reviewCount]) => {
+      if (!isMounted) return;
+      setAdminSummaryCounts({
+        orders: orderCount.data().count,
+        users: userCount.data().count,
+        products: productCount.data().count,
+        reviews: reviewCount.data().count,
+      });
+    }).catch((error) => console.warn('Admin summary counts could not be loaded', error));
+
+    void getAggregateFromServer(
+      query(collection(db, 'orders'), where('status', 'in', ['confirmed', 'delivered'])),
+      { totalSales: sum('totalPrice') },
+    ).then((snapshot) => {
+      if (!isMounted) return;
+      setAdminGrossSales(snapshot.data().totalSales);
+    }).catch((error) => console.warn('Admin sales aggregate could not be loaded', error));
 
     loadData();
 
     return () => {
+      isMounted = false;
       unsubscribeOrders();
       unsubscribeReviews();
       unsubscribeProducts();
       unsubscribeProductCommercial();
     };
   }, [authorized]);
+
+  const loadMoreAdminProducts = async (): Promise<void> => {
+    const cursor = adminProductCursorRef.current;
+    if (!cursor || loadingMoreAdminProducts) return;
+    setLoadingMoreAdminProducts(true);
+    try {
+      const productSnapshot = await getDocs(query(
+        collection(db, 'products'),
+        orderBy(documentId()),
+        startAfter(cursor),
+        limit(ADMIN_PRODUCT_PAGE_SIZE),
+      ));
+      const nextProducts = productSnapshot.docs.map((document) => ({
+        id: document.id,
+        ...document.data(),
+      } as Product));
+      const commercialEntries: Array<[string, Record<string, unknown>]> = [];
+      for (let index = 0; index < nextProducts.length; index += FIRESTORE_IN_QUERY_LIMIT) {
+        const productIds = nextProducts.slice(index, index + FIRESTORE_IN_QUERY_LIMIT).map((product) => product.id);
+        if (productIds.length === 0) continue;
+        const commercialSnapshot = await getDocs(query(
+          collection(db, PRODUCT_PRIVATE_COLLECTION),
+          where(documentId(), 'in', productIds),
+          limit(FIRESTORE_IN_QUERY_LIMIT),
+        ));
+        commercialSnapshot.docs.forEach((document) => commercialEntries.push([
+          document.id,
+          document.data(),
+        ]));
+      }
+      setPublicProducts((current) => {
+        const byId = new Map(current.map((product) => [product.id, product]));
+        nextProducts.forEach((product) => byId.set(product.id, product));
+        return [...byId.values()];
+      });
+      setProductCommercialById((current) => ({ ...current, ...Object.fromEntries(commercialEntries) }));
+      adminProductCursorRef.current = productSnapshot.docs.at(-1) || null;
+      setHasMoreAdminProducts(productSnapshot.docs.length === ADMIN_PRODUCT_PAGE_SIZE);
+    } catch (error) {
+      console.warn('Additional admin products could not be loaded', error);
+      showSettingsToast('error', 'More products could not be loaded. Please try again.');
+    } finally {
+      setLoadingMoreAdminProducts(false);
+    }
+  };
+
+  const loadMoreAdminOrders = async (): Promise<number> => {
+    const cursor = adminOrderCursorRef.current;
+    if (!cursor || loadingMoreAdminOrders) return 0;
+    setLoadingMoreAdminOrders(true);
+    try {
+      const snapshot = await getDocs(query(
+        collection(db, 'orders'),
+        orderBy('createdAt', 'desc'),
+        startAfter(cursor),
+        limit(ADMIN_ORDER_READ_LIMIT),
+      ));
+      const nextOrders = snapshot.docs.map((document) => ({ id: document.id, ...document.data() } as Order));
+      setOrders((current) => {
+        const byId = new Map<string, Order>(current.map((order) => [order.id, order]));
+        nextOrders.forEach((order) => byId.set(order.id, order));
+        return [...byId.values()].sort((left, right) => {
+          const leftTime = left.createdAt ? new Date(left.createdAt).getTime() : 0;
+          const rightTime = right.createdAt ? new Date(right.createdAt).getTime() : 0;
+          return (Number.isNaN(rightTime) ? 0 : rightTime) - (Number.isNaN(leftTime) ? 0 : leftTime);
+        });
+      });
+      adminOrderCursorRef.current = snapshot.docs.at(-1) || null;
+      setHasMoreAdminOrders(snapshot.docs.length === ADMIN_ORDER_READ_LIMIT);
+      return nextOrders.length;
+    } catch (error) {
+      console.warn('Older admin orders could not be loaded', error);
+      showSettingsToast('error', 'Older orders could not be loaded. Please try again.');
+      return 0;
+    } finally {
+      setLoadingMoreAdminOrders(false);
+    }
+  };
+
+  const loadMoreAdminUsers = async (): Promise<number> => {
+    const cursor = adminUserCursorRef.current;
+    if (!cursor || loadingMoreAdminUsers) return 0;
+    setLoadingMoreAdminUsers(true);
+    try {
+      const snapshot = await getDocs(query(
+        collection(db, 'users'),
+        orderBy(documentId()),
+        startAfter(cursor),
+        limit(ADMIN_USER_READ_LIMIT),
+      ));
+      const nextUsers = snapshot.docs.map((document) => ({ id: document.id, ...document.data() }));
+      setUsers((current) => {
+        const byId = new Map(current.map((user) => [user.id, user]));
+        nextUsers.forEach((user) => byId.set(user.id, user));
+        return [...byId.values()];
+      });
+      adminUserCursorRef.current = snapshot.docs.at(-1) || null;
+      setHasMoreAdminUsers(snapshot.docs.length === ADMIN_USER_READ_LIMIT);
+      return nextUsers.length;
+    } catch (error) {
+      console.warn('Additional admin customers could not be loaded', error);
+      showSettingsToast('error', 'More customers could not be loaded. Please try again.');
+      return 0;
+    } finally {
+      setLoadingMoreAdminUsers(false);
+    }
+  };
 
   const formatPrice = (amount: number) => {
     return new Intl.NumberFormat('en-LK', {
@@ -1211,13 +1517,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
     }
     setSavingCategory(true);
     try {
-      const currentProductsSnapshot = await getDocs(collection(db, 'products'));
-      const currentProducts: Product[] = [];
-      currentProductsSnapshot.forEach((productDocument) => {
-        currentProducts.push({ id: productDocument.id, ...productDocument.data() } as Product);
-      });
-      const currentCounts = buildCategoryProductCounts([categoryToDelete], currentProducts)[categoryToDelete.id];
-      if (!canDeleteCategory(currentCounts)) {
+      if (await hasCategoryProductReference(db, categoryToDelete.id)) {
         showSettingsToast('error', 'This category is currently used by products.');
         closeCategoryDeleteConfirmation();
         return;
@@ -1277,17 +1577,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
         updatedAt: now,
       }, { merge: Boolean(editingBrand) });
       if (editingBrand && editingBrand.name !== name) {
-        const referencedProducts = products.filter((product) => productReferencesBrand(product, editingBrand));
-        for (let start = 0; start < referencedProducts.length; start += 450) {
-          const brandProductUpdates = writeBatch(db);
-          referencedProducts.slice(start, start + 450).forEach((product) => {
-            brandProductUpdates.update(doc(db, 'products', product.id), {
-              'specs.Brand': name,
-              updatedAt: now,
-            });
-          });
-          await brandProductUpdates.commit();
-        }
+        await updateBrandProductReferences(db, editingBrand, name, now);
       }
       showSettingsToast('success', `Brand "${name}" ${editingBrand ? 'updated' : 'created'} successfully.`);
       setShowBrandModal(false);
@@ -1321,12 +1611,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
     if (!authorized || !brandToDelete) return;
     setSavingBrand(true);
     try {
-      const currentProductsSnapshot = await getDocs(collection(db, 'products'));
-      const currentProducts: Product[] = [];
-      currentProductsSnapshot.forEach((productDocument) => {
-        currentProducts.push({ id: productDocument.id, ...productDocument.data() } as Product);
-      });
-      if (countProductsForBrand(currentProducts, brandToDelete) > 0) {
+      if (await hasBrandProductReference(db, brandToDelete)) {
         showSettingsToast('error', 'This brand is currently used by products and cannot be deleted.');
         setBrandToDelete(null);
         return;
@@ -1582,7 +1867,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
   };
 
   // --- STATS DERIVATIONS ---
-  const totalSalesVal = orders
+  const totalSalesVal = adminGrossSales ?? orders
     .filter(o => o.status === 'confirmed' || o.status === 'delivered')
     .reduce((acc, o) => acc + o.totalPrice, 0);
 
@@ -1751,9 +2036,10 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
 
   return (
     <div className={`min-h-screen font-sans flex flex-col md:flex-row transition-colors duration-300 ${isDarkMode ? 'bg-[#080E1A] text-slate-100' : 'bg-slate-50 text-slate-800'}`}>
+      {isMobileMenuOpen && <button type="button" onClick={() => setIsMobileMenuOpen(false)} className="fixed inset-0 z-30 bg-slate-950/60 md:hidden" aria-label="Close Admin navigation" />}
       
       {/* --- SIDEBAR PANEL (Always #0B1220 Dark) --- */}
-      <aside className={`fixed md:sticky top-0 z-40 w-72 h-screen bg-[#0B1220] text-slate-300 border-r border-slate-800/60 p-6 flex flex-col justify-between transition-transform duration-300 ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}`}>
+      <aside id="admin-navigation" aria-label="Admin navigation" className={`fixed md:sticky top-0 z-40 w-72 h-screen bg-[#0B1220] text-slate-300 border-r border-slate-800/60 p-6 flex flex-col justify-between transition-transform duration-300 ${isMobileMenuOpen ? 'visible translate-x-0' : 'invisible -translate-x-full md:visible md:translate-x-0'}`}>
         <div className="space-y-8">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-3">
@@ -1765,8 +2051,8 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                 <span className="text-[10px] text-blue-400 font-bold uppercase tracking-widest block">ADMIN PORTAL</span>
               </div>
             </div>
-            <button onClick={() => setIsMobileMenuOpen(false)} className="md:hidden text-slate-400 hover:text-white cursor-pointer">
-              <X className="h-5 w-5" />
+            <button ref={mobileMenuCloseRef} type="button" onClick={() => setIsMobileMenuOpen(false)} className="flex h-11 w-11 items-center justify-center rounded-xl text-slate-400 hover:bg-slate-800 hover:text-white md:hidden" aria-label="Close Admin navigation">
+              <X className="h-5 w-5" aria-hidden="true" />
             </button>
           </div>
 
@@ -1786,11 +2072,13 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
               const active = activeTab === tab.id;
               return (
                 <button
+                  type="button"
                   key={tab.id}
                   onClick={() => { setActiveTab(tab.id as any); setIsMobileMenuOpen(false); }}
+                  aria-current={active ? 'page' : undefined}
                   className={`w-full flex items-center space-x-3.5 px-4 py-3 rounded-xl font-medium text-xs transition-all cursor-pointer ${active ? 'bg-blue-600 text-white font-bold shadow-lg shadow-blue-500/25' : 'hover:bg-slate-800/55 hover:text-white text-slate-400'}`}
                 >
-                  <Icon className={`h-4.5 w-4.5 ${active ? 'text-white' : 'text-slate-400 group-hover:text-white'}`} />
+                  <Icon className={`h-4.5 w-4.5 ${active ? 'text-white' : 'text-slate-400 group-hover:text-white'}`} aria-hidden="true" />
                   <span>{tab.label}</span>
                 </button>
               );
@@ -1808,8 +2096,8 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
               <p className="text-[10px] text-slate-500 truncate">{PRODUCTION_ADMIN_EMAIL}</p>
             </div>
           </div>
-          <button onClick={() => auth.signOut()} className="w-full py-2 bg-slate-800 hover:bg-slate-700 hover:text-white text-[11px] font-bold rounded-lg transition-all cursor-pointer flex items-center justify-center space-x-1.5 text-slate-400">
-            <Power className="h-3.5 w-3.5 text-red-500" />
+          <button type="button" onClick={() => auth.signOut()} className="flex min-h-11 w-full items-center justify-center space-x-1.5 rounded-lg bg-slate-800 text-[11px] font-bold text-slate-400 transition-all hover:bg-slate-700 hover:text-white">
+            <Power className="h-3.5 w-3.5 text-red-500" aria-hidden="true" />
             <span>Sign Out Session</span>
           </button>
         </div>
@@ -1819,10 +2107,10 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
       <div className="flex-1 min-w-0 flex flex-col min-h-screen">
         
         {/* TOP COMPACT HEADER */}
-        <header className={`px-6 py-4 border-b flex items-center justify-between sticky top-0 z-30 backdrop-blur-md ${isDarkMode ? 'bg-[#080E1A]/85 border-slate-800/50' : 'bg-white/85 border-slate-200/50'}`}>
+        <header className={`sticky top-0 z-30 flex items-center justify-between border-b px-3 py-3 backdrop-blur-md sm:px-6 sm:py-4 ${isDarkMode ? 'bg-[#080E1A]/85 border-slate-800/50' : 'bg-white/85 border-slate-200/50'}`}>
           <div className="flex items-center space-x-4">
-            <button onClick={() => setIsMobileMenuOpen(true)} className="md:hidden p-1 text-slate-400 hover:text-slate-800 dark:hover:text-white">
-              <Menu className="h-5 w-5" />
+            <button ref={mobileMenuButtonRef} type="button" onClick={() => setIsMobileMenuOpen(true)} className="flex h-11 w-11 items-center justify-center rounded-xl text-slate-400 hover:bg-slate-100 hover:text-slate-800 dark:hover:bg-slate-800 dark:hover:text-white md:hidden" aria-label="Open Admin navigation" aria-expanded={isMobileMenuOpen} aria-controls="admin-navigation">
+              <Menu className="h-5 w-5" aria-hidden="true" />
             </button>
             <div className="hidden sm:flex items-center space-x-2 text-xs font-semibold text-slate-400">
               <span>Overview</span>
@@ -1833,14 +2121,14 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
 
           <div className="flex items-center space-x-4">
             {/* Theme Toggle */}
-            <button onClick={() => setIsDarkMode(!isDarkMode)} className="p-2 bg-slate-100 dark:bg-slate-800 rounded-xl text-slate-500 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 cursor-pointer">
-              {isDarkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+            <button type="button" onClick={() => setIsDarkMode(!isDarkMode)} className="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-100 text-slate-500 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700" aria-label={isDarkMode ? 'Use light Admin theme' : 'Use dark Admin theme'}>
+              {isDarkMode ? <Sun className="h-4 w-4" aria-hidden="true" /> : <Moon className="h-4 w-4" aria-hidden="true" />}
             </button>
 
             {/* Notification bell */}
             <div className="relative">
-              <button onClick={() => setShowNotifications(!showNotifications)} className="p-2 bg-slate-100 dark:bg-slate-800 rounded-xl text-slate-500 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 relative cursor-pointer">
-                <Bell className="h-4 w-4" />
+              <button type="button" onClick={() => setShowNotifications(!showNotifications)} className="relative flex h-11 w-11 items-center justify-center rounded-xl bg-slate-100 text-slate-500 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700" aria-label={`Admin notifications${notificationsList.length ? `, ${notificationsList.length} active` : ''}`} aria-expanded={showNotifications} aria-controls="admin-notifications">
+                <Bell className="h-4 w-4" aria-hidden="true" />
                 {notificationsList.length > 0 && (
                   <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white rounded-full text-[9px] font-black flex items-center justify-center animate-bounce">
                     {notificationsList.length}
@@ -1850,10 +2138,10 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
 
               <AnimatePresence>
                 {showNotifications && (
-                  <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 10 }} className={`absolute right-0 mt-3 w-80 rounded-2xl shadow-2xl p-4 border text-left ${isDarkMode ? 'bg-[#121A2E] border-slate-800 text-slate-100' : 'bg-white border-slate-200 text-slate-800'}`}>
+                  <motion.div id="admin-notifications" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 10 }} className={`absolute right-0 mt-3 w-[min(20rem,calc(100vw-1.5rem))] rounded-2xl shadow-2xl p-4 border text-left ${isDarkMode ? 'bg-[#121A2E] border-slate-800 text-slate-100' : 'bg-white border-slate-200 text-slate-800'}`}>
                     <div className="flex items-center justify-between border-b pb-2 mb-3">
                       <span className="text-xs font-bold uppercase tracking-wider text-blue-500">Alert Center</span>
-                      <button onClick={() => setShowNotifications(false)} className="text-[10px] text-slate-400 hover:underline">Close</button>
+                      <button type="button" onClick={() => setShowNotifications(false)} className="min-h-11 rounded-lg px-2 text-[10px] text-slate-400 hover:underline">Close</button>
                     </div>
                     <div className="space-y-2 max-h-60 overflow-y-auto">
                       {notificationsList.length === 0 ? (
@@ -1881,6 +2169,22 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
 
         {/* MAIN BODY COMPILING CONTAINER */}
         <main className="flex-1 p-6 overflow-x-hidden space-y-8">
+          {Object.keys(adminDataIssues).length > 0 && (
+            <section className="flex flex-col gap-3 rounded-2xl border border-red-500/25 bg-red-500/10 p-4 text-sm text-red-700 dark:text-red-300 sm:flex-row sm:items-center sm:justify-between" role="alert" aria-labelledby="admin-data-issue-title">
+              <div className="flex items-start gap-3">
+                <AlertCircle className="mt-0.5 h-5 w-5 shrink-0" aria-hidden="true" />
+                <div>
+                  <h2 id="admin-data-issue-title" className="font-extrabold">Some live administration data is unavailable</h2>
+                  <ul className="mt-1 list-disc space-y-1 pl-4 text-xs">
+                    {Object.entries(adminDataIssues).map(([key, message]) => <li key={key}>{message}</li>)}
+                  </ul>
+                </div>
+              </div>
+              <button type="button" onClick={() => window.location.reload()} className="min-h-11 shrink-0 rounded-xl bg-red-600 px-4 text-xs font-bold text-white hover:bg-red-500">
+                Retry dashboard
+              </button>
+            </section>
+          )}
           
           {/* TAB 1: DASHBOARD STATS */}
           {activeTab === 'stats' && (() => {
@@ -2036,6 +2340,71 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                   </div>
                 </div>
 
+                <section className={`rounded-3xl border p-5 text-left ${
+                  isDarkMode ? 'border-slate-800/70 bg-[#101827]/75' : 'border-slate-200/80 bg-white'
+                }`} aria-labelledby="admin-operations-readiness-title">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="text-[10px] font-black uppercase tracking-widest text-blue-500">Production operations</p>
+                      <h3 id="admin-operations-readiness-title" className="mt-1 text-base font-extrabold text-slate-900 dark:text-white">Operational readiness</h3>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void loadOperationsSummary()}
+                      disabled={loadingOperationsSummary}
+                      className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-slate-100 px-4 text-xs font-bold text-slate-700 transition hover:bg-slate-200 disabled:cursor-wait disabled:opacity-60 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+                    >
+                      <RefreshCw className={`h-4 w-4 ${loadingOperationsSummary ? 'animate-spin' : ''}`} aria-hidden="true" />
+                      {loadingOperationsSummary ? 'Refreshing' : 'Refresh operations'}
+                    </button>
+                  </div>
+                  {operationsSummaryError && (
+                    <div className="mt-4 flex items-start gap-2 rounded-xl border border-amber-500/25 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-300" role="alert">
+                      <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                      <span>{operationsSummaryError}</span>
+                    </div>
+                  )}
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4" aria-live="polite">
+                    <div className="rounded-2xl border border-slate-200/70 p-4 dark:border-slate-800">
+                      <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Email delivery</span>
+                      <strong className={`mt-2 block text-lg ${operationsSummary?.emailNotifications.failed ? 'text-red-500' : operationsSummary?.emailNotifications.retry_pending ? 'text-amber-500' : 'text-emerald-500'}`}>
+                        {operationsSummary ? operationsSummary.emailNotifications.failed > 0
+                          ? `${operationsSummary.emailNotifications.failed} failed`
+                          : operationsSummary.emailNotifications.retry_pending > 0
+                            ? `${operationsSummary.emailNotifications.retry_pending} retrying`
+                            : 'Healthy' : 'Checking…'}
+                      </strong>
+                      <small className="mt-1 block text-slate-400">{operationsSummary ? `${operationsSummary.emailNotifications.delivered} delivered · ${operationsSummary.emailNotifications.inProgress} processing` : 'Loading delivery status'}</small>
+                    </div>
+                    <div className="rounded-2xl border border-slate-200/70 p-4 dark:border-slate-800">
+                      <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Supplier alerts</span>
+                      <strong className={`mt-2 block text-lg ${operationsSummary?.supplierAlerts.active ? 'text-amber-500' : 'text-emerald-500'}`}>
+                        {operationsSummary ? `${operationsSummary.supplierAlerts.active} active` : 'Checking…'}
+                      </strong>
+                      <small className="mt-1 block text-slate-400">Open or acknowledged incidents</small>
+                    </div>
+                    <div className="rounded-2xl border border-slate-200/70 p-4 dark:border-slate-800">
+                      <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Coupons</span>
+                      <strong className="mt-2 block text-lg text-slate-900 dark:text-white">
+                        {operationsSummary ? `${operationsSummary.coupons.active} active` : 'Checking…'}
+                      </strong>
+                      <small className="mt-1 block text-slate-400">{operationsSummary ? `${operationsSummary.coupons.total} configured` : 'Loading private definitions'}</small>
+                    </div>
+                    <div className="rounded-2xl border border-slate-200/70 p-4 dark:border-slate-800">
+                      <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Supplier audit</span>
+                      <strong className="mt-2 block text-sm text-slate-900 dark:text-white">
+                        {operationsSummary ? formatOperationsTimestamp(operationsSummary.audit.latestSupplierEventAt) : 'Checking…'}
+                      </strong>
+                      <small className="mt-1 block text-slate-400">Latest immutable supplier event</small>
+                    </div>
+                  </div>
+                  {operationsSummary?.emailNotifications.lastFailure && (
+                    <p className="mt-3 text-xs text-red-500" role="status">
+                      Latest email failure: {operationsSummary.emailNotifications.lastFailure.message}
+                    </p>
+                  )}
+                </section>
+
                 {/* Premium Apple-inspired KPI Cards Grid */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
                   
@@ -2084,7 +2453,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
 
                     <div className="mt-5 text-left relative z-10">
                       <p className="text-2xl md:text-3xl font-black tracking-tight text-slate-900 dark:text-white">
-                        <AnimatedCounter value={orders.length} />
+                        <AnimatedCounter value={adminSummaryCounts.orders || orders.length} />
                       </p>
                       <div className="flex items-center space-x-1.5 mt-2.5">
                         <span className={`inline-flex items-center space-x-0.5 text-[10px] font-black px-2 py-0.5 rounded-full ${
@@ -2115,7 +2484,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
 
                     <div className="mt-5 text-left relative z-10">
                       <p className="text-2xl md:text-3xl font-black tracking-tight text-slate-900 dark:text-white">
-                        <AnimatedCounter value={customers.length} />
+                        <AnimatedCounter value={adminSummaryCounts.users || customers.length} />
                       </p>
                       <div className="flex items-center space-x-1.5 mt-2.5">
                         <span className={`inline-flex items-center space-x-0.5 text-[10px] font-black px-2 py-0.5 rounded-full ${
@@ -2760,6 +3129,18 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                   );
                 })}
               </div>
+              {hasMoreAdminProducts && (
+                <div className="flex justify-center pt-2">
+                  <button
+                    type="button"
+                    onClick={() => { void loadMoreAdminProducts(); }}
+                    disabled={loadingMoreAdminProducts}
+                    className="min-h-11 rounded-xl bg-blue-600 px-6 text-xs font-bold text-white transition-colors hover:bg-blue-500 disabled:cursor-wait disabled:opacity-60"
+                  >
+                    {loadingMoreAdminProducts ? 'Loading products...' : 'Load more products'}
+                  </button>
+                </div>
+              )}
 
             </motion.div>
           )}
@@ -2907,7 +3288,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
 
                     {/* Status Toggle Bar */}
                     <div className="flex gap-2 w-full xl:w-auto overflow-x-auto no-scrollbar py-1">
-                      {['all', 'pending', 'confirmed', 'packed', 'shipped', 'delivered', 'cancelled'].map(status => {
+                      {['all', 'pending', 'confirmed', 'processing', 'packed', 'shipped', 'delivered', 'cancelled'].map(status => {
                         const count = getStatusCount(status);
                         const isActive = orderStatusFilter === status;
                         return (
@@ -3055,11 +3436,19 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                             Page {orderPage} of {totalPages}
                           </span>
                           <button
-                            disabled={orderPage === totalPages}
-                            onClick={() => setOrderPage(prev => Math.min(prev + 1, totalPages))}
+                            disabled={loadingMoreAdminOrders || (orderPage === totalPages && !hasMoreAdminOrders)}
+                            onClick={() => {
+                              if (orderPage < totalPages) {
+                                setOrderPage((previous) => previous + 1);
+                                return;
+                              }
+                              void loadMoreAdminOrders().then((loaded) => {
+                                if (loaded > 0) setOrderPage((previous) => previous + 1);
+                              });
+                            }}
                             className="px-3.5 py-1.5 bg-white dark:bg-[#111928] border border-slate-200/80 dark:border-slate-800 text-slate-600 dark:text-slate-400 text-[10px] font-bold rounded-xl disabled:opacity-40 transition-colors cursor-pointer"
                           >
-                            Next
+                            {loadingMoreAdminOrders ? 'Loading...' : orderPage === totalPages && hasMoreAdminOrders ? 'Load older' : 'Next'}
                           </button>
                         </div>
                       )}
@@ -3131,6 +3520,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                                 >
                                   <option value="pending">Pending</option>
                                   <option value="confirmed">Confirmed</option>
+                                  <option value="processing">Processing</option>
                                   <option value="packed">Packed</option>
                                   <option value="shipped">Shipped</option>
                                   <option value="delivered">Delivered</option>
@@ -3161,9 +3551,9 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                               <span className="block text-[9px] font-black text-blue-500 uppercase tracking-widest">Order Processing Timeline</span>
                               
                               {/* Stepper nodes row */}
-                              <div className="grid grid-cols-5 gap-1.5 pt-2">
-                                {['pending', 'confirmed', 'packed', 'shipped', 'delivered'].map((step, idx, arr) => {
-                                  const stepsOrder = ['pending', 'confirmed', 'packed', 'shipped', 'delivered'];
+                              <div className="grid grid-cols-6 gap-1.5 pt-2">
+                                {['pending', 'confirmed', 'processing', 'packed', 'shipped', 'delivered'].map((step, idx, arr) => {
+                                  const stepsOrder = ['pending', 'confirmed', 'processing', 'packed', 'shipped', 'delivered'];
                                   const currentIdx = stepsOrder.indexOf(selectedOrder.status || 'pending');
                                   const stepIdx = stepsOrder.indexOf(step);
                                   const isCompleted = stepIdx < currentIdx;
@@ -3173,6 +3563,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                                   const stepLabelMap: Record<string, string> = {
                                     pending: 'Pending',
                                     confirmed: 'Confirmed',
+                                    processing: 'Processing',
                                     packed: 'Packed',
                                     shipped: 'Shipped',
                                     delivered: 'Delivered'
@@ -3634,11 +4025,19 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                             Page {customerPage} of {totalPages}
                           </span>
                           <button
-                            disabled={customerPage === totalPages}
-                            onClick={() => setCustomerPage(prev => Math.min(prev + 1, totalPages))}
+                            disabled={loadingMoreAdminUsers || (customerPage === totalPages && !hasMoreAdminUsers)}
+                            onClick={() => {
+                              if (customerPage < totalPages) {
+                                setCustomerPage((previous) => previous + 1);
+                                return;
+                              }
+                              void loadMoreAdminUsers().then((loaded) => {
+                                if (loaded > 0) setCustomerPage((previous) => previous + 1);
+                              });
+                            }}
                             className="px-3.5 py-1.5 bg-white dark:bg-[#111928] border border-slate-200/80 dark:border-slate-800 text-slate-600 dark:text-slate-400 text-[10px] font-bold rounded-xl disabled:opacity-40 transition-colors cursor-pointer"
                           >
-                            Next
+                            {loadingMoreAdminUsers ? 'Loading...' : customerPage === totalPages && hasMoreAdminUsers ? 'Load more' : 'Next'}
                           </button>
                         </div>
                       )}
@@ -4601,8 +5000,8 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
 
       {/* --- ADD/EDIT PRODUCT MODAL --- */}
       {showProductModal && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-[#111928] border border-slate-200/50 dark:border-slate-800 rounded-3xl max-w-3xl w-full p-6 text-left max-h-[90vh] overflow-y-auto shadow-2xl flex flex-col space-y-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-2 backdrop-blur-xs sm:p-4">
+          <div ref={productModalRef} className="flex max-h-[calc(100dvh-1rem)] w-full max-w-3xl flex-col space-y-4 overflow-y-auto rounded-3xl border border-slate-200/50 bg-white p-4 text-left shadow-2xl dark:border-slate-800 dark:bg-[#111928] sm:max-h-[90vh] sm:p-6" role="dialog" aria-modal="true" aria-labelledby="admin-product-modal-title" aria-busy={savingProduct}>
 
             {/* Modal Header */}
             <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
@@ -4611,17 +5010,21 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                   <Package className="h-5 w-5" />
                 </div>
                 <div>
-                  <h3 className="text-sm font-extrabold font-display text-slate-900 dark:text-white">
+                  <h3 id="admin-product-modal-title" className="text-sm font-extrabold font-display text-slate-900 dark:text-white">
                     {editingProduct ? "Modify Listing Details" : "Create Stock Item Record"}
                   </h3>
                   <p className="text-[10px] text-slate-400">Ensure catalog attributes are correct and optimized</p>
                 </div>
               </div>
               <button
+                ref={productModalCloseRef}
+                type="button"
                 onClick={() => setShowProductModal(false)}
-                className="p-1.5 text-slate-400 hover:text-slate-900 dark:hover:text-white bg-slate-100 dark:bg-slate-800 rounded-full cursor-pointer transition-colors"
+                disabled={savingProduct}
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-400 transition-colors hover:text-slate-900 disabled:opacity-50 dark:bg-slate-800 dark:hover:text-white"
+                aria-label="Close product editor"
               >
-                <X className="h-4.5 w-4.5" />
+                <X className="h-4.5 w-4.5" aria-hidden="true" />
               </button>
             </div>
 

@@ -1,0 +1,27 @@
+{
+  "displayName": "Zyro Supplier Hub - review backlog",
+  "combiner": "OR",
+  "conditions": [
+    {
+      "displayName": "Supplier review backlog exceeds 100 items",
+      "conditionThreshold": {
+        "filter": "resource.type=\"cloud_run_revision\" AND metric.type=\"logging.googleapis.com/user/supplier_hub_queue_depth\"",
+        "comparison": "COMPARISON_GT",
+        "thresholdValue": 100,
+        "duration": "900s",
+        "aggregations": [{
+          "alignmentPeriod": "300s",
+          "perSeriesAligner": "ALIGN_PERCENTILE_99",
+          "crossSeriesReducer": "REDUCE_MAX"
+        }],
+        "trigger": { "count": 1 }
+      }
+    }
+  ],
+  "alertStrategy": { "autoClose": "3600s" },
+  "documentation": {
+    "mimeType": "text/markdown",
+    "content": "The Supplier Hub review backlog remained above 100 items for 15 minutes. Check active synchronization, Product Review throughput, retry backlog and dead-letter items."
+  },
+  "notificationChannels": []
+}

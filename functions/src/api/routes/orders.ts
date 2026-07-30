@@ -3,10 +3,12 @@ import { FieldValue } from "firebase-admin/firestore";
 import { requireAdminAuth } from "../middleware/adminAuth";
 import { adminAuth, adminDb } from "../firebase";
 import { sendApiError } from "../errors";
-import { assertCustomerCanCancelOrder, buildOrderStatusPlan } from "../orders/orderStatusLogic";
+import {
+  ORDER_STATUSES, assertCustomerCanCancelOrder, buildOrderStatusPlan, requireCurrentProductStock,
+} from "../orders/orderStatusLogic";
 import { appendPaymentTimeline, createPaymentTimelineEvent } from "../payments/payhereLogic";
 
-const ORDER_STATUSES = new Set(["pending", "confirmed", "processing", "packed", "shipped", "delivered", "cancelled"]);
+const VALID_ORDER_STATUSES = new Set<string>(ORDER_STATUSES);
 
 const requireCustomerAuth: express.RequestHandler = async (req, res, next) => {
   const match = (req.header("Authorization") || "").match(/^Bearer\s+(.+)$/i);
@@ -50,10 +52,8 @@ async function updateOrderStatus(orderId: string, newStatus: string, customerUid
     for (const [productId, quantity] of quantities) {
       const productRef = adminDb.collection("products").doc(productId);
       const productSnap = await transaction.get(productRef);
-      if (productSnap.exists) {
-        const stock = Number(productSnap.data()?.stock);
-        productStocks.push({ ref: productRef, stock: Number.isFinite(stock) ? stock : 0, quantity });
-      }
+      const stock = requireCurrentProductStock(productSnap.exists, productSnap.data()?.stock);
+      productStocks.push({ ref: productRef, stock, quantity });
     }
 
     productStocks.forEach(({ ref, stock, quantity }) => transaction.update(ref, { stock: stock + quantity }));
@@ -113,7 +113,7 @@ export function registerOrderRoutes(app: express.Express): void {
   app.post("/api/orders/:orderId/status", requireAdminAuth, async (req, res) => {
     const orderId = String(req.params.orderId || "").trim();
     const newStatus = typeof req.body?.status === "string" ? req.body.status.trim().toLowerCase() : "";
-    if (!orderId || !ORDER_STATUSES.has(newStatus)) {
+    if (!orderId || !VALID_ORDER_STATUSES.has(newStatus)) {
       res.status(400).json({ error: "A valid order ID and status are required" });
       return;
     }

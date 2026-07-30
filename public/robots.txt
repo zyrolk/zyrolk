@@ -4,5 +4,10 @@ Allow: /
 # Administrative and server-only paths are not public storefront content.
 Disallow: /admin
 Disallow: /api/
+Disallow: /account
+Disallow: /wishlist
+Disallow: /recently-viewed
+Disallow: /compare
+Disallow: /search
 
 Sitemap: https://zyro.lk/sitemap.xml

@@ -5,6 +5,7 @@ import { getStorage } from "firebase-admin/storage";
 const sharp: typeof import("sharp").default = require("sharp");
 import { appLogger } from "../logging";
 import { fetchSupplierOutbound, SupplierOutboundResponse } from "../security/supplierOutboundRequest";
+import { recordSupplierOperationalAlertSafely } from "./supplierOperationalAlerts";
 
 export const SUPPLIER_MEDIA_COLLECTION = "supplier_media_assets";
 export const SUPPLIER_MEDIA_AUDIT_COLLECTION = "supplier_media_audit";
@@ -273,6 +274,31 @@ const defaultDependencies = (db: Firestore): SupplierMediaPipelineDependencies =
     },
     recordAudit: async (event) => {
       await db.collection(SUPPLIER_MEDIA_AUDIT_COLLECTION).add(event);
+      if (event.event === "supplier_media_failed") {
+        const failure = record(event.failure);
+        const reason = String(failure.reason || "Supplier media processing failed.");
+        const common = {
+          severity: "critical" as const,
+          supplierId: String(event.supplierId || event.sourceId || "") || null,
+          queueItemId: String(event.queueItemId || "") || null,
+          technicalMetadata: {
+            sourceId: event.sourceId || null,
+            productId: event.productId || null,
+            retryable: failure.retryable === true,
+            reason,
+          },
+        };
+        await recordSupplierOperationalAlertSafely({
+          ...common,
+          category: "media_processing_failure",
+        });
+        if (/firebase storage|storage|upload failed|bucket/iu.test(reason)) {
+          await recordSupplierOperationalAlertSafely({
+            ...common,
+            category: "storage_failure",
+          });
+        }
+      }
     },
   };
 };

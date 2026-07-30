@@ -2,8 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { Mail, Phone, MapPin, Send, CheckCircle, Clock, MessageSquare, Edit3 } from 'lucide-react';
 import { WebsiteSettings } from '../types';
 import { db } from '../firebase';
-import { addDoc, collection, doc, getDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc } from 'firebase/firestore';
 import { reportClientIssue } from '../services/observability/clientDiagnostics';
+import { fetchJson } from '../services/network/fetchJson';
 
 interface ContactPageProps {
   settings?: WebsiteSettings | null;
@@ -179,10 +180,20 @@ export default function ContactPage({ settings, isAdmin, onEdit }: ContactPagePr
     setSubmitting(true);
     setSubmitError("");
     try {
-      await addDoc(collection(db, "contact_inquiries"), {
-        name: name.trim(), phone: phone.trim(), email: email.trim(), message: message.trim(),
-        status: "new", createdAt: serverTimestamp(),
-      });
+      await fetchJson<{ success: true; inquiryId: string }>(
+        '/api/contact-inquiries',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: name.trim(),
+            phone: phone.trim(),
+            email: email.trim(),
+            message: message.trim(),
+          }),
+        },
+        { fallbackMessage: 'Your inquiry could not be sent. Please try again or contact us through WhatsApp.' },
+      );
       setSubmitted(true);
       setTimeout(() => {
         setSubmitted(false);

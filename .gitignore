@@ -3,7 +3,15 @@ build/
 dist/
 functions/lib/
 coverage/
+.firebase/
 .DS_Store
 *.log
 .env*
 !.env.example
+
+# Local validation and diagnostic output
+diffcheck*.txt
+test-failure-details.txt
+test-failures.json
+test-*-rerun.txt
+test-supplier*.txt

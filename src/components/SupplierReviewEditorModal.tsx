@@ -97,6 +97,9 @@ export default function SupplierReviewEditorModal({
   const [failedMediaUrls, setFailedMediaUrls] = useState<Set<string>>(() => new Set());
   const firstInputRef = useRef<HTMLInputElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+  const onCloseRef = useRef(onClose);
+  const isPublishingRef = useRef(isPublishing);
   const validationErrors = useMemo(
     () => validateSupplierReviewDraft(draft, validCategoryIds, categories, brands),
     [brands, categories, draft, validCategoryIds],
@@ -148,13 +151,17 @@ export default function SupplierReviewEditorModal({
     return Array.isArray(values) ? values.filter((value): value is string => typeof value === 'string' && /^https?:\/\//iu.test(value)) : [];
   }, [item]);
 
+  useEffect(() => { onCloseRef.current = onClose; }, [onClose]);
+  useEffect(() => { isPublishingRef.current = isPublishing; }, [isPublishing]);
+
   useEffect(() => {
+    previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
-    firstInputRef.current?.focus();
+    const focusFrame = window.requestAnimationFrame(() => firstInputRef.current?.focus());
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !isPublishing) onClose();
+      if (event.key === 'Escape' && !isPublishingRef.current) onCloseRef.current();
       if (event.key !== 'Tab' || !dialogRef.current) return;
       const focusable = Array.from(dialogRef.current.querySelectorAll('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, a[href]')) as HTMLElement[];
       if (!focusable.length) return;
@@ -171,10 +178,12 @@ export default function SupplierReviewEditorModal({
     document.addEventListener('keydown', handleKeyDown);
 
     return () => {
+      window.cancelAnimationFrame(focusFrame);
       document.body.style.overflow = previousOverflow;
       document.removeEventListener('keydown', handleKeyDown);
+      previousFocusRef.current?.focus();
     };
-  }, [isPublishing, onClose]);
+  }, []);
 
   const setNumber = (field: 'sellingPrice' | 'comparePrice' | 'costPrice' | 'marketPrice' | 'stock', value: string) => {
     const ownershipField = field === 'sellingPrice'

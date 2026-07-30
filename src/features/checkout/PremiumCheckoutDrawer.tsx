@@ -1,5 +1,5 @@
 import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from 'react';
-import { collection, onSnapshot } from 'firebase/firestore';
+import { collection, limit, onSnapshot, query } from 'firebase/firestore';
 import {
   BadgePercent, Check, CheckCircle2, ChevronRight, CircleDollarSign, Copy, Home, LoaderCircle,
   LockKeyhole, MapPin, Minus, PackageCheck, Phone, Plus, ShieldCheck, ShoppingBag, Trash2, Truck, X,
@@ -15,11 +15,12 @@ import {
   validateCheckoutForm, writeCheckoutDraft,
 } from './checkoutModel';
 import { Order } from '../../types';
-import { trackCommerceEvent, trackPurchaseOnce } from '../../services/observability/commerceAnalytics';
+import { commerceAnalyticsItem, trackCommerceEvent, trackPurchaseOnce } from '../../services/observability/commerceAnalytics';
 import { resolveDeliveryCharge } from '../../services/settings/shippingSettings';
 import './premiumCheckout.css';
 
 const IDEMPOTENCY_KEY = 'zyro.checkout.idempotency';
+const CHECKOUT_ADDRESS_READ_LIMIT = 25;
 const DISTRICT_DELIVERY: Record<string, number> = {
   Colombo: 350, Gampaha: 450, Kalutara: 450, Kandy: 550, Galle: 550, Matara: 550,
   Jaffna: 650, Kurunegala: 500, Anuradhapura: 600, Badulla: 600, Ratnapura: 500,
@@ -126,7 +127,10 @@ export default function PremiumCheckoutDrawer({
   useEffect(() => {
     if (!isOpen || !user) { setAddresses([]); setAddressesLoading(false); return; }
     setAddressesLoading(true);
-    return onSnapshot(collection(db, 'users', user.uid, 'addresses'), (snapshot) => {
+    return onSnapshot(query(
+      collection(db, 'users', user.uid, 'addresses'),
+      limit(CHECKOUT_ADDRESS_READ_LIMIT),
+    ), (snapshot) => {
       const next = sortCustomerAddresses(snapshot.docs.map(document => ({ id: document.id, ...document.data() } as CustomerAddress)));
       setAddresses(next);
       setAddressesLoading(false);
@@ -206,7 +210,16 @@ export default function PremiumCheckoutDrawer({
 
     setIsSubmitting(true);
     try {
-      void trackCommerceEvent('begin_checkout', { currency: 'LKR', value: grandTotal, items: cartItems.length });
+      const analyticsItems = cartItems.map(item => commerceAnalyticsItem({
+        id: item.product.id,
+        name: item.product.name,
+        price: item.product.price,
+        quantity: item.quantity,
+      }));
+      void trackCommerceEvent('begin_checkout', { currency: 'LKR', value: grandTotal, items: analyticsItems });
+      void trackCommerceEvent('add_payment_info', {
+        currency: 'LKR', value: grandTotal, payment_type: paymentMethod, items: analyticsItems,
+      });
       const token = user ? await user.getIdToken() : '';
       const payload = {
         customerUid: user?.uid || 'guest', customerName: normalized.customerName, customerPhone: normalized.customerPhone,
@@ -223,7 +236,7 @@ export default function PremiumCheckoutDrawer({
       }, { fallbackMessage: 'Checkout is temporarily unavailable. Your cart is still saved.' });
       if (!result.success) throw new Error(result.error || 'The order could not be placed.');
       setPlacedOrder(result.order);
-      trackPurchaseOnce(result.order.id, result.order.totalPrice, 'cod', result.order.couponCode);
+      trackPurchaseOnce(result.order.id, result.order.totalPrice, 'cod', result.order.couponCode, analyticsItems);
       clearIdempotencyKey();
       clearCheckoutDraft(window.sessionStorage);
       onClearCart();

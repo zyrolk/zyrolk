@@ -39,11 +39,14 @@ export default defineConfig(() => {
               if (id.includes('lucide-react')) {
                 return 'icons';
               }
-              if (id.includes('react') || id.includes('react-dom') || id.includes('motion')) {
-                return 'react-vendor';
-              }
+              // Check Recharts before the generic React match: "recharts"
+              // contains "react" and would otherwise be pulled into the
+              // storefront's eager React vendor chunk.
               if (id.includes('recharts')) {
                 return 'charts';
+              }
+              if (id.includes('react') || id.includes('react-dom') || id.includes('motion')) {
+                return 'react-vendor';
               }
             }
 

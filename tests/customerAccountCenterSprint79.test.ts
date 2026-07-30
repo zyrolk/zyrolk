@@ -101,7 +101,7 @@ test('profile management preserves Firebase Authentication and merges account fi
 });
 
 test('address book supports owner-scoped live reads and atomic add, edit, default, and delete operations', () => {
-  assert.match(account, /onSnapshot\(collection\(db, 'users', user\.uid, 'addresses'\)/);
+  assert.match(account, /onSnapshot\(query\([\s\S]*collection\(db, 'users', user\.uid, 'addresses'\)[\s\S]*limit\(CUSTOMER_ADDRESS_READ_LIMIT\)/);
   assert.match(account, /const batch = writeBatch\(db\)/);
   assert.match(account, /batch\.set\(addressRef/);
   assert.match(account, /batch\.update\(existing\.ref, \{ isDefault: false/);

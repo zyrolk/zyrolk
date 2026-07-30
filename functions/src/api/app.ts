@@ -6,8 +6,10 @@ import { registerSupplierPortalRoutes } from "./routes/supplierPortal";
 import { registerOrderRoutes } from "./routes/orders";
 import { registerReviewSystemRoutes } from "./routes/reviewSystem";
 import { registerAdminConfigurationRoutes } from "./routes/adminConfiguration";
+import { registerContactRoutes } from "./routes/contact";
 import { adminAppCheck, adminAuth, adminDb } from "./firebase";
 import { appLogger } from "./logging";
+import { recordSupplierOperationalAlertSafely } from "./suppliers/supplierOperationalAlerts";
 
 const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
@@ -35,6 +37,10 @@ const isExactLocalhost = (hostname: string): boolean => {
     || /^127\.0\.0\.1:\d+$/u.test(host)
     || /^\[::1\](?::\d+)?$/u.test(host);
 };
+
+const isSupplierHubApiPath = (path: string): boolean => path.startsWith("/api/supplier")
+  || path.startsWith("/api/test-supplier")
+  || path.startsWith("/api/fetch-supplier");
 
 export function createApiApp(): express.Express {
   const app = express();
@@ -86,13 +92,29 @@ export function createApiApp(): express.Express {
     }
     const token = req.header("X-Firebase-AppCheck");
     if (!token) {
+      if (isSupplierHubApiPath(req.path)) {
+        await recordSupplierOperationalAlertSafely({
+          category: "app_check_failure",
+          severity: "critical",
+          dedupeScope: "supplier-hub-app-check",
+          technicalMetadata: { path: req.path, method: req.method, reason: "missing_app_check_token" },
+        });
+      }
       res.status(401).json({ error: "App verification is required" });
       return;
     }
     try {
       await adminAppCheck.verifyToken(token);
       next();
-    } catch {
+    } catch (error) {
+      if (isSupplierHubApiPath(req.path)) {
+        await recordSupplierOperationalAlertSafely({
+          category: "app_check_failure",
+          severity: "critical",
+          dedupeScope: "supplier-hub-app-check",
+          technicalMetadata: { path: req.path, method: req.method, reason: "app_check_verification_failed", error },
+        });
+      }
       res.status(401).json({ error: "App verification failed" });
     }
   });
@@ -100,13 +122,13 @@ export function createApiApp(): express.Express {
   app.use(express.json({ limit: "100kb" }));
 
   // PayHere routes deliberately remain unregistered during the COD-only launch period.
-  registerAdminConfigurationRoutes(app, { auth: adminAuth });
+  registerAdminConfigurationRoutes(app, { auth: adminAuth, db: adminDb });
   registerCheckoutRoutes(app);
+  registerContactRoutes(app, { db: adminDb });
   registerOrderRoutes(app);
   registerReviewSystemRoutes(app, {
     db: adminDb,
     verifyIdToken: (token) => adminAuth.verifyIdToken(token),
-    isAdminEmail: (email) => (email || "").toLowerCase() === runtimeConfig.adminEmail,
   });
   registerSupplierRoutes(app);
   registerSupplierPortalRoutes(app, { db: adminDb, auth: adminAuth });
@@ -121,11 +143,21 @@ export function createApiApp(): express.Express {
 
   app.get("/sitemap.xml", async (_req, res) => {
     try {
-      const productsSnapshot = await adminDb.collection("products").limit(5000).get();
+      const [productsSnapshot, categoriesSnapshot] = await Promise.all([
+        adminDb.collection("products").limit(5000).get(),
+        adminDb.collection("categories").limit(500).get(),
+      ]);
       const productUrls = productsSnapshot.docs.filter((product) => product.data().isActive !== false).map((product) => (
-        `<url><loc>${xmlEscape(`https://zyro.lk/?product=${encodeURIComponent(product.id)}`)}</loc><changefreq>daily</changefreq><priority>0.8</priority></url>`
+        `<url><loc>${xmlEscape(`https://zyro.lk/products/${encodeURIComponent(product.id)}`)}</loc><changefreq>daily</changefreq><priority>0.8</priority></url>`
       ));
-      const body = `<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>https://zyro.lk/</loc><changefreq>daily</changefreq><priority>1.0</priority></url>${productUrls.join("")}</urlset>`;
+      const categoryUrls = categoriesSnapshot.docs.filter((category) => category.data().isActive !== false).map((category) => (
+        `<url><loc>${xmlEscape(`https://zyro.lk/categories/${encodeURIComponent(category.id)}`)}</loc><changefreq>weekly</changefreq><priority>0.7</priority></url>`
+      ));
+      const staticPaths = ["", "products", "categories", "about-us", "contact", "faq", "privacy-policy", "terms-conditions", "return-policy", "warranty-policy"];
+      const staticUrls = staticPaths.map((path, index) => (
+        `<url><loc>${xmlEscape(`https://zyro.lk/${path}`)}</loc><changefreq>${index < 3 ? "daily" : "monthly"}</changefreq><priority>${index === 0 ? "1.0" : index < 3 ? "0.9" : "0.5"}</priority></url>`
+      ));
+      const body = `<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${staticUrls.join("")}${categoryUrls.join("")}${productUrls.join("")}</urlset>`;
       res.set("Content-Type", "application/xml; charset=utf-8");
       res.set("Cache-Control", "public, max-age=3600, stale-while-revalidate=86400");
       res.status(200).send(body);

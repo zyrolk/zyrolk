@@ -3,6 +3,7 @@ import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { adminDb } from "../api/firebase";
 import { appLogger } from "../api/logging";
 import { appendPaymentTimeline, createPaymentTimelineEvent } from "../api/payments/payhereLogic";
+import { collectOrderStockQuantities, requireCurrentProductStock } from "../api/orders/orderStatusLogic";
 
 async function expireReservation(orderRef: FirebaseFirestore.DocumentReference): Promise<boolean> {
   return adminDb.runTransaction(async (transaction) => {
@@ -20,16 +21,11 @@ async function expireReservation(orderRef: FirebaseFirestore.DocumentReference):
     if ((!isPayHereReservation && !isOfflineConfirmationReservation) || order.stockReservationStatus !== "reserved" || expiresAt > Date.now()) return false;
 
     const productUpdates: Array<{ ref: FirebaseFirestore.DocumentReference; stock: number }> = [];
-    for (const item of Array.isArray(order.items) ? order.items : []) {
-      const productId = typeof item?.productId === "string" ? item.productId.trim() : "";
-      const quantity = Number(item?.quantity);
-      if (!productId || !Number.isInteger(quantity) || quantity <= 0) continue;
+    for (const [productId, quantity] of collectOrderStockQuantities(order.items)) {
       const productRef = adminDb.collection("products").doc(productId);
       const productSnapshot = await transaction.get(productRef);
-      if (productSnapshot.exists) {
-        const stock = Number(productSnapshot.data()?.stock);
-        productUpdates.push({ ref: productRef, stock: (Number.isFinite(stock) ? stock : 0) + quantity });
-      }
+      const stock = requireCurrentProductStock(productSnapshot.exists, productSnapshot.data()?.stock);
+      productUpdates.push({ ref: productRef, stock: stock + quantity });
     }
 
     productUpdates.forEach((update) => transaction.update(update.ref, { stock: update.stock }));
@@ -65,7 +61,9 @@ export const expirePaymentReservations = onSchedule("every 5 minutes", async () 
     .where("stockReservationExpiresAt", "<=", Timestamp.now())
     .limit(100)
     .get();
-  const results = await Promise.all(snapshot.docs.map((order) => expireReservation(order.ref)));
-  const expiredCount = results.filter(Boolean).length;
+  const results = await Promise.allSettled(snapshot.docs.map((order) => expireReservation(order.ref)));
+  const expiredCount = results.filter((result) => result.status === "fulfilled" && result.value).length;
+  const failedCount = results.filter((result) => result.status === "rejected").length;
   if (expiredCount) appLogger.info("Expired unconfirmed stock reservations.", { expiredCount });
+  if (failedCount) appLogger.error("Some expired stock reservations could not be reconciled.", { failedCount });
 });

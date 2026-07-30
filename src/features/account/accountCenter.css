@@ -302,7 +302,7 @@ button:disabled { cursor: not-allowed; opacity: .62; }
 .zy-order-card-images img { width: 100%; height: 100%; object-fit: contain; }
 .zy-order-card footer { align-items: flex-end; padding-top: .2rem; }
 .zy-order-card footer strong { font-size: 1rem; }
-.zy-order-card footer button, .zy-order-details-topbar button { display: inline-flex; align-items: center; gap: .35rem; padding: .58rem .72rem; border: 0; border-radius: .75rem; color: var(--account-blue); background: #eaf3ff; font: inherit; font-size: .7rem; font-weight: 820; cursor: pointer; }
+.zy-order-card footer button, .zy-order-details-topbar button { display: inline-flex; min-height: 2.75rem; align-items: center; gap: .35rem; padding: .58rem .72rem; border: 0; border-radius: .75rem; color: var(--account-blue); background: #eaf3ff; font: inherit; font-size: .7rem; font-weight: 820; cursor: pointer; }
 .zy-order-card footer button svg, .zy-order-details-topbar button svg { width: .85rem; height: .85rem; }
 .zy-order-empty { min-height: 330px; border: 1px dashed #cbd8e4; border-radius: 1.3rem; background: rgba(255,255,255,.65); }
 .zy-order-skeleton { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }

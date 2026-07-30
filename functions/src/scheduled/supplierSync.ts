@@ -19,6 +19,10 @@ import {
   SupplierProductComparisonStatus,
 } from "../api/suppliers/supplierProductImport";
 import { buildSupplierAuditEvent } from "../api/suppliers/supplierAuditTrail";
+import {
+  recordSupplierOperationalAlertSafely,
+  resolveSupplierOperationalAlertSafely,
+} from "../api/suppliers/supplierOperationalAlerts";
 import { buildSupplierProductApprovalBaseline } from "../api/suppliers/supplierApprovalConcurrency";
 import { buildSupplierHealth, resolveSupplierPriority, SupplierPriorityCandidate } from "../api/suppliers/multiSupplier";
 import { createSupplierSyncJob, SupplierSyncJobProgressInput } from "../api/suppliers/supplierSyncJobs";
@@ -2374,6 +2378,18 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
               discoveredCategories: [...discoveredCategoryLabels].sort((left, right) => left.localeCompare(right)),
             },
           }, { merge: true });
+          if (traversalResult.complete) {
+            await Promise.all([
+              resolveSupplierOperationalAlertSafely({
+                category: "supplier_sync_failure",
+                supplierId: String(source.supplierId || source.id),
+              }),
+              resolveSupplierOperationalAlertSafely({
+                category: "supplier_connection_failure",
+                supplierId: String(source.supplierId || source.id),
+              }),
+            ]);
+          }
         }
         completedSourceCount += 1;
         await reportProgress({
@@ -2416,6 +2432,20 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
             },
             syncHealth: buildSupplierHealth(source.syncHealth || {}, "failure", Math.max(0, Date.now() - sourceStartedAt), new Date().toISOString()),
           }, { merge: true });
+          await recordSupplierOperationalAlertSafely({
+            category: "supplier_sync_failure",
+            severity: "critical",
+            supplierId: String(source.supplierId || source.id),
+            batchId,
+            technicalMetadata: {
+              sourceId: source.id,
+              supplierName,
+              failureClassification,
+              reason: message,
+              productsDiscovered: sourceProductsDiscovered,
+              productsFailed: Math.max(1, sourceProductsFailed),
+            },
+          });
         }
         completedSourceCount += 1;
         await reportProgress({
@@ -2495,6 +2525,12 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
       productsQueued: metrics.productsQueued,
       errorCount: metrics.errors.length,
     });
+    if (trigger === "scheduled" && status === "Success") {
+      await resolveSupplierOperationalAlertSafely({
+        category: "scheduler_failure",
+        dedupeScope: "supplier-sync-scheduler",
+      });
+    }
     return buildRunResult(
       batchId,
       status,
@@ -2522,6 +2558,19 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
         schedulerLastRunFinishedAt: finishedAt.toISOString(),
       }, { merge: true });
     }
+    await recordSupplierOperationalAlertSafely({
+      category: trigger === "scheduled" ? "scheduler_failure" : "supplier_sync_failure",
+      severity: "critical",
+      jobId: batchId,
+      batchId,
+      dedupeScope: "supplier-sync-scheduler",
+      technicalMetadata: {
+        trigger,
+        productsScanned: metrics.productsScanned,
+        productsQueued: metrics.productsQueued,
+        reason: error instanceof Error ? error.message : String(error || "Scheduled sync failed."),
+      },
+    });
     throw error;
   } finally {
     if (syncLockAcquired) await releaseSyncLock(new Date(), batchId);
@@ -2574,5 +2623,18 @@ export const scheduledSupplierSync = onSchedule({
   memory: "1GiB",
 }, async (event) => {
   const scheduledAt = Date.parse(event.scheduleTime);
-  await runScheduledSupplierSync(Number.isFinite(scheduledAt) ? scheduledAt : Date.now());
+  try {
+    await runScheduledSupplierSync(Number.isFinite(scheduledAt) ? scheduledAt : Date.now());
+  } catch (error) {
+    await recordSupplierOperationalAlertSafely({
+      category: "scheduler_failure",
+      severity: "critical",
+      dedupeScope: "supplier-sync-scheduler",
+      technicalMetadata: {
+        scheduleTime: event.scheduleTime,
+        reason: error instanceof Error ? error.message : String(error || "Supplier scheduler failed."),
+      },
+    });
+    throw error;
+  }
 });

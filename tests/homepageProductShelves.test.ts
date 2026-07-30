@@ -6,6 +6,7 @@ const app = readFileSync('src/App.tsx', 'utf8');
 const homepage = readFileSync('src/components/MarketplaceHomePhase1.tsx', 'utf8');
 const shelf = readFileSync('src/components/StorefrontProductShelf.tsx', 'utf8');
 const styles = readFileSync('src/index.css', 'utf8');
+const catalog = readFileSync('src/services/storefront/storefrontCatalog.ts', 'utf8');
 
 test('Sprint 74 composes all five homepage sections from the generic storefront shelf', () => {
   assert.equal((homepage.match(/<StorefrontProductShelf/g) || []).length, 5);
@@ -17,7 +18,9 @@ test('Sprint 74 composes all five homepage sections from the generic storefront 
 });
 
 test('shelf product selection stays with the live App-level product projections', () => {
-  assert.match(app, /onSnapshot\(collection\(db, "products"\)/);
+  assert.match(app, /subscribeToStorefrontProductPage\(db/);
+  assert.match(app, /loadStorefrontHomepageProducts\(db\)/);
+  assert.match(catalog, /where\('isFeatured', '==', true\)/);
   assert.match(app, /activeProducts\.filter\(product => product\.isNew\)\.slice\(0, 8\)/);
   assert.match(app, /activeProducts\.filter\(product => product\.isBestSeller\)\.slice\(0, 8\)/);
   assert.match(app, /featuredProducts\.filter\(product => !dealIds\.has\(product\.id\)\)\.slice\(0, 8\)/);

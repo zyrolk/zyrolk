@@ -1,0 +1,27 @@
+{
+  "displayName": "Zyro Supplier Hub - synchronization failures",
+  "combiner": "OR",
+  "conditions": [
+    {
+      "displayName": "At least one supplier synchronization failed",
+      "conditionThreshold": {
+        "filter": "resource.type=\"cloud_run_revision\" AND metric.type=\"logging.googleapis.com/user/supplier_hub_sync_failure\"",
+        "comparison": "COMPARISON_GT",
+        "thresholdValue": 0,
+        "duration": "0s",
+        "aggregations": [{
+          "alignmentPeriod": "300s",
+          "perSeriesAligner": "ALIGN_SUM",
+          "crossSeriesReducer": "REDUCE_SUM"
+        }],
+        "trigger": { "count": 1 }
+      }
+    }
+  ],
+  "alertStrategy": { "autoClose": "1800s" },
+  "documentation": {
+    "mimeType": "text/markdown",
+    "content": "A Supplier Hub synchronization failed. Open Supplier Hub > Activity, inspect the failed source and retry only after reviewing the safe failure reason."
+  },
+  "notificationChannels": []
+}

@@ -14,6 +14,8 @@ import {
   getSupplierQueueIdentityCandidate,
   resolveSupplierQueueIdentity,
 } from "../api/suppliers/supplierQueueIdentity";
+import { recordSupplierOperationalAlertSafely } from "../api/suppliers/supplierOperationalAlerts";
+import { recordSupplierQueueProcessingDurationMetric } from "../api/suppliers/supplierCloudMonitoring";
 
 export const SUPPLIER_QUEUE_STATES = [
   "queued",
@@ -35,6 +37,11 @@ export interface SupplierQueueProcessResult {
   queueItemId: string;
   outcome: "completed" | "skipped" | "retryable_failure" | "dead_letter";
   state: SupplierQueueState;
+}
+
+export interface SupplierQueueProcessingControl {
+  currentTime?: () => number;
+  verifyWorkerOwnership?: () => void | Promise<void>;
 }
 
 export interface SupplierReviewQueueMetrics {
@@ -483,15 +490,19 @@ export async function processSupplierReviewQueueItem(
   queueItemId: string,
   workerId: string,
   now = Date.now(),
+  control: SupplierQueueProcessingControl = {},
 ): Promise<SupplierQueueProcessResult> {
+  await control.verifyWorkerOwnership?.();
   const leased = await leaseSupplierReviewQueueItem(db, queueItemId, workerId, now);
   if (!leased) return { queueItemId, outcome: "skipped", state: stateFor({}) };
   const wallClockStartedAt = Date.now();
-  const currentTime = (): number => now + Math.max(0, Date.now() - wallClockStartedAt);
+  const currentTime = control.currentTime
+    || (() => now + Math.max(0, Date.now() - wallClockStartedAt));
   let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   let heartbeatInFlight: Promise<void> = Promise.resolve();
   let leaseLost = false;
   try {
+    await control.verifyWorkerOwnership?.();
     const processingRecord = await markSupplierQueueProcessing(db, queueItemId, workerId, now);
     const leaseId = asString(processingRecord.leaseId);
     const sendHeartbeat = (): void => {
@@ -502,16 +513,60 @@ export async function processSupplierReviewQueueItem(
       }).catch(() => { leaseLost = true; });
     };
     heartbeatTimer = setInterval(sendHeartbeat, LEASE_HEARTBEAT_INTERVAL_MS);
+    await control.verifyWorkerOwnership?.();
     if (sourceImageUrls(processingRecord).length > 0 || extractSupplierMediaFromRecord(processingRecord.managedMedia).length > 0) {
       await ensureSupplierReviewQueueManagedMedia(db, queueItemId);
     }
+    await control.verifyWorkerOwnership?.();
     sendHeartbeat();
     await heartbeatInFlight;
     if (leaseLost) throw new Error("Supplier queue lease was lost during processing.");
+    await control.verifyWorkerOwnership?.();
     await completeSupplierQueueItem(db, queueItemId, workerId, currentTime());
     return { queueItemId, outcome: "completed", state: "review_pending" };
   } catch (error) {
     const state = await recordSupplierQueueFailure(db, queueItemId, workerId, error, currentTime());
+    const supplierId = asString(leased.supplierId) || asString(asRecord(leased.supplierSnapshot).supplierId) || asString(leased.sourceId) || null;
+    if (state === "dead_letter") {
+      await recordSupplierOperationalAlertSafely({
+        category: "dead_letter_created",
+        severity: "critical",
+        supplierId,
+        queueItemId,
+        jobId: asString(leased.jobId) || null,
+        batchId: asString(leased.batchId) || null,
+        technicalMetadata: {
+          workerId,
+          failureClassification: classifySupplierQueueFailure(error),
+          reason: error instanceof Error ? error.message : String(error || "Queue processing failed."),
+        },
+      });
+    }
+    if (error instanceof Error && error.name === "SupplierMediaRetryableError") {
+      const metadata = {
+        workerId,
+        reason: error.message,
+        retryCount: retryCountFor(leased),
+      };
+      await recordSupplierOperationalAlertSafely({
+        category: "media_processing_failure",
+        severity: "critical",
+        supplierId,
+        queueItemId,
+        batchId: asString(leased.batchId) || null,
+        technicalMetadata: metadata,
+      });
+      if (/firebase storage|storage|upload failed|bucket/iu.test(error.message)) {
+        await recordSupplierOperationalAlertSafely({
+          category: "storage_failure",
+          severity: "critical",
+          supplierId,
+          queueItemId,
+          batchId: asString(leased.batchId) || null,
+          technicalMetadata: metadata,
+        });
+      }
+    }
     if (state === "leased" || state === "processing") return { queueItemId, outcome: "skipped", state };
     return { queueItemId, outcome: state === "dead_letter" ? "dead_letter" : "retryable_failure", state };
   } finally {
@@ -537,11 +592,29 @@ export async function recoverExpiredSupplierReviewQueueLeases(db: Firestore, now
     if (!isSupplierQueueLeaseExpired(document.data() as SupplierQueueRecord, now)) continue;
     const state = await recordSupplierQueueFailure(db, document.id, "recovery", new Error("Worker lease expired."), now, true);
     if (state === "retryable_failure" || state === "dead_letter") recovered += 1;
+    if (state === "dead_letter") {
+      const item = document.data() as SupplierQueueRecord;
+      await recordSupplierOperationalAlertSafely({
+        category: "dead_letter_created",
+        severity: "critical",
+        supplierId: asString(item.supplierId) || asString(asRecord(item.supplierSnapshot).supplierId) || asString(item.sourceId) || null,
+        queueItemId: document.id,
+        jobId: asString(item.jobId) || null,
+        batchId: asString(item.batchId) || null,
+        technicalMetadata: { reason: "Worker lease expired before processing completed.", recoveredBy: "recovery" },
+      });
+    }
   }
   return recovered;
 }
 
-export async function processDueSupplierReviewQueueItems(db: Firestore, workerId: string, now = Date.now(), limit = 50): Promise<SupplierQueueProcessResult[]> {
+export async function processDueSupplierReviewQueueItems(
+  db: Firestore,
+  workerId: string,
+  now = Date.now(),
+  limit = 50,
+  control: SupplierQueueProcessingControl = {},
+): Promise<SupplierQueueProcessResult[]> {
   const nowIso = new Date(now).toISOString();
   const perStateLimit = Math.max(1, Math.ceil(limit / 2));
   const snapshots = await Promise.all(["queued", "retryable_failure"].map((queueState) => db.collection("supplier_review_queue")
@@ -558,8 +631,23 @@ export async function processDueSupplierReviewQueueItems(db: Firestore, workerId
     })
     .slice(0, limit);
   const results: SupplierQueueProcessResult[] = [];
+  const currentTime = control.currentTime || Date.now;
   for (const document of documents) {
-    results.push(await processSupplierReviewQueueItem(db, document.id, workerId, now));
+    await control.verifyWorkerOwnership?.();
+    const itemStartedAt = currentTime();
+    const result = await processSupplierReviewQueueItem(db, document.id, workerId, itemStartedAt, {
+      ...control,
+      currentTime,
+    });
+    results.push(result);
+    if (result.outcome !== "skipped") {
+      recordSupplierQueueProcessingDurationMetric({
+        durationMs: Math.max(0, currentTime() - itemStartedAt),
+        outcome: result.outcome,
+        queueItemId: result.queueItemId,
+      });
+    }
+    await control.verifyWorkerOwnership?.();
   }
   return results;
 }

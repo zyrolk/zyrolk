@@ -11,11 +11,11 @@ import {
   normalizeVote,
   selectVerifiedPurchaseOrder,
 } from "../reviews/reviewSystemLogic";
+import { hasAdminAccess } from "../security/adminAuthorization";
 
 interface ReviewSystemDependencies {
   db: Firestore;
   verifyIdToken: (token: string) => Promise<DecodedIdToken>;
-  isAdminEmail: (email: string | undefined) => boolean;
 }
 
 const rateBuckets = new Map<string, number[]>();
@@ -199,7 +199,7 @@ export function registerReviewSystemRoutes(app: express.Express, dependencies: R
       }
 
       if (action === "reply") {
-        if (!dependencies.isAdminEmail(user.email)) throw new ReviewSystemError("Seller access required", 403);
+        if (!hasAdminAccess(user)) throw new ReviewSystemError("Seller access required", 403);
         const reply = cleanReviewText(req.body?.reply, "Seller reply", 2, 2000);
         const review = await reviewRef.get();
         if (!review.exists) throw new ReviewSystemError("Review not found", 404);
@@ -274,7 +274,7 @@ export function registerReviewSystemRoutes(app: express.Express, dependencies: R
       }
 
       if (action === "reply") {
-        if (!dependencies.isAdminEmail(user.email)) throw new ReviewSystemError("Seller access required", 403);
+        if (!hasAdminAccess(user)) throw new ReviewSystemError("Seller access required", 403);
         const answer = cleanReviewText(req.body?.answer, "Answer", 2, 2000);
         const question = await questionRef.get();
         if (!question.exists) throw new ReviewSystemError("Question not found", 404);

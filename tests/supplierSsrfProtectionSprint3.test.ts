@@ -147,7 +147,8 @@ test('A2Z and generic HTTP connectors share the central outbound request policy'
   const registry = readFileSync('functions/src/api/suppliers/SupplierRegistry.ts', 'utf8');
 
   assert.match(genericConnector, /fetchSupplierOutbound\(this\.targetUrl/);
-  assert.match(a2zConnector, /fetchSupplierOutbound\(url/);
+  assert.match(a2zConnector, /this\.fetchOutbound = dependencies\.fetchOutbound \|\| fetchSupplierOutbound/);
+  assert.match(a2zConnector, /this\.fetchOutbound\(url/);
   assert.doesNotMatch(genericConnector, /await fetch\(/);
   assert.doesNotMatch(a2zConnector, /await fetch\(/);
   assert.match(registry, /outboundPolicy:/);

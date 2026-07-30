@@ -134,7 +134,8 @@ test('inventory reservation, retry and restoration remain atomic and idempotent'
   assert.match(checkoutRoute, /newStock:\s*currentStock\s*-\s*item\.quantity/);
   assert.match(checkoutRoute, /stockReservationStatus/);
   assert.match(paymentRoute, /stockRestorationApplied !== true/);
-  assert.match(paymentRoute, /stock:\s*\(Number\.isFinite\(stock\) \? stock : 0\) \+ quantity/);
+  assert.match(paymentRoute, /collectOrderStockQuantities\(order\.items\)/);
+  assert.match(paymentRoute, /requireCurrentProductStock\(productSnapshot\.exists, productSnapshot\.data\(\)\?\.stock\)/);
   assert.match(paymentRoute, /Insufficient stock to retry payment/);
   assert.match(expiry, /stockReservationStatus[\s\S]*reserved/);
   assert.match(expiry, /stockRestorationApplied:\s*true/);

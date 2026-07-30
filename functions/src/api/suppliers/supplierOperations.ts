@@ -147,6 +147,7 @@ export async function loadSupplierOperationsSummary(db: Firestore): Promise<Reco
     mediaReuseSnapshot,
     missingImageSnapshot,
     mediaDurationSnapshot,
+    operationalAlertSnapshot,
     ...stateCounts
   ] = await Promise.all([
     supplierSnapshotPromise,
@@ -163,6 +164,11 @@ export async function loadSupplierOperationsSummary(db: Firestore): Promise<Reco
     db.collection("supplier_media_audit").where("event", "==", "supplier_media_reused").count().get(),
     db.collection("supplier_review_queue").where("productValidation.missingFields", "array-contains", "images").count().get(),
     db.collection("supplier_media_audit").where("processingDurationMs", ">", 0).limit(500).get(),
+    db.collection("supplier_operational_alerts")
+      .where("status", "in", ["open", "acknowledged"])
+      .orderBy("lastOccurrence", "desc")
+      .limit(100)
+      .get(),
     ...queueStates.map((state) => countState(db, state)),
   ]);
   const suppliers: DocumentRecord[] = supplierSnapshot.docs.map((document) => ({
@@ -211,7 +217,23 @@ export async function loadSupplierOperationsSummary(db: Firestore): Promise<Reco
     healthScore: calculateSupplierHealthScore(supplier),
     nextScheduledSync: toOperationsIso(supplier.nextScheduledSyncAt),
   }));
-  const alerts = generateSupplierOperationsAlerts({ suppliers, queueCounts, mediaFailures, storageFailures });
+  const generatedAlerts = generateSupplierOperationsAlerts({ suppliers, queueCounts, mediaFailures, storageFailures });
+  const durableAlerts = operationalAlertSnapshot.docs.map((document) => {
+    const alert = document.data();
+    return {
+      id: document.id,
+      type: alert.category || "operational_alert",
+      severity: alert.severity || "critical",
+      title: alert.title || "Supplier Hub alert",
+      message: alert.message || "Supplier Hub requires administrator attention.",
+      supplierId: alert.supplierId || undefined,
+      createdAt: toOperationsIso(alert.firstOccurrence) || new Date().toISOString(),
+      lastOccurrence: toOperationsIso(alert.lastOccurrence),
+      status: alert.status || "open",
+      assignedAdmin: alert.assignedAdmin || null,
+    };
+  });
+  const alerts = [...durableAlerts, ...generatedAlerts.filter((alert) => !durableAlerts.some((durable) => durable.id === alert.id))];
   const processMemory = process.memoryUsage();
   return {
     generatedAt: new Date().toISOString(),
@@ -329,6 +351,7 @@ export async function loadSupplierOperationsAudit(db: Firestore, options: { afte
     { key: "media", collection: "supplier_media_audit", timestampField: "timestamp" },
     { key: "sync", collection: "supplier_sync_history", timestampField: "createdAt" },
     { key: "supplier", collection: "supplier_operations_audit", timestampField: "timestamp" },
+    { key: "alert", collection: "supplier_operational_alert_events", timestampField: "occurredAt" },
   ] as const;
   let cursors: Record<string, string> = {};
   if (options.after) {

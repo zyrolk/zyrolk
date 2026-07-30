@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { ProductParser } from "./ProductParser";
 import { RawA2ZProduct } from "./types";
 import { getCookieNames, sanitizeA2ZResponseBody, sanitizeA2ZResponseHeaders } from "./diagnostics";
@@ -9,18 +10,65 @@ import {
 import { fetchSupplierOutbound, SupplierOutboundPolicy, SupplierOutboundResponse } from "../../security/supplierOutboundRequest";
 import { SupplierCatalogPageRequest, SupplierCatalogPageResult } from "../types";
 
-export class A2ZConnectorService {
-  private static sessionCookie: string | null = null;
-  private static lastLoginTime = 0;
-  private static readonly SESSION_TTL = 15 * 60 * 1000;
-  private static readonly REQUEST_TIMEOUT_MS = 15000;
-  private static readonly BROWSER_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
+export interface A2ZSessionScope {
+  supplierId: string;
+  sourceId: string;
+  targetUrl: string;
+  credentialReference: string;
+}
 
-  private static debugLog(...values: unknown[]): void {
+interface A2ZAuthenticatedSession {
+  cookie: string;
+  authenticatedAt: number;
+  scopeKey: string;
+  credentialFingerprint: string;
+}
+
+interface A2ZConnectorServiceDependencies {
+  fetchOutbound?: typeof fetchSupplierOutbound;
+  now?: () => number;
+}
+
+const normalizeScopeValue = (value: string, field: string): string => {
+  const normalized = String(value || "").trim();
+  if (!normalized) throw new Error(`A2Z session ${field} is required.`);
+  return normalized;
+};
+
+export function buildA2ZSessionScopeKey(scope: A2ZSessionScope): string {
+  const supplierId = normalizeScopeValue(scope.supplierId, "supplier ID");
+  const sourceId = normalizeScopeValue(scope.sourceId, "source ID");
+  const credentialReference = normalizeScopeValue(scope.credentialReference, "credential reference");
+  const targetHost = new URL(normalizeScopeValue(scope.targetUrl, "target URL")).host.toLowerCase();
+  const parts = [supplierId, sourceId, targetHost, credentialReference];
+  const encoded = parts.map((part) => `${Buffer.byteLength(part, "utf8")}:${part}`).join("|");
+  return createHash("sha256").update(encoded, "utf8").digest("hex");
+}
+
+export class A2ZConnectorService {
+  private session: A2ZAuthenticatedSession | null = null;
+  private loginInFlight: Promise<A2ZAuthenticatedSession> | null = null;
+  private readonly sessionScopeKey: string;
+  private readonly fetchOutbound: typeof fetchSupplierOutbound;
+  private readonly now: () => number;
+  private readonly SESSION_TTL = 15 * 60 * 1000;
+  private readonly REQUEST_TIMEOUT_MS = 15000;
+  private readonly BROWSER_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
+
+  constructor(
+    private readonly scope: A2ZSessionScope,
+    dependencies: A2ZConnectorServiceDependencies = {},
+  ) {
+    this.sessionScopeKey = buildA2ZSessionScopeKey(scope);
+    this.fetchOutbound = dependencies.fetchOutbound || fetchSupplierOutbound;
+    this.now = dependencies.now || Date.now;
+  }
+
+  private debugLog(...values: unknown[]): void {
     if (process.env.SUPPLIER_DEBUG_LOGS === "true") console.info(...values);
   }
 
-  private static logDiagnostic(authenticationStage: string, details: Record<string, unknown>): void {
+  private logDiagnostic(authenticationStage: string, details: Record<string, unknown>): void {
     this.debugLog("[A2Z-Connector]", JSON.stringify({
       event: "a2z_integration_diagnostic",
       authenticationStage,
@@ -28,7 +76,7 @@ export class A2ZConnectorService {
     }));
   }
 
-  private static async fetchWithTimeout(
+  private async fetchWithTimeout(
     url: string,
     init: RequestInit,
     outboundPolicy: SupplierOutboundPolicy,
@@ -37,13 +85,13 @@ export class A2ZConnectorService {
     const timeoutId = setTimeout(() => controller.abort(), this.REQUEST_TIMEOUT_MS);
 
     try {
-      return await fetchSupplierOutbound(url, { ...init, signal: controller.signal }, outboundPolicy);
+      return await this.fetchOutbound(url, { ...init, signal: controller.signal }, outboundPolicy);
     } finally {
       clearTimeout(timeoutId);
     }
   }
 
-  private static getBaseDomain(url: string): string {
+  private getBaseDomain(url: string): string {
     try {
       const urlObj = new URL(url);
       return `${urlObj.protocol}//${urlObj.host}`;
@@ -59,7 +107,7 @@ export class A2ZConnectorService {
     }
   }
 
-  private static extractCleanCookies(cookieHeaders: string[] | string | null): string {
+  private extractCleanCookies(cookieHeaders: string[] | string | null): string {
     if (!cookieHeaders) {
       return "";
     }
@@ -82,7 +130,7 @@ export class A2ZConnectorService {
     return cleanCookies.join("; ");
   }
 
-  private static mergeCookies(oldCookieStr: string | null, newCookieStr: string | null): string {
+  private mergeCookies(oldCookieStr: string | null, newCookieStr: string | null): string {
     const cookieMap = new Map<string, string>();
     const parse = (str: string | null) => {
       if (!str) {
@@ -117,11 +165,42 @@ export class A2ZConnectorService {
       .join("; ");
   }
 
-  public static async login(
+  private credentialFingerprint(credentials: { username?: string; password?: string }): string {
+    const username = credentials.username;
+    const password = credentials.password;
+    if (!username || !password) {
+      throw new Error("A2Z credentials are required before attempting supplier login.");
+    }
+    const fingerprint = fingerprintA2ZCredentials(username, password);
+    return `${fingerprint.usernameSha256}:${fingerprint.passwordSha256}`;
+  }
+
+  private assertScopedTarget(baseUrl: string): void {
+    const expectedHost = new URL(this.scope.targetUrl).host.toLowerCase();
+    const requestedHost = new URL(baseUrl).host.toLowerCase();
+    if (requestedHost !== expectedHost) {
+      throw new Error("A2Z session target does not match its isolated supplier scope.");
+    }
+  }
+
+  private reusableSession(credentials: { username?: string; password?: string }): A2ZAuthenticatedSession | null {
+    const credentialFingerprint = this.credentialFingerprint(credentials);
+    if (!this.session
+      || this.session.scopeKey !== this.sessionScopeKey
+      || this.session.credentialFingerprint !== credentialFingerprint
+      || this.now() - this.session.authenticatedAt > this.SESSION_TTL) {
+      return null;
+    }
+    return this.session;
+  }
+
+  private async performLogin(
     baseUrl: string,
     credentials: { username?: string; password?: string },
     outboundPolicy: SupplierOutboundPolicy,
-  ): Promise<string> {
+    credentialFingerprint: string,
+  ): Promise<A2ZAuthenticatedSession> {
+    this.assertScopedTarget(baseUrl);
     const baseDomain = this.getBaseDomain(baseUrl);
     this.debugLog(`[A2Z-Connector] Triggering authentic login sequence for domain: ${baseDomain}`);
 
@@ -225,20 +304,50 @@ export class A2ZConnectorService {
       const cleanAuthCookie = this.extractCleanCookies(authCookieStr);
 
       const finalCookie = this.mergeCookies(cleanPreCookie, cleanAuthCookie);
-      this.sessionCookie = finalCookie;
-      this.lastLoginTime = Date.now();
+      if (!finalCookie) throw new Error("A2Z authentication did not return a usable session cookie.");
 
       this.debugLog("[A2Z-Connector] Authentication successfully completed. Preserved clean session cookie.");
-      return finalCookie;
-    } catch (err: any) {
-      console.error("[A2Z-Connector] Authentication failed:", err.message || err);
-      this.sessionCookie = null;
-      this.lastLoginTime = 0;
-      throw new Error(`A2Z Authentication Failed: ${err.message || "Unknown Error"}`);
+      return {
+        cookie: finalCookie,
+        authenticatedAt: this.now(),
+        scopeKey: this.sessionScopeKey,
+        credentialFingerprint,
+      };
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Unknown Error";
+      console.error("[A2Z-Connector] Authentication failed:", message);
+      throw new Error(`A2Z Authentication Failed: ${message}`);
     }
   }
 
-  private static async fetchCatalogInternal(
+  public async login(
+    baseUrl: string,
+    credentials: { username?: string; password?: string },
+    outboundPolicy: SupplierOutboundPolicy,
+  ): Promise<string> {
+    this.assertScopedTarget(baseUrl);
+    const credentialFingerprint = this.credentialFingerprint(credentials);
+    if (this.loginInFlight) {
+      const sharedSession = await this.loginInFlight;
+      this.session = sharedSession;
+      return sharedSession.cookie;
+    }
+
+    const pendingLogin = this.performLogin(baseUrl, credentials, outboundPolicy, credentialFingerprint);
+    this.loginInFlight = pendingLogin;
+    try {
+      const session = await pendingLogin;
+      this.session = session;
+      return session.cookie;
+    } catch (error) {
+      this.session = null;
+      throw error;
+    } finally {
+      if (this.loginInFlight === pendingLogin) this.loginInFlight = null;
+    }
+  }
+
+  private async fetchCatalogInternal(
     baseUrl: string,
     credentials: { username?: string; password?: string },
     outboundPolicy: SupplierOutboundPolicy,
@@ -247,6 +356,7 @@ export class A2ZConnectorService {
     if (!baseUrl) {
       throw new Error("A2Z Connector Service requires a valid websiteUrl base path.");
     }
+    this.assertScopedTarget(baseUrl);
 
     const baseDomain = this.getBaseDomain(baseUrl);
     const requestedOffset = pageRequest?.cursor?.startsWith("a2z-local:")
@@ -259,24 +369,25 @@ export class A2ZConnectorService {
       productsUrlObject.searchParams.set("length", String(pageSize));
     }
     const productsUrl = productsUrlObject.toString();
-    const isSessionExpired = Date.now() - this.lastLoginTime > this.SESSION_TTL;
-
-    if (!this.sessionCookie || isSessionExpired) {
+    let activeSession = this.reusableSession(credentials);
+    if (!activeSession) {
       this.debugLog("[A2Z-Connector] Preserved session is missing or expired. Authenticating...");
       await this.login(baseUrl, credentials, outboundPolicy);
+      activeSession = this.reusableSession(credentials);
     }
+    if (!activeSession) throw new Error("A2Z authentication did not create a reusable scoped session.");
 
     this.debugLog(`[A2Z-Connector] Fetching catalog from target API: ${productsUrl}`);
 
     let responseBodyText = "";
 
-    const executeFetch = async (): Promise<boolean> => {
+    const executeFetch = async (sessionCookie: string): Promise<boolean> => {
       try {
         const fetchResponse = await this.fetchWithTimeout(productsUrl, {
           method: "GET",
           redirect: "manual",
           headers: {
-            "Cookie": this.sessionCookie || "",
+            "Cookie": sessionCookie,
             "Accept": "application/json"
           }
         }, outboundPolicy);
@@ -301,18 +412,20 @@ export class A2ZConnectorService {
           return true;
         }
         return false;
-      } catch (err: any) {
-        console.warn(`[A2Z-Connector] Fetch attempt failed: ${err.message}`);
+      } catch (error: unknown) {
+        console.warn(`[A2Z-Connector] Fetch attempt failed: ${error instanceof Error ? error.message : "Unknown Error"}`);
         return false;
       }
     };
 
-    let isSuccess = await executeFetch();
+    const attemptedCookie = activeSession.cookie;
+    let isSuccess = await executeFetch(attemptedCookie);
 
     if (!isSuccess) {
       this.debugLog("[A2Z-Connector] Session invalidated or fetch failed. Retrying login...");
-      await this.login(baseUrl, credentials, outboundPolicy);
-      isSuccess = await executeFetch();
+      if (this.session?.cookie === attemptedCookie) this.session = null;
+      const refreshedCookie = await this.login(baseUrl, credentials, outboundPolicy);
+      isSuccess = await executeFetch(refreshedCookie);
     }
 
     if (!isSuccess) {
@@ -384,7 +497,7 @@ export class A2ZConnectorService {
     return { products: parsedProducts, targetUrl: productsUrl, nextCursor, complete, invalidProducts };
   }
 
-  public static async fetchCatalog(
+  public async fetchCatalog(
     baseUrl: string,
     credentials: { username?: string; password?: string },
     outboundPolicy: SupplierOutboundPolicy,
@@ -392,7 +505,7 @@ export class A2ZConnectorService {
     return (await this.fetchCatalogInternal(baseUrl, credentials, outboundPolicy)).products as RawA2ZProduct[];
   }
 
-  public static async fetchCatalogPage(
+  public async fetchCatalogPage(
     baseUrl: string,
     credentials: { username?: string; password?: string },
     outboundPolicy: SupplierOutboundPolicy,

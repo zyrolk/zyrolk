@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   Menu, X, Search, Heart, ShoppingBag, User, 
   LayoutDashboard, LogIn, LogOut, ChevronDown,
   ArrowUpRight, Clock3, LoaderCircle, PackageSearch, Tag,
   ShieldCheck, Grid3X3, MessageCircle, MapPin, Bell,
-  Ticket, Settings, Headphones, ReceiptText, Home, Sparkles, BarChart3
+  Ticket, Settings, Headphones, ReceiptText, Home, Sparkles, BarChart3,
+  Camera, Languages, LockKeyhole, Mic, RotateCcw, Truck
 } from 'lucide-react';
 import { auth } from '../firebase';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
@@ -13,6 +14,7 @@ import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { searchCustomerProducts } from '../services/product-search/customerProductSearch';
 import { normalizeSearchText } from '../services/product-search/productSearchMetadata';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
+import MarketplaceMegaMenu from './MarketplaceMegaMenu';
 
 const RECENT_SEARCHES_KEY = 'zyro_recent_searches';
 
@@ -58,10 +60,12 @@ export default function Navbar({
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [user, setUser] = useState<any>(null);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [isMegaMenuOpen, setIsMegaMenuOpen] = useState(false);
   const [tempSearch, setTempSearch] = useState("");
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
   const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(-1);
+  const searchInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const prefersReducedMotion = useReducedMotion();
   const [recentSearches, setRecentSearches] = useState<string[]>(() => {
     try {
@@ -98,9 +102,14 @@ export default function Navbar({
         setActiveSuggestionIndex(-1);
       }
       if (!target?.closest('[data-account-menu]')) setIsProfileOpen(false);
+      if (!target?.closest('[data-mega-menu]')) setIsMegaMenuOpen(false);
     };
     const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setIsProfileOpen(false);
+      if (event.key === 'Escape') {
+        setIsProfileOpen(false);
+        setIsMegaMenuOpen(false);
+        setIsMobileMenuOpen(false);
+      }
     };
     document.addEventListener('mousedown', handleOutsideClick);
     document.addEventListener('keydown', handleEscape);
@@ -195,6 +204,13 @@ export default function Navbar({
     setIsAdminMode(false);
     setIsMobileMenuOpen(false);
     setIsSearchOpen(false);
+    setIsMegaMenuOpen(false);
+  };
+
+  const focusSearch = () => {
+    const input = searchInputRefs.current.desktop ?? searchInputRefs.current.mobile;
+    input?.focus();
+    setIsSearchOpen(true);
   };
 
   const clearSearch = () => {
@@ -251,11 +267,12 @@ export default function Navbar({
   };
 
   const navLinks = [
-    { id: 'home', label: 'Home', icon: Home, action: () => navigateToPage('home') },
-    { id: 'categories', label: 'Categories', icon: Grid3X3, action: () => navigateToPage('categories') },
     { id: 'deals', label: 'Deals', icon: Tag, action: navigateToDeals },
     { id: 'new-arrivals', label: 'New Arrivals', icon: Sparkles, action: () => navigateToPage('products') },
-    { id: 'contact', label: 'Contact', icon: MessageCircle, action: () => navigateToPage('contact') }
+    { id: 'best-sellers', label: 'Best Sellers', icon: BarChart3, action: () => navigateToPage('products') },
+    { id: 'brands', label: 'Brands', icon: ShieldCheck, action: () => navigateToPage('products') },
+    { id: 'today-offers', label: "Today's Offers", icon: Tag, action: navigateToDeals },
+    { id: 'support', label: 'Support', icon: MessageCircle, action: () => navigateToPage('contact') }
   ];
 
   const accountItems = [
@@ -281,9 +298,11 @@ export default function Navbar({
         <label htmlFor={inputId} className="sr-only">Search products</label>
         <Search className="pointer-events-none absolute left-4 top-1/2 z-10 h-4.5 w-4.5 -translate-y-1/2 text-slate-500" aria-hidden="true" />
         <input
+          ref={(element) => { searchInputRefs.current[idPrefix] = element; }}
           id={inputId}
           type="search"
-          placeholder="Search products, brands & categories"
+          placeholder="Search products, brands and categories..."
+          aria-label="Search products, brands & categories"
           value={tempSearch}
           onChange={(event) => {
             setTempSearch(event.target.value);
@@ -292,7 +311,7 @@ export default function Navbar({
           }}
           onFocus={() => setIsSearchOpen(true)}
           onKeyDown={handleSearchKeyDown}
-          className="zy-input zy-market-search min-h-14 min-w-0 max-w-full w-full rounded-2xl pl-11 pr-32 text-base text-slate-900 transition-all placeholder:text-slate-500 focus-visible:outline-none [&::-webkit-search-cancel-button]:appearance-none"
+          className="zy-input zy-market-search min-h-14 min-w-0 max-w-full w-full rounded-2xl pl-11 pr-[12.75rem] text-base text-slate-900 transition-all placeholder:text-slate-500 focus-visible:outline-none [&::-webkit-search-cancel-button]:appearance-none"
           role="combobox"
           aria-autocomplete="list"
           aria-expanded={isSearchOpen}
@@ -300,24 +319,37 @@ export default function Navbar({
           aria-activedescendant={activeSuggestionIndex >= 0 ? `${idPrefix}-product-option-${activeSuggestionIndex}` : undefined}
           autoComplete="off"
         />
-        {tempSearch && (
+        <div className="zy-search-tools absolute right-1 top-1/2 z-10 flex -translate-y-1/2 items-center gap-0.5">
+          {tempSearch && (
+            <button type="button" onClick={clearSearch} className="zy-search-tool" aria-label="Clear product search">
+              <X aria-hidden="true" />
+            </button>
+          )}
           <button
             type="button"
-            onClick={clearSearch}
-            className="zy-search-clear absolute right-[5.75rem] top-1/2 z-10 flex h-12 w-10 -translate-y-1/2 items-center justify-center rounded-xl text-slate-500 transition-colors hover:bg-slate-200 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20"
-            aria-label="Clear product search"
+            className="zy-search-tool"
+            aria-label="Voice search is unavailable in this launch version"
+            title="Voice search is unavailable in this launch version"
+            disabled
           >
-            <X className="h-4 w-4" aria-hidden="true" />
+            <Mic aria-hidden="true" />
           </button>
-        )}
-        <button
-          type="submit"
-          className="zy-search-submit absolute right-0.5 top-1/2 z-10 flex h-12 min-w-[5.25rem] -translate-y-1/2 items-center justify-center gap-1.5 rounded-xl bg-brand-blue px-3 text-xs font-black text-white shadow-sm transition-all hover:bg-blue-700 active:scale-95 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/25"
-          aria-label="Submit product search"
-        >
-          <span>Search</span>
-          <ArrowUpRight className="h-4 w-4" aria-hidden="true" />
-        </button>
+          <button
+            type="button"
+            className="zy-search-tool"
+            aria-label="Image search is not available yet"
+            title="Image search is coming soon"
+            disabled
+          >
+            <Camera aria-hidden="true" />
+          </button>
+          <button type="button" onClick={focusSearch} className="zy-search-ai" aria-label="Open product discovery search">
+            <Sparkles aria-hidden="true" /><span>Find</span>
+          </button>
+          <button type="submit" className="zy-search-submit" aria-label="Submit product search">
+            <Search aria-hidden="true" />
+          </button>
+        </div>
 
         <AnimatePresence initial={false}>
           {isSearchOpen && (
@@ -462,269 +494,189 @@ export default function Navbar({
 
   return (
     <header className={`zy-market-header sticky top-0 z-50 w-full ${isScrolled ? 'is-scrolled' : ''}`}>
-      <div className="zy-market-header-shell mx-auto w-full max-w-[1480px] px-4 sm:px-6 lg:px-8">
-        <div className="zy-market-header-row flex h-16 items-center justify-between gap-2 md:h-20 md:gap-3">
-          
-          {/* Logo */}
-          <button type="button" className="zy-brand-button flex min-h-12 flex-shrink-0 items-center rounded-xl cursor-pointer focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20" onClick={() => navigateToPage('home')} aria-label="Go to homepage">
+      <div className="zy-announcement-bar">
+        <div className="zy-header-container">
+          <div className="zy-announcement-benefits" aria-label="Store benefits">
+            <span><Truck aria-hidden="true" />Islandwide Delivery</span>
+            <span><RotateCcw aria-hidden="true" />Easy Returns</span>
+            <span><LockKeyhole aria-hidden="true" />Secure Payments</span>
+            <button type="button" onClick={focusSearch}><Search aria-hidden="true" />Product Search</button>
+          </div>
+          <div className="zy-announcement-contact">
+            {settings?.contactPhone && <a href={`tel:${settings.contactPhone}`}>{settings.contactPhone}</a>}
+            <span aria-label="Available languages: English and Sinhala"><Languages aria-hidden="true" />EN / සිං</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="zy-market-header-shell zy-header-container">
+        <div className="zy-market-header-row">
+          <button
+            type="button"
+            onClick={() => setIsMobileMenuOpen((open) => !open)}
+            className="zy-navbar-action zy-mobile-menu-trigger"
+            aria-label={isMobileMenuOpen ? 'Close navigation menu' : 'Open navigation menu'}
+            aria-expanded={isMobileMenuOpen}
+            aria-controls="mobile-header-navigation"
+          >
+            {isMobileMenuOpen ? <X aria-hidden="true" /> : <Menu aria-hidden="true" />}
+          </button>
+
+          <button type="button" className="zy-brand-button" onClick={() => navigateToPage('home')} aria-label="Go to Zyro.lk homepage">
             {settings?.logoUrl ? (
-              <img 
-                src={settings.logoUrl} 
-                alt={settings.storeName || "Zyro.lk"} 
-                className="h-8 max-w-[150px] object-contain" 
-                referrerPolicy="no-referrer"
-              />
+              <img src={settings.logoUrl} alt={settings.storeName || 'Zyro.lk'} referrerPolicy="no-referrer" />
             ) : (
-              <span className="text-2xl font-bold tracking-tight text-slate-900 font-display flex items-center">
-                {settings?.storeName ? (
-                  <>
-                    {settings.storeName.split('.')[0]}
-                    {settings.storeName.includes('.') && <span className="text-brand-blue">.{settings.storeName.split('.').slice(1).join('.')}</span>}
-                  </>
-                ) : (
-                  <>Zyro<span className="text-brand-blue">.lk</span></>
-                )}
-              </span>
+              <span>{settings?.storeName ? settings.storeName.split('.')[0] : 'Zyro'}<b>.lk</b></span>
             )}
           </button>
 
-          {/* Desktop Search Bar */}
-          <div className="mx-3 hidden min-w-[18rem] max-w-2xl flex-1 md:flex lg:mx-5">
-            {renderSearchBox('desktop')}
+          <div className="zy-header-categories" data-mega-menu>
+            <button
+              type="button"
+              className={`zy-categories-trigger ${isMegaMenuOpen ? 'is-active' : ''}`}
+              onClick={() => setIsMegaMenuOpen((open) => !open)}
+              aria-expanded={isMegaMenuOpen}
+              aria-controls="desktop-mega-menu"
+            >
+              <Grid3X3 aria-hidden="true" /><span>Categories</span><ChevronDown aria-hidden="true" />
+            </button>
           </div>
 
-          {/* Desktop Navigation Links */}
-          <nav className="hidden shrink-0 items-center gap-0.5 xl:flex" aria-label="Primary storefront navigation">
-            {navLinks.map((link) => (
-              <button
-                key={link.id}
-                onClick={link.action}
-                className={`zy-navbar-link min-h-12 rounded-xl px-3 text-xs font-black transition-all cursor-pointer ${
-                  currentPage === link.id && !isAdminMode
-                    ? 'is-active text-brand-blue'
-                    : 'text-slate-600 hover:text-brand-blue'
-                }`}
-              >
-                {link.label}
-              </button>
-            ))}
-          </nav>
+          <div className="zy-desktop-search">{renderSearchBox('desktop')}</div>
 
-          {/* Action Icons */}
-          <div className="flex shrink-0 items-center gap-1.5 md:gap-2">
-
-            {/* Wishlist Button */}
+          <div className="zy-header-actions">
+            <button type="button" className="zy-header-action zy-orders-action" onClick={user ? () => navigateToPage('account-orders') : onOpenAuthModal}>
+              <ReceiptText aria-hidden="true" /><span>Orders</span>
+            </button>
             {isWishlistEnabled && (
-              <button 
-                onClick={() => { setCurrentPage('wishlist'); setIsAdminMode(false); }}
-                className="zy-navbar-action relative hidden h-12 w-12 items-center justify-center rounded-2xl text-slate-600 hover:text-red-500 md:flex"
-                title="Wishlist"
-                aria-label={`Open wishlist with ${wishlistCount} saved ${wishlistCount === 1 ? 'product' : 'products'}`}
-                aria-current={currentPage === 'wishlist' ? 'page' : undefined}
-              >
-                <Heart className={`h-5 w-5 ${currentPage === 'wishlist' ? 'fill-red-500 text-red-500' : ''}`} />
-                {wishlistCount > 0 && (
-                  <span className="absolute top-0 right-0 inline-flex items-center justify-center px-1.5 py-0.5 text-[10px] font-bold leading-none text-white bg-red-500 rounded-full shadow-sm">
-                    {wishlistCount}
-                  </span>
-                )}
+              <button type="button" className="zy-header-action" onClick={() => navigateToPage('wishlist')} aria-label={`Wishlist with ${wishlistCount} items`} aria-current={currentPage === 'wishlist' ? 'page' : undefined}>
+                <span className="zy-action-icon"><Heart aria-hidden="true" />{wishlistCount > 0 && <b>{wishlistCount}</b>}</span><span>Wishlist</span>
               </button>
             )}
-
-            {/* Cart Button */}
-            <button 
-              onClick={onOpenCart}
-              className="zy-navbar-action relative flex h-12 w-12 items-center justify-center rounded-2xl text-slate-600 hover:text-brand-blue"
-              title="Shopping Cart"
-              aria-label={`Open shopping cart with ${cartCount} ${cartCount === 1 ? 'item' : 'items'}`}
-            >
-              <ShoppingBag className="h-5 w-5" />
-              {cartCount > 0 && (
-                <span className="absolute top-0 right-0 inline-flex items-center justify-center px-1.5 py-0.5 text-[10px] font-bold leading-none text-white bg-brand-blue rounded-full shadow-sm">
-                  {cartCount}
-                </span>
-              )}
+            <button type="button" className="zy-header-action zy-notification-action" onClick={user ? () => navigateToPage('account-settings') : onOpenAuthModal}>
+              <Bell aria-hidden="true" /><span>Notifications</span>
+            </button>
+            <button type="button" className="zy-header-action zy-cart-action" onClick={onOpenCart} aria-label={`Cart with ${cartCount} items`}>
+              <span className="zy-action-icon"><ShoppingBag aria-hidden="true" />{cartCount > 0 && <b>{cartCount}</b>}</span><span>Cart</span>
             </button>
 
-            {/* User Dropdown */}
-            <div className="relative hidden md:block" data-account-menu>
+            <div className="zy-account-trigger-wrap" data-account-menu>
               <button
-                onClick={() => setIsProfileOpen(!isProfileOpen)}
-                className="zy-navbar-action flex h-12 min-w-12 items-center justify-center gap-1 rounded-2xl text-slate-600 hover:text-brand-blue"
+                type="button"
+                className="zy-header-action"
+                onClick={() => setIsProfileOpen((open) => !open)}
                 aria-label={user ? 'Open account menu' : 'Open sign in menu'}
                 aria-expanded={isProfileOpen}
                 aria-controls="desktop-account-menu"
               >
-                <User className="h-5 w-5" />
-                <ChevronDown className="h-3.5 w-3.5 hidden sm:block" />
+                <User aria-hidden="true" /><span>Account</span><ChevronDown className="zy-action-chevron" aria-hidden="true" />
               </button>
 
-              {isProfileOpen && (
-                <div id="desktop-account-menu" className="zy-account-menu absolute right-0 z-[100] mt-3 w-[min(23rem,calc(100vw-2rem))] overflow-hidden rounded-[1.75rem] border border-white/80 bg-white/95 shadow-2xl shadow-slate-950/20 backdrop-blur-2xl">
-                  <div className="bg-gradient-to-br from-blue-800 via-brand-blue to-blue-500 px-5 py-5 text-white">
-                    <div className="flex items-center gap-3">
-                      <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-white/25 bg-white/15 text-xl font-black shadow-inner" aria-hidden="true">
-                        {(user?.displayName || user?.email || 'G').slice(0, 1).toUpperCase()}
-                      </div>
-                      <div className="min-w-0 flex-1 text-left">
-                        <p className="text-[10px] font-black uppercase tracking-[0.18em] text-blue-100">{user ? 'Your marketplace account' : 'Welcome to Zyro.lk'}</p>
-                        <p className="mt-0.5 truncate text-base font-black font-display">{user ? user.displayName || 'Zyro.lk Customer' : 'Guest shopper'}</p>
-                        <p className="mt-0.5 truncate text-xs text-blue-100">{user?.email || 'Sign in to manage your shopping'}</p>
-                      </div>
-                      {user && <ShieldCheck className="h-5 w-5 shrink-0 text-blue-100" aria-label="Signed in account" />}
+              <AnimatePresence initial={false}>
+                {isProfileOpen && (
+                  <motion.div
+                    id="desktop-account-menu"
+                    className="zy-account-menu"
+                    initial={prefersReducedMotion ? { opacity: 1 } : { opacity: 0, y: -8, scale: 0.98 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: -5, scale: 0.99 }}
+                    transition={{ duration: prefersReducedMotion ? 0 : 0.16 }}
+                  >
+                    <div className="zy-account-summary">
+                      <span aria-hidden="true">{(user?.displayName || user?.email || 'G').slice(0, 1).toUpperCase()}</span>
+                      <div><small>{user ? 'Your marketplace account' : 'Welcome to Zyro.lk'}</small><strong>{user ? user.displayName || 'Zyro.lk Customer' : 'Guest shopper'}</strong><p>{user?.email || 'Sign in to manage your shopping'}</p></div>
                     </div>
-                  </div>
-
-                  <div className="max-h-[min(34rem,calc(100vh-7rem))] overflow-y-auto p-3 text-left">
-                    <span className="mb-2 block px-2 pt-1 text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Account</span>
-                    <div className="space-y-1">
+                    <div className="zy-account-menu-body">
                       {accountItems.map(({ label, icon: Icon, action, pending }) => (
-                        <button
-                          key={label}
-                          type="button"
-                          onClick={action}
-                          disabled={pending}
-                          className="zy-account-row"
-                          aria-disabled={pending || undefined}
-                        >
-                          <span className="zy-account-row-icon"><Icon className="h-4.5 w-4.5" aria-hidden="true" /></span>
-                          <span className="min-w-0 flex-1">{label}</span>
-                          {pending ? <span className="text-[9px] font-black uppercase tracking-wider text-slate-400">Coming soon</span> : <ArrowUpRight className="h-4 w-4 text-slate-400" aria-hidden="true" />}
+                        <button key={label} type="button" onClick={action} disabled={pending} className="zy-account-row" aria-disabled={pending || undefined}>
+                          <span className="zy-account-row-icon"><Icon aria-hidden="true" /></span><span>{label}</span>
+                          {pending ? <small>Coming soon</small> : <ArrowUpRight aria-hidden="true" />}
                         </button>
                       ))}
+                      {isAdminUser && (
+                        <button type="button" onClick={() => { setIsAdminMode(true); setCurrentPage('admin'); setIsProfileOpen(false); }} className="zy-account-admin">
+                          <LayoutDashboard aria-hidden="true" />Administration<ArrowUpRight aria-hidden="true" />
+                        </button>
+                      )}
+                      {user ? (
+                        <button type="button" onClick={handleLogout} className="zy-account-signout"><LogOut aria-hidden="true" /> Logout</button>
+                      ) : (
+                        <button type="button" onClick={() => { onOpenAuthModal(); setIsProfileOpen(false); }} className="zy-account-signin"><LogIn aria-hidden="true" /> Sign In / Register</button>
+                      )}
                     </div>
-
-                    {isAdminUser && (
-                      <button
-                        onClick={() => { setIsAdminMode(true); setCurrentPage('admin'); setIsProfileOpen(false); }}
-                        className={`mt-2 flex min-h-12 w-full items-center justify-between rounded-2xl border px-4 text-sm font-black transition-colors ${isAdminMode ? 'border-blue-200 bg-blue-50 text-brand-blue' : 'border-slate-200 bg-white text-slate-700 hover:border-blue-200 hover:bg-blue-50'}`}
-                      >
-                        <span className="flex items-center gap-2"><LayoutDashboard className="h-4.5 w-4.5" /> Administration</span>
-                        <ArrowUpRight className="h-4 w-4" aria-hidden="true" />
-                      </button>
-                    )}
-
-                    {user ? (
-                      <button onClick={handleLogout} className="mt-3 flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl border border-red-100 bg-red-50 text-sm font-black text-red-600 transition-colors hover:border-red-200 hover:bg-red-100">
-                        <LogOut className="h-4.5 w-4.5" /> Logout
-                      </button>
-                    ) : (
-                      <button onClick={() => { onOpenAuthModal(); setIsProfileOpen(false); }} className="zy-button zy-button-primary mt-3 min-h-12 w-full rounded-2xl text-sm">
-                        <LogIn className="h-4.5 w-4.5" /> Sign In / Register
-                      </button>
-                    )}
-                  </div>
-                </div>
-              )}
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
-
-            {/* Mobile Hamburger Menu Button */}
-            <button
-              onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-              className="zy-navbar-action flex h-12 w-12 items-center justify-center rounded-2xl text-slate-600 hover:text-brand-blue xl:hidden"
-              aria-label={isMobileMenuOpen ? 'Close navigation menu' : 'Open navigation menu'}
-              aria-expanded={isMobileMenuOpen}
-            >
-              {isMobileMenuOpen ? <X className="h-6 w-6" /> : <Menu className="h-6 w-6" />}
-            </button>
-
           </div>
         </div>
+
+        <div className="zy-navbar-mobile-search">{renderSearchBox('mobile')}</div>
       </div>
 
-      <div className="zy-navbar-mobile-search min-w-0 max-w-full px-4 pb-3 md:hidden">
-        <div className="mx-auto min-w-0 max-w-7xl">
-          {renderSearchBox('mobile')}
+      <div className="zy-desktop-navigation" data-mega-menu>
+        <div className="zy-header-container">
+          <button type="button" className={`zy-navbar-link zy-navigation-categories ${isMegaMenuOpen ? 'is-active' : ''}`} onClick={() => setIsMegaMenuOpen((open) => !open)} aria-expanded={isMegaMenuOpen} aria-controls="desktop-mega-menu">
+            <Grid3X3 aria-hidden="true" />Categories<ChevronDown aria-hidden="true" />
+          </button>
+          <nav aria-label="Primary storefront navigation">
+            {navLinks.map((link) => (
+              <button key={link.id} type="button" onClick={link.action} className={`zy-navbar-link ${currentPage === link.id && !isAdminMode ? 'is-active' : ''}`}>{link.label}</button>
+            ))}
+          </nav>
+          <button type="button" className="zy-navigation-ai" onClick={focusSearch}><Sparkles aria-hidden="true" />Find products</button>
         </div>
       </div>
 
-      {/* Mobile Menu Panel */}
-      {isMobileMenuOpen && (
-        <div className="zy-mobile-market-menu px-4 pb-5 pt-2 xl:hidden">
-          <div className="mx-auto max-w-2xl overflow-hidden rounded-[1.75rem] border border-white/80 bg-white/95 shadow-2xl shadow-blue-950/15 backdrop-blur-2xl">
-            <div className="bg-gradient-to-br from-blue-800 via-brand-blue to-blue-500 p-4 text-white">
-              <div className="flex items-center gap-3">
-                <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-white/25 bg-white/15 text-lg font-black" aria-hidden="true">
-                  {(user?.displayName || user?.email || 'G').slice(0, 1).toUpperCase()}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-black">{user ? user.displayName || 'Zyro.lk Customer' : 'Welcome to Zyro.lk'}</p>
-                  <p className="mt-0.5 truncate text-xs text-blue-100">{user?.email || 'Sign in to manage your shopping'}</p>
-                </div>
-                {!user && (
-                  <button type="button" onClick={() => { onOpenAuthModal(); setIsMobileMenuOpen(false); }} className="min-h-12 rounded-xl border border-white/25 bg-white/15 px-3 text-xs font-black hover:bg-white/25">
-                    Sign in
-                  </button>
-                )}
-              </div>
-            </div>
+      <AnimatePresence initial={false}>
+        {isMegaMenuOpen && (
+          <motion.div
+            id="desktop-mega-menu"
+            className="zy-mega-menu"
+            data-mega-menu
+            initial={prefersReducedMotion ? { opacity: 1 } : { opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -7 }}
+            transition={{ duration: prefersReducedMotion ? 0 : 0.2, ease: [0.2, 0.75, 0.25, 1] }}
+          >
+            <div className="zy-header-container"><MarketplaceMegaMenu categories={categories} onSelectCategory={handleCategorySuggestion} /></div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-            <nav className="grid grid-cols-2 gap-2 p-3" aria-label="Mobile storefront navigation">
-              {navLinks.map(({ id, label, icon: Icon, action }) => (
-                <button
-                  key={id}
-                  onClick={action}
-                  className={`zy-mobile-nav-card min-h-14 ${currentPage === id && !isAdminMode ? 'is-active' : ''}`}
-                  aria-current={currentPage === id && !isAdminMode ? 'page' : undefined}
-                >
-                  <Icon className="h-5 w-5" aria-hidden="true" />
-                  <span>{label}</span>
-                </button>
-              ))}
+      <AnimatePresence initial={false}>
+        {isMobileMenuOpen && (
+          <motion.div
+            id="mobile-header-navigation"
+            className="zy-mobile-market-menu"
+            initial={prefersReducedMotion ? { opacity: 1 } : { opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -6 }}
+            transition={{ duration: prefersReducedMotion ? 0 : 0.18 }}
+          >
+            <div className="zy-mobile-menu-account">
+              <span aria-hidden="true">{(user?.displayName || user?.email || 'G').slice(0, 1).toUpperCase()}</span>
+              <div><strong>{user ? user.displayName || 'Zyro.lk Customer' : 'Welcome to Zyro.lk'}</strong><small>{user?.email || 'Sign in for orders, saved items and more'}</small></div>
+              <button type="button" onClick={user ? () => navigateToPage('account') : onOpenAuthModal}>{user ? 'Account' : 'Sign in'}</button>
+            </div>
+            <nav className="zy-mobile-primary-links" aria-label="Mobile storefront navigation">
+              <button type="button" onClick={() => navigateToPage('home')}><Home aria-hidden="true" />Home</button>
+              <button type="button" onClick={() => navigateToPage('categories')}><Grid3X3 aria-hidden="true" />Categories</button>
+              {navLinks.map(({ id, label, icon: Icon, action }) => <button key={id} type="button" onClick={action}><Icon aria-hidden="true" />{label}</button>)}
             </nav>
-
-            <div className="border-t border-slate-100 p-3">
-              <span className="mb-2 block px-1 text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Shopping account</span>
-              <div className="grid grid-cols-2 gap-2">
-                {user && (
-                  <button type="button" onClick={() => navigateToPage('account')} className="zy-mobile-account-card"><User className="h-5 w-5" aria-hidden="true" /><span>My Account</span></button>
-                )}
-                {user && (
-                  <button type="button" onClick={() => navigateToPage('account-orders')} className="zy-mobile-account-card"><ReceiptText className="h-5 w-5" aria-hidden="true" /><span>My Orders</span></button>
-                )}
-                {user && (
-                  <button type="button" onClick={() => navigateToPage('account-addresses')} className="zy-mobile-account-card"><MapPin className="h-5 w-5" aria-hidden="true" /><span>Addresses</span></button>
-                )}
-                {isWishlistEnabled && (
-                  <button type="button" onClick={() => navigateToPage('wishlist')} className="zy-mobile-account-card"><Heart className="h-5 w-5" aria-hidden="true" /><span>Wishlist</span>{wishlistCount > 0 && <b>{wishlistCount}</b>}</button>
-                )}
-                <button type="button" onClick={() => navigateToPage('recently-viewed')} className="zy-mobile-account-card"><Clock3 className="h-5 w-5" aria-hidden="true" /><span>Recently Viewed</span></button>
-                <button type="button" onClick={() => navigateToPage('compare')} className="zy-mobile-account-card"><BarChart3 className="h-5 w-5" aria-hidden="true" /><span>Compare</span></button>
-                {user && (
-                  <button type="button" onClick={() => navigateToPage('account-settings')} className="zy-mobile-account-card"><Settings className="h-5 w-5" aria-hidden="true" /><span>Settings</span></button>
-                )}
-                <button type="button" onClick={() => navigateToPage('contact')} className="zy-mobile-account-card"><Headphones className="h-5 w-5" aria-hidden="true" /><span>Support</span></button>
+            {categories.length > 0 && (
+              <div className="zy-mobile-category-list">
+                <span>Shop by category</span>
+                <div>{categories.filter((category) => category.isActive !== false).slice(0, 10).map((category) => <button key={category.id} type="button" onClick={() => handleCategorySuggestion(category.id)}>{category.name}</button>)}</div>
               </div>
+            )}
+            <div className="zy-mobile-menu-footer">
+              {settings?.contactPhone && <a href={`tel:${settings.contactPhone}`}><Headphones aria-hidden="true" />{settings.contactPhone}</a>}
+              <span><Languages aria-hidden="true" />EN / සිං</span>
             </div>
-
-            {isAdminUser && (
-              <button
-                onClick={() => {
-                  setIsAdminMode(true);
-                  setCurrentPage('admin');
-                  setIsMobileMenuOpen(false);
-                }}
-                className={`mx-3 mb-3 flex min-h-12 w-[calc(100%-1.5rem)] items-center rounded-2xl border px-3 text-left text-sm font-black transition-all ${
-                  isAdminMode
-                    ? 'border-blue-200 bg-brand-blue text-white'
-                    : 'border-slate-100 bg-white text-slate-700 hover:bg-blue-50'
-                }`}
-              >
-                <LayoutDashboard className="h-4 w-4 mr-2" />
-                Admin Dashboard
-              </button>
-            )}
-
-            {user && (
-              <div className="border-t border-slate-100 p-3">
-                <button type="button" onClick={handleLogout} className="flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl bg-red-50 text-sm font-black text-red-600 hover:bg-red-100">
-                  <LogOut className="h-4.5 w-4.5" aria-hidden="true" /> Logout
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </header>
   );
 }

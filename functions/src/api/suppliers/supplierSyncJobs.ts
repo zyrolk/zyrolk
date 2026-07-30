@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { FieldValue, Firestore } from "firebase-admin/firestore";
+import { recordSupplierManualSyncRequestMetric } from "./supplierCloudMonitoring";
 
 export const SUPPLIER_SYNC_JOB_STATES = [
   "pending",
@@ -180,7 +181,7 @@ export async function createSupplierSyncJob(
     resumeCount: 0,
     progress: initialProgress(now),
   };
-  return db.runTransaction(async (transaction) => {
+  const result = await db.runTransaction(async (transaction) => {
     const snapshot = await transaction.get(reference);
     if (snapshot.exists) {
       return { created: false, job: { id: snapshot.id, ...snapshot.data() } as SupplierSyncJobRecord };
@@ -188,6 +189,14 @@ export async function createSupplierSyncJob(
     transaction.create(reference, record);
     return { created: true, job: record };
   });
+  if (input.trigger === "manual") {
+    recordSupplierManualSyncRequestMetric({
+      jobId: result.job.id,
+      sourceCount: record.sourceIds.length,
+      created: result.created,
+    });
+  }
+  return result;
 }
 
 export async function leaseSupplierSyncJob(

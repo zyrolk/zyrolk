@@ -1,4 +1,8 @@
-# Sprint 84 production deployment
+# Sprint 84 historical deployment notes
+
+> This document describes the earlier PayHere-capable architecture and is not
+> the current launch procedure. PayHere is temporarily disabled. Use
+> `docs/PRODUCTION_OPERATIONS_RUNBOOK.md` for the current COD-only release.
 
 Sprint 84 adds PayHere payments, transactional stock reservations, notification outbox records, App Check enforcement support, commerce telemetry, and dynamic SEO endpoints. Deploy the changes as one coordinated release so the API, rules, indexes, and storefront agree on the payment lifecycle.
 

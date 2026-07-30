@@ -71,9 +71,12 @@ test('Supplier Hub queue decisions are Functions-authoritative and transaction g
 
 test('Supplier Hub authorization accepts only revocation-checked server-verifiable admin claims', () => {
   const middleware = readFileSync('functions/src/api/middleware/supplierHubAdminAuth.ts', 'utf8');
+  const authorization = readFileSync('functions/src/api/security/adminAuthorization.ts', 'utf8');
   assert.match(middleware, /adminAuth\.verifyIdToken/);
   assert.match(middleware, /verifyIdToken\(match\[1\], true\)/);
-  assert.match(middleware, /claims\.admin === true/);
+  assert.match(middleware, /hasSupplierHubAdminAccess\(decodedToken\)/);
+  assert.match(authorization, /claims\.admin === true/);
+  assert.match(authorization, /claims\.supplierHubAdmin === true/);
   assert.doesNotMatch(middleware, /collection\("users"\)/);
   assert.match(middleware, /res\.locals\.supplierAdmin/);
 });

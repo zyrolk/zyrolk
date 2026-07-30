@@ -109,13 +109,13 @@
 .zy-checkout-items article > div > strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.9rem; }
 .zy-checkout-items article small { color: #64748b; font-size: 0.75rem; }
 .zy-checkout-items article > div > span { display: flex; width: fit-content; align-items: center; overflow: hidden; border: 1px solid #dbe3ef; border-radius: 999px; background: #fff; }
-.zy-checkout-items article > div > span button { display: grid; width: 2rem; height: 2rem; place-items: center; color: #334155; background: transparent; }
+.zy-checkout-items article > div > span button { display: grid; width: 2.75rem; height: 2.75rem; place-items: center; color: #334155; background: transparent; }
 .zy-checkout-items article > div > span button:disabled { opacity: 0.35; }
 .zy-checkout-items article > div > span svg { width: 0.85rem; }
 .zy-checkout-items article > div > span b { min-width: 1.4rem; text-align: center; font-size: 0.8rem; }
 .zy-checkout-items article > aside { display: grid; align-self: stretch; justify-items: end; align-content: space-between; gap: 0.7rem; }
 .zy-checkout-items article > aside b { white-space: nowrap; font-size: 0.86rem; }
-.zy-checkout-items article > aside button { display: grid; width: 2rem; height: 2rem; place-items: center; border-radius: 999px; color: #94a3b8; background: transparent; }
+.zy-checkout-items article > aside button { display: grid; width: 2.75rem; height: 2.75rem; place-items: center; border-radius: 999px; color: #94a3b8; background: transparent; }
 .zy-checkout-items article > aside button:hover { color: #dc2626; background: #fef2f2; }
 .zy-checkout-items article > aside svg { width: 1rem; }
 
@@ -140,7 +140,7 @@
 .zy-coupon-card p { margin: 0.7rem 0 0; font-size: 0.75rem; }
 .zy-coupon-card p.is-success { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; color: #15803d; }
 .zy-coupon-card p.is-success svg { width: 0.9rem; }
-.zy-coupon-card p.is-success button { margin-left: auto; color: #1d4ed8; text-decoration: underline; background: transparent; }
+.zy-coupon-card p.is-success button { min-height: 2.75rem; margin-left: auto; padding-inline: .5rem; color: #1d4ed8; text-decoration: underline; background: transparent; }
 .zy-coupon-card p.is-error { color: #b91c1c; }
 
 .zy-saved-addresses, .zy-checkout-guest-note, .zy-payment-method, .zy-checkout-summary { padding: 1rem; border: 1px solid rgba(148, 163, 184, 0.24); border-radius: 1rem; background: #fff; }
@@ -199,7 +199,7 @@
 .zy-checkout-empty > svg { width: 2.5rem; height: 2.5rem; color: #94a3b8; }
 .zy-checkout-empty strong { color: #0f172a; }
 .zy-checkout-empty p { margin: 0; font-size: 0.82rem; }
-.zy-checkout-empty button { margin-top: 0.5rem; padding: 0.7rem 1rem; border-radius: 0.75rem; color: #fff; background: #1d4ed8; font-weight: 700; }
+.zy-checkout-empty button { min-height: 2.75rem; margin-top: 0.5rem; padding: 0.7rem 1rem; border-radius: 0.75rem; color: #fff; background: #1d4ed8; font-weight: 700; }
 
 .zy-order-confirmation { width: min(68rem, calc(100% - 2rem)); margin: 0 auto; padding: clamp(1.5rem, 5vw, 4rem) 0; }
 .zy-confirmation-hero { display: grid; justify-items: center; padding: 1rem 0 2rem; text-align: center; }
@@ -211,7 +211,7 @@
 .zy-confirmation-reference div { display: grid; }
 .zy-confirmation-reference small { color: #56709e; }
 .zy-confirmation-reference strong { color: #1e3a8a; font-size: 1.2rem; letter-spacing: 0.05em; }
-.zy-confirmation-reference button { display: flex; align-items: center; gap: 0.4rem; padding: 0.65rem 0.85rem; border: 1px solid #a9c3ea; border-radius: 0.7rem; color: #1d4ed8; background: #fff; font-weight: 800; }
+.zy-confirmation-reference button { display: flex; min-height: 2.75rem; align-items: center; gap: 0.4rem; padding: 0.65rem 0.85rem; border: 1px solid #a9c3ea; border-radius: 0.7rem; color: #1d4ed8; background: #fff; font-weight: 800; }
 .zy-confirmation-reference button svg { width: 1rem; }
 .zy-confirmation-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; margin-top: 1rem; }
 .zy-confirmation-grid > section { padding: 1.2rem; border: 1px solid rgba(148, 163, 184, 0.24); border-radius: 1rem; background: #fff; }

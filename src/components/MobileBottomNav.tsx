@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { 
-  Home, ShoppingBag, Heart, ShoppingCart, Menu, X, 
+  Home, Heart, ShoppingBag, ShoppingCart, X, Grid3X3,
   LayoutDashboard, LogIn, LogOut, Phone, MapPin, 
   ChevronRight, SlidersHorizontal, UserRound, ShieldCheck, MessageCircle,
   Mail, HelpCircle, LockKeyhole, Info, Settings, ReceiptText, Clock3, BarChart3
@@ -44,18 +44,36 @@ export default function MobileBottomNav({
   const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
   const prefersReducedMotion = useReducedMotion();
   const menuCloseButtonRef = useRef<HTMLButtonElement>(null);
+  const menuSheetRef = useRef<HTMLDivElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     if (!isMoreMenuOpen) return;
     previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
     const focusTimer = window.setTimeout(() => menuCloseButtonRef.current?.focus(), 0);
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') setIsMoreMenuOpen(false);
+      if (event.key !== 'Tab' || !menuSheetRef.current) return;
+      const focusable = (Array.from(menuSheetRef.current.querySelectorAll(
+        'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled])',
+      )) as HTMLElement[]).filter((element) => element.offsetParent !== null);
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
     };
     document.addEventListener('keydown', handleEscape);
     return () => {
       window.clearTimeout(focusTimer);
+      document.body.style.overflow = previousOverflow;
       document.removeEventListener('keydown', handleEscape);
       previousFocusRef.current?.focus();
     };
@@ -91,7 +109,7 @@ export default function MobileBottomNav({
         <div className="zy-mobile-dock bg-white/95 backdrop-blur-xl border border-slate-200/80 rounded-2xl px-1.5 py-1.5 flex justify-around items-stretch">
           
           {/* Tab 1: Home */}
-          <button 
+          <button
             onClick={() => handleTabClick('home')}
             className={`zy-mobile-tab flex min-h-12 flex-col items-center justify-center flex-1 transition-all relative py-1 cursor-pointer rounded-xl active:scale-95 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20 ${
               currentPage === 'home' && !isAdminMode ? activeTabClass : inactiveTabClass
@@ -106,43 +124,23 @@ export default function MobileBottomNav({
             )}
           </button>
 
-          {/* Tab 2: Shop / Products */}
+          {/* Tab 2: Categories */}
           <button 
-            onClick={() => handleTabClick('products')}
+            onClick={() => handleTabClick('categories')}
             className={`zy-mobile-tab flex min-h-12 flex-col items-center justify-center flex-1 transition-all relative py-1 cursor-pointer rounded-xl active:scale-95 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20 ${
-              currentPage === 'products' && !isAdminMode ? activeTabClass : inactiveTabClass
+              currentPage === 'categories' && !isAdminMode ? activeTabClass : inactiveTabClass
             }`}
-            aria-label="Browse products"
-            aria-current={currentPage === 'products' && !isAdminMode ? 'page' : undefined}
+            aria-label="Browse categories"
+            aria-current={currentPage === 'categories' && !isAdminMode ? 'page' : undefined}
           >
-            <ShoppingBag className="h-5 w-5" />
-            <span className="text-[9px] font-bold mt-1 tracking-tight">Shop</span>
-            {currentPage === 'products' && !isAdminMode && (
+            <Grid3X3 className="h-5 w-5" />
+            <span className="text-[9px] font-bold mt-1 tracking-tight">Categories</span>
+            {currentPage === 'categories' && !isAdminMode && (
               <span className="absolute bottom-0 w-1 h-1 bg-brand-blue rounded-full"></span>
             )}
           </button>
 
-          {/* Tab 3: Cart (Action Button) */}
-          <button 
-            onClick={() => {
-              setIsMoreMenuOpen(false);
-              onOpenCart();
-            }}
-            className="zy-mobile-tab zy-mobile-tab-cart flex min-h-12 flex-col items-center justify-center flex-1 transition-all relative py-1 cursor-pointer rounded-xl text-slate-500 hover:text-slate-700 active:scale-95 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20"
-            aria-label={`Open cart with ${cartCount} ${cartCount === 1 ? 'item' : 'items'}`}
-          >
-            <div className="relative">
-              <ShoppingCart className="h-5 w-5" />
-              {cartCount > 0 && (
-                <span className="absolute -top-1.5 -right-2 inline-flex items-center justify-center px-1.5 py-0.5 text-[8px] font-black leading-none text-white bg-brand-blue rounded-full">
-                  {cartCount}
-                </span>
-              )}
-            </div>
-            <span className="text-[9px] font-bold mt-1 tracking-tight">Cart</span>
-          </button>
-
-          {/* Tab 4: Wishlist */}
+          {/* Tab 3: Wishlist */}
           <button 
             onClick={() => handleTabClick('wishlist')}
             className={`zy-mobile-tab flex min-h-12 flex-col items-center justify-center flex-1 transition-all relative py-1 cursor-pointer rounded-xl active:scale-95 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20 ${
@@ -165,18 +163,38 @@ export default function MobileBottomNav({
             )}
           </button>
 
-          {/* Tab 5: More Menu Bottom Sheet Toggle */}
+          {/* Tab 4: Cart */}
+          <button
+            onClick={() => {
+              setIsMoreMenuOpen(false);
+              onOpenCart();
+            }}
+            className="zy-mobile-tab zy-mobile-tab-cart flex min-h-12 flex-col items-center justify-center flex-1 transition-all relative py-1 cursor-pointer rounded-xl text-slate-500 hover:text-slate-700 active:scale-95 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20"
+            aria-label={`Open cart with ${cartCount} ${cartCount === 1 ? 'item' : 'items'}`}
+          >
+            <div className="relative">
+              <ShoppingCart className="h-5 w-5" />
+              {cartCount > 0 && (
+                <span className="absolute -top-1.5 -right-2 inline-flex items-center justify-center px-1.5 py-0.5 text-[8px] font-black leading-none text-white bg-brand-blue rounded-full">
+                  {cartCount}
+                </span>
+              )}
+            </div>
+            <span className="text-[9px] font-bold mt-1 tracking-tight">Cart</span>
+          </button>
+
+          {/* Tab 5: Account */}
           <button 
             onClick={() => setIsMoreMenuOpen(!isMoreMenuOpen)}
             className={`zy-mobile-tab flex min-h-12 flex-col items-center justify-center flex-1 transition-all relative py-1 cursor-pointer rounded-xl active:scale-95 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20 ${
               isMoreMenuOpen ? 'text-brand-blue scale-110' : 'text-slate-500 hover:text-slate-700'
             }`}
-            aria-label={isMoreMenuOpen ? 'Close more menu' : 'Open more menu'}
+            aria-label={isMoreMenuOpen ? 'Close account menu' : 'Open account menu'}
             aria-expanded={isMoreMenuOpen}
             aria-controls="mobile-more-menu"
           >
-            {isMoreMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
-            <span className="text-[9px] font-bold mt-1 tracking-tight">Menu</span>
+            {isMoreMenuOpen ? <X className="h-5 w-5" /> : <UserRound className="h-5 w-5" />}
+            <span className="text-[9px] font-bold mt-1 tracking-tight">Account</span>
           </button>
 
         </div>
@@ -206,6 +224,7 @@ export default function MobileBottomNav({
 
           {/* Drawer content board */}
           <motion.div
+            ref={menuSheetRef}
             className="zy-mobile-sheet absolute bottom-0 left-0 right-0 max-h-[88dvh] bg-white rounded-t-[2rem] sm:rounded-t-[2.5rem] shadow-2xl border-t border-slate-100 flex flex-col overflow-hidden pb-[calc(6.75rem+env(safe-area-inset-bottom))]"
             initial={prefersReducedMotion ? { y: 0 } : { y: '9%' }}
             animate={{ y: 0 }}

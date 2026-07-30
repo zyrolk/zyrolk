@@ -28,6 +28,7 @@ interface ProductDetailModalProps {
   onSelectProduct: (product: Product) => void;
   onBuyNow: (product: Product, quantity: number) => void;
   settings?: WebsiteSettings | null;
+  isAdminUser?: boolean;
 }
 
 export default function ProductDetailModal({
@@ -40,7 +41,8 @@ export default function ProductDetailModal({
   allProducts = [],
   onSelectProduct,
   onBuyNow,
-  settings
+  settings,
+  isAdminUser = false,
 }: ProductDetailModalProps) {
   const isWishlistEnabled = settings?.enableWishlist !== false;
   const isReviewsEnabled = settings?.enableReviews !== false;
@@ -872,6 +874,7 @@ export default function ProductDetailModal({
                   productId={product.id}
                   productName={product.name}
                   currentUser={currentUser}
+                  isAdminUser={isAdminUser}
                 />
               )}
               {/* SECTION: CAROUSEL SLIDER OF RELATED PRODUCTS */}

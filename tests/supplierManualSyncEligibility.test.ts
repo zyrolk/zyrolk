@@ -114,7 +114,7 @@ test('scheduled sync still rejects a paused source and the worker forwards reque
   const sync = readFileSync('functions/src/scheduled/supplierSync.ts', 'utf8');
   assert.match(worker, /runSupplierSync\(\{[\s\S]*?trigger: lease\.job\.trigger,[\s\S]*?sourceIds: lease\.job\.sourceIds/);
   assert.match(sync, /selectSupplierSourcesForSync\([\s\S]*?await loadSupplierSources\(requestedSourceIds\),[\s\S]*?requestedSourceIds,[\s\S]*?trigger/);
-  assert.match(sync, /data: projectSupplierSourceForConnector\(source, trigger\)[\s\S]*?\n\s*\[\],\n/);
+  assert.match(sync, /data: projectSupplierSourceForConnector\(source, trigger\)[\s\S]*?\r?\n\s*\[\],\r?\n/);
   assert.doesNotMatch(sync, /trigger === "manual" \? \[\] : settings\.enabledSupplierIds/);
   assert.doesNotMatch(sync, /settings\.websiteSyncEnabled === false/);
 });

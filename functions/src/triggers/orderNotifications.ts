@@ -1,8 +1,11 @@
 import { createHash } from "node:crypto";
 import { onDocumentWritten } from "firebase-functions/v2/firestore";
-import { FieldValue } from "firebase-admin/firestore";
+import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { adminDb } from "../api/firebase";
 import { appLogger } from "../api/logging";
+import {
+  ORDER_EMAIL_MAX_ATTEMPTS, projectOrderEmailDelivery, safeOrderEmailFailure,
+} from "../api/orders/orderNotificationLogic";
 
 const ADMIN_EMAIL = "zyrolkofficial@gmail.com";
 
@@ -41,13 +44,16 @@ async function queueEmail(eventId: string, orderId: string, message: EmailMessag
       recipientHash: createHash("sha256").update(message.to).digest("hex"),
       status: "handed_off",
       provider: "firebase-trigger-email",
+      attemptCount: 1,
+      maxAttempts: ORDER_EMAIL_MAX_ATTEMPTS,
+      currentMailId: id,
       createdAt: FieldValue.serverTimestamp(),
       handedOffAt: FieldValue.serverTimestamp(),
     });
     transaction.create(adminDb.collection("mail").doc(id), {
       to: [message.to],
       message: { subject: message.subject, text: message.text, html: message.html },
-      metadata: { orderId, kind: message.kind, notificationId: id },
+      metadata: { orderId, kind: message.kind, notificationId: id, deliveryAttempt: 1 },
     });
   });
 }
@@ -141,4 +147,69 @@ export const sendOrderNotifications = onDocumentWritten("orders/{orderId}", asyn
 
   await Promise.all(messages.map((message) => queueEmail(event.id, orderId, message)));
   if (messages.length) appLogger.info("Order notifications handed off.", { orderId, count: messages.length });
+});
+
+export const trackOrderNotificationDelivery = onDocumentWritten("mail/{mailId}", async (event) => {
+  const mail = event.data?.after.exists ? event.data.after.data() : undefined;
+  const metadata = mail?.metadata && typeof mail.metadata === "object"
+    ? mail.metadata as Record<string, unknown>
+    : {};
+  const notificationIdValue = typeof metadata.notificationId === "string" ? metadata.notificationId.trim() : "";
+  if (!mail || !notificationIdValue) return;
+
+  const delivery = mail.delivery && typeof mail.delivery === "object"
+    ? mail.delivery as Record<string, unknown>
+    : {};
+  const attempt = Math.max(1, Math.floor(Number(metadata.deliveryAttempt) || 1));
+  const projection = projectOrderEmailDelivery(delivery.state, attempt);
+  const outboxRef = adminDb.collection("notification_outbox").doc(notificationIdValue);
+
+  await adminDb.runTransaction(async (transaction) => {
+    const outboxSnapshot = await transaction.get(outboxRef);
+    if (!outboxSnapshot.exists) return;
+    const outbox = outboxSnapshot.data() || {};
+    const isLegacySupplierAlert = !outbox.currentMailId
+      && outbox.kind === "supplier_operational_alert"
+      && outbox.status === "handed_off";
+    if (!isLegacySupplierAlert && outbox.currentMailId !== event.params.mailId) return;
+    const update: Record<string, unknown> = {
+      status: projection.status,
+      attemptCount: attempt,
+      updatedAt: FieldValue.serverTimestamp(),
+      ...(isLegacySupplierAlert ? {
+        currentMailId: event.params.mailId,
+        maxAttempts: ORDER_EMAIL_MAX_ATTEMPTS,
+      } : {}),
+    };
+    if (projection.status === "delivered") {
+      Object.assign(update, {
+        deliveredAt: FieldValue.serverTimestamp(),
+        nextRetryAt: FieldValue.delete(),
+        lastError: FieldValue.delete(),
+      });
+    } else if (projection.status === "retry_pending") {
+      Object.assign(update, {
+        failedAt: FieldValue.serverTimestamp(),
+        nextRetryAt: Timestamp.fromMillis(projection.nextRetryAtMillis!),
+        lastError: safeOrderEmailFailure(delivery.error),
+      });
+    } else if (projection.status === "failed") {
+      Object.assign(update, {
+        failedAt: FieldValue.serverTimestamp(),
+        nextRetryAt: FieldValue.delete(),
+        lastError: safeOrderEmailFailure(delivery.error),
+      });
+    }
+    transaction.update(outboxRef, update);
+  });
+
+  if (projection.status === "delivered") {
+    appLogger.info("Order notification delivered.", { notificationId: notificationIdValue, attempt });
+  } else if (projection.status === "retry_pending" || projection.status === "failed") {
+    appLogger.warn("Order notification delivery failed.", {
+      notificationId: notificationIdValue,
+      attempt,
+      retryScheduled: projection.shouldRetry,
+    });
+  }
 });

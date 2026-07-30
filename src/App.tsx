@@ -1,12 +1,9 @@
 import React, { Suspense, lazy, useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { 
-  collection, onSnapshot, doc, getDoc, updateDoc, setDoc 
-} from 'firebase/firestore';
+import { onSnapshot, doc, getDoc, updateDoc, setDoc } from 'firebase/firestore';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { db, auth } from './firebase';
 import { Product, Category, CartItem, CustomerProduct, WebsiteSettings } from './types';
-import { isProductionAdminEmail } from './config/admin';
-import { motion } from 'motion/react';
+import { hasAdminAccess } from './services/security/adminAuthorization';
 import { projectCustomerProducts } from './services/product-search/customerProjection';
 import { searchCustomerProducts } from './services/product-search/customerProductSearch';
 import { getBrowserStorage, readStoredArray, writeStoredJson } from './services/browser/persistentStorage';
@@ -22,16 +19,28 @@ import {
   getActiveCategories,
   sortCategoriesAlphabetically,
 } from './services/categories/categoryUtils';
-import { ProductionReview, calculateProductionRatingSummary, projectProductionReview } from './features/reviews/reviewModel';
+import { ProductionReview } from './features/reviews/reviewModel';
 import { getPaymentReturnContext } from './features/checkout/payhere';
-import { trackCommerceEvent } from './services/observability/commerceAnalytics';
+import { commerceAnalyticsItem, trackCommerceEvent } from './services/observability/commerceAnalytics';
+import {
+  loadNextStorefrontProductPage,
+  loadStorefrontCatalogCounts,
+  loadStorefrontHomepageProducts,
+  loadStorefrontProductsByIds,
+  mergeStorefrontProducts,
+  STOREFRONT_PRODUCT_PAGE_SIZE,
+  StorefrontProductPage,
+  subscribeToHomepageReviews,
+  subscribeToStorefrontCategories,
+  subscribeToStorefrontProductPage,
+} from './services/storefront/storefrontCatalog';
+import { buildStorefrontUrl, parseStorefrontRoute } from './services/navigation/storefrontRoutes';
 
 // Components
 import Navbar from './components/Navbar';
 import MobileBottomNav from './components/MobileBottomNav';
 import HeroBanner from './components/HeroBanner';
 import ProductCard from './components/ProductCard';
-import ProductFilters from './components/ProductFilters';
 import Footer from './components/Footer';
 import FloatingWhatsApp from './components/FloatingWhatsApp';
 import MarketplaceHomePhase1 from './components/MarketplaceHomePhase1';
@@ -52,6 +61,7 @@ const WishlistExperience = lazy(() => import('./features/personalization/Wishlis
 const CompareProducts = lazy(() => import('./features/personalization/CompareProducts'));
 const PaymentReturnPage = lazy(() => import('./features/checkout/PaymentReturnPage'));
 const SupplierPortal = lazy(() => import('./features/supplier-portal/SupplierPortal'));
+const ProductFilters = lazy(() => import('./components/ProductFilters'));
 
 // Lucide Icons
 import { 
@@ -65,6 +75,29 @@ const formatPrice = (amount: number) => new Intl.NumberFormat('en-LK', {
   minimumFractionDigits: 0,
   maximumFractionDigits: 0
 }).format(amount);
+
+const selectFilteredStorefrontProducts = (
+  sourceProducts: readonly Product[],
+  searchQuery: string,
+  selectedCategory: string,
+  priceRange: number,
+  sortBy: string,
+): Product[] => {
+  const activeProducts = sourceProducts.filter((product) => product.isActive !== false);
+  const matchingCustomerIds = new Set(
+    searchCustomerProducts(projectCustomerProducts(activeProducts), searchQuery).map((product) => product.id),
+  );
+  return activeProducts.filter((product) => (
+    matchingCustomerIds.has(product.id) &&
+    (selectedCategory === 'all' || categoryMatches(product.category, selectedCategory)) &&
+    product.price <= priceRange
+  )).sort((left, right) => {
+    if (sortBy === 'price-asc') return left.price - right.price;
+    if (sortBy === 'price-desc') return right.price - left.price;
+    if (sortBy === 'rating') return right.rating - left.rating;
+    return Number(right.isFeatured) - Number(left.isFeatured);
+  });
+};
 
 const STOREFRONT_PAGE_IDS = new Set([
   'home', 'legacy-home', 'products', 'categories', 'wishlist', 'recently-viewed', 'compare', 'contact',
@@ -95,11 +128,17 @@ const OverlayLoadingFallback = ({ label }: { label: string }) => (
 
 export default function App() {
   // Page Navigation State
+  const initialRouteRef = useRef(
+    typeof window === 'undefined' ? { page: 'home' } : parseStorefrontRoute(window.location.pathname, window.location.search),
+  );
   const [paymentReturnContext, setPaymentReturnContext] = useState(() => (
     typeof window === 'undefined' ? null : getPaymentReturnContext(window.location.search)
   ));
-  const [currentPage, setCurrentPage] = useState<string>(() => paymentReturnContext ? 'payment-return' : 'home'); // home, products, categories, wishlist, contact, admin
-  const [isAdminMode, setIsAdminMode] = useState<boolean>(false);
+  const [currentPage, setCurrentPage] = useState<string>(() => paymentReturnContext ? 'payment-return' : initialRouteRef.current.page);
+  const [isAdminMode, setIsAdminMode] = useState<boolean>(() => initialRouteRef.current.page === 'admin');
+  const [routedProductId, setRoutedProductId] = useState<string | null>(() => initialRouteRef.current.productId || null);
+  const [isResolvingRoutedProduct, setIsResolvingRoutedProduct] = useState(Boolean(initialRouteRef.current.productId));
+  const historyReadyRef = useRef(false);
 
   useEffect(() => {
     if (!paymentReturnContext || typeof window === 'undefined') return;
@@ -139,6 +178,11 @@ export default function App() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [homepageReviews, setHomepageReviews] = useState<ProductionReview[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+  const [hasMoreProducts, setHasMoreProducts] = useState<boolean>(false);
+  const [loadingMoreProducts, setLoadingMoreProducts] = useState<boolean>(false);
+  const [catalogFullyLoaded, setCatalogFullyLoaded] = useState<boolean>(false);
+  const [catalogActiveCount, setCatalogActiveCount] = useState<number | null>(null);
+  const [catalogCategoryCounts, setCatalogCategoryCounts] = useState<Record<string, number>>({});
 
   // Shopping Cart & Wishlist States (Backed by LocalStorage)
   const [cart, setCart] = useState<CartItem[]>(() => readStoredArray<CartItem>(getBrowserStorage('localStorage'), 'zyro_cart'));
@@ -151,8 +195,8 @@ export default function App() {
   );
 
   // Filtering / Sorting / Search States
-  const [searchQuery, setSearchQuery] = useState<string>("");
-  const [selectedCategory, setSelectedCategory] = useState<string>("all");
+  const [searchQuery, setSearchQuery] = useState<string>(() => initialRouteRef.current.searchQuery || '');
+  const [selectedCategory, setSelectedCategory] = useState<string>(() => initialRouteRef.current.categoryId || 'all');
   const [priceRange, setPriceRange] = useState<number>(1000000); // Slider up to 1M LKR
   const [sortBy, setSortBy] = useState<string>("featured"); // featured, price-asc, price-desc, rating
 
@@ -165,11 +209,19 @@ export default function App() {
   const [isFilterDrawerOpen, setIsFilterDrawerOpen] = useState<boolean>(false);
   const [wishlistFeedback, setWishlistFeedback] = useState<{ productName: string; action: 'added' | 'removed' } | null>(null);
   const wishlistFeedbackTimerRef = useRef<number | null>(null);
+  const lastTrackedSearchRef = useRef('');
+  const wasCartOpenRef = useRef(false);
+  const lastTrackedProductViewRef = useRef('');
   const wishlistRef = useRef(wishlist);
   const cartRef = useRef(cart);
   const recentlyViewedIdsRef = useRef(recentlyViewedProductIds);
   const storefrontContentRef = useRef<HTMLElement | null>(null);
   const previousPageRef = useRef(currentPage);
+  const productsRef = useRef<Product[]>(products);
+  const productCursorRef = useRef<StorefrontProductPage['cursor']>(null);
+  const firstProductPageIdsRef = useRef<Set<string>>(new Set());
+  const nextProductPagePromiseRef = useRef<Promise<boolean> | null>(null);
+  const resolvedRoutedProductRef = useRef<string | null>(null);
 
   // Auth User State
   const [user, setUser] = useState<User | null>(null);
@@ -194,12 +246,82 @@ export default function App() {
   useEffect(() => { recentlyViewedIdsRef.current = recentlyViewedProductIds; }, [recentlyViewedProductIds]);
 
   useEffect(() => {
-    if (!products.length || paymentReturnContext || typeof window === 'undefined') return;
-    const productId = new URLSearchParams(window.location.search).get('product')?.trim();
-    if (!productId) return;
-    const product = products.find(candidate => candidate.id === productId && candidate.isActive !== false);
-    if (product) setSelectedProduct(product);
-  }, [paymentReturnContext, products]);
+    if (!routedProductId || paymentReturnContext) {
+      setIsResolvingRoutedProduct(false);
+      return;
+    }
+    const loadedProduct = products.find(candidate => candidate.id === routedProductId && candidate.isActive !== false);
+    if (loadedProduct) {
+      resolvedRoutedProductRef.current = routedProductId;
+      setCurrentPage('products');
+      setSelectedProduct(loadedProduct);
+      setIsResolvingRoutedProduct(false);
+      return;
+    }
+    if (resolvedRoutedProductRef.current === routedProductId) return;
+    resolvedRoutedProductRef.current = routedProductId;
+    setIsResolvingRoutedProduct(true);
+    let active = true;
+    void loadStorefrontProductsByIds(db, [routedProductId]).then((matches) => {
+      if (!active) return;
+      const product = matches.find(candidate => candidate.id === routedProductId && candidate.isActive !== false);
+      if (!product) {
+        setSelectedProduct(null);
+        setCurrentPage('not-found');
+        return;
+      }
+      setProducts(current => mergeStorefrontProducts(current, [product]));
+      setCurrentPage('products');
+      setSelectedProduct(product);
+    }).catch((error) => {
+      if (!active) return;
+      reportClientIssue('storefront-product-deep-link', error, 'warning');
+      setSelectedProduct(null);
+      setCurrentPage('not-found');
+    }).finally(() => {
+      if (active) setIsResolvingRoutedProduct(false);
+    });
+    return () => { active = false; };
+  }, [paymentReturnContext, products, routedProductId]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const applyLocation = () => {
+      const route = parseStorefrontRoute(window.location.pathname, window.location.search);
+      setCurrentPage(route.page);
+      setIsAdminMode(route.page === 'admin');
+      setSelectedCategory(route.categoryId || 'all');
+      setSearchQuery(route.searchQuery || '');
+      setRoutedProductId(route.productId || null);
+      setSelectedProduct(null);
+      setIsResolvingRoutedProduct(Boolean(route.productId));
+      resolvedRoutedProductRef.current = null;
+    };
+    window.addEventListener('popstate', applyLocation);
+    return () => window.removeEventListener('popstate', applyLocation);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || paymentReturnContext) return;
+    const nextUrl = buildStorefrontUrl({
+      page: isAdminMode ? 'admin' : currentPage,
+      categoryId: selectedCategory,
+      productId: routedProductId,
+      searchQuery,
+    });
+    const currentUrl = `${window.location.pathname}${window.location.search}`;
+    if (currentUrl === nextUrl) {
+      historyReadyRef.current = true;
+      return;
+    }
+    const state = {
+      zyroStorefront: true,
+      zyroProductOverlay: Boolean(routedProductId && historyReadyRef.current),
+    };
+    if (!historyReadyRef.current) window.history.replaceState(state, '', nextUrl);
+    else window.history.pushState(state, '', nextUrl);
+    historyReadyRef.current = true;
+  }, [currentPage, isAdminMode, paymentReturnContext, routedProductId, searchQuery, selectedCategory]);
 
   useEffect(() => {
     const handleOnline = () => setIsOffline(false);
@@ -236,7 +358,8 @@ export default function App() {
           let loadedWishlist = wishlistRef.current;
           let loadedCart = cartRef.current;
           let loadedRecentlyViewedIds = recentlyViewedIdsRef.current;
-          if (isProductionAdminEmail(currentUser.email)) {
+          const tokenResult = await currentUser.getIdTokenResult();
+          if (hasAdminAccess(tokenResult.claims)) {
             setIsAdminMode(true);
             setIsAdminUser(true);
             setIsSupplierUser(false);
@@ -422,7 +545,11 @@ export default function App() {
   }, [compareProductIds]);
 
   useEffect(() => {
-    if (loading) return;
+    productsRef.current = products;
+  }, [products]);
+
+  useEffect(() => {
+    if (loading || !catalogFullyLoaded) return;
     setRecentlyViewedProductIds(current => {
       const cleaned = cleanRecentlyViewedIds(current, products);
       return cleaned.length === current.length && cleaned.every((id, index) => id === current[index]) ? current : cleaned;
@@ -431,7 +558,7 @@ export default function App() {
       const cleaned = resolveComparedProducts(current, products).map(product => product.id);
       return cleaned.length === current.length && cleaned.every((id, index) => id === current[index]) ? current : cleaned;
     });
-  }, [loading, products]);
+  }, [catalogFullyLoaded, loading, products]);
 
   // Seeding & Firestore Live Sync
   useEffect(() => {
@@ -488,31 +615,37 @@ export default function App() {
         unsubSettings = sUnsub;
       }
 
-      // Live listener on products
-      const pUnsub = onSnapshot(collection(db, "products"), (snap) => {
-        // TODO(security): introduce a customer-safe product DTO in a dedicated data-boundary sprint.
+      // Keep only the first customer-safe catalog page live. Additional pages are
+      // fetched explicitly with stable document cursors.
+      const pUnsub = subscribeToStorefrontProductPage(db, (page) => {
         if (!isMounted) return;
-        const prodList: Product[] = [];
-        snap.forEach(doc => {
-          prodList.push({ id: doc.id, ...doc.data() } as Product);
+        const previousFirstPageIds = firstProductPageIdsRef.current;
+        const nextFirstPageIds = new Set(page.products.map((product) => product.id));
+        setProducts((current) => {
+          const retainedPages = current.filter((product) => !previousFirstPageIds.has(product.id));
+          return mergeStorefrontProducts(page.products, retainedPages);
         });
-        setProducts(prodList);
+        firstProductPageIdsRef.current = nextFirstPageIds;
+        productCursorRef.current = page.cursor;
+        setHasMoreProducts(page.hasMore);
+        setCatalogFullyLoaded(!page.hasMore);
         setStorefrontDataError(null);
         setLoading(false);
       }, error => handleDataFailure('products', error, true));
+      void loadStorefrontHomepageProducts(db)
+        .then((homepageProducts) => {
+          if (isMounted) setProducts((current) => mergeStorefrontProducts(current, homepageProducts));
+        })
+        .catch((error) => handleDataFailure('homepage-products', error));
       if (!isMounted) {
         pUnsub();
       } else {
         unsubProds = pUnsub;
       }
 
-      // Live listener on categories
-      const cUnsub = onSnapshot(collection(db, "categories"), (snap) => {
+      // Category metadata is a small, explicitly bounded registry.
+      const cUnsub = subscribeToStorefrontCategories(db, (catList) => {
         if (!isMounted) return;
-        const catList: Category[] = [];
-        snap.forEach(doc => {
-          catList.push({ id: doc.id, ...doc.data() } as Category);
-        });
         setCategories(getActiveCategories(sortCategoriesAlphabetically(catList)));
       }, error => handleDataFailure('categories', error));
       if (!isMounted) {
@@ -521,20 +654,9 @@ export default function App() {
         unsubCats = cUnsub;
       }
 
-      // Live listener on reviews
-      const rUnsub = onSnapshot(collection(db, "reviews"), (snap) => {
+      // Homepage testimonials use only the latest approved bounded set.
+      const rUnsub = subscribeToHomepageReviews(db, (revList) => {
         if (!isMounted) return;
-        const revList: ProductionReview[] = [];
-        snap.forEach(doc => {
-          const review = projectProductionReview(doc.id, doc.data());
-          if (review) revList.push(review);
-        });
-        // sort by createdAt desc
-        revList.sort((a, b) => {
-          const timeA = a.createdAt?.getTime() || 0;
-          const timeB = b.createdAt?.getTime() || 0;
-          return timeB - timeA;
-        });
         setHomepageReviews(revList);
       }, error => handleDataFailure('reviews', error));
       if (!isMounted) {
@@ -555,16 +677,100 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    if (categories.length === 0) return;
+    let cancelled = false;
+    loadStorefrontCatalogCounts(db, categories)
+      .then((counts) => {
+        if (cancelled) return;
+        setCatalogActiveCount(counts.activeProducts);
+        setCatalogCategoryCounts(counts.byCategory);
+      })
+      .catch((error) => reportClientIssue('storefront-catalog-counts', error, 'warning'));
+    return () => { cancelled = true; };
+  }, [categories]);
+
+  const loadMoreProducts = useCallback((): Promise<boolean> => {
+    if (nextProductPagePromiseRef.current) return nextProductPagePromiseRef.current;
+    const cursor = productCursorRef.current;
+    if (!cursor || catalogFullyLoaded) return Promise.resolve(false);
+
+    const request = (async () => {
+      setLoadingMoreProducts(true);
+      try {
+        const page = await loadNextStorefrontProductPage(db, cursor);
+        productCursorRef.current = page.cursor;
+        setProducts((current) => mergeStorefrontProducts(current, page.products));
+        setHasMoreProducts(page.hasMore);
+        setCatalogFullyLoaded(!page.hasMore);
+        setStorefrontDataError(null);
+        return page.hasMore;
+      } catch (error) {
+        reportClientIssue('storefront-products-pagination', error, 'warning');
+        setStorefrontDataError('More products could not be loaded. Please try again.');
+        return false;
+      } finally {
+        setLoadingMoreProducts(false);
+        nextProductPagePromiseRef.current = null;
+      }
+    })();
+    nextProductPagePromiseRef.current = request;
+    return request;
+  }, [catalogFullyLoaded]);
+
+  const requestedProductIds = useMemo(() => [...new Set([
+    ...wishlist.map((product) => product.id),
+    ...cart.map((item) => item.product.id),
+    ...recentlyViewedProductIds,
+    ...compareProductIds,
+  ])], [cart, compareProductIds, recentlyViewedProductIds, wishlist]);
+
+  useEffect(() => {
+    if (loading || requestedProductIds.length === 0) return;
+    const loadedIds = new Set(productsRef.current.map((product) => product.id));
+    const missingIds = requestedProductIds.filter((id) => !loadedIds.has(id));
+    if (missingIds.length === 0) return;
+    let cancelled = false;
+    loadStorefrontProductsByIds(db, missingIds)
+      .then((resolvedProducts) => {
+        if (!cancelled) setProducts((current) => mergeStorefrontProducts(current, resolvedProducts));
+      })
+      .catch((error) => reportClientIssue('storefront-targeted-products', error, 'warning'));
+    return () => { cancelled = true; };
+  }, [loading, requestedProductIds]);
+
   // Scroll to top on page change
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, [currentPage]);
 
   useEffect(() => {
-    if (isCartOpen) {
+    if (isCartOpen && !wasCartOpenRef.current) {
       setHasOpenedCart(true);
+      void trackCommerceEvent('view_cart', {
+        currency: 'LKR',
+        value: cart.reduce((total, item) => total + item.product.price * item.quantity, 0),
+        items: cart.map((item) => commerceAnalyticsItem({
+          id: item.product.id,
+          name: item.product.name,
+          price: item.product.price,
+          quantity: item.quantity,
+        })),
+      });
     }
-  }, [isCartOpen]);
+    wasCartOpenRef.current = isCartOpen;
+  }, [cart, isCartOpen]);
+
+  useEffect(() => {
+    if (currentPage !== 'products') return;
+    const query = searchQuery.trim();
+    if (query.length < 2 || lastTrackedSearchRef.current === query) return;
+    const timer = window.setTimeout(() => {
+      lastTrackedSearchRef.current = query;
+      void trackCommerceEvent('search', { search_term: query.slice(0, 160) });
+    }, 600);
+    return () => window.clearTimeout(timer);
+  }, [currentPage, searchQuery]);
 
   useEffect(() => {
     if (isAuthModalOpen) {
@@ -572,10 +778,34 @@ export default function App() {
     }
   }, [isAuthModalOpen]);
 
+  const closeProductDetail = useCallback(() => {
+    if (!routedProductId && !selectedProduct) return;
+    if (typeof window !== 'undefined' && window.history.state?.zyroProductOverlay) {
+      window.history.back();
+      return;
+    }
+    setSelectedProduct(null);
+    setRoutedProductId(null);
+    setIsResolvingRoutedProduct(false);
+    setCurrentPage('products');
+    setSelectedCategory('all');
+    setSearchQuery('');
+    if (typeof window !== 'undefined') {
+      window.history.replaceState({ zyroStorefront: true }, '', '/products');
+      historyReadyRef.current = true;
+    }
+  }, [routedProductId, selectedProduct]);
+
   // --- CART FUNCTIONS ---
   const handleAddToCart = useCallback((product: Product, qty: number = 1) => {
     if (product.stock <= 0) return;
-    void trackCommerceEvent('add_to_cart', { currency: 'LKR', value: product.price * qty, product_id: product.id, quantity: qty });
+    void trackCommerceEvent('add_to_cart', {
+      currency: 'LKR',
+      value: product.price * qty,
+      product_id: product.id,
+      quantity: qty,
+      items: [commerceAnalyticsItem({ id: product.id, name: product.name, price: product.price, quantity: qty })],
+    });
     setCart(prev => {
       const existing = prev.find(item => item.product.id === product.id);
       if (existing) {
@@ -589,7 +819,7 @@ export default function App() {
     });
   }, []);
 
-  const handleBuyNow = (product: Product, quantity: number) => {
+  const handleBuyNow = useCallback((product: Product, quantity: number) => {
     if (product.stock <= 0) return;
     const qtyToUse = Math.min(product.stock, quantity);
     setCart(prev => {
@@ -603,9 +833,9 @@ export default function App() {
       }
       return [...prev, { product, quantity: qtyToUse }];
     });
-    setSelectedProduct(null);
+    closeProductDetail();
     setIsCartOpen(true);
-  };
+  }, [closeProductDetail]);
 
   const handleUpdateCartQuantity = (productId: string, quantity: number) => {
     setCart(prev => prev.map(item => 
@@ -614,6 +844,17 @@ export default function App() {
   };
 
   const handleRemoveFromCart = (productId: string) => {
+    const item = cartRef.current.find((candidate) => candidate.product.id === productId);
+    if (item) void trackCommerceEvent('remove_from_cart', {
+      currency: 'LKR',
+      value: item.product.price * item.quantity,
+      items: [commerceAnalyticsItem({
+        id: item.product.id,
+        name: item.product.name,
+        price: item.product.price,
+        quantity: item.quantity,
+      })],
+    });
     setCart(prev => prev.filter(item => item.product.id !== productId));
   };
 
@@ -630,6 +871,11 @@ export default function App() {
   // --- WISHLIST FUNCTIONS ---
   const handleToggleWishlist = useCallback((product: Product) => {
     const isRemoving = wishlist.some(item => item.id === product.id);
+    if (!isRemoving) void trackCommerceEvent('add_to_wishlist', {
+      currency: 'LKR',
+      value: product.price,
+      items: [commerceAnalyticsItem({ id: product.id, name: product.name, price: product.price })],
+    });
     setWishlist(prev => {
       const isExist = prev.some(item => item.id === product.id);
       if (isExist) {
@@ -666,21 +912,14 @@ export default function App() {
 
   const handleViewProduct = useCallback((product: Product) => {
     setRecentlyViewedProductIds(previous => addRecentlyViewedProduct(previous, product.id));
+    resolvedRoutedProductRef.current = product.id;
+    setRoutedProductId(product.id);
     setSelectedProduct(product);
   }, []);
 
-  const storefrontProducts = useMemo(() => {
-    const reviewsByProduct = new Map<string, ProductionReview[]>();
-    homepageReviews.forEach((review) => {
-      const group = reviewsByProduct.get(review.productId) || [];
-      group.push(review);
-      reviewsByProduct.set(review.productId, group);
-    });
-    return products.map((product) => {
-      const summary = calculateProductionRatingSummary(reviewsByProduct.get(product.id) || []);
-      return { ...product, rating: summary.average, reviewsCount: summary.total };
-    });
-  }, [homepageReviews, products]);
+  // Ratings are maintained as product aggregates by the review backend. A
+  // bounded testimonial query must not replace complete rating statistics.
+  const storefrontProducts = products;
 
   const customerProducts = useMemo(
     () => projectCustomerProducts(storefrontProducts.filter((product) => product.isActive !== false)),
@@ -698,29 +937,43 @@ export default function App() {
   );
 
   // --- FILTERING LOGIC ---
-  const filteredProducts = useMemo(() => {
-    const matchingCustomerIds = new Set(
-      searchCustomerProducts(customerProducts, searchQuery).map((product) => product.id),
-    );
-    return storefrontProducts.filter(prod => {
-      const matchesActive = prod.isActive !== false;
-      const matchesSearch = matchingCustomerIds.has(prod.id);
-      const matchesCategory = selectedCategory === "all" || categoryMatches(prod.category, selectedCategory);
-      const matchesPrice = prod.price <= priceRange;
-      return matchesActive && matchesSearch && matchesCategory && matchesPrice;
-    }).sort((a, b) => {
-      if (sortBy === "price-asc") return a.price - b.price;
-      if (sortBy === "price-desc") return b.price - a.price;
-      if (sortBy === "rating") return b.rating - a.rating;
-      return (b.isFeatured ? 1 : 0) - (a.isFeatured ? 1 : 0); // Featured defaults
-    });
-  }, [customerProducts, priceRange, searchQuery, selectedCategory, sortBy, storefrontProducts]);
+  const filteredProducts = useMemo(() => selectFilteredStorefrontProducts(
+    storefrontProducts,
+    searchQuery,
+    selectedCategory,
+    priceRange,
+    sortBy,
+  ), [priceRange, searchQuery, selectedCategory, sortBy, storefrontProducts]);
+
+  // Keep search and filter results complete without restoring the old full
+  // collection listener. Cursor pages are scanned only while the catalog page
+  // needs enough matching results to render a useful page.
+  useEffect(() => {
+    if (currentPage !== 'products' || loading || !hasMoreProducts || filteredProducts.length >= STOREFRONT_PRODUCT_PAGE_SIZE) return;
+    let cancelled = false;
+    const fillFilteredPage = async () => {
+      while (!cancelled && productCursorRef.current) {
+        const currentMatches = selectFilteredStorefrontProducts(
+          productsRef.current,
+          searchQuery,
+          selectedCategory,
+          priceRange,
+          sortBy,
+        ).length;
+        if (currentMatches >= STOREFRONT_PRODUCT_PAGE_SIZE) break;
+        const moreAvailable = await loadMoreProducts();
+        if (!moreAvailable) break;
+      }
+    };
+    void fillFilteredPage();
+    return () => { cancelled = true; };
+  }, [currentPage, filteredProducts.length, hasMoreProducts, loadMoreProducts, loading, priceRange, searchQuery, selectedCategory, sortBy]);
 
   const activeProducts = useMemo(
     () => storefrontProducts.filter(product => product.isActive !== false),
     [storefrontProducts]
   );
-  const activeProductCount = activeProducts.length;
+  const activeProductCount = catalogActiveCount ?? activeProducts.length;
 
   const featuredProducts = useMemo(
     () => activeProducts.filter(product => product.isFeatured),
@@ -773,12 +1026,19 @@ export default function App() {
     [categories, products],
   );
   const categoryCounts = useMemo(
-    () => Object.fromEntries(categories.map((category) => [category.id, categoryProductCounts[category.id]?.active ?? 0])),
-    [categories, categoryProductCounts],
+    () => Object.fromEntries(categories.map((category) => [
+      category.id,
+      catalogCategoryCounts[category.id] ?? categoryProductCounts[category.id]?.active ?? 0,
+    ])),
+    [catalogCategoryCounts, categories, categoryProductCounts],
   );
   const storefrontCategories = useMemo(
     () => categories.filter((category) => (categoryCounts[category.id] || 0) > 0),
     [categories, categoryCounts],
+  );
+  const selectedSeoCategory = useMemo(
+    () => selectedCategory === 'all' ? null : categories.find((category) => category.id === selectedCategory) || null,
+    [categories, selectedCategory],
   );
   const isCategoriesPageLoading = loading;
   const homepageCategories = useMemo(() => categories.flatMap((category) => {
@@ -806,6 +1066,20 @@ export default function App() {
   }, []);
 
   const liveSelectedProduct = selectedProduct ? (storefrontProducts.find(product => product.id === selectedProduct.id) || selectedProduct) : null;
+
+  useEffect(() => {
+    if (!liveSelectedProduct || lastTrackedProductViewRef.current === liveSelectedProduct.id) return;
+    lastTrackedProductViewRef.current = liveSelectedProduct.id;
+    void trackCommerceEvent('view_item', {
+      currency: 'LKR',
+      value: liveSelectedProduct.price,
+      items: [commerceAnalyticsItem({
+        id: liveSelectedProduct.id,
+        name: liveSelectedProduct.name,
+        price: liveSelectedProduct.price,
+      })],
+    });
+  }, [liveSelectedProduct]);
   const recentlyViewedProducts = useMemo(
     () => buildRecentlyViewedProducts(recentlyViewedProductIds, storefrontProducts, 24),
     [recentlyViewedProductIds, storefrontProducts],
@@ -842,6 +1116,10 @@ export default function App() {
       <StorefrontSeo
         currentPage={currentPage}
         product={liveSelectedProduct}
+        requestedProductId={routedProductId}
+        category={selectedSeoCategory}
+        requestedCategoryId={selectedCategory === 'all' ? null : selectedCategory}
+        searchQuery={searchQuery}
         settings={settings}
         isAdminMode={isAdminMode}
       />
@@ -937,6 +1215,7 @@ export default function App() {
               onExploreProducts={() => { setCurrentPage('products'); setSelectedCategory('all'); }}
               onBrowseCategories={() => setCurrentPage('categories')}
               onSelectCategory={(categoryId) => { setSelectedCategory(categoryId); setCurrentPage('products'); }}
+              onSearch={(query) => { setSearchQuery(query); setSelectedCategory('all'); setCurrentPage('products'); }}
               onAddToCart={handleAddToCart}
               onToggleWishlist={handleToggleWishlist}
               onViewDetail={handleViewProduct}
@@ -955,6 +1234,9 @@ export default function App() {
                   categories={storefrontCategories}
                   onExploreProducts={() => { setCurrentPage('products'); setSelectedCategory('all'); }}
                   onBrowseCategories={() => { setCurrentPage('categories'); }}
+                  onSelectCategory={(categoryId) => { setSelectedCategory(categoryId); setCurrentPage('products'); }}
+                  onSearch={(query) => { setSearchQuery(query); setSelectedCategory('all'); setCurrentPage('products'); }}
+                  onViewProduct={handleViewProduct}
                 />
               </section>
 
@@ -1005,7 +1287,7 @@ export default function App() {
                 <div className="flex snap-x snap-mandatory gap-4 overflow-x-auto pb-4 pr-5 scrollbar-none sm:grid sm:grid-cols-2 sm:overflow-visible sm:pb-0 sm:pr-0 md:grid-cols-4 sm:gap-5 md:gap-6">
                   {homepageCategories.map(({ category: cat, image: catImage, itemsCount }, categoryIndex) => {
                     return (
-                      <motion.button
+                      <button
                         type="button"
                         key={cat.id}
                         onClick={() => {
@@ -1050,7 +1332,7 @@ export default function App() {
                             </span>
                           </div>
                         </div>
-                      </motion.button>
+                      </button>
                     );
                   })}
                 </div>
@@ -1111,7 +1393,7 @@ export default function App() {
 
                       <div className="grid grid-cols-2 gap-3 sm:gap-6 lg:grid-cols-4 lg:gap-7">
                         {trendingProducts.map((prod) => (
-                          <ProductCard 
+                          <ProductCard
                             key={prod.id}
                             product={prod}
                             isWishlisted={wishlistProductIds.has(prod.id)}
@@ -1394,21 +1676,23 @@ export default function App() {
                 {/* Left Side Filters Sidebar */}
                 <div className="hidden lg:col-span-3 lg:block">
                   <div className="zy-surface zy-filter-panel sticky top-24 p-5">
-                    <ProductFilters
-                      categories={storefrontCategories}
-                      categoryCounts={categoryCounts}
-                      activeProductCount={activeProductCount}
-                      selectedCategory={selectedCategory}
-                      onSelectCategory={setSelectedCategory}
-                      priceRange={priceRange}
-                      onPriceRangeChange={setPriceRange}
-                      sortBy={sortBy}
-                      onSortChange={setSortBy}
-                      activeFilterCount={activeFilterCount}
-                      onClearAll={clearAllFilters}
-                      formatPrice={formatPrice}
-                      idPrefix="desktop-products"
-                    />
+                    <Suspense fallback={<div className="h-72 animate-pulse rounded-2xl bg-slate-100" aria-label="Loading product filters" />}>
+                      <ProductFilters
+                        categories={storefrontCategories}
+                        categoryCounts={categoryCounts}
+                        activeProductCount={activeProductCount}
+                        selectedCategory={selectedCategory}
+                        onSelectCategory={setSelectedCategory}
+                        priceRange={priceRange}
+                        onPriceRangeChange={setPriceRange}
+                        sortBy={sortBy}
+                        onSortChange={setSortBy}
+                        activeFilterCount={activeFilterCount}
+                        onClearAll={clearAllFilters}
+                        formatPrice={formatPrice}
+                        idPrefix="desktop-products"
+                      />
+                    </Suspense>
                   </div>
                 </div>
 
@@ -1490,20 +1774,34 @@ export default function App() {
                       </button>}
                     </div>
                   ) : (
-                    <div className="grid grid-cols-1 min-[480px]:grid-cols-2 lg:grid-cols-3 gap-5 sm:gap-6">
-                      {filteredProducts.map((prod) => (
-                        <ProductCard 
-                          key={prod.id}
-                          product={prod}
-                          isWishlisted={wishlistProductIds.has(prod.id)}
-                          onAddToCart={handleAddToCart}
-                          onToggleWishlist={handleToggleWishlist}
-                          onViewDetail={handleViewProduct}
-                          showWishlist={settings?.enableWishlist !== false}
-                          settings={settings}
-                        />
-                      ))}
-                    </div>
+                    <>
+                      <div className="grid grid-cols-1 min-[480px]:grid-cols-2 lg:grid-cols-3 gap-5 sm:gap-6">
+                        {filteredProducts.map((prod) => (
+                          <ProductCard
+                            key={prod.id}
+                            product={prod}
+                            isWishlisted={wishlistProductIds.has(prod.id)}
+                            onAddToCart={handleAddToCart}
+                            onToggleWishlist={handleToggleWishlist}
+                            onViewDetail={handleViewProduct}
+                            showWishlist={settings?.enableWishlist !== false}
+                            settings={settings}
+                          />
+                        ))}
+                      </div>
+                      {hasMoreProducts && (
+                        <div className="flex justify-center pt-8">
+                          <button
+                            type="button"
+                            onClick={() => { void loadMoreProducts(); }}
+                            disabled={loadingMoreProducts}
+                            className="zy-button zy-button-secondary min-h-12 min-w-44 disabled:cursor-wait disabled:opacity-60"
+                          >
+                            {loadingMoreProducts ? 'Loading products...' : 'Load more products'}
+                          </button>
+                        </div>
+                      )}
+                    </>
                   )}
 
                 </div>
@@ -1536,21 +1834,23 @@ export default function App() {
                   </button>
                 </div>
                 <div className="flex-1 overflow-y-auto px-5 py-5">
-                  <ProductFilters
-                    categories={storefrontCategories}
-                    categoryCounts={categoryCounts}
-                    activeProductCount={activeProductCount}
-                    selectedCategory={selectedCategory}
-                    onSelectCategory={setSelectedCategory}
-                    priceRange={priceRange}
-                    onPriceRangeChange={setPriceRange}
-                    sortBy={sortBy}
-                    onSortChange={setSortBy}
-                    activeFilterCount={activeFilterCount}
-                    onClearAll={clearAllFilters}
-                    formatPrice={formatPrice}
-                    idPrefix="mobile-products"
-                  />
+                  <Suspense fallback={<div className="h-72 animate-pulse rounded-2xl bg-slate-100" aria-label="Loading product filters" />}>
+                    <ProductFilters
+                      categories={storefrontCategories}
+                      categoryCounts={categoryCounts}
+                      activeProductCount={activeProductCount}
+                      selectedCategory={selectedCategory}
+                      onSelectCategory={setSelectedCategory}
+                      priceRange={priceRange}
+                      onPriceRangeChange={setPriceRange}
+                      sortBy={sortBy}
+                      onSortChange={setSortBy}
+                      activeFilterCount={activeFilterCount}
+                      onClearAll={clearAllFilters}
+                      formatPrice={formatPrice}
+                      idPrefix="mobile-products"
+                    />
+                  </Suspense>
                 </div>
                 <div className="border-t border-slate-200 bg-white px-5 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
                   <button
@@ -1791,8 +2091,17 @@ export default function App() {
 
           {!isKnownStorefrontPage && (
             <StorefrontNotFound
-              onGoHome={() => setCurrentPage('home')}
-              onBrowseProducts={() => { setCurrentPage('products'); setSelectedCategory('all'); }}
+              onGoHome={() => {
+                setRoutedProductId(null);
+                setSelectedProduct(null);
+                setCurrentPage('home');
+              }}
+              onBrowseProducts={() => {
+                setRoutedProductId(null);
+                setSelectedProduct(null);
+                setCurrentPage('products');
+                setSelectedCategory('all');
+              }}
             />
           )}
         </main>
@@ -1841,12 +2150,15 @@ export default function App() {
       )}
 
       {/* Detail Showcase Modal */}
+      {isResolvingRoutedProduct && (
+        <OverlayLoadingFallback label="Loading product details" />
+      )}
       {liveSelectedProduct && (
         <Suspense fallback={<OverlayLoadingFallback label="Loading product details" />}>
           <ProductDetailModal
               product={liveSelectedProduct}
               isOpen={!!selectedProduct}
-              onClose={() => setSelectedProduct(null)}
+              onClose={closeProductDetail}
               isWishlisted={wishlistProductIds.has(liveSelectedProduct.id)}
               onAddToCart={handleAddToCart}
               onToggleWishlist={handleToggleWishlist}
@@ -1854,6 +2166,7 @@ export default function App() {
               onSelectProduct={handleViewProduct}
               onBuyNow={handleBuyNow}
               settings={settings}
+              isAdminUser={isAdminUser}
             />
         </Suspense>
       )}

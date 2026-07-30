@@ -1,10 +1,9 @@
 import * as express from "express";
 import { adminAuth } from "../firebase";
 import { appLogger } from "../logging";
+import { hasAdminAccess } from "../security/adminAuthorization";
 
-export function hasAdminAccess(claims: Record<string, unknown>): boolean {
-  return claims.admin === true || claims.role === "admin";
-}
+export { hasAdminAccess } from "../security/adminAuthorization";
 
 export const requireAdminAuth: express.RequestHandler = async (req, res, next) => {
   const authHeader = req.header("Authorization") || "";

@@ -1,0 +1,9 @@
+name: supplier_hub_manual_sync_requests
+description: Accepted Supplier Hub manual synchronization requests.
+filter: >-
+  jsonPayload.eventType="supplier_hub_operational_metric" AND
+  jsonPayload.metricName="supplier_manual_sync_requests"
+metricDescriptor:
+  metricKind: DELTA
+  valueType: INT64
+  unit: "1"

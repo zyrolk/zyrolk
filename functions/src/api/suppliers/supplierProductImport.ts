@@ -10,6 +10,7 @@ import {
   SupplierFieldEmptyBehavior,
   SupplierFieldSyncGroup,
 } from "./supplierFieldManifest";
+import { requiresUnsupportedVariantSelection } from "./supplierProductMapping";
 
 export interface SupplierImportValidationWarning {
   field: string;
@@ -419,6 +420,8 @@ export function buildSupplierImportWarnings(
   const hasVariants = hasCollectionValues(product.variants);
   if (hasOptions !== hasVariants) {
     add("variants", "missing_variant_data", "Variant options and variant records are incomplete.");
+  } else if (requiresUnsupportedVariantSelection(productPayload)) {
+    add("variants", "unsupported_variant_selection", "Variant selection is required and must be resolved before publishing.");
   }
   return warnings;
 }

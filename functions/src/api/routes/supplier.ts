@@ -18,6 +18,8 @@ import { SupplierRegistry } from "../suppliers/SupplierRegistry";
 import { adminDb } from "../firebase";
 import { appLogger } from "../logging";
 import { getSupplierSyncSchedulerStatus } from "../../scheduled/supplierSync";
+import { getSyncInvestigationPage, getRecentSyncInvestigations } from "../suppliers/supplierInvestigations";
+import { recordSupplierInvestigationRequestMetric } from "../suppliers/supplierCloudMonitoring";
 import { isLocalSupplierSyncWorkerRuntime, processSupplierSyncJob } from "../../scheduled/supplierSyncWorker";
 import {
   createSupplierSyncJob,
@@ -46,6 +48,11 @@ import {
   listSupplierProductOffers,
   selectSupplierProductOffer,
 } from "../suppliers/supplierOfferEngine";
+import {
+  recordSupplierOperationalAlertSafely,
+  resolveSupplierOperationalAlertSafely,
+  transitionSupplierOperationalAlert,
+} from "../suppliers/supplierOperationalAlerts";
 
 const readSourceIds = (value: unknown): string[] => {
   if (value === undefined) return [];
@@ -70,6 +77,13 @@ const readSyncJobId = (value: unknown): string => {
   const id = value.trim();
   if (!id || id.length > 180 || id.includes("/")) throw new ApiError("The supplier sync job ID is invalid.", 400);
   return id;
+};
+
+const readOperationalAlertId = (value: unknown): string => {
+  if (typeof value !== "string" || !/^[a-f0-9]{64}$/u.test(value)) {
+    throw new ApiError("The operational alert ID is invalid.", 400);
+  }
+  return value;
 };
 
 const readBoundedLimit = (value: unknown, fallback = 100, maximum = 200): number => {
@@ -143,6 +157,16 @@ async function testStoredSupplierSource(sourceId: string) {
     lastError: result.success ? "None" : result.error || "Connection test failed.",
     lastConnectionTestAt: new Date().toISOString(),
   }, { merge: true });
+  if (result.success) {
+    await resolveSupplierOperationalAlertSafely({ category: "supplier_connection_failure", supplierId: sourceId });
+  } else {
+    await recordSupplierOperationalAlertSafely({
+      category: "supplier_connection_failure",
+      severity: "critical",
+      supplierId: sourceId,
+      technicalMetadata: { sourceId, reason: result.error || "Connection test failed." },
+    });
+  }
   return result;
 }
 
@@ -151,8 +175,18 @@ async function testProposedSupplierSource(sourceId: string, value: unknown) {
   const connector = await SupplierRegistry.createConnectorForSourceRecord(sourceId, source, { allowProposedHost: true });
   const result = await connector.testConnection();
   if (!result.success) {
+    await recordSupplierOperationalAlertSafely({
+      category: "supplier_connection_failure",
+      severity: "critical",
+      supplierId: sourceId,
+      technicalMetadata: { sourceId, reason: result.error || "Connection test failed." },
+    });
     throw new ApiError(result.error || "Supplier connection test failed.", 422);
   }
+  await resolveSupplierOperationalAlertSafely({
+    category: "supplier_connection_failure",
+    supplierId: sourceId,
+  });
   return { source, result };
 }
 
@@ -205,11 +239,31 @@ export function registerSupplierRoutes(app: express.Express): void {
     }
   });
 
+  app.get("/api/supplier-sync-investigation/:batchId", requireSupplierHubAdmin, async (req, res) => {
+    try {
+      const batchId = readSyncJobId(req.params.batchId);
+      const limit = readBoundedLimit(req.query.limit ?? undefined, 100, 1000);
+      const after = typeof req.query.after === 'string' ? req.query.after : undefined;
+      recordSupplierInvestigationRequestMetric({ batchId, continuation: Boolean(after) });
+      const result = await getSyncInvestigationPage(adminDb, batchId, { limit, afterId: after });
+      const recent = await getRecentSyncInvestigations(adminDb, 25);
+      res.status(200).json({ success: true, batchId, rows: result.rows, nextCursor: result.nextCursor, job: result.job || null, history: result.history || null, recent });
+    } catch (error: unknown) {
+      sendSupplierFailure(res, error, {
+        logMessage: "Supplier sync investigation lookup failed.",
+        fallbackMessage: "Supplier sync investigation data could not be loaded.",
+        context: { route: req.path },
+      });
+    }
+  });
+
   app.post("/api/supplier-sources", requireSupplierHubAdmin, async (req, res) => {
+    let connectionVerified = false;
     try {
       const sourceId = cleanSupplierSourceId(req.body?.id);
       const reviewer = reviewerFor(res);
       const { source, result: connectionTest } = await testProposedSupplierSource(sourceId, req.body?.source);
+      connectionVerified = true;
       await saveSupplierSource(adminDb, sourceId, source, reviewer, { createOnly: true });
       await adminDb.collection("supplierSources").doc(sourceId).set({
         connectionStatus: "connected",
@@ -239,6 +293,15 @@ export function registerSupplierRoutes(app: express.Express): void {
       });
       if (initialSync) startLocalSupplierSyncJob(initialSync.job.id);
     } catch (error: unknown) {
+      if (!connectionVerified) {
+        await recordSupplierOperationalAlertSafely({
+          category: "supplier_connection_failure",
+          severity: "critical",
+          supplierId: typeof req.body?.id === "string" ? req.body.id : null,
+          dedupeScope: typeof req.body?.id === "string" ? undefined : "supplier-onboarding",
+          technicalMetadata: { reason: error instanceof Error ? error.message : String(error || "Supplier connection failed.") },
+        });
+      }
       sendSupplierFailure(res, error, {
         logMessage: "Supplier source creation failed.",
         fallbackMessage: "Supplier source could not be created.",
@@ -821,6 +884,26 @@ export function registerSupplierRoutes(app: express.Express): void {
     }
   });
 
+  app.post("/api/supplier-operations/alerts/:alertId/action", requireSupplierHubAdmin, async (req, res) => {
+    try {
+      const alertId = readOperationalAlertId(req.params.alertId);
+      const requestedStatus = String(req.body?.status || "").trim().toLowerCase();
+      if (requestedStatus !== "acknowledged" && requestedStatus !== "resolved") {
+        throw new ApiError("Operational alert status must be acknowledged or resolved.", 400);
+      }
+      const reviewer = reviewerFor(res);
+      const alert = await transitionSupplierOperationalAlert(adminDb, alertId, requestedStatus, reviewer);
+      if (!alert) throw new ApiError("Operational alert was not found.", 404);
+      res.status(200).json({ success: true, alert });
+    } catch (error: unknown) {
+      sendSupplierFailure(res, error, {
+        logMessage: "Supplier operational alert update failed.",
+        fallbackMessage: "Operational alert status could not be updated.",
+        context: { route: req.path },
+      });
+    }
+  });
+
   app.post("/api/test-supplier", requireSupplierHubAdmin, async (req, res) => {
     try {
       const sourceIdValue = req.body?.sourceId;
@@ -845,8 +928,25 @@ export function registerSupplierRoutes(app: express.Express): void {
       }
       const result = await connector.testConnection();
 
+      if (!result.success) {
+        await recordSupplierOperationalAlertSafely({
+          category: "supplier_connection_failure",
+          severity: "critical",
+          supplierId: typeof req.body?.sourceId === "string" ? req.body.sourceId : null,
+          dedupeScope: typeof req.body?.sourceId === "string" ? undefined : "supplier-connection-test",
+          technicalMetadata: { reason: result.error || "Supplier connection test failed." },
+        });
+      }
+
       res.status(200).json(result);
     } catch (error: any) {
+      await recordSupplierOperationalAlertSafely({
+        category: "supplier_connection_failure",
+        severity: "critical",
+        supplierId: typeof req.body?.sourceId === "string" ? req.body.sourceId : null,
+        dedupeScope: typeof req.body?.sourceId === "string" ? undefined : "supplier-connection-test",
+        technicalMetadata: { reason: error instanceof Error ? error.message : String(error || "Supplier connection failed.") },
+      });
       sendSupplierFailure(res, error, {
         logMessage: "Supplier connection test failed.",
         fallbackMessage: "Supplier URL is not allowed.",

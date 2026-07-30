@@ -8,6 +8,8 @@ import {
   classifySupplierQueueFailure,
   isSupplierQueueLeaseExpired,
   leaseSupplierReviewQueueItem,
+  heartbeatSupplierReviewQueueLease,
+  processDueSupplierReviewQueueItems,
   processSupplierReviewQueueItem,
   recoverExpiredSupplierReviewQueueLeases,
   retryDeadLetterSupplierReviewQueueItem,
@@ -133,6 +135,96 @@ test('expired leases are recovered exactly once by the recovery worker', async (
   assert.equal(await recoverExpiredSupplierReviewQueueLeases(db as never, now), 1);
   assert.equal(documents.get('supplier_review_queue/review-stale')?.queueState, 'retryable_failure');
   assert.equal(await recoverExpiredSupplierReviewQueueLeases(db as never, now), 0);
+});
+
+test('sequential queue processing captures a fresh timestamp for every item in a long-running batch', async () => {
+  const startedAt = Date.now();
+  let currentTime = startedAt;
+  let advanced = false;
+  const { db, documents } = createFakeFirestore({
+    'supplier_review_queue/review-first': {
+      id: 'review-first',
+      ...buildSupplierQueueLifecycle(new Date(startedAt - 1).toISOString()),
+    },
+    'supplier_review_queue/review-second': {
+      id: 'review-second',
+      ...buildSupplierQueueLifecycle(new Date(startedAt - 1).toISOString()),
+    },
+  });
+
+  const results = await processDueSupplierReviewQueueItems(db as never, 'worker-long-running', startedAt, 10, {
+    currentTime: () => currentTime,
+    verifyWorkerOwnership: () => {
+      if (!advanced && documents.get('supplier_review_queue/review-first')?.queueState === 'review_pending') {
+        currentTime += 10 * 60 * 1000;
+        advanced = true;
+      }
+    },
+  });
+
+  assert.equal(results.length, 2);
+  assert.equal(documents.get('supplier_review_queue/review-first')?.leaseId, `worker-long-running:1:${startedAt}`);
+  assert.equal(documents.get('supplier_review_queue/review-second')?.leaseId, `worker-long-running:1:${startedAt + (10 * 60 * 1000)}`);
+});
+
+test('lease renewal uses the actual current time and prevents premature recovery', async () => {
+  const startedAt = Date.now();
+  const longRunningNow = startedAt + (12 * 60 * 1000);
+  const { db, documents } = createFakeFirestore({
+    'supplier_review_queue/review-heartbeat': {
+      id: 'review-heartbeat',
+      queueState: 'processing',
+      leaseOwner: 'worker-a',
+      leaseId: 'lease-a',
+      leaseExpiresAt: new Date(longRunningNow + 1_000).toISOString(),
+      retryCount: 0,
+      retryLimit: 3,
+    },
+  });
+
+  assert.equal(await heartbeatSupplierReviewQueueLease(
+    db as never,
+    'review-heartbeat',
+    'worker-a',
+    'lease-a',
+    longRunningNow,
+    5 * 60 * 1000,
+  ), true);
+  assert.equal(
+    documents.get('supplier_review_queue/review-heartbeat')?.leaseExpiresAt,
+    new Date(longRunningNow + (5 * 60 * 1000)).toISOString(),
+  );
+  assert.equal(await recoverExpiredSupplierReviewQueueLeases(db as never, longRunningNow + 2_000), 0);
+});
+
+test('verified global worker ownership loss stops the batch before another item is leased', async () => {
+  const now = Date.now();
+  const { db, documents } = createFakeFirestore({
+    'supplier_review_queue/review-first': {
+      id: 'review-first',
+      ...buildSupplierQueueLifecycle(new Date(now - 1).toISOString()),
+    },
+    'supplier_review_queue/review-second': {
+      id: 'review-second',
+      ...buildSupplierQueueLifecycle(new Date(now - 1).toISOString()),
+    },
+  });
+
+  await assert.rejects(
+    processDueSupplierReviewQueueItems(db as never, 'worker-a', now, 10, {
+      currentTime: () => now,
+      verifyWorkerOwnership: () => {
+        if (documents.get('supplier_review_queue/review-first')?.queueState === 'review_pending') {
+          throw new Error('Supplier queue worker lock was lost during processing.');
+        }
+      },
+    }),
+    /worker lock was lost/,
+  );
+
+  assert.equal(documents.get('supplier_review_queue/review-first')?.queueState, 'review_pending');
+  assert.equal(documents.get('supplier_review_queue/review-second')?.queueState, 'queued');
+  assert.equal(documents.get('supplier_review_queue/review-second')?.leaseOwner, undefined);
 });
 
 test('scheduled sync, admin recovery, and approval paths preserve the durable review queue contract', () => {

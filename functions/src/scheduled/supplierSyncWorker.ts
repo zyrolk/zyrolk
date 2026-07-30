@@ -16,6 +16,8 @@ import {
 } from "../api/suppliers/supplierSyncJobs";
 import { A2Z_SECRETS } from "../config/secrets";
 import { runSupplierSync } from "./supplierSync";
+import { recordSupplierOperationalAlertSafely } from "../api/suppliers/supplierOperationalAlerts";
+import { recordSupplierSyncOutcomeMetric } from "../api/suppliers/supplierCloudMonitoring";
 
 const JOB_HEARTBEAT_INTERVAL_MS = 30_000;
 export const SUPPLIER_SYNC_JOB_DISPATCH_SCHEDULE = String(process.env.SUPPLIER_SYNC_JOB_DISPATCH_SCHEDULE || "every 1 minutes").trim() || "every 1 minutes";
@@ -28,6 +30,25 @@ export interface SupplierSyncJobWorkerResult {
 export function isLocalSupplierSyncWorkerRuntime(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.NODE_ENV !== "production" && !env.K_SERVICE && !env.FUNCTION_TARGET;
 }
+
+const reportSyncJobFailure = async (
+  jobId: string,
+  sourceIds: readonly string[],
+  reason: unknown,
+): Promise<void> => {
+  const scopes: Array<string | null> = sourceIds.length ? [...sourceIds] : [null];
+  await Promise.all(scopes.map((supplierId) => recordSupplierOperationalAlertSafely({
+    category: "supplier_sync_failure",
+    severity: "critical",
+    supplierId,
+    jobId,
+    batchId: jobId,
+    dedupeScope: supplierId ? undefined : "supplier-sync-jobs",
+    technicalMetadata: {
+      reason: reason instanceof Error ? reason.message : String(reason || "Supplier synchronization failed."),
+    },
+  })));
+};
 
 export async function processSupplierSyncJob(jobId: string, now = Date.now()): Promise<SupplierSyncJobWorkerResult> {
   const workerId = `supplier-sync-worker-${jobId}-${now}`;
@@ -112,10 +133,30 @@ export async function processSupplierSyncJob(jobId: string, now = Date.now()): P
       return { jobId, outcome: "waiting" };
     }
     if (result.status === "Failed" || result.status === "Partial") {
-      await failSupplierSyncJob(adminDb, jobId, workerId, lease.leaseId, progress, new Error(result.errors.join("; ") || "Supplier synchronization failed."));
+      const failure = new Error(result.errors.join("; ") || "Supplier synchronization failed.");
+      await failSupplierSyncJob(adminDb, jobId, workerId, lease.leaseId, progress, failure);
+      await reportSyncJobFailure(jobId, lease.job.sourceIds, failure);
+      recordSupplierSyncOutcomeMetric({
+        outcome: "failure",
+        trigger: lease.job.trigger,
+        jobId,
+        sourceCount: lease.job.sourceIds.length,
+        productsScanned: result.productsScanned,
+        productsQueued: result.productsQueued,
+      });
       return { jobId, outcome: "failed" };
     }
     await completeSupplierSyncJob(adminDb, jobId, workerId, lease.leaseId, result as unknown as Record<string, unknown>, progress);
+    if (result.status === "Success") {
+      recordSupplierSyncOutcomeMetric({
+        outcome: "success",
+        trigger: lease.job.trigger,
+        jobId,
+        sourceCount: lease.job.sourceIds.length,
+        productsScanned: result.productsScanned,
+        productsQueued: result.productsQueued,
+      });
+    }
     return { jobId, outcome: "completed" };
   } catch (error) {
     if (cancellationRequested) {
@@ -123,6 +164,15 @@ export async function processSupplierSyncJob(jobId: string, now = Date.now()): P
       return { jobId, outcome: "cancelled" };
     }
     await failSupplierSyncJob(adminDb, jobId, workerId, lease.leaseId, progress, error);
+    await reportSyncJobFailure(jobId, lease.job.sourceIds, error);
+    recordSupplierSyncOutcomeMetric({
+      outcome: "failure",
+      trigger: lease.job.trigger,
+      jobId,
+      sourceCount: lease.job.sourceIds.length,
+      productsScanned: progress.productsScanned,
+      productsQueued: progress.productsQueued,
+    });
     logger.error("Supplier sync job execution failed.", { jobId, workerId, error });
     return { jobId, outcome: "failed" };
   } finally {
@@ -160,5 +210,18 @@ export const scheduledSupplierSyncJobDispatcher = onSchedule({
   memory: "1GiB",
   secrets: A2Z_SECRETS,
 }, async () => {
-  await dispatchDueSupplierSyncJobs();
+  try {
+    await dispatchDueSupplierSyncJobs();
+  } catch (error) {
+    await recordSupplierOperationalAlertSafely({
+      category: "scheduler_failure",
+      severity: "critical",
+      dedupeScope: "supplier-sync-job-dispatcher",
+      technicalMetadata: {
+        dispatcher: "scheduledSupplierSyncJobDispatcher",
+        reason: error instanceof Error ? error.message : String(error || "Supplier sync dispatcher failed."),
+      },
+    });
+    throw error;
+  }
 });

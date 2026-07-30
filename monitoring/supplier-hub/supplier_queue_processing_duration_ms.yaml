@@ -1,0 +1,13 @@
+name: supplier_hub_queue_processing_duration_ms
+description: Distribution of Supplier Hub review queue item processing duration in milliseconds.
+filter: >-
+  jsonPayload.eventType="supplier_hub_operational_metric" AND
+  jsonPayload.metricName="supplier_queue_processing_duration_ms"
+valueExtractor: EXTRACT(jsonPayload.metricValue)
+bucketOptions:
+  explicitBuckets:
+    bounds: [0, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000, 120000, 300000]
+metricDescriptor:
+  metricKind: DELTA
+  valueType: DISTRIBUTION
+  unit: ms

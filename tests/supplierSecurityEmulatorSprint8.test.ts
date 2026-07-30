@@ -22,6 +22,7 @@ test('Firestore Emulator denies all Supplier Hub browser writes while trusted se
       'supplier_review_queue', 'supplier_import_queue', 'supplier_pending_changes',
       'supplier_sync_locks', 'supplier_sync_jobs', 'supplier_sync_history', 'supplierSources',
       'supplier_approval_audit', 'supplier_product_conflicts', 'supplier_product_offers',
+      'contact_inquiries', 'contact_inquiry_limits',
     ]) {
       await assertFails(setDoc(doc(browserDb, collection, 'browser-write'), { queueState: 'approved' }));
     }

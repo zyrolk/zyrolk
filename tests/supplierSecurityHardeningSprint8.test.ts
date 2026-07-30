@@ -21,10 +21,13 @@ test('Sprint 8 makes Supplier Hub operational collections browser read-only or f
 
 test('Supplier Hub authorization uses revocation-checked Firebase custom claims instead of mutable profile roles', () => {
   const middleware = readFileSync('functions/src/api/middleware/supplierHubAdminAuth.ts', 'utf8');
+  const authorization = readFileSync('functions/src/api/security/adminAuthorization.ts', 'utf8');
   const routes = readFileSync('functions/src/api/routes/supplier.ts', 'utf8');
   const portal = readFileSync('functions/src/api/routes/supplierPortal.ts', 'utf8');
   assert.match(middleware, /verifyIdToken\(match\[1\], true\)/);
-  assert.match(middleware, /claims\.admin === true/);
+  assert.match(middleware, /hasSupplierHubAdminAccess\(decodedToken\)/);
+  assert.match(authorization, /claims\.admin === true/);
+  assert.match(authorization, /claims\.supplierHubAdmin === true/);
   assert.doesNotMatch(middleware, /collection\("users"\)/);
   assert.match(routes, /requireSupplierHubAdmin/);
   assert.doesNotMatch(routes, /requireAdminAuth/);

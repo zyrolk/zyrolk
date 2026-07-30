@@ -8,7 +8,7 @@ import {
   EmailAuthProvider, User, reauthenticateWithCredential, sendEmailVerification, updatePassword, updateProfile,
 } from 'firebase/auth';
 import {
-  collection, doc, getDocs, onSnapshot, query, serverTimestamp, setDoc, where, writeBatch,
+  collection, doc, getDocs, limit, onSnapshot, query, serverTimestamp, setDoc, where, writeBatch,
 } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { Product, WebsiteSettings } from '../../types';
@@ -23,6 +23,9 @@ import {
 import CustomerOrdersView from './CustomerOrdersView';
 import { CustomerOrder, normalizeCustomerOrder } from './customerOrders';
 import './accountCenter.css';
+
+const CUSTOMER_ORDER_READ_LIMIT = 100;
+const CUSTOMER_ADDRESS_READ_LIMIT = 25;
 
 interface AccountCenterProps {
   currentPage: string;
@@ -148,7 +151,11 @@ export default function AccountCenter({
     });
 
     const ordersUnsubscribe = onSnapshot(
-      query(collection(db, 'orders'), where('customerUid', '==', user.uid)),
+      query(
+        collection(db, 'orders'),
+        where('customerUid', '==', user.uid),
+        limit(CUSTOMER_ORDER_READ_LIMIT),
+      ),
       snapshot => {
         const nextOrders = snapshot.docs
           .map(orderDoc => normalizeCustomerOrder(orderDoc.id, orderDoc.data()))
@@ -163,7 +170,10 @@ export default function AccountCenter({
       },
     );
 
-    const addressesUnsubscribe = onSnapshot(collection(db, 'users', user.uid, 'addresses'), snapshot => {
+    const addressesUnsubscribe = onSnapshot(query(
+      collection(db, 'users', user.uid, 'addresses'),
+      limit(CUSTOMER_ADDRESS_READ_LIMIT),
+    ), snapshot => {
       setAddresses(sortCustomerAddresses(snapshot.docs.map(addressDoc => ({
         id: addressDoc.id,
         ...addressDoc.data(),
@@ -257,7 +267,7 @@ export default function AccountCenter({
     try {
       const wasEditing = Boolean(editingAddressId);
       const addressesRef = collection(db, 'users', user.uid, 'addresses');
-      const currentSnapshot = await getDocs(addressesRef);
+      const currentSnapshot = await getDocs(query(addressesRef, limit(CUSTOMER_ADDRESS_READ_LIMIT)));
       const addressRef = editingAddressId ? doc(addressesRef, editingAddressId) : doc(addressesRef);
       const shouldBeDefault = normalized.isDefault || currentSnapshot.empty;
       const batch = writeBatch(db);
@@ -291,7 +301,10 @@ export default function AccountCenter({
     if (!user) return;
     setAddressError('');
     try {
-      const snapshot = await getDocs(collection(db, 'users', user.uid, 'addresses'));
+      const snapshot = await getDocs(query(
+        collection(db, 'users', user.uid, 'addresses'),
+        limit(CUSTOMER_ADDRESS_READ_LIMIT),
+      ));
       const batch = writeBatch(db);
       snapshot.docs.forEach(addressDoc => batch.update(addressDoc.ref, {
         isDefault: addressDoc.id === addressId,
@@ -312,7 +325,10 @@ export default function AccountCenter({
     }
     setAddressError('');
     try {
-      const snapshot = await getDocs(collection(db, 'users', user.uid, 'addresses'));
+      const snapshot = await getDocs(query(
+        collection(db, 'users', user.uid, 'addresses'),
+        limit(CUSTOMER_ADDRESS_READ_LIMIT),
+      ));
       const remaining = snapshot.docs.filter(addressDoc => addressDoc.id !== address.id);
       const batch = writeBatch(db);
       batch.delete(doc(db, 'users', user.uid, 'addresses', address.id));

@@ -34,7 +34,7 @@
 .zy-personalization-section-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 1rem; margin-bottom: 1.1rem; }
 .zy-personalization-section-heading h2 { margin: .25rem 0 .18rem; font-size: clamp(1.35rem, 2.5vw, 2rem); letter-spacing: -.035em; }
 .zy-personalization-section-heading > div > p:last-child { margin: 0; color: var(--ps-muted); font-size: .75rem; }
-.zy-personalization-section-heading > button, .zy-clear-history button { display: inline-flex; align-items: center; gap: .38rem; padding: .62rem .75rem; border: 1px solid var(--ps-line); border-radius: .75rem; color: #4e647c; background: #fff; font: inherit; font-size: .68rem; font-weight: 800; cursor: pointer; }
+.zy-personalization-section-heading > button, .zy-clear-history button { display: inline-flex; min-height: 2.75rem; align-items: center; gap: .38rem; padding: .62rem .75rem; border: 1px solid var(--ps-line); border-radius: .75rem; color: #4e647c; background: #fff; font: inherit; font-size: .68rem; font-weight: 800; cursor: pointer; }
 .zy-personalization-section-heading button svg, .zy-clear-history button svg { width: .85rem; }
 
 .zy-wishlist-two, .zy-recent-history { padding: clamp(1rem, 2.8vw, 1.6rem); border: 1px solid var(--ps-line); border-radius: 1.4rem; background: #f9fbfd; box-shadow: 0 16px 40px rgba(15,38,65,.055); }
@@ -42,15 +42,15 @@
 .zy-wishlist-two-card, .zy-recent-grid > article, .zy-personalized-product { position: relative; min-width: 0; padding: .45rem; border: 1px solid transparent; border-radius: 1.25rem; background: #fff; transition: border-color .2s ease, box-shadow .2s ease; }
 .zy-wishlist-two-card.is-selected { border-color: #70a8e8; box-shadow: 0 0 0 3px rgba(7,88,201,.1); }
 .zy-wishlist-two-card.is-unavailable { border-color: #e2e7ec; background: #f4f6f8; }
-.zy-wishlist-select { position: absolute; z-index: 8; top: .75rem; left: .75rem; display: grid; width: 1.55rem; height: 1.55rem; place-items: center; border-radius: .45rem; background: rgba(255,255,255,.95); box-shadow: 0 3px 10px rgba(15,38,65,.15); cursor: pointer; }
+.zy-wishlist-select { position: absolute; z-index: 8; top: .5rem; left: .5rem; display: grid; width: 2.75rem; height: 2.75rem; place-items: center; border-radius: .65rem; background: rgba(255,255,255,.95); box-shadow: 0 3px 10px rgba(15,38,65,.15); cursor: pointer; }
 .zy-wishlist-select input { width: 1rem; height: 1rem; accent-color: var(--ps-blue); }
-.zy-price-change { position: absolute; z-index: 8; top: .75rem; left: 2.65rem; display: inline-flex; align-items: center; gap: .25rem; padding: .32rem .5rem; border-radius: 999px; font-size: .58rem; font-weight: 850; box-shadow: 0 3px 10px rgba(15,38,65,.1); }
+.zy-price-change { position: absolute; z-index: 8; top: .75rem; left: 3.65rem; display: inline-flex; align-items: center; gap: .25rem; padding: .32rem .5rem; border-radius: 999px; font-size: .58rem; font-weight: 850; box-shadow: 0 3px 10px rgba(15,38,65,.1); }
 .zy-price-change svg { width: .72rem; }
 .zy-price-change.is-decreased { color: #17603e; background: #e1f7eb; }
 .zy-price-change.is-increased { color: #9b3038; background: #ffe8ea; }
 .zy-price-change-detail { margin: .45rem .45rem .2rem; color: var(--ps-muted); font-size: .62rem; text-align: center; }
 .zy-wishlist-card-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .4rem; padding: .45rem; }
-.zy-wishlist-card-actions button, .zy-recent-grid > article > button, .zy-personalized-product > button { display: inline-flex; align-items: center; justify-content: center; gap: .3rem; min-height: 2.35rem; padding: .48rem; border: 1px solid #dce5ee; border-radius: .68rem; color: #4e637a; background: #f7f9fb; font: inherit; font-size: .61rem; font-weight: 790; cursor: pointer; }
+.zy-wishlist-card-actions button, .zy-recent-grid > article > button, .zy-personalized-product > button { display: inline-flex; align-items: center; justify-content: center; gap: .3rem; min-height: 2.75rem; padding: .48rem; border: 1px solid #dce5ee; border-radius: .68rem; color: #4e637a; background: #f7f9fb; font: inherit; font-size: .61rem; font-weight: 790; cursor: pointer; }
 .zy-wishlist-card-actions button.is-active, .zy-recent-grid > article > button.is-active, .zy-personalized-product > button.is-active { border-color: #8ab5e8; color: var(--ps-blue); background: #eaf3ff; }
 .zy-wishlist-card-actions button svg, .zy-recent-grid > article > button svg, .zy-personalized-product > button svg { width: .78rem; }
 .zy-wishlist-card-actions > span { display: inline-flex; grid-column: 1 / -1; align-items: center; justify-content: center; gap: .3rem; padding: .36rem; border-radius: .6rem; font-size: .59rem; font-weight: 760; }
@@ -74,7 +74,7 @@
 .zy-wishlist-unavailable small { margin-top: .5rem; color: #a02d35; font-size: .62rem; font-weight: 850; text-transform: uppercase; }
 .zy-wishlist-unavailable strong { font-size: .8rem; }
 .zy-wishlist-unavailable p { margin: 0; color: var(--ps-muted); font-size: .68rem; line-height: 1.45; }
-.zy-wishlist-unavailable button { display: inline-flex; align-items: center; gap: .3rem; margin-top: .4rem; padding: .55rem .7rem; border: 0; border-radius: .65rem; color: #9e3039; background: #ffe6e8; font: inherit; font-size: .64rem; font-weight: 800; cursor: pointer; }
+.zy-wishlist-unavailable button { display: inline-flex; min-height: 2.75rem; align-items: center; gap: .3rem; margin-top: .4rem; padding: .55rem .7rem; border: 0; border-radius: .65rem; color: #9e3039; background: #ffe6e8; font: inherit; font-size: .64rem; font-weight: 800; cursor: pointer; }
 .zy-wishlist-unavailable button svg { width: .75rem; }
 .zy-clear-history { display: flex; gap: .4rem; }
 .zy-clear-history button:first-child { color: #9e3039; border-color: #efc7ca; background: #fff5f6; }
@@ -122,14 +122,14 @@
 .zy-compare-picker input { width: 100%; min-height: 3rem; padding: .65rem .8rem .65rem 2.6rem; border: 1px solid #ccd8e3; border-radius: .8rem; color: var(--ps-ink); font: inherit; font-size: .78rem; outline: none; }
 .zy-compare-picker input:focus { border-color: #428de1; box-shadow: 0 0 0 3px rgba(7,88,201,.13); }
 .zy-compare-picker > div { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .55rem; margin-top: .85rem; }
-.zy-compare-picker > div > article { display: grid; grid-template-columns: 2.6rem minmax(0,1fr) 1.9rem; align-items: center; gap: .55rem; min-width: 0; padding: .55rem; border: 1px solid #dce5ee; border-radius: .8rem; color: var(--ps-ink); background: #f9fbfd; text-align: left; }
+.zy-compare-picker > div > article { display: grid; grid-template-columns: 2.6rem minmax(0,1fr) 2.75rem; align-items: center; gap: .55rem; min-width: 0; padding: .55rem; border: 1px solid #dce5ee; border-radius: .8rem; color: var(--ps-ink); background: #f9fbfd; text-align: left; }
 .zy-compare-picker > div > article > span { width: 2.6rem; height: 2.6rem; overflow: hidden; border-radius: .55rem; background: #fff; }
 .zy-compare-picker > div > article img { width: 100%; height: 100%; object-fit: contain; }
 .zy-compare-picker > div > article > div { display: grid; min-width: 0; gap: .12rem; }
 .zy-compare-picker > div > article strong, .zy-compare-picker > div > article small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .zy-compare-picker > div > article strong { font-size: .66rem; }
 .zy-compare-picker > div > article small { color: var(--ps-muted); font-size: .56rem; }
-.zy-compare-picker > div > article > button { display: grid; width: 1.9rem; height: 1.9rem; place-items: center; border: 0; border-radius: .55rem; color: var(--ps-blue); background: #eaf3ff; cursor: pointer; }
+.zy-compare-picker > div > article > button { display: grid; width: 2.75rem; height: 2.75rem; place-items: center; border: 0; border-radius: .65rem; color: var(--ps-blue); background: #eaf3ff; cursor: pointer; }
 .zy-compare-picker > div > article > button svg { width: .8rem; }
 .zy-compare-no-results { margin: .8rem 0 0; color: var(--ps-muted); font-size: .72rem; }
 .zy-compare-empty { margin-top: 1rem; }
@@ -142,14 +142,14 @@
 .zy-compare-table thead th { position: sticky; z-index: 3; top: 0; background: #fff; }
 .zy-compare-table thead th:first-child, .zy-compare-table tbody th { position: sticky; z-index: 4; left: 0; min-width: 150px; background: #f7f9fb; }
 .zy-compare-table thead th:not(:first-child) { text-align: center; }
-.zy-compare-table thead th > button { position: absolute; top: .5rem; right: .5rem; display: grid; width: 1.7rem; height: 1.7rem; place-items: center; border: 0; border-radius: .5rem; color: #9c3038; background: #ffe9eb; cursor: pointer; }
+.zy-compare-table thead th > button { position: absolute; top: .35rem; right: .35rem; display: grid; width: 2.75rem; height: 2.75rem; place-items: center; border: 0; border-radius: .65rem; color: #9c3038; background: #ffe9eb; cursor: pointer; }
 .zy-compare-table thead th > button svg { width: .75rem; }
 .zy-compare-table thead th > span { display: block; width: 6rem; height: 6rem; margin: 0 auto .5rem; }
 .zy-compare-table thead img { width: 100%; height: 100%; object-fit: contain; }
 .zy-compare-table thead strong, .zy-compare-table thead small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .zy-compare-table thead strong { font-size: .72rem; }
 .zy-compare-table thead small { margin-top: .15rem; color: var(--ps-muted); font-size: .58rem; }
-.zy-compare-table thead th div button { margin-top: .45rem; padding: .35rem .5rem; border: 0; border-radius: .5rem; color: var(--ps-blue); background: #eaf3ff; font: inherit; font-size: .56rem; font-weight: 800; cursor: pointer; }
+.zy-compare-table thead th div button { min-height: 2.75rem; margin-top: .45rem; padding: .35rem .5rem; border: 0; border-radius: .5rem; color: var(--ps-blue); background: #eaf3ff; font: inherit; font-size: .56rem; font-weight: 800; cursor: pointer; }
 .zy-compare-table tbody th { display: table-cell; color: #455a71; font-weight: 800; }
 .zy-compare-table tbody th svg { display: inline; width: .75rem; margin-right: .25rem; color: var(--ps-blue); }
 .zy-compare-table tr.is-different th, .zy-compare-table tr.is-different td { background: #eef6ff; }
@@ -159,7 +159,7 @@
 .zy-compare-commerce article { display: grid; align-content: start; gap: .45rem; min-width: 0; padding: .65rem; border: 1px solid var(--ps-line); border-radius: .8rem; background: #f9fbfd; }
 .zy-compare-commerce article > strong { overflow: hidden; font-size: .65rem; text-overflow: ellipsis; white-space: nowrap; }
 .zy-compare-commerce article > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .3rem; }
-.zy-compare-commerce button { display: inline-flex; align-items: center; justify-content: center; gap: .25rem; min-height: 2.2rem; padding: .4rem; border: 0; border-radius: .58rem; color: #fff; background: var(--ps-blue); font: inherit; font-size: .55rem; font-weight: 800; cursor: pointer; }
+.zy-compare-commerce button { display: inline-flex; align-items: center; justify-content: center; gap: .25rem; min-height: 2.75rem; padding: .4rem; border: 0; border-radius: .58rem; color: #fff; background: var(--ps-blue); font: inherit; font-size: .55rem; font-weight: 800; cursor: pointer; }
 .zy-compare-commerce button:last-child { color: #9d3039; background: #ffe8ea; }
 .zy-compare-commerce button:last-child.is-active { color: #17603e; background: #e4f7ed; }
 .zy-compare-commerce button svg { width: .7rem; }

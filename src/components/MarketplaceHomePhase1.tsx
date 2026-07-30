@@ -29,6 +29,7 @@ interface MarketplaceHomePhase1Props {
   onExploreProducts: () => void;
   onBrowseCategories: () => void;
   onSelectCategory: (categoryId: string) => void;
+  onSearch: (query: string) => void;
   onAddToCart: (product: Product) => void;
   onToggleWishlist: (product: Product) => void;
   onViewDetail: (product: Product) => void;
@@ -52,6 +53,7 @@ export default function MarketplaceHomePhase1({
   onExploreProducts,
   onBrowseCategories,
   onSelectCategory,
+  onSearch,
   onAddToCart,
   onToggleWishlist,
   onViewDetail,
@@ -61,13 +63,16 @@ export default function MarketplaceHomePhase1({
 
   return (
     <div className="zy-foundation-home zy-launch-home animate-fadeIn">
-      <div className="zy-foundation-hero-wrap">
+      <div className="zy-foundation-hero-wrap zy-ai-hero-wrap">
         <HeroBanner
           settings={settings}
           products={products}
           categories={categories}
           onExploreProducts={onExploreProducts}
           onBrowseCategories={onBrowseCategories}
+          onSelectCategory={onSelectCategory}
+          onSearch={onSearch}
+          onViewProduct={onViewDetail}
         />
       </div>
 

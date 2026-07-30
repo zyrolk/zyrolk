@@ -1,10 +1,14 @@
 import { useEffect } from 'react';
-import { Product, WebsiteSettings } from '../types';
+import { Category, Product, WebsiteSettings } from '../types';
 import { buildStorefrontSeo } from '../services/seo/storefrontSeo';
 
 interface StorefrontSeoProps {
   currentPage: string;
   product?: Product | null;
+  requestedProductId?: string | null;
+  category?: Category | null;
+  requestedCategoryId?: string | null;
+  searchQuery?: string;
   settings?: WebsiteSettings | null;
   isAdminMode: boolean;
 }
@@ -23,11 +27,24 @@ const removeMeta = (attribute: 'name' | 'property', key: string) => {
   document.head.querySelector<HTMLMetaElement>(`meta[${attribute}="${key}"]`)?.remove();
 };
 
-export default function StorefrontSeo({ currentPage, product, settings, isAdminMode }: StorefrontSeoProps) {
+export default function StorefrontSeo({
+  currentPage,
+  product,
+  requestedProductId,
+  category,
+  requestedCategoryId,
+  searchQuery,
+  settings,
+  isAdminMode,
+}: StorefrontSeoProps) {
   useEffect(() => {
     const seo = buildStorefrontSeo({
       currentPage,
       product,
+      requestedProductId,
+      category,
+      requestedCategoryId,
+      searchQuery,
       settings,
       isAdminMode,
       // Canonicals must never point to a preview, emulator, or local hostname.
@@ -78,7 +95,7 @@ export default function StorefrontSeo({ currentPage, product, settings, isAdminM
       document.head.appendChild(structuredData);
     }
     structuredData.textContent = JSON.stringify(seo.structuredData).replace(/</gu, '\\u003c');
-  }, [currentPage, isAdminMode, product, settings]);
+  }, [category, currentPage, isAdminMode, product, requestedCategoryId, requestedProductId, searchQuery, settings]);
 
   return null;
 }

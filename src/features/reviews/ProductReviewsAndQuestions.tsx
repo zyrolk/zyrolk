@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { User } from 'firebase/auth';
-import { collection, onSnapshot, query, where } from 'firebase/firestore';
+import { collection, limit, onSnapshot, query, where } from 'firebase/firestore';
 import {
   BadgeCheck, CheckCircle2, ChevronDown, ChevronUp, Flag, HelpCircle, ImagePlus,
   MessageCircleQuestion, MessageSquare, Pencil, Search, Star, ThumbsDown, ThumbsUp, Trash2,
@@ -18,9 +18,12 @@ interface Props {
   productId: string;
   productName: string;
   currentUser: User | null;
+  isAdminUser?: boolean;
 }
 
-const ADMIN_EMAIL = 'zyrolkofficial@gmail.com';
+const PRODUCT_REVIEW_READ_LIMIT = 100;
+const PRODUCT_QUESTION_READ_LIMIT = 100;
+
 const formatDate = (date: Date | null): string => date
   ? new Intl.DateTimeFormat('en-LK', { year: 'numeric', month: 'short', day: 'numeric' }).format(date)
   : '';
@@ -37,7 +40,7 @@ function Stars({ rating, interactive = false, onChange }: { rating: number; inte
   );
 }
 
-export default function ProductReviewsAndQuestions({ productId, productName, currentUser }: Props) {
+export default function ProductReviewsAndQuestions({ productId, productName, currentUser, isAdminUser = false }: Props) {
   const [reviews, setReviews] = useState<ProductionReview[]>([]);
   const [questions, setQuestions] = useState<ProductQuestion[]>([]);
   const [loadingReviews, setLoadingReviews] = useState(true);
@@ -61,12 +64,16 @@ export default function ProductReviewsAndQuestions({ productId, productName, cur
   const [replyTarget, setReplyTarget] = useState<{ type: 'review' | 'question'; id: string } | null>(null);
   const [replyText, setReplyText] = useState('');
   const [busy, setBusy] = useState(false);
-  const isAdmin = currentUser?.email?.toLowerCase() === ADMIN_EMAIL;
+  const isAdmin = Boolean(currentUser && isAdminUser);
 
   useEffect(() => {
     setLoadingReviews(true);
     const unsubscribe = onSnapshot(
-      query(collection(db, 'reviews'), where('productId', '==', productId)),
+      query(
+        collection(db, 'reviews'),
+        where('productId', '==', productId),
+        limit(PRODUCT_REVIEW_READ_LIMIT),
+      ),
       (snapshot) => {
         setReviews(snapshot.docs.flatMap((document) => {
           const review = projectProductionReview(document.id, document.data());
@@ -86,7 +93,11 @@ export default function ProductReviewsAndQuestions({ productId, productName, cur
   useEffect(() => {
     setLoadingQuestions(true);
     const unsubscribe = onSnapshot(
-      query(collection(db, 'productQuestions'), where('productId', '==', productId)),
+      query(
+        collection(db, 'productQuestions'),
+        where('productId', '==', productId),
+        limit(PRODUCT_QUESTION_READ_LIMIT),
+      ),
       (snapshot) => {
         const projected = snapshot.docs.flatMap((document) => {
           const item = projectProductQuestion(document.id, document.data());

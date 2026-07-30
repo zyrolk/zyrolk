@@ -1,0 +1,27 @@
+{
+  "displayName": "Zyro Supplier Hub - processing latency",
+  "combiner": "OR",
+  "conditions": [
+    {
+      "displayName": "Queue processing p99 exceeds two minutes",
+      "conditionThreshold": {
+        "filter": "resource.type=\"cloud_run_revision\" AND metric.type=\"logging.googleapis.com/user/supplier_hub_queue_processing_duration_ms\"",
+        "comparison": "COMPARISON_GT",
+        "thresholdValue": 120000,
+        "duration": "900s",
+        "aggregations": [{
+          "alignmentPeriod": "300s",
+          "perSeriesAligner": "ALIGN_PERCENTILE_99",
+          "crossSeriesReducer": "REDUCE_MAX"
+        }],
+        "trigger": { "count": 1 }
+      }
+    }
+  ],
+  "alertStrategy": { "autoClose": "3600s" },
+  "documentation": {
+    "mimeType": "text/markdown",
+    "content": "Supplier queue p99 processing duration remained above two minutes. Check worker leases, retry volume, media processing and Firestore latency before increasing capacity."
+  },
+  "notificationChannels": []
+}

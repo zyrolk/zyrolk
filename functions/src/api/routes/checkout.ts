@@ -204,7 +204,7 @@ export function registerCheckoutRoutes(app: express.Express): void {
           }
 
           const currentStock = Number(pData.stock);
-          if (!Number.isFinite(currentStock) || currentStock < item.quantity) {
+          if (!Number.isInteger(currentStock) || currentStock < item.quantity) {
             throw new CheckoutError(`Insufficient stock for product "${pData.name}". Available: ${Number.isFinite(currentStock) ? currentStock : 0}, Requested: ${item.quantity}`, 409);
           }
 

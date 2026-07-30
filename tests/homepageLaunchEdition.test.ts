@@ -8,6 +8,7 @@ const hero = readFileSync('src/components/HeroBanner.tsx', 'utf8');
 const shelf = readFileSync('src/components/StorefrontProductShelf.tsx', 'utf8');
 const trustStrip = readFileSync('src/components/HomepageTrustStrip.tsx', 'utf8');
 const styles = readFileSync('src/index.css', 'utf8');
+const catalog = readFileSync('src/services/storefront/storefrontCatalog.ts', 'utf8');
 
 test('Sprint 75A retains all four premium homepage surfaces', () => {
   assert.match(homepage, /zy-launch-home/);
@@ -29,7 +30,8 @@ test('premium shelf treatments retain every live App-level product projection', 
     assert.match(homepage, new RegExp(`products=\\{${products}\\}`));
   }
 
-  assert.match(app, /onSnapshot\(collection\(db, "products"\)/);
+  assert.match(app, /subscribeToStorefrontProductPage\(db/);
+  assert.match(catalog, /orderBy\(documentId\(\)\)[\s\S]*limit\(STOREFRONT_PRODUCT_PAGE_SIZE\)/);
   assert.doesNotMatch(homepage, /firebase|firestore|mock product|sample product/iu);
   assert.doesNotMatch(shelf, /firebase|firestore|mock product|sample product/iu);
 });

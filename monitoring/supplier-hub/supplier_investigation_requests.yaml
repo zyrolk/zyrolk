@@ -1,0 +1,9 @@
+name: supplier_hub_investigation_requests
+description: Authenticated Supplier Hub sync investigation requests.
+filter: >-
+  jsonPayload.eventType="supplier_hub_operational_metric" AND
+  jsonPayload.metricName="supplier_investigation_requests"
+metricDescriptor:
+  metricKind: DELTA
+  valueType: INT64
+  unit: "1"

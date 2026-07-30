@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { X, LogIn, Mail, Lock, User, AlertCircle } from 'lucide-react';
 import { auth, db } from '../firebase';
 import { 
@@ -28,6 +28,50 @@ export default function AuthModal({ isOpen, onClose, registrationEnabled = true 
   const [loading, setLoading] = useState(false);
   const [isResetMode, setIsResetMode] = useState(false);
   const [resetMessage, setResetMessage] = useState("");
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+  const onCloseRef = useRef(onClose);
+  const loadingRef = useRef(loading);
+
+  useEffect(() => { onCloseRef.current = onClose; }, [onClose]);
+  useEffect(() => { loadingRef.current = loading; }, [loading]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const focusTimer = window.setTimeout(() => closeButtonRef.current?.focus(), 0);
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !loadingRef.current) {
+        event.preventDefault();
+        onCloseRef.current();
+        return;
+      }
+      if (event.key !== 'Tab' || !dialogRef.current) return;
+      const focusable = (Array.from(dialogRef.current.querySelectorAll(
+        'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled])',
+      )) as HTMLElement[]).filter((element) => element.offsetParent !== null);
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.clearTimeout(focusTimer);
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener('keydown', handleKeyDown);
+      previousFocusRef.current?.focus();
+    };
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -137,6 +181,7 @@ export default function AuthModal({ isOpen, onClose, registrationEnabled = true 
       
       {/* Modal Stage */}
       <div
+        ref={dialogRef}
         className="zy-auth-shell relative w-full max-w-md bg-white overflow-hidden p-6 md:p-8 animate-fadeIn text-left"
         role="dialog"
         aria-modal="true"
@@ -146,6 +191,8 @@ export default function AuthModal({ isOpen, onClose, registrationEnabled = true 
         
         {/* Close */}
         <button
+          ref={closeButtonRef}
+          type="button"
           onClick={onClose}
           className="absolute top-3 right-3 flex h-11 w-11 items-center justify-center text-slate-500 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-full transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20"
           aria-label="Close sign in dialog"
@@ -279,6 +326,7 @@ export default function AuthModal({ isOpen, onClose, registrationEnabled = true 
 
         {/* Social Authentication */}
         <button
+          type="button"
           onClick={handleGoogleLogin}
           className="w-full min-h-11 px-4 py-2.5 border border-slate-200 rounded-xl text-sm font-medium text-slate-700 hover:bg-slate-50 transition-all flex items-center justify-center space-x-2 cursor-pointer focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/15"
         >
@@ -296,6 +344,7 @@ export default function AuthModal({ isOpen, onClose, registrationEnabled = true 
         {!isResetMode && registrationEnabled && <div className="mt-6 text-center text-xs text-slate-500">
           {isSignUp ? "Already have a Zyro account?" : "New to Zyro.lk?"}{" "}
           <button
+            type="button"
             onClick={() => setIsSignUp(!isSignUp)}
             className="inline-flex min-h-11 items-center rounded-lg px-2 font-semibold text-brand-blue hover:underline cursor-pointer focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/15"
           >

@@ -8,6 +8,11 @@ import {
   processDueSupplierReviewQueueItems,
   recoverExpiredSupplierReviewQueueLeases,
 } from "./supplierReviewQueue";
+import {
+  recordSupplierOperationalAlertSafely,
+  resolveSupplierOperationalAlertSafely,
+} from "../api/suppliers/supplierOperationalAlerts";
+import { recordSupplierQueueDepthMetric } from "../api/suppliers/supplierCloudMonitoring";
 
 const WORKER_LOCK_ID = "scheduled_supplier_queue_worker";
 const WORKER_LEASE_MS = 4 * 60 * 1000;
@@ -94,21 +99,63 @@ export async function runSupplierQueueWorker(now = Date.now(), limit = 100): Pro
   }
   let workerHeartbeat: ReturnType<typeof setInterval> | null = null;
   let workerHeartbeatInFlight: Promise<void> = Promise.resolve();
+  let workerOwnershipFailure: Error | null = null;
   try {
     workerHeartbeat = setInterval(() => {
       workerHeartbeatInFlight = workerHeartbeatInFlight.then(async () => {
+        if (workerOwnershipFailure) return;
         const renewed = await heartbeatSupplierQueueWorkerLock(adminDb, workerId);
-        if (!renewed) throw new Error("Supplier queue worker lock was lost during processing.");
+        if (!renewed) {
+          workerOwnershipFailure = new Error("Supplier queue worker lock was lost during processing.");
+          logger.error("Supplier review queue worker lost lock ownership.", { workerId });
+        }
       }).catch((error) => {
+        workerOwnershipFailure = error instanceof Error
+          ? error
+          : new Error("Supplier queue worker lock heartbeat failed.");
         logger.error("Supplier review queue worker heartbeat failed.", { workerId, error });
       });
     }, WORKER_HEARTBEAT_INTERVAL_MS);
-    const recoveredLeases = await recoverExpiredSupplierReviewQueueLeases(adminDb, now, limit);
-    const results = await processDueSupplierReviewQueueItems(adminDb, workerId, now, limit);
-    const metrics = await getSupplierReviewQueueMetrics(adminDb, now);
+    const verifyWorkerOwnership = async (): Promise<void> => {
+      await workerHeartbeatInFlight;
+      if (workerOwnershipFailure) throw workerOwnershipFailure;
+    };
+    await verifyWorkerOwnership();
+    const recoveredLeases = await recoverExpiredSupplierReviewQueueLeases(adminDb, Date.now(), limit);
+    await verifyWorkerOwnership();
+    const results = await processDueSupplierReviewQueueItems(adminDb, workerId, Date.now(), limit, {
+      currentTime: Date.now,
+      verifyWorkerOwnership,
+    });
+    await verifyWorkerOwnership();
+    const completedAt = Date.now();
+    const metrics = await getSupplierReviewQueueMetrics(adminDb, completedAt);
+    recordSupplierQueueDepthMetric({
+      queueDepth: metrics.queueDepth,
+      retryBacklog: metrics.retryBacklog,
+      activeWorkers: metrics.activeWorkers,
+      workerId,
+    });
+    if ((metrics.oldestQueueAgeMs || 0) >= 60 * 60 * 1000) {
+      await recordSupplierOperationalAlertSafely({
+        category: "queue_age_threshold_exceeded",
+        severity: "critical",
+        dedupeScope: "supplier-review-processing",
+        technicalMetadata: { queueAgeMs: metrics.oldestQueueAgeMs, thresholdMs: 60 * 60 * 1000 },
+      });
+    } else {
+      await resolveSupplierOperationalAlertSafely({
+        category: "queue_age_threshold_exceeded",
+        dedupeScope: "supplier-review-processing",
+      });
+    }
+    await resolveSupplierOperationalAlertSafely({
+      category: "queue_worker_failure",
+      dedupeScope: "supplier-review-worker",
+    });
     await adminDb.collection("supplier_settings").doc("config").set({
       queueWorkerStatus: "idle",
-      queueWorkerLastRunAt: new Date(now).toISOString(),
+      queueWorkerLastRunAt: new Date(completedAt).toISOString(),
       queueWorkerLastRun: {
         recoveredLeases,
         processed: results.length,
@@ -116,7 +163,7 @@ export async function runSupplierQueueWorker(now = Date.now(), limit = 100): Pro
         retryableFailures: results.filter((result) => result.outcome === "retryable_failure").length,
         deadLetters: results.filter((result) => result.outcome === "dead_letter").length,
       },
-      queueMetrics: { ...metrics, measuredAt: new Date(now).toISOString() },
+      queueMetrics: { ...metrics, measuredAt: new Date(completedAt).toISOString() },
     }, { merge: true });
     return {
       workerId,
@@ -129,10 +176,21 @@ export async function runSupplierQueueWorker(now = Date.now(), limit = 100): Pro
     };
   } catch (error) {
     logger.error("Supplier review queue worker failed.", { workerId, error });
+    const failedAt = Date.now();
     await adminDb.collection("supplier_settings").doc("config").set({
       queueWorkerStatus: "failed",
-      queueWorkerLastFailureAt: new Date(now).toISOString(),
+      queueWorkerLastFailureAt: new Date(failedAt).toISOString(),
     }, { merge: true });
+    await recordSupplierOperationalAlertSafely({
+      category: "queue_worker_failure",
+      severity: "critical",
+      dedupeScope: "supplier-review-worker",
+      technicalMetadata: {
+        workerId,
+        failedAt: new Date(failedAt).toISOString(),
+        reason: error instanceof Error ? error.message : String(error || "Queue worker failed."),
+      },
+    });
     throw error;
   } finally {
     if (workerHeartbeat) clearInterval(workerHeartbeat);

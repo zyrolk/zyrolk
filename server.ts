@@ -7,7 +7,9 @@ import { initializeApp, getApps } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import { getAppCheck } from "firebase-admin/app-check";
 import { FieldValue, getFirestore } from "firebase-admin/firestore";
-import { assertCustomerCanCancelOrder, buildOrderStatusPlan } from "./functions/src/api/orders/orderStatusLogic";
+import {
+  assertCustomerCanCancelOrder, buildOrderStatusPlan, requireCurrentProductStock,
+} from "./functions/src/api/orders/orderStatusLogic";
 import { registerReviewSystemRoutes } from "./functions/src/api/routes/reviewSystem";
 import {
   buildInitialPayHereOrderFields,
@@ -29,6 +31,8 @@ import { appendPaymentTimeline, createPaymentTimelineEvent } from "./functions/s
 import { registerSupplierRoutes } from "./functions/src/api/routes/supplier";
 import { registerSupplierPortalRoutes } from "./functions/src/api/routes/supplierPortal";
 import { registerAdminConfigurationRoutes } from "./functions/src/api/routes/adminConfiguration";
+import { hasAdminAccess } from "./functions/src/api/security/adminAuthorization";
+import { registerContactRoutes } from "./functions/src/api/routes/contact";
 
 const app = express();
 const PORT = 3000;
@@ -76,7 +80,6 @@ const CHECKOUT_RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const CHECKOUT_RATE_LIMIT_MAX_REQUESTS = 10;
 const CHECKOUT_IDEMPOTENCY_COLLECTION = "checkout_idempotency";
 const ALLOWED_PAYMENT_METHODS = new Set(["cod", "whatsapp_confirm", "payhere"]);
-const ADMIN_EMAIL = "zyrolkofficial@gmail.com";
 const DEFAULT_ALLOWED_ORIGINS = ["https://zyro.lk", "https://www.zyro.lk", "https://zyrolk-e0164.web.app"];
 const LOCAL_EXPRESS_ALLOWED_ORIGINS = ["http://localhost:3000", "http://127.0.0.1:3000"];
 const isLocalSupplierApiRuntime = process.env.NODE_ENV !== "production";
@@ -144,8 +147,8 @@ app.use(async (req, res, next) => {
 registerReviewSystemRoutes(app, {
   db: adminDb,
   verifyIdToken: (token) => adminAuth.verifyIdToken(token),
-  isAdminEmail: (email) => (email || "").toLowerCase() === ADMIN_EMAIL,
 });
+registerContactRoutes(app, { db: adminDb });
 // PayHere routes are intentionally not registered while the storefront is COD-only.
 // Firebase Hosting routes production Supplier Hub traffic directly to the Functions API.
 // The local server intentionally exposes the same canonical route modules only for development.
@@ -153,7 +156,7 @@ if (isLocalSupplierApiRuntime) {
   registerSupplierRoutes(app);
   registerSupplierPortalRoutes(app, { db: adminDb, auth: adminAuth });
 }
-registerAdminConfigurationRoutes(app, { auth: adminAuth });
+registerAdminConfigurationRoutes(app, { auth: adminAuth, db: adminDb });
 
 app.post("/api/monitoring/client-error", (req, res) => {
   const context = typeof req.body?.context === "string" ? req.body.context.trim().slice(0, 100) : "client-error";
@@ -165,12 +168,18 @@ app.post("/api/monitoring/client-error", (req, res) => {
 
 app.get("/sitemap.xml", async (_req, res) => {
   try {
-    const snapshot = await adminDb.collection("products").limit(5000).get();
+    const [snapshot, categoriesSnapshot] = await Promise.all([
+      adminDb.collection("products").limit(5000).get(),
+      adminDb.collection("categories").limit(500).get(),
+    ]);
     const escapeXml = (value: string) => value.replace(/[<>&'\"]/g, (character) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", "'": "&apos;", '"': "&quot;" }[character] || character));
-    const productUrls = snapshot.docs.filter((product) => product.data().isActive !== false).map((product) => `<url><loc>${escapeXml(`https://zyro.lk/?product=${encodeURIComponent(product.id)}`)}</loc><changefreq>daily</changefreq><priority>0.8</priority></url>`);
+    const productUrls = snapshot.docs.filter((product) => product.data().isActive !== false).map((product) => `<url><loc>${escapeXml(`https://zyro.lk/products/${encodeURIComponent(product.id)}`)}</loc><changefreq>daily</changefreq><priority>0.8</priority></url>`);
+    const categoryUrls = categoriesSnapshot.docs.filter((category) => category.data().isActive !== false).map((category) => `<url><loc>${escapeXml(`https://zyro.lk/categories/${encodeURIComponent(category.id)}`)}</loc><changefreq>weekly</changefreq><priority>0.7</priority></url>`);
+    const staticPaths = ["", "products", "categories", "about-us", "contact", "faq", "privacy-policy", "terms-conditions", "return-policy", "warranty-policy"];
+    const staticUrls = staticPaths.map((path, index) => `<url><loc>${escapeXml(`https://zyro.lk/${path}`)}</loc><changefreq>${index < 3 ? "daily" : "monthly"}</changefreq><priority>${index === 0 ? "1.0" : index < 3 ? "0.9" : "0.5"}</priority></url>`);
     res.setHeader("Content-Type", "application/xml; charset=utf-8");
     res.setHeader("Cache-Control", "public, max-age=3600, stale-while-revalidate=86400");
-    res.status(200).send(`<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>https://zyro.lk/</loc><changefreq>daily</changefreq><priority>1.0</priority></url>${productUrls.join("")}</urlset>`);
+    res.status(200).send(`<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${staticUrls.join("")}${categoryUrls.join("")}${productUrls.join("")}</urlset>`);
   } catch {
     res.status(503).type("text/plain").send("Sitemap temporarily unavailable");
   }
@@ -345,7 +354,7 @@ async function calculateTrustedCouponSubtotal(cartItems: CheckoutCartItem[]): Pr
     const data = snapshot.data()!;
     const price = Number(data.price);
     const stock = Number(data.stock);
-    if (!Number.isFinite(price) || price <= 0 || !Number.isFinite(stock) || stock < item.quantity) {
+    if (!Number.isFinite(price) || price <= 0 || !Number.isInteger(stock) || stock < item.quantity) {
       throw new CheckoutError("A cart item has changed. Review your cart and try again.", 409);
     }
     subtotal += price * item.quantity;
@@ -502,7 +511,7 @@ app.post("/api/checkout", async (req, res) => {
         }
 
         const currentStock = Number(pData.stock);
-        if (!Number.isFinite(currentStock) || currentStock < item.quantity) {
+        if (!Number.isInteger(currentStock) || currentStock < item.quantity) {
           throw new CheckoutError(`Insufficient stock for product "${pData.name}". Available: ${Number.isFinite(currentStock) ? currentStock : 0}, Requested: ${item.quantity}`, 409);
         }
 
@@ -660,9 +669,7 @@ const requireSupplierAdminAuth: express.RequestHandler = async (req, res, next) 
 
   try {
     const decodedToken = await adminAuth.verifyIdToken(match[1]);
-    const email = (decodedToken.email || "").toLowerCase();
-
-    if (email === ADMIN_EMAIL) {
+    if (hasAdminAccess(decodedToken)) {
       next();
       return;
     }
@@ -714,10 +721,8 @@ app.post("/api/orders/:orderId/cancel", requireCustomerAuth, async (req, res) =>
       for (const [productId, quantity] of quantities) {
         const productRef = adminDb.collection("products").doc(productId);
         const productSnap = await transaction.get(productRef);
-        if (productSnap.exists) {
-          const stock = Number(productSnap.data()?.stock);
-          productStocks.push({ ref: productRef, stock: Number.isFinite(stock) ? stock : 0, quantity });
-        }
+        const stock = requireCurrentProductStock(productSnap.exists, productSnap.data()?.stock);
+        productStocks.push({ ref: productRef, stock, quantity });
       }
 
       productStocks.forEach(({ ref, stock, quantity }) => transaction.update(ref, { stock: stock + quantity }));
@@ -767,12 +772,9 @@ app.post("/api/orders/:orderId/status", requireSupplierAdminAuth, async (req, re
       const orderSnap = await transaction.get(orderRef);
       if (!orderSnap.exists) throw new CheckoutError("Order not found", 404);
       const order = orderSnap.data()!;
-      const currentStatus = String(order.status || "pending").toLowerCase();
-      if (currentStatus === "cancelled" && newStatus !== "cancelled") {
-        throw new CheckoutError("Cancelled orders cannot be moved to another status", 409);
-      }
-
-      const shouldRestoreStock = newStatus === "cancelled" && order.stockDeducted === true && order.stockRestorationApplied !== true;
+      const { shouldRestoreStock, quantities } = buildOrderStatusPlan(
+        order.status, newStatus, order.stockDeducted, order.stockRestorationApplied, order.items,
+      );
       const cancellingUnsettledPayHere = shouldRestoreStock
         && order.paymentMethod === "payhere"
         && new Set(["awaiting_payment", "pending"]).has(String(order.paymentStatus || ""));
@@ -782,25 +784,12 @@ app.post("/api/orders/:orderId/status", requireSupplierAdminAuth, async (req, re
         && order.stockReservationStatus === "reserved"
         && newStatus !== "pending"
         && newStatus !== "cancelled";
-      const quantities = new Map<string, number>();
-      if (shouldRestoreStock) {
-        for (const item of Array.isArray(order.items) ? order.items : []) {
-          const productId = typeof item?.productId === "string" ? item.productId.trim() : "";
-          const quantity = Number(item?.quantity);
-          if (productId && Number.isInteger(quantity) && quantity > 0) {
-            quantities.set(productId, (quantities.get(productId) || 0) + quantity);
-          }
-        }
-      }
-
       const productStocks: Array<{ ref: FirebaseFirestore.DocumentReference; stock: number; quantity: number }> = [];
       for (const [productId, quantity] of quantities) {
         const productRef = adminDb.collection("products").doc(productId);
         const productSnap = await transaction.get(productRef);
-        if (productSnap.exists) {
-          const stock = Number(productSnap.data()?.stock);
-          productStocks.push({ ref: productRef, stock: Number.isFinite(stock) ? stock : 0, quantity });
-        }
+        const stock = requireCurrentProductStock(productSnap.exists, productSnap.data()?.stock);
+        productStocks.push({ ref: productRef, stock, quantity });
       }
 
       productStocks.forEach(({ ref, stock, quantity }) => transaction.update(ref, { stock: stock + quantity }));

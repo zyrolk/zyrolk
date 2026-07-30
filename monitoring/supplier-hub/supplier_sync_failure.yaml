@@ -1,0 +1,9 @@
+name: supplier_hub_sync_failure
+description: Failed Supplier Hub synchronization executions.
+filter: >-
+  jsonPayload.eventType="supplier_hub_operational_metric" AND
+  jsonPayload.metricName="supplier_sync_failure"
+metricDescriptor:
+  metricKind: DELTA
+  valueType: INT64
+  unit: "1"

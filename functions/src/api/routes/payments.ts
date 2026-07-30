@@ -1,6 +1,7 @@
 import * as express from "express";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { createCheckoutRateLimiter, getClientRateLimitKey, hashValue } from "../checkout/checkoutLogic";
+import { collectOrderStockQuantities, requireCurrentProductStock } from "../orders/orderStatusLogic";
 import {
   PaymentError,
   amountsMatch,
@@ -165,15 +166,12 @@ export function registerPaymentRoutes(app: express.Express, dependencies: Paymen
         if (!FAILURE_STATUSES.has(String(order.paymentStatus || ""))) throw new PaymentError("This payment is not eligible for retry", 409);
 
         const productUpdates: Array<{ ref: FirebaseFirestore.DocumentReference; stock: number }> = [];
-        for (const item of Array.isArray(order.items) ? order.items : []) {
-          const productId = typeof item?.productId === "string" ? item.productId.trim() : "";
-          const quantity = Number(item?.quantity);
-          if (!productId || !Number.isInteger(quantity) || quantity <= 0) throw new PaymentError("Order inventory data is invalid", 409);
+        for (const [productId, quantity] of collectOrderStockQuantities(order.items)) {
           const productRef = db.collection("products").doc(productId);
           const productSnapshot = await transaction.get(productRef);
-          const stock = Number(productSnapshot.data()?.stock);
-          if (!productSnapshot.exists || !Number.isFinite(stock) || stock < quantity) {
-            throw new PaymentError(`Insufficient stock to retry payment for ${String(item?.name || "an item")}`, 409);
+          const stock = requireCurrentProductStock(productSnapshot.exists, productSnapshot.data()?.stock);
+          if (stock < quantity) {
+            throw new PaymentError("Insufficient stock to retry payment for an order item", 409);
           }
           productUpdates.push({ ref: productRef, stock: stock - quantity });
         }
@@ -314,16 +312,11 @@ export function registerPaymentRoutes(app: express.Express, dependencies: Paymen
           && order.stockRestorationApplied !== true;
         const productUpdates: Array<{ ref: FirebaseFirestore.DocumentReference; stock: number }> = [];
         if (shouldRestore) {
-          for (const item of Array.isArray(order.items) ? order.items : []) {
-            const productId = typeof item?.productId === "string" ? item.productId.trim() : "";
-            const quantity = Number(item?.quantity);
-            if (!productId || !Number.isInteger(quantity) || quantity <= 0) continue;
+          for (const [productId, quantity] of collectOrderStockQuantities(order.items)) {
             const productRef = db.collection("products").doc(productId);
             const productSnapshot = await transaction.get(productRef);
-            if (productSnapshot.exists) {
-              const stock = Number(productSnapshot.data()?.stock);
-              productUpdates.push({ ref: productRef, stock: (Number.isFinite(stock) ? stock : 0) + quantity });
-            }
+            const stock = requireCurrentProductStock(productSnapshot.exists, productSnapshot.data()?.stock);
+            productUpdates.push({ ref: productRef, stock: stock + quantity });
           }
         }
 

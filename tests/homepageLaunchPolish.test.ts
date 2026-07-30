@@ -9,6 +9,7 @@ const reviews = readFileSync('src/components/HomepageCustomerReviews.tsx', 'utf8
 const footer = readFileSync('src/components/Footer.tsx', 'utf8');
 const productCard = readFileSync('src/components/ProductCard.tsx', 'utf8');
 const styles = readFileSync('src/index.css', 'utf8');
+const catalog = readFileSync('src/services/storefront/storefrontCatalog.ts', 'utf8');
 
 test('Sprint 75B composes Why Choose below trust and reviews after live product shelves', () => {
   assert.match(homepage, /import HomepageWhyChoose from '\.\/HomepageWhyChoose'/);
@@ -19,10 +20,11 @@ test('Sprint 75B composes Why Choose below trust and reviews after live product 
   assert.match(homepage, /enabled=\{settings\?\.enableReviews !== false\}/);
 });
 
-test('homepage reviews reuse the existing live verified-review snapshot', () => {
+test('homepage reviews reuse a bounded live verified-review snapshot', () => {
   assert.match(app, /const \[homepageReviews, setHomepageReviews\] = useState/);
-  assert.match(app, /onSnapshot\(collection\(db, "reviews"\)/);
-  assert.match(app, /projectProductionReview\(doc\.id, doc\.data\(\)\)/);
+  assert.match(app, /subscribeToHomepageReviews\(db/);
+  assert.match(catalog, /where\('approved', '==', true\)[\s\S]*limit\(HOMEPAGE_REVIEW_LIMIT\)/);
+  assert.match(catalog, /projectProductionReview\(document\.id, document\.data\(\)\)/);
   assert.match(app, /setHomepageReviews\(revList\)/);
   assert.match(app, /reviews=\{homepageReviews\}/);
   assert.match(homepage, /reviews=\{reviews\}/);

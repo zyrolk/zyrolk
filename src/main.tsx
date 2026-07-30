@@ -5,6 +5,7 @@ import AppErrorBoundary from './components/AppErrorBoundary.tsx';
 import './index.css';
 import './styles/storefrontL6.css';
 import './styles/storefrontL7.css';
+import './styles/storefrontHeader.css';
 import { initializeStorefrontAppCheck } from './services/security/appCheck.ts';
 import { initializeStorefrontMonitoring } from './services/observability/commerceAnalytics.ts';
 import { reportClientIssue } from './services/observability/clientDiagnostics.ts';
