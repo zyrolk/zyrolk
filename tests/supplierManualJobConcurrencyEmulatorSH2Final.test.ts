@@ -5,8 +5,13 @@ import {
   createSupplierSyncJob,
   SupplierSyncJobConflictError,
 } from "../functions/src/api/suppliers/supplierSyncJobs";
+import { fingerprintSupplierSyncRequest } from "../functions/src/api/suppliers/supplierSyncRequest";
 
 const canRun = Boolean(process.env.FIRESTORE_EMULATOR_HOST);
+// This suite validates admission, not worker completion. Keeping its jobs
+// legitimately not-due prevents the real on-create worker from completing a
+// missing-source fixture and releasing the reservation between contenders.
+const admissionTestNow = Date.now() + (60 * 60 * 1000);
 
 const manualInput = (sourceId: string, category = "Phones") => ({
   trigger: "manual" as const,
@@ -29,8 +34,8 @@ test("SH-2 manual sync admission is atomic on the real Firestore Emulator", {
   await t.test("identical concurrent requests share one active logical job", async () => {
     const sourceId = "manual-emulator-identical";
     const results = await Promise.all([
-      createSupplierSyncJob(adminDb, manualInput(sourceId), 1_000),
-      createSupplierSyncJob(adminDb, manualInput(sourceId), 1_000),
+      createSupplierSyncJob(adminDb, manualInput(sourceId), admissionTestNow),
+      createSupplierSyncJob(adminDb, manualInput(sourceId), admissionTestNow),
     ]);
     assert.equal(new Set(results.map((result) => result.job.id)).size, 1);
     assert.equal(results.filter((result) => result.created).length, 1);
@@ -41,22 +46,43 @@ test("SH-2 manual sync admission is atomic on the real Firestore Emulator", {
 
   await t.test("different concurrent controls fail closed without overlapping work", async () => {
     const sourceId = "manual-emulator-conflict";
+    const phones = manualInput(sourceId, "Phones");
+    const laptops = manualInput(sourceId, "Laptops");
+    assert.notEqual(
+      fingerprintSupplierSyncRequest(phones.syncRequest),
+      fingerprintSupplierSyncRequest(laptops.syncRequest),
+    );
     const results = await Promise.allSettled([
-      createSupplierSyncJob(adminDb, manualInput(sourceId, "Phones"), 2_000),
-      createSupplierSyncJob(adminDb, manualInput(sourceId, "Laptops"), 2_000),
+      createSupplierSyncJob(adminDb, phones, admissionTestNow),
+      createSupplierSyncJob(adminDb, laptops, admissionTestNow),
     ]);
     assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
+    const fulfilled = results.find((result) => result.status === "fulfilled");
+    assert.ok(fulfilled && fulfilled.status === "fulfilled");
     const rejected = results.find((result) => result.status === "rejected");
     assert.ok(rejected && rejected.status === "rejected");
     assert.ok(rejected.reason instanceof SupplierSyncJobConflictError);
     const lock = await adminDb.collection("supplier_sync_locks").doc(`source-${sourceId}`).get();
-    assert.ok(String(lock.data()?.manualReservationJobId || ""));
+    assert.equal(lock.data()?.manualReservationJobId, fulfilled.value.job.id);
+
+    const fixtureJobs = await adminDb.collection("supplier_sync_jobs")
+      .where("sourceIds", "array-contains", sourceId)
+      .get();
+    assert.equal(fixtureJobs.size, 1);
+    assert.equal(fixtureJobs.docs[0].id, fulfilled.value.job.id);
+    assert.equal(fixtureJobs.docs[0].data().state, "pending");
+    assert.equal(fixtureJobs.docs[0].data().nextAttemptAt, new Date(admissionTestNow).toISOString());
+    const storedFingerprint = fingerprintSupplierSyncRequest(fixtureJobs.docs[0].data().syncRequest);
+    assert.ok([
+      fingerprintSupplierSyncRequest(phones.syncRequest),
+      fingerprintSupplierSyncRequest(laptops.syncRequest),
+    ].includes(storedFingerprint));
   });
 
   await t.test("different supplier sources reserve independently", async () => {
     const [sourceA, sourceB] = await Promise.all([
-      createSupplierSyncJob(adminDb, manualInput("manual-emulator-source-a"), 3_000),
-      createSupplierSyncJob(adminDb, manualInput("manual-emulator-source-b"), 3_000),
+      createSupplierSyncJob(adminDb, manualInput("manual-emulator-source-a"), admissionTestNow),
+      createSupplierSyncJob(adminDb, manualInput("manual-emulator-source-b"), admissionTestNow),
     ]);
     assert.equal(sourceA.created, true);
     assert.equal(sourceB.created, true);
