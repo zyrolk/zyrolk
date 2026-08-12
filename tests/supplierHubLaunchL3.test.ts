@@ -56,12 +56,14 @@ test('supplier SKU normalization supports deterministic duplicate claims', () =>
 });
 
 test('supplier fulfilment follows the launch sequence and blocks completed orders', () => {
-  assert.equal(assertSupplierOrderTransition('pending', 'processing', 'confirmed'), 'processing');
-  assert.equal(assertSupplierOrderTransition('processing', 'packed', 'processing'), 'packed');
-  assert.equal(assertSupplierOrderTransition('packed', 'shipped', 'processing'), 'shipped');
-  assert.throws(() => assertSupplierOrderTransition('pending', 'shipped', 'confirmed'), /cannot move/i);
-  assert.throws(() => assertSupplierOrderTransition('packed', 'shipped', 'delivered'), /cannot be changed/i);
-  assert.throws(() => assertSupplierOrderTransition('processing', 'packed', 'cancelled'), /cannot be changed/i);
+  assert.equal(assertSupplierOrderTransition('pending', 'processing', 'confirmed', 'committed'), 'processing');
+  assert.equal(assertSupplierOrderTransition('processing', 'packed', 'processing', 'committed'), 'packed');
+  assert.equal(assertSupplierOrderTransition('packed', 'shipped', 'processing', 'committed'), 'shipped');
+  assert.throws(() => assertSupplierOrderTransition('pending', 'shipped', 'confirmed', 'committed'), /cannot move/i);
+  assert.throws(() => assertSupplierOrderTransition('packed', 'shipped', 'delivered', 'committed'), /confirmed active order/i);
+  assert.throws(() => assertSupplierOrderTransition('processing', 'packed', 'cancelled', 'committed'), /confirmed active order/i);
+  assert.throws(() => assertSupplierOrderTransition('pending', 'processing', 'pending', 'reserved'), /confirmed active order/i);
+  assert.throws(() => assertSupplierOrderTransition('pending', 'processing', 'confirmed', 'reserved'), /committed inventory/i);
 });
 
 test('supplier order ownership supports single and multi-supplier assignments only', () => {
@@ -112,23 +114,31 @@ test('admin rejection records an actionable reason and releases duplicate claims
 
 test('Supplier Portal routes enforce role, ownership, duplicate prevention and projection boundaries', () => {
   const route = readFileSync('functions/src/api/routes/supplierPortal.ts', 'utf8');
+  const fulfilment = readFileSync('functions/src/api/orders/orderFulfilmentGroups.ts', 'utf8');
   assert.match(route, /orders\/:orderId\/assign", requireSupplierHubAdmin/);
-  assert.match(route, /supplierSnapshot\.data\(\)\?\.role !== "supplier"/);
+  assert.match(fulfilment, /supplierSnapshot\.data\(\)\?\.role !== "supplier"/);
   assert.match(route, /userSnapshot\.data\(\)\?\.role !== "supplier"/);
   assert.match(route, /ownerId !== identity\.uid/);
-  assert.match(route, /supplierOwnsOrder\(snapshot\.data\(\) \|\| \{\}, identity\.uid\)/);
+  assert.match(route, /supplierGroupForAccount\(privateOrder, supplierId\)/);
   assert.match(route, /supplier_sku_claims/);
   assert.match(route, /supplier_product_claims/);
   assert.match(route, /A matching product or supplier SKU already exists/);
   assert.doesNotMatch(route.slice(route.indexOf('const projectProduct'), route.indexOf('const projectRequest')), /costPrice|marketPrice|reservedStock|paymentReference/);
 });
 
-test('supplier fulfilment does not touch customer order status, inventory or reservation fields', () => {
-  const route = readFileSync('functions/src/api/routes/supplierPortal.ts', 'utf8');
-  const fulfilmentRoute = route.slice(route.indexOf('app.post("/api/supplier-portal/orders'), route.indexOf('app.post("/api/supplier-portal/notifications'));
-  const orderMutation = fulfilmentRoute.slice(fulfilmentRoute.indexOf('transaction.update(orderReference'), fulfilmentRoute.indexOf('    });'));
-  assert.match(fulfilmentRoute, /supplierFulfilmentStatus/);
-  assert.doesNotMatch(orderMutation, /stockReservation|stockRestoration|paymentStatus|collection\("products"\)|\n\s*status:/);
+test('supplier fulfilment derives customer order status without touching inventory or reservation fields', () => {
+  const fulfilment = readFileSync('functions/src/api/orders/orderFulfilmentGroups.ts', 'utf8');
+  const fulfilmentTransaction = fulfilment.slice(
+    fulfilment.indexOf('export async function transitionOrderFulfilmentGroup'),
+    fulfilment.indexOf('export function supplierGroupForAccount'),
+  );
+  const orderMutation = fulfilmentTransaction.slice(
+    fulfilmentTransaction.indexOf('transaction.update(orderReference'),
+    fulfilmentTransaction.indexOf('  });'),
+  );
+  assert.match(fulfilmentTransaction, /supplierFulfilmentStatus/);
+  assert.match(fulfilmentTransaction, /deriveOrderStatusFromFulfilmentGroups/);
+  assert.doesNotMatch(orderMutation, /stockReservation|stockRestoration|paymentStatus|collection\("products"\)/);
 });
 
 test('Firestore rules expose only owned supplier portal records and deny claim access', () => {

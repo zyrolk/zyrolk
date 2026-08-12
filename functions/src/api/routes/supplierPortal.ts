@@ -3,23 +3,32 @@ import * as express from "express";
 import { FieldPath, FieldValue } from "firebase-admin/firestore";
 import { ApiError, sendApiError } from "../errors";
 import { requireSupplierHubAdmin } from "../middleware/supplierHubAdminAuth";
+import {
+  assignOrderFulfilmentGroup,
+  correctOrderFulfilmentTracking,
+  ORDER_PRIVATE_COLLECTION,
+  parseOrderPrivateFulfilment,
+  recordOrderFulfilmentTracking,
+  supplierGroupForAccount,
+  transitionOrderFulfilmentGroup,
+} from "../orders/orderFulfilmentGroups";
 import { PRODUCT_PRIVATE_COLLECTION, sanitizePublicProductData } from "../products/productCommercialData";
 import { buildSupplierAuditEvent, createSupplierAuditEvent } from "../suppliers/supplierAuditTrail";
 import { buildSupplierProductApprovalBaseline } from "../suppliers/supplierApprovalConcurrency";
 import {
-  assertSupplierOrderTransition,
   calculateSupplierSummary,
   normalizeProductFingerprint,
   normalizeSupplierSku,
   sanitizeSupplierProductDraft,
   sanitizeSupplierProfile,
+  SUPPLIER_PORTAL_SOURCE_ID,
   supplierOwnsOrder,
   validateSupplierProductForSubmission,
 } from "../suppliers/supplierPortalLogic";
 
 interface SupplierPortalDependencies {
   db: FirebaseFirestore.Firestore;
-  auth: { verifyIdToken(token: string): Promise<{ uid: string; email?: string }> };
+  auth: { verifyIdToken(token: string, checkRevoked?: boolean): Promise<{ uid: string; email?: string }> };
 }
 
 interface SupplierIdentity {
@@ -46,6 +55,14 @@ const cleanId = (value: unknown, label: string): string => {
   const result = typeof value === "string" ? value.trim().slice(0, 160) : "";
   if (!result || result.includes("/")) throw new ApiError(`A valid ${label} is required`, 400);
   return result;
+};
+
+const assertTrackingBody = (body: unknown): Record<string, unknown> => {
+  const value = body && typeof body === "object" && !Array.isArray(body) ? body as Record<string, unknown> : {};
+  const allowed = new Set(["courierName", "trackingNumber", "expectedGroupRevision", "expectedOrderPrivateRevision"]);
+  const unsupported = Object.keys(value).find((key) => !allowed.has(key));
+  if (unsupported) throw new ApiError(`Unsupported tracking field: ${unsupported}`, 400);
+  return value;
 };
 
 const readPageSize = (value: unknown): number => {
@@ -119,10 +136,44 @@ const projectRequest = (id: string, request: Record<string, unknown>): Record<st
   reviewedAt: toIso(request.reviewedAt),
 });
 
-const projectOrder = (id: string, order: Record<string, unknown>, supplierId: string): Record<string, unknown> => {
+const projectOrder = (
+  id: string,
+  order: Record<string, unknown>,
+  supplierId: string,
+  privateData?: FirebaseFirestore.DocumentData,
+): Record<string, unknown> | null => {
   const sourceItems = Array.isArray(order.items) ? order.items as Array<Record<string, unknown>> : [];
-  const explicitlyAssignedItems = sourceItems.filter((item) => item.supplierId === supplierId);
-  const items = explicitlyAssignedItems.length > 0 ? explicitlyAssignedItems : sourceItems;
+  let groupId = "";
+  let groupRevision = 0;
+  let orderPrivateRevision = 0;
+  let attributionAvailable = false;
+  let groupStatus = String(order.supplierFulfilmentStatus || "pending");
+  let tracking: Record<string, unknown> | null = null;
+  let items = sourceItems;
+  if (privateData) {
+    const privateOrder = parseOrderPrivateFulfilment(id, privateData);
+    const group = supplierGroupForAccount(privateOrder, supplierId);
+    if (!group) return null;
+    const productIds = new Set(privateOrder.lines
+      .filter((line) => group.lineIds.includes(line.lineId))
+      .map((line) => line.productId));
+    items = sourceItems.filter((item) => productIds.has(String(item.productId || "")));
+    groupId = group.groupId;
+    groupRevision = group.revision;
+    orderPrivateRevision = privateOrder.revision;
+    groupStatus = group.status;
+    attributionAvailable = true;
+    tracking = group.tracking ? {
+      courierName: group.tracking.courierName,
+      trackingNumber: group.tracking.trackingNumber,
+      trackingUrl: group.tracking.trackingUrl,
+      recordedAt: group.tracking.recordedAt,
+      revision: group.tracking.revision,
+    } : null;
+  } else {
+    const explicitlyAssignedItems = sourceItems.filter((item) => item.supplierId === supplierId);
+    items = explicitlyAssignedItems.length > 0 ? explicitlyAssignedItems : sourceItems;
+  }
   const projectedItems = items.map((item) => ({
     productId: String(item.productId || ""),
     name: String(item.name || ""),
@@ -141,7 +192,12 @@ const projectOrder = (id: string, order: Record<string, unknown>, supplierId: st
     items: projectedItems,
     supplierTotal: projectedItems.reduce((total, item) => total + item.price * item.quantity, 0),
     status: String(order.status || "pending"),
-    supplierFulfilmentStatus: String(order.supplierFulfilmentStatus || "pending"),
+    supplierFulfilmentStatus: groupStatus,
+    groupId,
+    groupRevision,
+    orderPrivateRevision,
+    attributionAvailable,
+    tracking,
     paymentMethod: String(order.paymentMethod || ""),
     paymentStatus: String(order.paymentStatus || ""),
     createdAt: toIso(order.createdAt),
@@ -153,9 +209,93 @@ const assertActive = (identity: SupplierIdentity): void => {
   if (identity.profileStatus !== "active") throw new ApiError("Supplier profile must be active before using this action", 403);
 };
 
+export async function assignOrderToSupplier(
+  db: FirebaseFirestore.Firestore,
+  orderId: string,
+  groupId: string,
+  supplierId: string,
+  expectedGroupRevision: unknown,
+  expectedOrderPrivateRevision: unknown,
+  adminUid = "system-admin",
+) {
+  return assignOrderFulfilmentGroup({
+    db, orderId, groupId, supplierAccountId: supplierId,
+    expectedGroupRevision, expectedOrderPrivateRevision, adminUid,
+  });
+}
+
+export async function verifySupplierPortalIdentityToken(
+  auth: SupplierPortalDependencies["auth"],
+  token: string,
+  checkRevoked = true,
+): Promise<{ uid: string; email?: string }> {
+  return auth.verifyIdToken(token, checkRevoked);
+}
+
+export async function transitionSupplierOrderFulfilment(
+  db: FirebaseFirestore.Firestore,
+  orderId: string,
+  supplierId: string,
+  groupId: string,
+  nextStatus: unknown,
+  expectedGroupRevision: unknown,
+  expectedOrderPrivateRevision: unknown,
+  reason?: unknown,
+) {
+  return transitionOrderFulfilmentGroup({
+    db, orderId, supplierAccountId: supplierId, groupId, nextStatus,
+    expectedGroupRevision, expectedOrderPrivateRevision, reason,
+  });
+}
+
+export async function recordSupplierOrderTracking(
+  db: FirebaseFirestore.Firestore,
+  orderId: string,
+  supplierId: string,
+  groupId: string,
+  courierName: unknown,
+  trackingNumber: unknown,
+  expectedGroupRevision: unknown,
+  expectedOrderPrivateRevision: unknown,
+) {
+  return recordOrderFulfilmentTracking({
+    db,
+    orderId,
+    groupId,
+    supplierAccountId: supplierId,
+    courierName,
+    trackingNumber,
+    expectedGroupRevision,
+    expectedOrderPrivateRevision,
+  });
+}
+
+export async function correctAdminOrderTracking(
+  db: FirebaseFirestore.Firestore,
+  orderId: string,
+  groupId: string,
+  adminUid: string,
+  courierName: unknown,
+  trackingNumber: unknown,
+  expectedGroupRevision: unknown,
+  expectedOrderPrivateRevision: unknown,
+) {
+  return correctOrderFulfilmentTracking({
+    db,
+    orderId,
+    groupId,
+    adminUid,
+    courierName,
+    trackingNumber,
+    expectedGroupRevision,
+    expectedOrderPrivateRevision,
+  });
+}
+
 export function registerSupplierPortalRoutes(app: express.Express, dependencies: SupplierPortalDependencies): void {
-  const authenticate = async (req: express.Request): Promise<SupplierIdentity> => {
-    const decoded = await dependencies.auth.verifyIdToken(readBearerToken(req));
+  const authenticate = async (req: express.Request, res: express.Response): Promise<SupplierIdentity> => {
+    const checkRevoked = res.locals.supplierHubLocalExpressPreview !== true;
+    const decoded = await verifySupplierPortalIdentityToken(dependencies.auth, readBearerToken(req), checkRevoked);
     const [userSnapshot, profileSnapshot] = await Promise.all([
       dependencies.db.collection("users").doc(decoded.uid).get(),
       dependencies.db.collection("supplier_profiles").doc(decoded.uid).get(),
@@ -170,7 +310,7 @@ export function registerSupplierPortalRoutes(app: express.Express, dependencies:
   const route = (handler: (req: express.Request, res: express.Response, identity: SupplierIdentity) => Promise<void>): express.RequestHandler => (
     async (req, res) => {
       try {
-        const identity = await authenticate(req);
+        const identity = await authenticate(req, res);
         await handler(req, res, identity);
       } catch (error) {
         sendApiError(res, error, {
@@ -184,50 +324,90 @@ export function registerSupplierPortalRoutes(app: express.Express, dependencies:
 
   app.post("/api/supplier-portal/orders/:orderId/assign", requireSupplierHubAdmin, async (req, res) => {
     const orderId = typeof req.params.orderId === "string" ? req.params.orderId.trim() : "";
+    const groupId = typeof req.body?.groupId === "string" ? req.body.groupId.trim() : "";
     const supplierId = typeof req.body?.supplierId === "string" ? req.body.supplierId.trim() : "";
-    if (!orderId || orderId.includes("/") || !supplierId || supplierId.includes("/")) {
-      res.status(400).json({ error: "A valid order and supplier are required" });
+    if (!orderId || orderId.includes("/") || !groupId || groupId.includes("/") || !supplierId || supplierId.includes("/")) {
+      res.status(400).json({ error: "A valid order, fulfilment group and supplier are required" });
       return;
     }
     try {
-      const orderReference = dependencies.db.collection("orders").doc(orderId);
-      const supplierReference = dependencies.db.collection("users").doc(supplierId);
-      const profileReference = dependencies.db.collection("supplier_profiles").doc(supplierId);
-      await dependencies.db.runTransaction(async (transaction) => {
-        const [orderSnapshot, supplierSnapshot, profileSnapshot] = await Promise.all([
-          transaction.get(orderReference), transaction.get(supplierReference), transaction.get(profileReference),
-        ]);
-        if (!orderSnapshot.exists) throw new ApiError("Order not found", 404);
-        if (supplierSnapshot.data()?.role !== "supplier") throw new ApiError("Selected account is not a supplier", 400);
-        if (!profileSnapshot.exists || String(profileSnapshot.data()?.profileStatus || "pending").toLocaleLowerCase() !== "active") {
-          throw new ApiError("Selected supplier profile is not active", 409);
-        }
-        if (["cancelled", "delivered"].includes(String(orderSnapshot.data()?.status || ""))) {
-          throw new ApiError("Completed or cancelled orders cannot be reassigned", 409);
-        }
-        const assignedAt = FieldValue.serverTimestamp();
-        transaction.update(orderReference, {
-          supplierId,
-          supplierIds: [supplierId],
-          supplierFulfilmentStatus: "pending",
-          supplierAssignedAt: assignedAt,
-        });
-        transaction.set(dependencies.db.collection("supplier_notifications").doc(`order-${orderId}-${supplierId}`), {
-          supplierId,
-          type: "new_order",
-          title: "New assigned order",
-          message: `Order ${String(orderSnapshot.data()?.orderNumber || orderId)} is assigned to your account.`,
-          orderId,
-          isRead: false,
-          createdAt: assignedAt,
-        });
-      });
-      res.json({ success: true, supplierId });
+      const result = await assignOrderToSupplier(
+        dependencies.db,
+        orderId,
+        groupId,
+        supplierId,
+        req.body?.expectedGroupRevision,
+        req.body?.expectedOrderPrivateRevision,
+        String(res.locals.supplierAdmin?.uid || "unknown-admin"),
+      );
+      res.json({ success: true, supplierId, ...result });
     } catch (error) {
       sendApiError(res, error, {
         logMessage: "Admin supplier order assignment failed.",
         fallbackMessage: "Order could not be assigned to the supplier",
         context: { orderId, supplierId },
+      });
+    }
+  });
+
+  app.get("/api/supplier-portal/orders/:orderId/fulfilment-groups", requireSupplierHubAdmin, async (req, res) => {
+    const orderId = typeof req.params.orderId === "string" ? req.params.orderId.trim() : "";
+    if (!orderId || orderId.includes("/")) {
+      res.status(400).json({ error: "A valid order is required" });
+      return;
+    }
+    try {
+      const [orderSnapshot, privateSnapshot] = await dependencies.db.getAll(
+        dependencies.db.collection("orders").doc(orderId),
+        dependencies.db.collection(ORDER_PRIVATE_COLLECTION).doc(orderId),
+      );
+      if (!orderSnapshot.exists) throw new ApiError("Order not found", 404);
+      if (!privateSnapshot.exists || !Array.isArray(privateSnapshot.data()?.fulfilmentGroups)) {
+        res.json({
+          success: true,
+          orderId,
+          attributionAvailable: false,
+          message: "Fulfilment attribution unavailable for this legacy order",
+          orderPrivateRevision: null,
+          groups: [],
+        });
+        return;
+      }
+      const privateOrder = parseOrderPrivateFulfilment(orderId, privateSnapshot.data());
+      const profileSnapshots = privateOrder.fulfilmentGroups.length
+        ? await dependencies.db.getAll(...privateOrder.fulfilmentGroups.map((group) => (
+          dependencies.db.collection("supplier_profiles").doc(group.supplierAccountId)
+        )))
+        : [];
+      const profileById = new Map(profileSnapshots.map((snapshot) => [snapshot.id, snapshot.data() || {}]));
+      res.json({
+        success: true,
+        orderId,
+        attributionAvailable: true,
+        orderPrivateRevision: privateOrder.revision,
+        groups: privateOrder.fulfilmentGroups.map((group) => ({
+          groupId: group.groupId,
+          lineIds: group.lineIds,
+          supplierAccountId: group.supplierAccountId,
+          supplierSourceIds: group.supplierSourceIds,
+          supplierName: String(profileById.get(group.supplierAccountId)?.companyName || group.supplierAccountId),
+          status: group.status,
+          revision: group.revision,
+          assignedAt: group.assignedAt,
+          acceptedAt: group.acceptedAt,
+          processingAt: group.processingAt,
+          packedAt: group.packedAt,
+          shippedAt: group.shippedAt,
+          deliveredAt: group.deliveredAt,
+          tracking: group.tracking,
+          declineReason: group.declineReason,
+        })),
+      });
+    } catch (error) {
+      sendApiError(res, error, {
+        logMessage: "Admin fulfilment-group retrieval failed.",
+        fallbackMessage: "Fulfilment groups could not be loaded",
+        context: { orderId },
       });
     }
   });
@@ -238,11 +418,12 @@ export function registerSupplierPortalRoutes(app: express.Express, dependencies:
     const requestCursor = readCursor(req.query.requestsCursor);
     const orderCursor = readCursor(req.query.ordersCursor);
     const notificationCursor = readCursor(req.query.notificationsCursor);
-    const [profileSnapshot, commercialProductSnapshot, legacyProductSnapshot, requestSnapshot, directOrders, sharedOrders, notificationSnapshot, categorySnapshot, brandSnapshot] = await Promise.all([
+    const [profileSnapshot, commercialProductSnapshot, legacyProductSnapshot, requestSnapshot, privateOrders, directOrders, sharedOrders, notificationSnapshot, categorySnapshot, brandSnapshot] = await Promise.all([
       dependencies.db.collection("supplier_profiles").doc(identity.uid).get(),
       applyDocumentCursor(dependencies.db.collection(PRODUCT_PRIVATE_COLLECTION).where("supplierId", "==", identity.uid).orderBy(FieldPath.documentId()).limit(pageSize), productCursor).get(),
       applyDocumentCursor(dependencies.db.collection("products").where("supplierId", "==", identity.uid).orderBy(FieldPath.documentId()).limit(pageSize), productCursor).get(),
       applyDocumentCursor(dependencies.db.collection("supplier_product_requests").where("supplierId", "==", identity.uid).orderBy(FieldPath.documentId()).limit(pageSize), requestCursor).get(),
+      applyDocumentCursor(dependencies.db.collection(ORDER_PRIVATE_COLLECTION).where("assignedSupplierAccountIds", "array-contains", identity.uid).orderBy(FieldPath.documentId()).limit(pageSize), orderCursor).get(),
       applyDocumentCursor(dependencies.db.collection("orders").where("supplierId", "==", identity.uid).orderBy(FieldPath.documentId()).limit(pageSize), orderCursor).get(),
       applyDocumentCursor(dependencies.db.collection("orders").where("supplierIds", "array-contains", identity.uid).orderBy(FieldPath.documentId()).limit(pageSize), orderCursor).get(),
       applyDocumentCursor(dependencies.db.collection("supplier_notifications").where("supplierId", "==", identity.uid).orderBy(FieldPath.documentId()).limit(pageSize), notificationCursor).get(),
@@ -264,9 +445,17 @@ export function registerSupplierPortalRoutes(app: express.Express, dependencies:
     ));
     const requests = requestSnapshot.docs.map((document) => projectRequest(document.id, document.data()))
       .sort((left, right) => String(right.updatedAt).localeCompare(String(left.updatedAt)));
-    const orderDocuments = new Map([...directOrders.docs, ...sharedOrders.docs].map((document) => [document.id, document]));
-    const orders = [...orderDocuments.values()].filter((document) => supplierOwnsOrder(document.data(), identity.uid))
-      .map((document) => projectOrder(document.id, document.data(), identity.uid))
+    const privateByOrderId = new Map(privateOrders.docs.map((document) => [document.id, document.data()]));
+    const routedOrderDocuments = privateOrders.size
+      ? await dependencies.db.getAll(...privateOrders.docs.map((document) => dependencies.db.collection("orders").doc(document.id)))
+      : [];
+    const orderDocuments = new Map([...directOrders.docs, ...sharedOrders.docs, ...routedOrderDocuments]
+      .filter((document) => document.exists)
+      .map((document) => [document.id, document]));
+    const orders = [...orderDocuments.values()]
+      .filter((document) => privateByOrderId.has(document.id) || supplierOwnsOrder(document.data() || {}, identity.uid))
+      .map((document) => projectOrder(document.id, document.data() || {}, identity.uid, privateByOrderId.get(document.id)))
+      .filter((order): order is Record<string, unknown> => Boolean(order))
       .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)));
     const storedNotifications = notificationSnapshot.docs.map((document) => ({
       id: document.id,
@@ -306,12 +495,12 @@ export function registerSupplierPortalRoutes(app: express.Express, dependencies:
         pageSize,
         productsCursor: commercialProductSnapshot.docs.at(-1)?.id || legacyProductSnapshot.docs.at(-1)?.id || null,
         requestsCursor: requestSnapshot.docs.at(-1)?.id || null,
-        ordersCursor: directOrders.docs.at(-1)?.id || sharedOrders.docs.at(-1)?.id || null,
+        ordersCursor: privateOrders.docs.at(-1)?.id || directOrders.docs.at(-1)?.id || sharedOrders.docs.at(-1)?.id || null,
         notificationsCursor: notificationSnapshot.docs.at(-1)?.id || null,
         hasMore: {
           products: commercialProductSnapshot.size === pageSize || legacyProductSnapshot.size === pageSize,
           requests: requestSnapshot.size === pageSize,
-          orders: directOrders.size === pageSize || sharedOrders.size === pageSize,
+          orders: privateOrders.size === pageSize || directOrders.size === pageSize || sharedOrders.size === pageSize,
           notifications: notificationSnapshot.size === pageSize,
         },
       },
@@ -481,7 +670,7 @@ export function registerSupplierPortalRoutes(app: express.Express, dependencies:
         imageUrl: draft.imageUrl,
         source: "Supplier Portal",
         connector: "supplier_portal",
-        sourceId: "supplier-portal",
+        sourceId: SUPPLIER_PORTAL_SOURCE_ID,
         canonicalProductId: queuedProductId,
         productId: queuedProductId,
         changeType: requestData.requestType === "new_product" ? "NEW_PRODUCT" : "DESCRIPTION_CHANGED",
@@ -572,7 +761,7 @@ export function registerSupplierPortalRoutes(app: express.Express, dependencies:
       imageUrl: String(product.imageUrl || ""),
       source: "Supplier Portal",
       connector: "supplier_portal",
-      sourceId: "supplier-portal",
+      sourceId: SUPPLIER_PORTAL_SOURCE_ID,
       canonicalProductId: productId,
       productId,
       changeType: "STOCK_CHANGED",
@@ -610,24 +799,69 @@ export function registerSupplierPortalRoutes(app: express.Express, dependencies:
     res.json({ success: true, status: "pending" });
   }));
 
-  app.post("/api/supplier-portal/orders/:orderId/fulfilment", route(async (req, res, identity) => {
+  app.post("/api/supplier-portal/orders/:orderId/groups/:groupId/fulfilment", route(async (req, res, identity) => {
     assertActive(identity);
     const orderId = cleanId(req.params.orderId, "order ID");
-    const orderReference = dependencies.db.collection("orders").doc(orderId);
-    let updatedStatus = "";
-    await dependencies.db.runTransaction(async (transaction) => {
-      const snapshot = await transaction.get(orderReference);
-      if (!snapshot.exists || !supplierOwnsOrder(snapshot.data() || {}, identity.uid)) throw new ApiError("Assigned order not found", 404);
-      const order = snapshot.data() || {};
-      updatedStatus = assertSupplierOrderTransition(order.supplierFulfilmentStatus, req.body?.status, order.status);
-      transaction.update(orderReference, {
-        supplierFulfilmentStatus: updatedStatus,
-        supplierFulfilmentUpdatedAt: FieldValue.serverTimestamp(),
-        supplierFulfilmentUpdatedBy: identity.uid,
-      });
-    });
-    res.json({ success: true, status: updatedStatus });
+    const groupId = cleanId(req.params.groupId, "fulfilment group ID");
+    const result = await transitionSupplierOrderFulfilment(
+      dependencies.db,
+      orderId,
+      identity.uid,
+      groupId,
+      req.body?.status,
+      req.body?.expectedGroupRevision,
+      req.body?.expectedOrderPrivateRevision,
+      req.body?.reason,
+    );
+    res.json({ success: true, ...result });
   }));
+
+  app.post("/api/supplier-portal/orders/:orderId/groups/:groupId/tracking", route(async (req, res, identity) => {
+    assertActive(identity);
+    const orderId = cleanId(req.params.orderId, "order ID");
+    const groupId = cleanId(req.params.groupId, "fulfilment group ID");
+    const body = assertTrackingBody(req.body);
+    const result = await recordSupplierOrderTracking(
+      dependencies.db,
+      orderId,
+      identity.uid,
+      groupId,
+      body.courierName,
+      body.trackingNumber,
+      body.expectedGroupRevision,
+      body.expectedOrderPrivateRevision,
+    );
+    res.json({ success: true, ...result });
+  }));
+
+  app.post("/api/supplier-portal/orders/:orderId/groups/:groupId/tracking/correct", requireSupplierHubAdmin, async (req, res) => {
+    const orderId = typeof req.params.orderId === "string" ? req.params.orderId.trim() : "";
+    const groupId = typeof req.params.groupId === "string" ? req.params.groupId.trim() : "";
+    if (!orderId || orderId.includes("/") || !groupId || groupId.includes("/")) {
+      res.status(400).json({ error: "A valid order and fulfilment group are required" });
+      return;
+    }
+    try {
+      const body = assertTrackingBody(req.body);
+      const result = await correctAdminOrderTracking(
+        dependencies.db,
+        orderId,
+        groupId,
+        String(res.locals.supplierAdmin?.uid || "unknown-admin"),
+        body.courierName,
+        body.trackingNumber,
+        body.expectedGroupRevision,
+        body.expectedOrderPrivateRevision,
+      );
+      res.json({ success: true, ...result });
+    } catch (error) {
+      sendApiError(res, error, {
+        logMessage: "Admin tracking correction failed.",
+        fallbackMessage: "Tracking could not be corrected",
+        context: { orderId, groupId },
+      });
+    }
+  });
 
   app.post("/api/supplier-portal/notifications/:notificationId/read", route(async (req, res, identity) => {
     const notificationId = cleanId(req.params.notificationId, "notification ID");

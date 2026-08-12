@@ -29,26 +29,6 @@ export interface SupplierComparison {
   }>;
 }
 
-const PRICE_FIELDS = new Set(['Cost Price', 'Market Price']);
-const IMAGE_FIELDS = new Set(['Primary Image', 'Images']);
-
-const syncGroupForLabel = (field: string): NonNullable<SupplierComparison['fieldChanges']>[number]['syncGroup'] => {
-  if (PRICE_FIELDS.has(field)) return 'pricing';
-  if (field === 'Stock') return 'inventory';
-  if (IMAGE_FIELDS.has(field)) return 'media';
-  return 'content';
-};
-
-const groupIsEnabled = (
-  group: NonNullable<SupplierComparison['fieldChanges']>[number]['syncGroup'],
-  settings: SupplierSourceSyncSettings | undefined,
-): boolean => {
-  if (group === 'pricing') return settings?.syncPriceUpdates !== false;
-  if (group === 'inventory') return settings?.syncStockUpdates !== false;
-  if (group === 'media') return settings?.syncImageUpdates !== false;
-  return settings?.syncDescriptionUpdates !== false;
-};
-
 export function getSupplierProductLimit(productLimit: string | undefined, maximum = 250): number {
   const safeMaximum = Math.max(1, Math.floor(maximum));
   if (!productLimit || productLimit === 'All') return safeMaximum;
@@ -84,25 +64,12 @@ export function limitSupplierProducts<T>(products: readonly T[], productLimit: n
 
 export function filterSupplierComparison(
   comparison: SupplierComparison,
-  settings: SupplierSourceSyncSettings | undefined,
+  _settings: SupplierSourceSyncSettings | undefined,
 ): SupplierComparison | null {
+  // Keep legacy flags in the shared UI model without allowing presentation
+  // helpers to imply that a detected supplier change may be discarded.
   if (comparison.status === 'UNCHANGED') return null;
-  if (comparison.status === 'NEW_PRODUCT') {
-    return settings?.syncNewProducts === false ? null : comparison;
-  }
-
-  const allowedFieldChanges = comparison.fieldChanges?.filter((change) => groupIsEnabled(change.syncGroup, settings));
-  const allowedFields = comparison.fieldChanges
-    ? [...new Set((allowedFieldChanges || []).map((change) => change.label))]
-    : comparison.changedFields.filter((field) => groupIsEnabled(syncGroupForLabel(field), settings));
-
-  if (allowedFields.length === 0) return null;
-  const allowedGroups = new Set(allowedFieldChanges?.map((change) => change.syncGroup) || allowedFields.map(syncGroupForLabel));
-  const filteredChanges = allowedFieldChanges && allowedFieldChanges.length > 0 ? { fieldChanges: allowedFieldChanges } : {};
-  if (allowedGroups.has('pricing')) return { status: 'PRICE_CHANGED', changedFields: allowedFields, ...filteredChanges };
-  if (allowedGroups.has('inventory')) return { status: 'STOCK_CHANGED', changedFields: allowedFields, ...filteredChanges };
-  if (allowedGroups.has('media')) return { status: 'IMAGE_CHANGED', changedFields: allowedFields, ...filteredChanges };
-  return { status: 'DESCRIPTION_CHANGED', changedFields: allowedFields, ...filteredChanges };
+  return comparison;
 }
 
 export function getSupplierImageLimit(value: unknown, maximum = 20): number {
@@ -167,6 +134,7 @@ export function isSupplierSourceAutoSyncDue(
     '15 minutes': 15 * 60 * 1000,
     '30 minutes': 30 * 60 * 1000,
     '1 hour': 60 * 60 * 1000,
+    '3 hours': 3 * 60 * 60 * 1000,
     '6 hours': 6 * 60 * 60 * 1000,
     daily: 24 * 60 * 60 * 1000,
   };

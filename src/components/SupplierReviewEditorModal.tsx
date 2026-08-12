@@ -51,7 +51,8 @@ const MAX_MANAGED_MEDIA_IMAGES = 20;
 const OWNERSHIP_LABELS: Record<SupplierReviewEditableField, string> = {
   name: 'Product name', shortDescription: 'Short description', description: 'Description', model: 'Model',
   barcode: 'Barcode', productType: 'Product type', tags: 'Tags', keyFeatures: 'Key features',
-  whatsIncluded: "What's included", slug: 'SEO slug', price: 'Selling price', originalPrice: 'Compare price',
+  whatsIncluded: "What's included", slug: 'SEO slug', metaDescription: 'Meta description', keywords: 'SEO keywords',
+  price: 'Selling price', originalPrice: 'Compare price',
   costPrice: 'Cost price', marketPrice: 'Market price',
   stock: 'Stock', category: 'Category', subcategory: 'Subcategory', brand: 'Brand', specs: 'Specifications',
   isActive: 'Storefront status', isNew: 'New arrival', isFeatured: 'Featured', isBestSeller: 'Best seller',
@@ -334,6 +335,18 @@ export default function SupplierReviewEditorModal({
             </section>
           )}
 
+          {item.approvalConflict && (
+            <section className="order-0 rounded-2xl border border-red-500/25 bg-red-500/10 p-4 text-xs" aria-labelledby="supplier-conflict-context-title">
+              <h4 id="supplier-conflict-context-title" className="flex items-center gap-2 font-black text-red-700 dark:text-red-300"><AlertTriangle className="h-4 w-4" />Conflict requires an explicit administrator decision</h4>
+              <dl className="mt-3 grid gap-2 sm:grid-cols-2">
+                <div className="rounded-xl bg-white/70 p-3 dark:bg-slate-950/40"><dt className="text-[9px] font-black uppercase tracking-wide text-slate-400">Reason</dt><dd className="mt-1 font-semibold text-slate-700 dark:text-slate-200">{String(item.approvalConflict.reason || 'Supplier product conflict').replaceAll('_', ' ')}</dd></div>
+                <div className="rounded-xl bg-white/70 p-3 dark:bg-slate-950/40"><dt className="text-[9px] font-black uppercase tracking-wide text-slate-400">Canonical Zyro product</dt><dd className="mt-1 break-all font-mono font-semibold text-slate-700 dark:text-slate-200">{item.matchedProductId || item.productPayload?.id || 'Not resolved'}</dd></div>
+                {item.approvalConflict.changedFields?.length ? <div className="rounded-xl bg-white/70 p-3 sm:col-span-2 dark:bg-slate-950/40"><dt className="text-[9px] font-black uppercase tracking-wide text-slate-400">Detected signals</dt><dd className="mt-1 font-semibold text-slate-700 dark:text-slate-200">{item.approvalConflict.changedFields.join(', ')}</dd></div> : null}
+              </dl>
+              <p className="mt-3 text-[10px] font-semibold text-red-700/90 dark:text-red-200/90">Review the supplier identity and canonical product before publishing. Product Review never merges or publishes this conflict automatically.</p>
+            </section>
+          )}
+
           {fieldChanges.length > 0 && (
             <section className="order-[70] rounded-2xl border border-blue-500/20 bg-blue-500/5 p-4" aria-labelledby="supplier-proposed-changes-title">
               <h4 id="supplier-proposed-changes-title" className="text-xs font-black uppercase tracking-wider text-blue-700 dark:text-blue-300">What changed</h4>
@@ -555,6 +568,8 @@ export default function SupplierReviewEditorModal({
               <label className="space-y-1.5 text-xs"><span className="font-bold text-slate-600 dark:text-slate-300">Barcode</span><input value={draft.barcode} onChange={(event) => editDraft('barcode', { barcode: event.target.value })} aria-invalid={Boolean(errorFor('barcode'))} className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 dark:border-slate-700 dark:bg-slate-900" /></label>
               <label className="space-y-1.5 text-xs"><span className="font-bold text-slate-600 dark:text-slate-300">Product type</span><input value={draft.productType} onChange={(event) => editDraft('productType', { productType: event.target.value })} aria-invalid={Boolean(errorFor('productType'))} className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 dark:border-slate-700 dark:bg-slate-900" /></label>
               <label className="space-y-1.5 text-xs"><span className="font-bold text-slate-600 dark:text-slate-300">SEO slug</span><input value={draft.slug} onChange={(event) => editDraft('slug', { slug: event.target.value })} aria-invalid={Boolean(errorFor('slug'))} className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 dark:border-slate-700 dark:bg-slate-900" /></label>
+              <label className="space-y-1.5 text-xs sm:col-span-2"><span className="font-bold text-slate-600 dark:text-slate-300">Meta description</span><textarea rows={3} value={draft.metaDescription} onChange={(event) => editDraft('metaDescription', { metaDescription: event.target.value })} aria-invalid={Boolean(errorFor('metaDescription'))} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900" />{errorFor('metaDescription') && <span className="text-[10px] font-semibold text-red-500">{errorFor('metaDescription')}</span>}</label>
+              <label className="space-y-1.5 text-xs sm:col-span-2"><span className="font-bold text-slate-600 dark:text-slate-300">SEO keywords</span><input value={draft.keywords.join(', ')} onChange={(event) => editDraft('keywords', { keywords: commaList(event.target.value) })} aria-invalid={Boolean(errorFor('keywords'))} className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 dark:border-slate-700 dark:bg-slate-900" />{errorFor('keywords') && <span className="text-[10px] font-semibold text-red-500">{errorFor('keywords')}</span>}</label>
               <label className="space-y-1.5 text-xs sm:col-span-2"><span className="font-bold text-slate-600 dark:text-slate-300">Tags</span><input value={draft.tags.join(', ')} onChange={(event) => editDraft('tags', { tags: commaList(event.target.value) })} className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 dark:border-slate-700 dark:bg-slate-900" /></label>
               <label className="space-y-1.5 text-xs"><span className="font-bold text-slate-600 dark:text-slate-300">Key features</span><textarea rows={3} value={draft.keyFeatures.join(', ')} onChange={(event) => editDraft('keyFeatures', { keyFeatures: commaList(event.target.value) })} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900" /></label>
               <label className="space-y-1.5 text-xs"><span className="font-bold text-slate-600 dark:text-slate-300">What's included</span><textarea rows={3} value={draft.whatsIncluded.join(', ')} onChange={(event) => editDraft('whatsIncluded', { whatsIncluded: commaList(event.target.value) })} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900" /></label>

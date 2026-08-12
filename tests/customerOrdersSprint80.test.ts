@@ -127,14 +127,15 @@ test('customer cancellation authorization hides foreign orders and permits pendi
 });
 
 test('trusted cancellation endpoints require Firebase auth, ownership, pending status, and stock restoration logic', () => {
-  for (const source of [functionRoute, localServer]) {
-    assert.match(source, /\/api\/orders\/:orderId\/cancel/);
-    assert.match(source, /verifyIdToken/);
-    assert.match(source, /assertCustomerCanCancelOrder/);
-    assert.match(source, /buildOrderStatusPlan/);
-    assert.match(source, /stockRestorationApplied/);
-    assert.match(source, /statusUpdatedAt/);
-  }
+  assert.match(functionRoute, /\/api\/orders\/:orderId\/cancel/);
+  assert.match(functionRoute, /verifyIdToken/);
+  assert.match(functionRoute, /assertCustomerCanCancelOrder/);
+  assert.match(functionRoute, /buildOrderStatusPlan/);
+  assert.match(functionRoute, /stockRestorationApplied/);
+  assert.match(functionRoute, /statusUpdatedAt/);
+  assert.match(localServer, /\/api\/orders\/:orderId\/cancel/);
+  assert.match(localServer, /requireCustomerAuth/);
+  assert.match(localServer, /updateOrderStatus\(orderId, "cancelled", res\.locals\.customerUid, adminDb\)/);
   assert.match(functionRoute, /updateOrderStatus\(orderId, "cancelled", res\.locals\.customerUid\)/);
   assert.match(functionRoute, /requireAdminAuth/);
 });

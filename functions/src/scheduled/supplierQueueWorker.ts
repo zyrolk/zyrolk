@@ -2,7 +2,6 @@ import { FieldValue, Firestore } from "firebase-admin/firestore";
 import { logger } from "firebase-functions";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { adminDb } from "../api/firebase";
-import { A2Z_SECRETS } from "../config/secrets";
 import {
   getSupplierReviewQueueMetrics,
   processDueSupplierReviewQueueItems,
@@ -204,7 +203,6 @@ export const scheduledSupplierQueueWorker = onSchedule({
   timeZone: "Asia/Colombo",
   timeoutSeconds: 540,
   memory: "1GiB",
-  secrets: A2Z_SECRETS,
 }, async () => {
   await runSupplierQueueWorker();
 });

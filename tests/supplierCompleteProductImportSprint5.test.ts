@@ -164,13 +164,15 @@ test('Sprint 5 sparse updates preserve approved catalog and private supplier met
   });
 });
 
-test('Sprint 5 detects detail changes and routes them through the existing description-update control', () => {
+test('Sprint 5 detects detail changes without allowing the legacy description flag to discard review delivery', () => {
   const product = ProductParser.parseJsonPayload({ sku: 'A2Z-1', title: 'Product', model: 'NEW', options: { Color: ['Black'] }, variants: [{ color: 'Black' }] });
   const changedFields = detectSupplierProductDetailChanges(product, {
     model: 'OLD', options: { Color: ['Blue'] }, variants: [{ color: 'Blue' }], supplierMetadata: {},
   });
   assert.deepEqual(changedFields, ['Model', 'Variants', 'Options']);
-  assert.equal(filterSupplierComparison({ status: 'DESCRIPTION_CHANGED', changedFields }, { syncDescriptionUpdates: false }), null);
+  assert.deepEqual(filterSupplierComparison({ status: 'DESCRIPTION_CHANGED', changedFields }, { syncDescriptionUpdates: false }), {
+    status: 'DESCRIPTION_CHANGED', changedFields,
+  });
   assert.deepEqual(filterSupplierComparison({ status: 'DESCRIPTION_CHANGED', changedFields }, { syncDescriptionUpdates: true }), {
     status: 'DESCRIPTION_CHANGED', changedFields,
   });

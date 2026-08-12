@@ -173,17 +173,17 @@ test('launch validation requires registered brand, matching subcategory and requ
   }), ['Select a sub category for the selected category.']);
 });
 
-test('Sprint L2 Admin UI exposes controlled registries and preserves existing CRUD operations', () => {
+test('Sprint L2 Admin UI preserves controlled registries while product mutations use the trusted API', () => {
   const admin = readFileSync('src/components/AdminDashboard.tsx', 'utf8');
   assert.match(admin, /Brand Registry/);
   assert.match(admin, /Select a registered brand/);
   assert.match(admin, /Specification Template/);
   assert.match(admin, /Sub Categories/);
-  assert.match(admin, /buildProductSavePayload/);
-  assert.match(admin, /splitProductData\(payload as Record<string, unknown>\)/);
-  assert.match(admin, /productBatch\.set\(doc\(db, "products", productId\)/);
-  assert.match(admin, /productBatch\.set\(commercialReference/);
-  assert.match(admin, /productBatch\.delete\(doc\(db, PRODUCT_PRIVATE_COLLECTION, productToDelete\.id\)\)/);
+  assert.match(admin, /createAdminProduct\(/);
+  assert.match(admin, /updateAdminProduct\(/);
+  assert.match(admin, /archiveAdminProduct\(/);
+  assert.doesNotMatch(admin, /productBatch\.set\(doc\(db, "products"/);
+  assert.doesNotMatch(admin, /generateNextSku/);
   assert.doesNotMatch(admin, /rating:\s*editingProduct\s*\?\s*editingProduct\.rating\s*:\s*5/);
   assert.doesNotMatch(admin, /reviewsCount[^\n]*type=["'](?:number|text)["']/);
   assert.match(admin, /grid-cols-1[\s\S]*sm:grid-cols-2/);

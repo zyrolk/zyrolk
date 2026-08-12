@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 import { 
   collection, documentId, getAggregateFromServer, getCountFromServer, getDocs, doc, updateDoc, deleteDoc, getDoc, limit,
-  onSnapshot, orderBy, query, QueryDocumentSnapshot, setDoc, startAfter, sum, where, writeBatch, deleteField
+  onSnapshot, orderBy, query, QueryDocumentSnapshot, setDoc, startAfter, sum, where
 } from 'firebase/firestore';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { onAuthStateChanged } from 'firebase/auth';
@@ -35,11 +35,9 @@ import {
 } from '../services/brands/brandUtils';
 import {
   applySpecificationTemplate,
-  buildProductSavePayload,
   createProductDraft,
   getActiveSubcategories,
   getSelectedCategory,
-  MANUAL_PRODUCT_EDITOR_OWNERSHIP_FIELDS,
   normalizeCategoryBlueprint,
   normalizeProductForEditor,
   normalizeSpecificationTemplate,
@@ -52,15 +50,23 @@ import HeroSliderEditor from './HeroSliderEditor';
 import BusinessConfigurationEditor from './admin/BusinessConfigurationEditor';
 import PaymentConfigurationPanel from './admin/PaymentConfigurationPanel';
 import { normalizeSlideSpeed, validateHeroSlides } from '../services/hero-slider/heroSlider';
-import { sanitizeFirestoreData } from '../services/firestore/sanitizeFirestoreData';
 import { validateProductForSave } from '../services/products/productValidation';
 import {
-  buildCommercialFieldDeletes,
   mergeProductCommercialData,
   PRODUCT_PRIVATE_COLLECTION,
-  splitProductData,
 } from '../services/products/productCommercialData';
-import { changedProductOwnershipFields, claimAdminProductFieldOwnership } from '../services/products/supplierFieldOwnership';
+import {
+  archiveAdminProduct,
+  createAdminProduct,
+  updateAdminProduct,
+} from '../services/admin/adminProductApi';
+import {
+  assignAdminOrderFulfilmentGroup,
+  correctAdminOrderFulfilmentTracking,
+  loadAdminOrderFulfilment,
+  type AdminFulfilmentGroup,
+  type AdminOrderFulfilmentView,
+} from '../services/admin/orderFulfilmentApi';
 import { isHttpUrl, validateStoreSettings } from '../services/settings/storeSettingsValidation';
 import { getAppCheckRequestHeaders } from '../services/security/appCheck';
 import { normalizeWebsiteSettings } from '../services/settings/websiteSettings';
@@ -83,6 +89,21 @@ const ADMIN_PRODUCT_PAGE_SIZE = 120;
 const ADMIN_ORDER_READ_LIMIT = 250;
 const ADMIN_REVIEW_READ_LIMIT = 200;
 const ADMIN_USER_READ_LIMIT = 250;
+const ADMIN_FULFILMENT_NOTIFICATION_LIMIT = 30;
+
+interface AdminFulfilmentNotification {
+  id: string;
+  text: string;
+  time: string;
+}
+
+const formatAdminNotificationTime = (value: unknown): string => {
+  const date = value && typeof value === 'object' && 'toDate' in value
+    && typeof (value as { toDate?: unknown }).toDate === 'function'
+    ? (value as { toDate: () => Date }).toDate()
+    : new Date(typeof value === 'string' || typeof value === 'number' ? value : '');
+  return Number.isFinite(date.getTime()) ? date.toLocaleString() : 'Recent';
+};
 const ADMIN_REGISTRY_READ_LIMIT = 100;
 const ADMIN_CMS_READ_LIMIT = 50;
 const FIRESTORE_IN_QUERY_LIMIT = 30;
@@ -333,45 +354,6 @@ Thank you for contacting us. One of our specialists will reach out to you via ph
   }
 ];
 
-const generateSlug = (name: string): string => {
-  return name
-    .toLowerCase()
-    .trim()
-    .replace(/[^\w\s-]/g, '') // remove non-word chars except spaces and dashes
-    .replace(/[\s_]+/g, '-')   // replace spaces and underscores with dashes
-    .replace(/-+/g, '-')      // remove duplicate dashes
-    .replace(/^-+|-+$/g, '');  // remove leading/trailing dashes
-};
-
-const generateNextSku = (existingProducts: Product[]): string => {
-  let maxNum = 0;
-  existingProducts.forEach(p => {
-    if (p.sku) {
-      const match = p.sku.trim().match(/^ZY-(\d+)$/i);
-      if (match) {
-        const num = parseInt(match[1], 10);
-        if (num > maxNum) {
-          maxNum = num;
-        }
-      }
-    }
-  });
-  const nextNum = maxNum + 1;
-  return `ZY-${String(nextNum).padStart(6, '0')}`;
-};
-
-const generateUniqueSlug = (name: string, existingProducts: Product[], skipId?: string): string => {
-  let baseSlug = generateSlug(name);
-  if (!baseSlug) baseSlug = "product";
-  let slug = baseSlug;
-  let counter = 1;
-  while (existingProducts.some(p => p.id === slug && p.id !== skipId)) {
-    slug = `${baseSlug}-${counter}`;
-    counter++;
-  }
-  return slug;
-};
-
 interface AdminDashboardProps {
   initialTab?: 'stats' | 'aiManager' | 'products' | 'categories' | 'orders' | 'customers' | 'pages' | 'settings' | 'supplierHubFiveStars';
   initialCmsPageId?: string;
@@ -423,6 +405,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
   const [adminSummaryCounts, setAdminSummaryCounts] = useState({ orders: 0, users: 0, products: 0, reviews: 0 });
   const [adminGrossSales, setAdminGrossSales] = useState<number | null>(null);
   const [operationsSummary, setOperationsSummary] = useState<AdminOperationsSummary | null>(null);
+  const [adminFulfilmentNotifications, setAdminFulfilmentNotifications] = useState<AdminFulfilmentNotification[]>([]);
   const [operationsSummaryError, setOperationsSummaryError] = useState('');
   const [loadingOperationsSummary, setLoadingOperationsSummary] = useState(false);
   const [adminDataIssues, setAdminDataIssues] = useState<Record<string, string>>({});
@@ -455,6 +438,9 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
   const [orderSearch, setOrderSearch] = useState("");
   const [orderStatusFilter, setOrderStatusFilter] = useState<string>("all");
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
+  const [selectedOrderFulfilment, setSelectedOrderFulfilment] = useState<AdminOrderFulfilmentView | null>(null);
+  const [loadingOrderFulfilment, setLoadingOrderFulfilment] = useState(false);
+  const [orderFulfilmentError, setOrderFulfilmentError] = useState('');
   const [updatingOrderStatus, setUpdatingOrderStatus] = useState<Record<string, boolean>>({});
   const [orderPage, setOrderPage] = useState<number>(1);
   const ordersPerPage = 8;
@@ -477,6 +463,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
   const [showProductModal, setShowProductModal] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [productToDelete, setProductToDelete] = useState<Product | null>(null);
+  const [manualProductRequestId, setManualProductRequestId] = useState('');
   const productModalRef = useRef<HTMLDivElement>(null);
   const productModalCloseRef = useRef<HTMLButtonElement>(null);
   const productModalPreviousFocusRef = useRef<HTMLElement | null>(null);
@@ -648,6 +635,24 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
   useEffect(() => {
     setOrderPage(1);
   }, [orderSearch, orderStatusFilter]);
+
+  useEffect(() => {
+    if (!selectedOrderId || !authorized || !auth.currentUser) {
+      setSelectedOrderFulfilment(null);
+      setOrderFulfilmentError('');
+      return;
+    }
+    let active = true;
+    setLoadingOrderFulfilment(true);
+    setOrderFulfilmentError('');
+    void loadAdminOrderFulfilment(auth.currentUser, selectedOrderId)
+      .then((result) => { if (active) setSelectedOrderFulfilment(result); })
+      .catch((error: unknown) => {
+        if (active) setOrderFulfilmentError(error instanceof Error ? error.message : 'Fulfilment groups could not be loaded.');
+      })
+      .finally(() => { if (active) setLoadingOrderFulfilment(false); });
+    return () => { active = false; };
+  }, [authorized, selectedOrderId]);
 
   useEffect(() => {
     setCustomerPage(1);
@@ -1060,6 +1065,24 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
       clearAdminDataIssue('reviews');
     }, (error) => reportAdminDataIssue('reviews', 'Live review updates are temporarily unavailable.', error));
 
+    const unsubscribeFulfilmentNotifications = onSnapshot(query(
+      collection(db, 'supplier_notifications'),
+      where('audience', '==', 'admin'),
+      orderBy('createdAt', 'desc'),
+      limit(ADMIN_FULFILMENT_NOTIFICATION_LIMIT),
+    ), (snapshot) => {
+      setAdminFulfilmentNotifications(snapshot.docs.map((document) => ({
+        id: document.id,
+        text: String(document.data().message || 'Supplier fulfilment requires attention.'),
+        time: formatAdminNotificationTime(document.data().createdAt),
+      })));
+      clearAdminDataIssue('fulfilment-notifications');
+    }, (error) => reportAdminDataIssue(
+      'fulfilment-notifications',
+      'Supplier fulfilment alerts are temporarily unavailable.',
+      error,
+    ));
+
     const unsubscribeProducts = onSnapshot(query(
       collection(db, "products"),
       orderBy(documentId()),
@@ -1129,6 +1152,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
       isMounted = false;
       unsubscribeOrders();
       unsubscribeReviews();
+      unsubscribeFulfilmentNotifications();
       unsubscribeProducts();
       unsubscribeProductCommercial();
     };
@@ -1253,7 +1277,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
   // Save Product Handlers
   const handleSaveProduct = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!authorized) return;
+    if (!authorized || savingProductRef.current) return;
 
     // 1. Product Name validation (required)
     if (!newProduct.name?.trim()) {
@@ -1273,102 +1297,39 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
       return;
     }
 
-    // 4. Slug validation (cannot be empty)
-    if (!newProduct.id?.trim()) {
-      showSettingsToast("error", "Product slug / ID cannot be empty.");
-      return;
-    }
-
-    // 5. Prevent duplicate slugs
-    const isDuplicateSlug = products.some(p => p.id.trim().toLowerCase() === newProduct.id?.trim().toLowerCase() && p.id !== editingProduct?.id);
-    if (isDuplicateSlug) {
-      showSettingsToast("error", `Product slug "${newProduct.id}" is already in use by another product.`);
-      return;
-    }
-
-    // 6. Guarantee uniqueness of SKU
-    let finalSku = newProduct.sku;
-    if (!editingProduct) {
-      // If SKU is empty or somehow duplicated, we regenerate to guarantee uniqueness
-      if (!finalSku || products.some(p => p.sku?.trim().toLowerCase() === finalSku?.trim().toLowerCase())) {
-        finalSku = generateNextSku(products);
-      }
-    } else {
-      // On edit, SKU cannot be changed
-      finalSku = editingProduct.sku;
-    }
-
-    if (!finalSku) {
-      showSettingsToast("error", "Product SKU is required.");
-      return;
-    }
-
     const productErrors = validateProductForSave({
-      product: { ...newProduct, sku: finalSku },
+      product: newProduct,
       products,
       categories,
       brands,
       editingProductId: editingProduct?.id,
+      serverAssignedIdentity: !editingProduct,
     });
     if (productErrors.length > 0) {
       showSettingsToast("error", productErrors[0]);
       return;
     }
 
+    const createRequestId = manualProductRequestId || globalThis.crypto.randomUUID();
+    if (!editingProduct && !manualProductRequestId) setManualProductRequestId(createRequestId);
     setSavingProduct(true);
     try {
-      const selectedBrand = brands.find((brand) => brand.id === newProduct.brand);
-      const now = new Date().toISOString();
-      const basePayload = buildProductSavePayload({
-        draft: { ...newProduct, sku: finalSku },
-        storedProduct: editingProduct,
-        selectedBrand,
-        now,
-      });
-      const existingOwnership = (editingProduct as (Product & { supplierFieldOwnership?: unknown }) | null)?.supplierFieldOwnership;
-      const adminOwnedFields = changedProductOwnershipFields(
-        editingProduct ? editingProduct as Product & Record<string, unknown> : undefined,
-        basePayload as Record<string, unknown>,
-        MANUAL_PRODUCT_EDITOR_OWNERSHIP_FIELDS,
-      );
-      const payload = sanitizeFirestoreData({
-        ...basePayload,
-        supplierFieldOwnership: claimAdminProductFieldOwnership(
-          existingOwnership,
-          adminOwnedFields,
-          auth.currentUser?.uid || auth.currentUser?.email || 'admin',
-          now,
-        ),
-      });
-
-      const productId = editingProduct?.id || newProduct.id!;
-      const { publicData, commercialData } = splitProductData(payload as Record<string, unknown>);
-      const productBatch = writeBatch(db);
-      productBatch.set(doc(db, "products", productId), {
-        ...publicData,
-        id: productId,
-        ...buildCommercialFieldDeletes(deleteField()),
-      }, { merge: true });
-      const commercialReference = doc(db, PRODUCT_PRIVATE_COLLECTION, productId);
-      if (Object.keys(commercialData).length > 0) {
-        productBatch.set(commercialReference, {
-          ...commercialData,
-          productId,
-          updatedAt: payload.updatedAt,
-        });
-      } else {
-        productBatch.delete(commercialReference);
-      }
-      await productBatch.commit();
+      const result = editingProduct
+        ? await updateAdminProduct(editingProduct.id, newProduct)
+        : await createAdminProduct(
+          { ...newProduct, id: undefined, sku: undefined },
+          createRequestId,
+        );
 
       if (editingProduct) {
         showSettingsToast("success", `Product "${newProduct.name}" updated successfully.`);
       } else {
-        showSettingsToast("success", `Product "${newProduct.name}" created successfully.`);
+        showSettingsToast("success", `Product "${newProduct.name}" created with SKU ${result.sku}.`);
       }
 
       setShowProductModal(false);
       setEditingProduct(null);
+      setManualProductRequestId('');
       setNewProduct(createProductDraft(categories[0]?.id || '', ''));
       setSpecKey("");
       setSpecVal("");
@@ -1383,21 +1344,21 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
 
   const handleEditProductClick = (prod: Product) => {
     setEditingProduct(prod);
+    setManualProductRequestId('');
     setNewProduct(normalizeProductForEditor(prod, brands, categories));
     setShowProductModal(true);
   };
 
   // Duplicate Product Handler
   const handleDuplicateProduct = (prod: Product) => {
-    const nextSku = generateNextSku(products);
     const duplicatedName = `${prod.name} (Copy)`;
-    const duplicatedId = generateUniqueSlug(duplicatedName, products);
-    
+
     setEditingProduct(null);
+    setManualProductRequestId(globalThis.crypto.randomUUID());
     setNewProduct({
       ...prod,
-      id: duplicatedId,
-      sku: nextSku,
+      id: '',
+      sku: '',
       name: duplicatedName,
       isActive: prod.isActive !== false,
       imageUrls: prod.imageUrls || []
@@ -1408,19 +1369,19 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
   };
 
   const confirmDeleteProduct = async () => {
-    if (!productToDelete || !authorized) return;
+    if (!productToDelete || !authorized || savingProductRef.current) return;
+    setSavingProduct(true);
     try {
       const productName = productToDelete.name;
-      const productBatch = writeBatch(db);
-      productBatch.delete(doc(db, "products", productToDelete.id));
-      productBatch.delete(doc(db, PRODUCT_PRIVATE_COLLECTION, productToDelete.id));
-      await productBatch.commit();
-      showSettingsToast("success", `Product "${productName}" deleted successfully.`);
+      await archiveAdminProduct(productToDelete.id);
+      showSettingsToast("success", `Product "${productName}" archived successfully.`);
       setProductToDelete(null);
       loadData();
     } catch (err: any) {
-      console.error("Delete failed:", err);
-      showSettingsToast("error", err?.message || "Failed to delete product.");
+      console.error("Archive failed:", err);
+      showSettingsToast("error", err?.message || "Failed to archive product.");
+    } finally {
+      setSavingProduct(false);
     }
   };
 
@@ -1628,6 +1589,13 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
     }
   };
 
+  const reloadOrderFulfilment = async (orderId: string): Promise<void> => {
+    if (!auth.currentUser) return;
+    const result = await loadAdminOrderFulfilment(auth.currentUser, orderId);
+    setSelectedOrderFulfilment(result);
+    setOrderFulfilmentError('');
+  };
+
   const handleUpdateOrderStatus = async (orderId: string, newStatus: string) => {
     if (!authorized) return;
     setUpdatingOrderStatus(prev => ({ ...prev, [orderId]: true }));
@@ -1640,10 +1608,17 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
       const response = await fetch(`/api/orders/${encodeURIComponent(orderId)}/status`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}`, ...appCheckHeaders },
-        body: JSON.stringify({ status: newStatus }),
+        body: JSON.stringify({
+          status: newStatus,
+          ...(selectedOrderFulfilment?.orderId === orderId && selectedOrderFulfilment.orderPrivateRevision ? {
+            expectedOrderPrivateRevision: selectedOrderFulfilment.orderPrivateRevision,
+            expectedGroupRevisions: Object.fromEntries(selectedOrderFulfilment.groups.map((group) => [group.groupId, group.revision])),
+          } : {}),
+        }),
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok || !result.success) throw new Error(result.error || 'Failed to update order status.');
+      if (selectedOrderId === orderId) await reloadOrderFulfilment(orderId);
       showSettingsToast("success", `Order #${orderId.substring(0, 8).toUpperCase()} status set to ${newStatus.toUpperCase()}`);
     } catch (err: any) {
       console.error("Order update failed:", err);
@@ -1653,27 +1628,50 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
     }
   };
 
-  const handleAssignOrderSupplier = async (orderId: string, supplierId: string) => {
-    if (!authorized || !supplierId) return;
-    const operationKey = `supplier-${orderId}`;
+  const handleAssignOrderSupplier = async (orderId: string, group: AdminFulfilmentGroup) => {
+    if (!authorized || !auth.currentUser || !selectedOrderFulfilment?.orderPrivateRevision) return;
+    const operationKey = `supplier-${orderId}-${group.groupId}`;
     setUpdatingOrderStatus(prev => ({ ...prev, [operationKey]: true }));
     try {
-      const [token, appCheckHeaders] = await Promise.all([
-        auth.currentUser?.getIdToken(),
-        getAppCheckRequestHeaders(),
-      ]);
-      if (!token) throw new Error('Admin authentication is required. Please sign in again.');
-      const response = await fetch(`/api/supplier-portal/orders/${encodeURIComponent(orderId)}/assign`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...appCheckHeaders },
-        body: JSON.stringify({ supplierId }),
-      });
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok || !result.success) throw new Error(result.error || 'Failed to assign supplier.');
-      showSettingsToast('success', `Order #${orderId.substring(0, 8).toUpperCase()} assigned to supplier.`);
+      await assignAdminOrderFulfilmentGroup(
+        auth.currentUser,
+        orderId,
+        group,
+        selectedOrderFulfilment.orderPrivateRevision,
+      );
+      await reloadOrderFulfilment(orderId);
+      showSettingsToast('success', `Order #${orderId.substring(0, 8).toUpperCase()} fulfilment group assigned.`);
     } catch (error: unknown) {
       console.error('Supplier order assignment failed:', error);
       showSettingsToast('error', error instanceof Error ? error.message : 'Failed to assign supplier.');
+    } finally {
+      setUpdatingOrderStatus(prev => ({ ...prev, [operationKey]: false }));
+    }
+  };
+
+  const handleCorrectOrderTracking = async (orderId: string, group: AdminFulfilmentGroup) => {
+    if (!authorized || !auth.currentUser || !selectedOrderFulfilment?.orderPrivateRevision || !group.tracking) return;
+    const courierName = window.prompt('Correct courier name', group.tracking.courierName)?.trim();
+    if (!courierName) return;
+    const trackingNumber = window.prompt('Correct tracking number', group.tracking.trackingNumber)?.trim();
+    if (!trackingNumber) return;
+    if (!window.confirm('Confirm this tracking correction? The previous value remains in immutable audit history.')) return;
+    const operationKey = `tracking-${orderId}-${group.groupId}`;
+    setUpdatingOrderStatus(prev => ({ ...prev, [operationKey]: true }));
+    try {
+      await correctAdminOrderFulfilmentTracking(
+        auth.currentUser,
+        orderId,
+        group,
+        selectedOrderFulfilment.orderPrivateRevision,
+        courierName,
+        trackingNumber,
+      );
+      await reloadOrderFulfilment(orderId);
+      showSettingsToast('success', `Order #${orderId.substring(0, 8).toUpperCase()} tracking corrected.`);
+    } catch (error: unknown) {
+      console.error('Tracking correction failed:', error);
+      showSettingsToast('error', error instanceof Error ? error.message : 'Tracking could not be corrected.');
     } finally {
       setUpdatingOrderStatus(prev => ({ ...prev, [operationKey]: false }));
     }
@@ -2002,6 +2000,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
 
   // Notifications alerts
   const notificationsList = [
+    ...adminFulfilmentNotifications.map(notification => ({ ...notification, type: 'fulfilment' })),
     ...lowStockProducts.map(p => ({ id: `stock-${p.id}`, type: 'stock', text: `${p.name} is low on stock (${p.stock} left)`, time: 'Immediate action' })),
     ...pendingOrders.slice(0, 5).map(o => ({ id: `order-${o.id}`, type: 'order', text: `New pending order #${o.orderNumber || o.id.substring(0,8)}`, time: o.createdAt ? new Date(o.createdAt).toLocaleDateString() : 'Recent' })),
     ...reviews.filter(r => r.approved === false).map(r => ({ id: `rev-${r.id}`, type: 'review', text: `New unapproved review: "${r.comment}"`, time: 'Needs verification' }))
@@ -2961,12 +2960,12 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                   <button
                   type="button"
                   onClick={() => {
-                    const nextSku = generateNextSku(products);
                     setEditingProduct(null);
+                    setManualProductRequestId(globalThis.crypto.randomUUID());
                     const categoryId = categories.find((category) => category.isActive !== false)?.id || categories[0]?.id || '';
                     const category = getSelectedCategory(categories, categoryId);
                     setNewProduct({
-                      ...createProductDraft(categoryId, nextSku),
+                      ...createProductDraft(categoryId, ''),
                       specs: applySpecificationTemplate({}, category?.specificationTemplate),
                     });
                     setSpecKey("");
@@ -3492,21 +3491,10 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
 
                             {/* Status Changer Controls */}
                             <div className="flex flex-wrap items-center justify-end gap-2.5">
-                              <label className="text-left">
-                                <span className="block text-[9px] text-slate-400 font-bold uppercase tracking-wider">Assigned Supplier</span>
-                                <select
-                                  aria-label="Assign order to supplier"
-                                  value={selectedOrder.supplierId || ''}
-                                  disabled={updatingOrderStatus[`supplier-${selectedOrder.id}`] || ['cancelled', 'delivered'].includes(selectedOrder.status)}
-                                  onChange={(event) => void handleAssignOrderSupplier(selectedOrder.id, event.target.value)}
-                                  className="mt-1 max-w-48 text-xs bg-slate-50 dark:bg-[#111928] border border-slate-200 dark:border-slate-850 rounded-xl px-3.5 py-2 focus:outline-hidden focus:border-blue-500 font-bold cursor-pointer disabled:opacity-50"
-                                >
-                                  <option value="">Unassigned</option>
-                                  {users.filter((account) => account.role === 'supplier').map((account) => (
-                                    <option key={account.id} value={account.id}>{account.displayName || account.email || account.id}</option>
-                                  ))}
-                                </select>
-                              </label>
+                              <div className="text-left">
+                                <span className="block text-[9px] text-slate-400 font-bold uppercase tracking-wider">Supplier routing</span>
+                                <span className="mt-1 block text-[10px] font-semibold text-slate-500">Managed per fulfilment group below</span>
+                              </div>
                               <div className="text-right hidden sm:block">
                                 <span className="block text-[9px] text-slate-400 font-bold uppercase tracking-wider">Modify Order State</span>
                                 <span className="text-[10px] font-medium text-slate-400">Instant database update</span>
@@ -3520,11 +3508,11 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                                 >
                                   <option value="pending">Pending</option>
                                   <option value="confirmed">Confirmed</option>
-                                  <option value="processing">Processing</option>
-                                  <option value="packed">Packed</option>
-                                  <option value="shipped">Shipped</option>
-                                  <option value="delivered">Delivered</option>
-                                  <option value="cancelled">Cancelled</option>
+                                  <option value="processing" disabled={Boolean(selectedOrderFulfilment?.groups.length)}>Processing (supplier-derived)</option>
+                                  <option value="packed" disabled={Boolean(selectedOrderFulfilment?.groups.length)}>Packed (supplier-derived)</option>
+                                  <option value="shipped" disabled={Boolean(selectedOrderFulfilment?.groups.length)}>Shipped (supplier-derived)</option>
+                                  <option value="delivered" disabled={Boolean(selectedOrderFulfilment?.groups.length && !selectedOrderFulfilment.groups.every((group) => group.status === 'shipped'))}>Delivered</option>
+                                  <option value="cancelled" disabled={Boolean(selectedOrderFulfilment?.groups.some((group) => ['accepted', 'processing', 'packed', 'shipped', 'delivered'].includes(group.status)))}>Cancelled</option>
                                 </select>
                                 {updatingOrderStatus[selectedOrder.id] && (
                                   <div className="absolute right-3.5 top-2">
@@ -3534,6 +3522,33 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                               </div>
                             </div>
                           </div>
+
+                          <section aria-labelledby="order-fulfilment-groups-title" className="rounded-2xl border border-slate-200/80 bg-slate-50/70 p-4 dark:border-slate-800 dark:bg-slate-950/30">
+                            <div className="flex items-center justify-between gap-3">
+                              <div>
+                                <h4 id="order-fulfilment-groups-title" className="text-xs font-black uppercase tracking-wider text-slate-700 dark:text-slate-200">Fulfilment groups</h4>
+                                <p className="mt-1 text-[10px] text-slate-500">Routing is fixed to purchase-time supplier attribution.</p>
+                              </div>
+                              {loadingOrderFulfilment && <RefreshCw className="h-4 w-4 animate-spin text-blue-500" aria-label="Loading fulfilment groups" />}
+                            </div>
+                            {orderFulfilmentError && <p role="alert" className="mt-3 rounded-xl bg-red-50 p-3 text-xs font-semibold text-red-700">{orderFulfilmentError}</p>}
+                            {selectedOrderFulfilment && !selectedOrderFulfilment.attributionAvailable && <p className="mt-3 rounded-xl bg-amber-50 p-3 text-xs font-semibold text-amber-800">{selectedOrderFulfilment.message || 'Fulfilment attribution unavailable for this legacy order.'}</p>}
+                            {selectedOrderFulfilment?.attributionAvailable && <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                              {selectedOrderFulfilment.groups.length ? selectedOrderFulfilment.groups.map((group) => {
+                                const operationKey = `supplier-${selectedOrder.id}-${group.groupId}`;
+                                const canAssign = group.status === 'unassigned'
+                                  && !['pending', 'cancelled', 'delivered'].includes(selectedOrder.status)
+                                  && !updatingOrderStatus[operationKey];
+                                return <article key={group.groupId} className="rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-[#111928]">
+                                  <div className="flex items-start justify-between gap-3"><div><p className="text-xs font-black text-slate-800 dark:text-white">{group.supplierName}</p><p className="mt-1 text-[10px] text-slate-500">{group.lineIds.length} line{group.lineIds.length === 1 ? '' : 's'} · {group.supplierSourceIds.length} source{group.supplierSourceIds.length === 1 ? '' : 's'}</p></div><span className="rounded-full bg-slate-100 px-2 py-1 text-[9px] font-black uppercase text-slate-600 dark:bg-slate-800 dark:text-slate-300">{group.status}</span></div>
+                                  <p className="mt-2 break-all text-[9px] text-slate-400">Account: {group.supplierAccountId}</p>
+                                  {group.declineReason && <p className="mt-2 rounded-lg bg-amber-50 p-2 text-[10px] text-amber-800">{group.declineReason}</p>}
+                                  {group.tracking && <div className="mt-3 rounded-lg border border-emerald-100 bg-emerald-50 p-2 text-[10px] text-slate-700"><p className="font-black uppercase text-emerald-700">Shipment tracking</p><p className="mt-1 font-semibold">{group.tracking.courierName}</p><p className="break-all font-mono">{group.tracking.trackingNumber}</p>{group.tracking.trackingUrl && <a href={group.tracking.trackingUrl} target="_blank" rel="noopener noreferrer" className="mt-1 inline-flex font-bold text-blue-700">Track package</a>}{group.status === 'shipped' && <button type="button" onClick={() => void handleCorrectOrderTracking(selectedOrder.id, group)} disabled={Boolean(updatingOrderStatus[`tracking-${selectedOrder.id}-${group.groupId}`])} className="mt-2 block min-h-9 rounded-lg border border-emerald-200 bg-white px-3 font-black text-emerald-800 disabled:opacity-50">Correct tracking</button>}</div>}
+                                  {group.status === 'unassigned' && <button type="button" onClick={() => void handleAssignOrderSupplier(selectedOrder.id, group)} disabled={!canAssign} className="mt-3 min-h-10 rounded-xl bg-blue-600 px-3 text-[10px] font-black text-white disabled:opacity-50">{group.declineReason ? 'Reassign purchase supplier' : 'Assign purchase supplier'}</button>}
+                                </article>;
+                              }) : <p className="text-xs text-slate-500">This order contains internal-fulfilment lines only.</p>}
+                            </div>}
+                          </section>
 
                           {/* Interactive Order Timeline Stepper */}
                           {selectedOrder.status === 'cancelled' ? (
@@ -5049,16 +5064,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                         required
                         placeholder="e.g. Sony WH-1000XM5 Headphones"
                         value={newProduct.name || ""}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          setNewProduct(prev => {
-                            const updated = { ...prev, name: val };
-                            if (!editingProduct) {
-                              updated.id = generateSlug(val);
-                            }
-                            return updated;
-                          });
-                        }}
+                        onChange={(e) => setNewProduct((previous) => ({ ...previous, name: e.target.value }))}
                         className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-hidden focus:border-blue-500 transition-colors text-xs"
                       />
                     </div>
@@ -5321,16 +5327,15 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                     <div className="grid grid-cols-2 gap-3">
                       <div className="space-y-1">
                         <label className="text-slate-400 font-bold flex items-center">
-                          Product Slug / ID <span className="text-red-500 ml-0.5">*</span>
+                          Product ID <span className="text-slate-400 ml-1 font-normal">(Admin Only · Read-Only)</span>
                         </label>
                         <input
                           type="text"
-                          required
-                          placeholder="prod-sony-headphones"
+                          readOnly
+                          placeholder="Auto-assigned securely on save"
                           value={newProduct.id || ""}
-                          onChange={(e) => setNewProduct(prev => ({ ...prev, id: generateSlug(e.target.value) }))}
-                          disabled={!!editingProduct}
-                          className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-hidden disabled:opacity-50 text-xs font-mono"
+                          disabled
+                          className="w-full cursor-not-allowed rounded-xl border border-slate-200 bg-slate-100 px-3 py-2 text-xs font-mono text-slate-500 opacity-75 dark:border-slate-700 dark:bg-slate-900/60"
                         />
                       </div>
 
@@ -5359,7 +5364,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                       ) : (
                         <span className="text-[10px] text-blue-600 dark:text-blue-400 font-semibold flex items-center gap-1 bg-blue-500/10 p-2 rounded-lg border border-blue-500/20 font-mono">
                           <Info className="h-3.5 w-3.5 shrink-0" />
-                          <span>Sequential SKU will be automatically assigned on save.</span>
+                          <span>A secure unique SKU will be assigned by the server on save.</span>
                         </span>
                       )}
                     </div>
@@ -5839,7 +5844,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
         </div>
       )}
 
-      {/* --- DELETE CONFIRMATION MODAL --- */}
+      {/* --- ARCHIVE CONFIRMATION MODAL --- */}
       {productToDelete && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white dark:bg-[#111928] border border-slate-100 dark:border-slate-800 rounded-3xl max-w-sm w-full p-6 text-left shadow-2xl space-y-6">
@@ -5847,14 +5852,14 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
               <AlertCircle className="h-6 w-6" />
             </div>
             <div className="text-center space-y-2">
-              <h3 className="font-bold text-slate-900 dark:text-white">Delete stock product?</h3>
+              <h3 className="font-bold text-slate-900 dark:text-white">Archive stock product?</h3>
               <p className="text-xs text-slate-500 leading-relaxed">
-                Are you sure you want to delete <span className="font-semibold">"{productToDelete.name}"</span>? This will remove the listing and cannot be undone.
+                Archive <span className="font-semibold">"{productToDelete.name}"</span>? It will be removed from the active storefront while its Product ID, SKU, and historical references are retained.
               </p>
             </div>
             <div className="flex gap-3">
               <button onClick={() => setProductToDelete(null)} className="flex-1 py-2.5 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-bold rounded-xl cursor-pointer">Cancel</button>
-              <button onClick={confirmDeleteProduct} className="flex-1 py-2.5 bg-red-600 hover:bg-red-700 text-white text-xs font-bold rounded-xl cursor-pointer">Delete</button>
+              <button onClick={confirmDeleteProduct} disabled={savingProduct} className="flex-1 rounded-xl bg-red-600 py-2.5 text-xs font-bold text-white hover:bg-red-700 disabled:cursor-wait disabled:opacity-60">{savingProduct ? 'Archiving...' : 'Archive'}</button>
             </div>
           </div>
         </div>

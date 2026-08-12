@@ -107,6 +107,16 @@ export interface Order {
     quantity: number;
     imageUrl: string;
   }[];
+  shipments?: Array<{
+    shipmentId: string;
+    productIds: string[];
+    status: 'shipped' | 'delivered';
+    courierName: string;
+    trackingNumber: string;
+    trackingUrl: string | null;
+    shippedAt: string;
+    deliveredAt?: string;
+  }>;
   totalPrice: number;
   itemsSubtotal?: number;
   deliveryFee?: number;
@@ -120,7 +130,8 @@ export interface Order {
   paymentTimeline?: Array<{ id: string; status: string; label: string; source: string; at: string }>;
   supplierId?: string;
   supplierIds?: string[];
-  supplierFulfilmentStatus?: 'pending' | 'processing' | 'packed' | 'shipped';
+  supplierAssignmentActive?: boolean;
+  supplierFulfilmentStatus?: 'pending' | 'processing' | 'packed' | 'shipped' | 'delivered';
   supplierAssignedAt?: string;
   supplierFulfilmentUpdatedAt?: string;
   createdAt: string;

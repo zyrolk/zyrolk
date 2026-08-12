@@ -6,6 +6,19 @@ import { sendApiError } from "../errors";
 import {
   ORDER_STATUSES, assertCustomerCanCancelOrder, buildOrderStatusPlan, requireCurrentProductStock,
 } from "../orders/orderStatusLogic";
+import {
+  assertGroupsAllowOrderCancellation,
+  fulfilmentEventId,
+  ORDER_PRIVATE_COLLECTION,
+  parseOrderPrivateFulfilment,
+  prepareAdminDelivery,
+  projectCustomerShipments,
+} from "../orders/orderFulfilmentGroups";
+import {
+  createCustomerDeliveryEmail,
+  fulfilmentEmailNotificationsEnabled,
+  projectFulfilmentNotificationLines,
+} from "../orders/orderFulfilmentNotifications";
 import { appendPaymentTimeline, createPaymentTimelineEvent } from "../payments/payhereLogic";
 
 const VALID_ORDER_STATUSES = new Set<string>(ORDER_STATUSES);
@@ -25,18 +38,50 @@ const requireCustomerAuth: express.RequestHandler = async (req, res, next) => {
   }
 };
 
-async function updateOrderStatus(orderId: string, newStatus: string, customerUid?: string) {
-  return adminDb.runTransaction(async (transaction) => {
-    const orderRef = adminDb.collection("orders").doc(orderId);
-    const orderSnap = await transaction.get(orderRef);
+export async function updateOrderStatus(
+  orderId: string,
+  newStatus: string,
+  customerUid?: string,
+  db: FirebaseFirestore.Firestore = adminDb,
+  revisionFence?: {
+    adminUid: string;
+    expectedOrderPrivateRevision?: unknown;
+    expectedGroupRevisions?: unknown;
+  },
+) {
+  return db.runTransaction(async (transaction) => {
+    const orderRef = db.collection("orders").doc(orderId);
+    const privateRef = db.collection(ORDER_PRIVATE_COLLECTION).doc(orderId);
+    const settingsRef = db.collection("settings").doc("website");
+    const [orderSnap, privateSnap, settingsSnap] = await transaction.getAll(orderRef, privateRef, settingsRef);
     if (!orderSnap.exists) throw Object.assign(new Error("Order not found"), { statusCode: 404 });
 
     const order = orderSnap.data()!;
     const currentStatus = String(order.status || "pending").toLowerCase();
     if (customerUid) assertCustomerCanCancelOrder(customerUid, order.customerUid, currentStatus);
+    const privateOrder = privateSnap.exists && Array.isArray(privateSnap.data()?.fulfilmentGroups)
+      ? parseOrderPrivateFulfilment(orderId, privateSnap.data())
+      : null;
+    if (newStatus === "cancelled" && privateOrder) assertGroupsAllowOrderCancellation(privateOrder);
+    if (privateOrder?.fulfilmentGroups.length
+      && ["processing", "packed", "shipped"].includes(newStatus)
+      && newStatus !== currentStatus) {
+      throw Object.assign(new Error("Supplier-backed order progress is derived from fulfilment groups"), { statusCode: 409 });
+    }
+    const now = new Date().toISOString();
+    const delivery = privateOrder?.fulfilmentGroups.length && newStatus === "delivered" && newStatus !== currentStatus
+      ? prepareAdminDelivery({
+        privateOrder,
+        expectedOrderPrivateRevision: revisionFence?.expectedOrderPrivateRevision,
+        expectedGroupRevisions: revisionFence?.expectedGroupRevisions,
+        adminUid: revisionFence?.adminUid || "unknown-admin",
+        now,
+      })
+      : null;
 
     const { shouldRestoreStock, quantities } = buildOrderStatusPlan(
       order.status, newStatus, order.stockDeducted, order.stockRestorationApplied, order.items,
+      order.supplierFulfilmentStatus,
     );
     const cancellingUnsettledPayHere = shouldRestoreStock
       && order.paymentMethod === "payhere"
@@ -50,16 +95,54 @@ async function updateOrderStatus(orderId: string, newStatus: string, customerUid
 
     const productStocks: Array<{ ref: FirebaseFirestore.DocumentReference; stock: number; quantity: number }> = [];
     for (const [productId, quantity] of quantities) {
-      const productRef = adminDb.collection("products").doc(productId);
+      const productRef = db.collection("products").doc(productId);
       const productSnap = await transaction.get(productRef);
       const stock = requireCurrentProductStock(productSnap.exists, productSnap.data()?.stock);
       productStocks.push({ ref: productRef, stock, quantity });
     }
 
     productStocks.forEach(({ ref, stock, quantity }) => transaction.update(ref, { stock: stock + quantity }));
+    if (delivery) {
+      transaction.update(privateRef, {
+        fulfilmentGroups: delivery.groups,
+        revision: delivery.nextRevision,
+        updatedAt: now,
+      });
+      delivery.audits.forEach((audit) => transaction.create(
+        db.collection("supplier_operations_audit").doc(audit.id),
+        audit.data,
+      ));
+      const deliveryEventId = fulfilmentEventId(
+        orderId,
+        "all-groups",
+        "customer_delivered",
+        delivery.nextRevision,
+      );
+      createCustomerDeliveryEmail({
+        transaction,
+        db,
+        eventId: deliveryEventId,
+        orderId,
+        orderNumber: String(order.orderNumber || orderId),
+        customerEmail: order.customerEmail,
+        shipmentCount: delivery.groups.filter((group) => group.tracking).length,
+        lines: projectFulfilmentNotificationLines(
+          order,
+          privateOrder!,
+          { lineIds: privateOrder!.lines.map((line) => line.lineId) },
+        ),
+        emailEnabled: fulfilmentEmailNotificationsEnabled(settingsSnap.data()),
+      });
+    }
     transaction.update(orderRef, {
       status: newStatus,
       statusUpdatedAt: FieldValue.serverTimestamp(),
+      ...(delivery ? {
+        supplierFulfilmentStatus: "delivered",
+        supplierFulfilmentUpdatedAt: now,
+        supplierFulfilmentUpdatedBy: revisionFence?.adminUid || "unknown-admin",
+        shipments: projectCustomerShipments(privateOrder!, delivery.groups),
+      } : {}),
       ...(committingOfflineReservation ? {
         stockReservationStatus: "committed",
         stockReservationExpiresAt: FieldValue.delete(),
@@ -81,7 +164,7 @@ async function updateOrderStatus(orderId: string, newStatus: string, customerUid
       } : {}),
     });
     if (cancellingUnsettledPayHere && typeof order.paymentGatewayOrderId === "string") {
-      transaction.set(adminDb.collection("payment_transactions").doc(order.paymentGatewayOrderId), {
+      transaction.set(db.collection("payment_transactions").doc(order.paymentGatewayOrderId), {
         status: "cancelled",
         updatedAt: FieldValue.serverTimestamp(),
       }, { merge: true });
@@ -119,7 +202,11 @@ export function registerOrderRoutes(app: express.Express): void {
     }
 
     try {
-      const result = await updateOrderStatus(orderId, newStatus);
+      const result = await updateOrderStatus(orderId, newStatus, undefined, adminDb, {
+        adminUid: String(res.locals.supplierAdmin?.uid || "unknown-admin"),
+        expectedOrderPrivateRevision: req.body?.expectedOrderPrivateRevision,
+        expectedGroupRevisions: req.body?.expectedGroupRevisions,
+      });
 
       res.json({ success: true, ...result });
     } catch (error: any) {

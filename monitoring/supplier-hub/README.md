@@ -46,3 +46,27 @@ Provisioning remains an explicit deployment operation with the appropriate IAM
 authorization. No supplier identifiers, job identifiers, or queue identifiers
 are extracted as metric labels; those values remain available only as structured
 log context to avoid unbounded metric cardinality.
+
+## Launch verification gate
+
+Repository definitions are not proof that production resources exist. Before
+GO, the release operator must record:
+
+1. All six `supplier_hub_*` log-based metrics exist in the intended project and
+   receive a controlled test sample.
+2. Sync failure, review backlog and queue-latency policies are enabled.
+3. Every policy has a verified notification channel even though the checked-in
+   policy deliberately keeps `notificationChannels` empty.
+4. A test notification reaches the on-call mailbox and has a named response
+   owner.
+5. The application alert engine creates and emails critical
+   `supplier_sync_failure`, `dead_letter_created`, `queue_worker_failure` and
+   `scheduler_failure` alerts through the existing notification outbox.
+6. Admin operational readiness shows delivered, retry-pending and terminally
+   failed email totals from the existing order/Supplier alert outbox.
+
+Cloud policies for order/checkout failures are not defined in this directory.
+Use the existing structured Functions logs and Admin operational readiness for
+the COD launch, and configure Console alerts only for signals that are actually
+emitted. Do not represent a Console-only policy as deployed until it has been
+created and tested.

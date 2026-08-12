@@ -178,7 +178,7 @@ test('Sprint 3 production sync uses connector pages, persistent cursors, and ful
   assert.match(readFileSync('functions/src/api/suppliers/a2z/A2ZConnectorService.ts', 'utf8'), /productsForPage\.length < pageSize/);
   assert.match(http, /public async fetchProductPage/);
   assert.match(http, /requestUrl\.searchParams\.set\("offset", request\.cursor\)/);
-  assert.match(http, /products\.length < pageSize/);
+  assert.match(http, /allProducts\.length < pageSize/);
   assert.match(sync, /runSupplierCatalogTraversal/);
   assert.match(sync, /catalogCursor: checkpoint\.cursor/);
   assert.match(sync, /supplierCatalogTraversalId/);

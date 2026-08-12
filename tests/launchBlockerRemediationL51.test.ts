@@ -52,14 +52,15 @@ test('supplier approval atomically separates public catalogue and private commer
   assert.equal(privateWrite?.data.supplierId, 'supplier-1');
 });
 
-test('Firestore rules block commercial product writes and all public private-data access', () => {
+test('Firestore rules keep product reads compatible while all product writes use the trusted API', () => {
   const rules = readFileSync('firestore.rules', 'utf8');
   assert.match(rules, /function isPublicProductData\(data\)/);
   for (const field of ['costPrice', 'marketPrice', 'supplierItemCode', 'supplierPurchasePrice', 'supplierInternalNotes', 'supplierProfit']) {
     assert.match(rules, new RegExp(`['"]${field}['"]`));
   }
-  assert.match(rules, /match \/products\/\{productId\}[\s\S]*allow create, update: if isAdmin\(\) && isPublicProductData/);
-  assert.match(rules, /match \/product_private\/\{productId\}[\s\S]*allow read, write: if isAdmin\(\)/);
+  assert.match(rules, /match \/products\/\{productId\}[\s\S]*allow read: if true;[\s\S]*allow create, update, delete: if false/);
+  assert.match(rules, /match \/product_private\/\{productId\}[\s\S]*allow read: if isAdmin\(\);[\s\S]*allow create, update, delete: if false/);
+  assert.match(rules, /match \/admin_product_audit\/\{auditId\}[\s\S]*allow read: if isAdmin\(\);[\s\S]*allow create, update, delete: if false/);
   assert.match(rules, /match \/checkout_abuse_limits\/\{docId\}[\s\S]*allow read, write: if false/);
 });
 

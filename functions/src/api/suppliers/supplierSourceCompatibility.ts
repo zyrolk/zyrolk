@@ -50,6 +50,7 @@ export function normalizeSupplierSourceConfig(id: string, data: SupplierSourceDa
   return {
     id,
     supplierId: text(data.supplierId, id),
+    ...(text(data.supplierAccountId) ? { supplierAccountId: text(data.supplierAccountId) } : {}),
     name,
     connectorType: inferConnectorType(data.connectorType ?? data.supplierType ?? data.type, { id, name, websiteUrl }),
     enabled: sourceStatus === "active" && data.enabled !== false,

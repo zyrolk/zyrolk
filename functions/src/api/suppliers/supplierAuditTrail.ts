@@ -158,6 +158,7 @@ export function buildSupplierAuditEvent(input: SupplierAuditEventInput, eventId:
   const sourceId = asString(queueItem.sourceId) || "unknown";
   const supplierId = asString(queueItem.supplierId) || asString(supplierSnapshot.supplierId) || "unknown";
   const productId = asString(queueItem.productId) || asString(asRecord(queueItem.productPayload).id) || "";
+  const zyroSku = asString(queueItem.zyroSku) || asString(input.afterPrivateProduct?.sku) || "";
   const now = input.now ?? Date.now();
   const queueCreatedAt = toMillis(queueItem.queueCreatedAt);
   const processingStartedAt = toMillis(queueItem.processingStartedAt);
@@ -184,6 +185,7 @@ export function buildSupplierAuditEvent(input: SupplierAuditEventInput, eventId:
     sourceId,
     supplierOfferId: asString(queueItem.supplierOfferId) || null,
     productId: productId || null,
+    zyroSku: zyroSku || null,
     action: input.action,
     previousState: input.previousState,
     newState: input.newState,

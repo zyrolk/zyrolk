@@ -244,6 +244,13 @@ export default function CustomerOrdersView({
         {selectedOrder.status === 'cancelled' && <p className="zy-order-cancelled-note"><AlertTriangle aria-hidden="true" />This order was cancelled and will not continue through fulfilment.</p>}
       </section>
 
+      {selectedOrder.shipments.length > 0 && <section className="zy-account-form-card" aria-labelledby="order-shipments-title">
+        <div className="zy-account-panel-heading"><div><small>Shipment progress</small><h3 id="order-shipments-title">Package tracking</h3></div><Truck aria-hidden="true" /></div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {selectedOrder.shipments.map((shipment, index) => <article key={shipment.shipmentId} className="rounded-xl border border-slate-200 p-4"><p className="text-xs font-black uppercase text-emerald-700">{shipment.status === 'delivered' ? 'Delivered' : 'Shipped'}{selectedOrder.shipments.length > 1 ? ` package ${index + 1}` : ''}</p><p className="mt-2 font-semibold">{shipment.courierName}</p><p className="break-all font-mono text-sm">{shipment.trackingNumber}</p><p className="mt-2 text-xs text-slate-500">Shipped {formatAccountDate(shipment.shippedAt)}</p>{shipment.trackingUrl && <a href={shipment.trackingUrl} target="_blank" rel="noopener noreferrer" className="mt-3 inline-flex min-h-10 items-center rounded-xl bg-blue-600 px-4 text-xs font-black text-white">Track package</a>}</article>)}
+        </div>
+      </section>}
+
       {selectedOrder.paymentMethod === 'payhere' && <section className="zy-order-payment-timeline" aria-labelledby="payment-timeline-title">
         <div className="zy-account-panel-heading"><div><small>Verified payment</small><h3 id="payment-timeline-title">Payment status timeline</h3></div><ShieldCheck aria-hidden="true" /></div>
         <ol>{selectedOrder.paymentTimeline.length ? selectedOrder.paymentTimeline.map((event) => <li key={event.id}><span><ShieldCheck aria-hidden="true" /></span><div><strong>{event.label}</strong><small>{event.at ? formatAccountDate(event.at) : 'Recorded securely'} · {event.source}</small></div></li>) : <li><span><Clock3 aria-hidden="true" /></span><div><strong>Payment status is being prepared</strong><small>Check again shortly for a verified update.</small></div></li>}</ol>

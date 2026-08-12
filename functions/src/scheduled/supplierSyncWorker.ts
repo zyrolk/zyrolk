@@ -3,6 +3,7 @@ import { onDocumentCreated } from "firebase-functions/v2/firestore";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { adminDb } from "../api/firebase";
 import {
+  accumulateSupplierSyncAttemptProgress,
   calculateSupplierSyncJobProgress,
   cancelRunningSupplierSyncJob,
   completeSupplierSyncJob,
@@ -10,6 +11,7 @@ import {
   heartbeatSupplierSyncJob,
   leaseSupplierSyncJob,
   listDueSupplierSyncJobIds,
+  normalizeSupplierSyncJobProgress,
   recoverExpiredSupplierSyncJobs,
   SupplierSyncJobProgressInput,
   waitSupplierSyncJob,
@@ -55,20 +57,36 @@ export async function processSupplierSyncJob(jobId: string, now = Date.now()): P
   const lease = await leaseSupplierSyncJob(adminDb, jobId, workerId, now);
   if (!lease) return { jobId, outcome: "skipped" };
 
+  const storedProgress = normalizeSupplierSyncJobProgress(lease.job, now);
   const startedAtMs = Date.parse(String(lease.job.startedAt || lease.job.createdAt || "")) || now;
+  const attemptStartedAtMs = now;
+  const activeElapsedBeforeAttemptMs = storedProgress.activeElapsedMs;
+  const attemptCounterBase = {
+    pagesProcessed: storedProgress.pagesProcessed,
+    productsDiscovered: storedProgress.productsDiscovered,
+    productsObserved: storedProgress.productsObserved,
+    productsScanned: storedProgress.productsScanned,
+    productsQueued: storedProgress.productsQueued,
+    productsFailed: storedProgress.productsFailed,
+  };
   let cancellationRequested = false;
   let leaseLost = false;
   let progress = calculateSupplierSyncJobProgress(startedAtMs, {
+    ...storedProgress,
     phase: "starting",
-    totalSources: lease.job.sourceIds.length,
+    totalSources: storedProgress.totalSources || lease.job.sourceIds.length,
+    activeElapsedMs: activeElapsedBeforeAttemptMs,
   }, now);
-  let heartbeatInFlight: Promise<void> | null = null;
+  let heartbeatQueue: Promise<void> = Promise.resolve();
+  let timerHeartbeatInFlight: Promise<void> | null = null;
 
-  const heartbeat = async (input: SupplierSyncJobProgressInput = {}): Promise<void> => {
+  const persistHeartbeat = async (input: SupplierSyncJobProgressInput = {}): Promise<void> => {
+    const heartbeatAt = Date.now();
     progress = calculateSupplierSyncJobProgress(startedAtMs, {
       ...progress,
       ...input,
-    }, Date.now());
+      activeElapsedMs: activeElapsedBeforeAttemptMs + Math.max(0, heartbeatAt - attemptStartedAtMs),
+    }, heartbeatAt);
     const result = await heartbeatSupplierSyncJob(
       adminDb,
       jobId,
@@ -79,13 +97,25 @@ export async function processSupplierSyncJob(jobId: string, now = Date.now()): P
     cancellationRequested = result.cancellationRequested;
   };
 
+  // Checkpoint reports and the timer share one write chain. This prevents an
+  // older timer transaction from committing after a newer catalogue checkpoint.
+  const heartbeat = (input: SupplierSyncJobProgressInput = {}): Promise<void> => {
+    const operation = heartbeatQueue.then(() => persistHeartbeat(input));
+    heartbeatQueue = operation.then(() => undefined, () => undefined);
+    return operation;
+  };
+
+  const reportAttemptProgress = (input: SupplierSyncJobProgressInput): Promise<void> => {
+    return heartbeat(accumulateSupplierSyncAttemptProgress(attemptCounterBase, input));
+  };
+
   const heartbeatTimer = setInterval(() => {
-    if (heartbeatInFlight) return;
-    heartbeatInFlight = heartbeat().catch((error) => {
+    if (timerHeartbeatInFlight) return;
+    timerHeartbeatInFlight = heartbeat().catch((error) => {
       leaseLost = true;
       logger.error("Supplier sync job heartbeat failed.", { jobId, workerId, error });
     }).finally(() => {
-      heartbeatInFlight = null;
+      timerHeartbeatInFlight = null;
     });
   }, JOB_HEARTBEAT_INTERVAL_MS);
 
@@ -99,16 +129,17 @@ export async function processSupplierSyncJob(jobId: string, now = Date.now()): P
       trigger: lease.job.trigger,
       sourceIds: lease.job.sourceIds,
       batchId: jobId,
+      syncRequest: lease.job.syncRequest,
       control: {
-        reportProgress: heartbeat,
+        reportProgress: reportAttemptProgress,
         shouldCancel: () => cancellationRequested || leaseLost,
       },
     });
-    await heartbeat({
+    await reportAttemptProgress({
       phase: result.status === "Partial" ? "waiting" : "finalizing",
-      completedSources: result.suppliers.length,
       pagesProcessed: result.pagesProcessed,
       productsDiscovered: result.productsDiscovered,
+      productsObserved: result.productsDiscovered,
       productsScanned: result.productsScanned,
       productsQueued: result.productsQueued,
       productsFailed: result.productsFailed,
@@ -177,7 +208,8 @@ export async function processSupplierSyncJob(jobId: string, now = Date.now()): P
     return { jobId, outcome: "failed" };
   } finally {
     clearInterval(heartbeatTimer);
-    if (heartbeatInFlight) await heartbeatInFlight;
+    if (timerHeartbeatInFlight) await timerHeartbeatInFlight;
+    await heartbeatQueue;
   }
 }
 

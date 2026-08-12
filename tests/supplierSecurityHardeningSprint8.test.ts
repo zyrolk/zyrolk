@@ -12,8 +12,9 @@ test('Sprint 8 makes Supplier Hub operational collections browser read-only or f
     'supplier_review_queue', 'supplier_import_queue', 'supplier_pending_changes',
     'supplier_sync_locks', 'supplier_sync_history', 'supplier_approval_audit',
     'supplier_sync_jobs', 'supplier_product_conflicts', 'supplier_product_offers', 'supplier_settings',
+    'zyro_sku_claims', 'admin_product_audit',
   ]) {
-    assert.match(rules, new RegExp(`match /${collection}/\\{docId\\}[\\s\\S]*?allow create, update, delete: if false;`));
+    assert.match(rules, new RegExp(`match /${collection}/\\{[^}]+\\}[\\s\\S]*?allow create, update, delete: if false;`));
   }
   assert.match(rules, /match \/supplierSources\/\{docId\}[\s\S]*?allow read, create, update, delete: if false;/);
   assert.match(rules, /function isSupplierHubAdmin\(\)[\s\S]*?request\.auth\.token\.supplierHubAdmin == true/);
@@ -37,17 +38,17 @@ test('Supplier Hub authorization uses revocation-checked Firebase custom claims 
 test('Supplier source validation accepts Secret Manager references and rejects credential values', () => {
   const source = sanitizeSupplierSource({
     supplierName: 'A2Z', supplierType: 'a2z', websiteUrl: 'https://supplier.example.com',
-    authentication: { mode: 'secret_manager', secretRef: 'A2Z_A2Z_MAIN' },
+    authentication: { mode: 'secret_manager', credentialProfile: 'supplier-a' },
     settings: { autoSync: '1 hour', productLimit: '25' },
   });
-  assert.equal(source.authentication.secretRef, 'A2Z_A2Z_MAIN');
+  assert.equal(source.authentication.credentialProfile, 'supplier-a');
   assert.throws(() => sanitizeSupplierSource({
     supplierName: 'A2Z', supplierType: 'a2z', websiteUrl: 'https://supplier.example.com',
-    password: 'not-allowed', authentication: { mode: 'secret_manager', secretRef: 'A2Z_A2Z_MAIN' },
+    password: 'not-allowed', authentication: { mode: 'secret_manager', credentialProfile: 'supplier-a' },
   }), /must not store credentials/);
   assert.throws(() => sanitizeSupplierSource({
     supplierName: 'A2Z', supplierType: 'a2z', websiteUrl: 'https://supplier.example.com',
-    config: { apiHeaders: 'Authorization: secret' }, authentication: { mode: 'secret_manager', secretRef: 'A2Z_A2Z_MAIN' },
+    config: { apiHeaders: 'Authorization: secret' }, authentication: { mode: 'secret_manager', credentialProfile: 'supplier-a' },
   }), /must not store credentials/);
   assert.deepEqual(sanitizeSupplierHubSettings({
     maxProducts: 5, defaultImageLimit: 5, defaultMarkup: 10, defaultProfitMargin: 15,

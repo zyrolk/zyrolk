@@ -148,13 +148,14 @@ test('Sprint 4 automatic failures use bounded retry attempts instead of retrying
   assert.equal(finalRecord.retryCount, 5);
 });
 
-test('Sprint 4 progress provides bounded completion and ETA', () => {
+test('Sprint 4 progress remains indeterminate without an exact catalog total', () => {
   const start = Date.parse('2026-07-26T08:00:00.000Z');
   const progress = calculateSupplierSyncJobProgress(start, {
     phase: 'catalog_traversal', totalSources: 4, completedSources: 1, pagesProcessed: 10,
   }, start + 60_000);
-  assert.equal(progress.percent, 25);
-  assert.equal(progress.etaMs, 180_000);
+  assert.equal(progress.determination, 'indeterminate');
+  assert.equal(progress.percent, 0);
+  assert.equal(progress.etaMs, null);
   assert.equal(progress.pagesProcessed, 10);
   assert.equal(calculateSupplierSyncJobProgress(start, { phase: 'completed', totalSources: 4, completedSources: 4 }, start + 120_000).percent, 100);
 });

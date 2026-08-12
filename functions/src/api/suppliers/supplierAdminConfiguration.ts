@@ -2,6 +2,15 @@ import { FieldValue, Firestore } from "firebase-admin/firestore";
 import { ApiError } from "../errors";
 import { SupplierHubAdminIdentity } from "../middleware/supplierHubAdminAuth";
 import { normalizeSupplierSourceConfig } from "./supplierSourceCompatibility";
+import { SupplierRegistry } from "./SupplierRegistry";
+import {
+  A2ZCredentialProfileError,
+  A2Z_GLOBAL_CREDENTIAL_PROFILE,
+  isA2ZGlobalCredentialReference,
+  normalizeA2ZCredentialReference,
+} from "./a2zCredentialProfiles";
+import { getA2ZCredentials } from "./credentials";
+import { buildSupplierTargetUrl } from "../security/supplierUrlProtection";
 
 const MAX_ID_LENGTH = 160;
 const MAX_TEXT_LENGTH = 2_000;
@@ -11,6 +20,7 @@ const AUTO_SYNC_VALUES = new Map([
   ["15 minutes", "15 Minutes"],
   ["30 minutes", "30 Minutes"],
   ["1 hour", "1 Hour"],
+  ["3 hours", "3 Hours"],
   ["6 hours", "6 Hours"],
   ["daily", "Daily"],
 ]);
@@ -34,9 +44,25 @@ export function projectSupplierSourceForAdmin(value: Record<string, unknown>, so
   const projectedSettings = projected.settings && typeof projected.settings === "object" && !Array.isArray(projected.settings)
     ? projected.settings as Record<string, unknown>
     : {};
+  const storedAuthentication = projected.authentication && typeof projected.authentication === "object"
+    ? projected.authentication as Record<string, unknown>
+    : {};
+  let projectedAuthentication: Record<string, unknown> = storedAuthentication;
+  if (normalized.connectorType === "a2z") {
+    const storedReference = storedAuthentication.secretRef || storedAuthentication.credentialProfile;
+    try {
+      projectedAuthentication = storedReference
+        ? { mode: "secret_manager", credentialProfile: normalizeA2ZCredentialReference(storedReference) }
+        : { mode: "secret_manager" };
+    } catch {
+      // Do not expose malformed or arbitrary legacy reference strings to the browser.
+      projectedAuthentication = { mode: "secret_manager" };
+    }
+  }
   return {
     ...projected,
     supplierId: normalized.supplierId,
+    supplierAccountId: normalized.supplierAccountId || "",
     supplierName: projected.supplierName || normalized.name,
     name: projected.name || normalized.name,
     connectorType: normalized.connectorType,
@@ -51,6 +77,8 @@ export function projectSupplierSourceForAdmin(value: Record<string, unknown>, so
       autoSync: projectedSettings.autoSync || normalized.syncSchedule || "Off",
     },
     capabilities: projected.capabilities || normalized.capabilities,
+    authentication: projectedAuthentication,
+    syncCapabilities: SupplierRegistry.getConnectorSyncCapabilities(normalized.connectorType),
     websiteUrl: projected.websiteUrl || normalized.websiteUrl,
     endpoint: projected.endpoint || normalized.endpoint,
   };
@@ -160,6 +188,17 @@ const isMigratedLegacyA2ZSource = (value: FirebaseFirestore.DocumentData | undef
   return normalizeSupplierSourceConfig(String(value.supplierId || "legacy-supplier"), value).connectorType === "a2z";
 };
 
+const isExistingGlobalA2ZSource = (value: FirebaseFirestore.DocumentData | undefined): boolean => {
+  if (!value) return false;
+  const normalized = normalizeSupplierSourceConfig(String(value.supplierId || "legacy-supplier"), value);
+  if (normalized.connectorType !== "a2z") return false;
+  const authentication = value.authentication && typeof value.authentication === "object"
+    ? value.authentication as Record<string, unknown>
+    : {};
+  const reference = authentication.secretRef || authentication.credentialProfile;
+  return !reference || isA2ZGlobalCredentialReference(reference) || isMigratedLegacyA2ZSource(value);
+};
+
 const cleanAuthentication = (value: unknown, allowGlobalA2ZSecrets = false): Record<string, string> => {
   if (value === undefined) return {};
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new ApiError("Supplier authentication metadata is invalid.", 400);
@@ -169,13 +208,42 @@ const cleanAuthentication = (value: unknown, allowGlobalA2ZSecrets = false): Rec
   if (!["none", "secret_manager", "basic", "api_key", "oauth2"].includes(mode)) throw new ApiError("authentication.mode is invalid.", 400);
   const secretRef = cleanText(authentication.secretRef, "authentication.secretRef", 300);
   const credentialProfile = cleanText(authentication.credentialProfile, "authentication.credentialProfile", 160);
+  if (secretRef && credentialProfile) {
+    throw new ApiError("Supplier authentication must use exactly one credential profile reference.", 400);
+  }
   if (mode !== "none" && !secretRef && !credentialProfile && !allowGlobalA2ZSecrets) {
     throw new ApiError("A Secret Manager reference or credential profile is required for supplier authentication.", 400);
   }
   return { mode, ...(secretRef ? { secretRef } : {}), ...(credentialProfile ? { credentialProfile } : {}) };
 };
 
+const validateA2ZAuthenticationReference = (
+  authentication: Record<string, string>,
+  allowLegacyGlobalProfile: boolean,
+): Record<string, string> => {
+  if (authentication.mode !== "secret_manager") {
+    throw new ApiError("A2Z supplier authentication must use a server-managed credential profile.", 400);
+  }
+  const reference = authentication.secretRef || authentication.credentialProfile;
+  let normalizedReference: string;
+  try {
+    normalizedReference = normalizeA2ZCredentialReference(reference);
+  } catch (error) {
+    if (error instanceof A2ZCredentialProfileError) throw new ApiError(error.message, 400);
+    throw error;
+  }
+  if (normalizedReference === A2Z_GLOBAL_CREDENTIAL_PROFILE && !allowLegacyGlobalProfile) {
+    throw new ApiError("New A2Z suppliers require an independent server-configured credential profile.", 400);
+  }
+  return normalizedReference === A2Z_GLOBAL_CREDENTIAL_PROFILE
+    ? { mode: "secret_manager", credentialProfile: normalizedReference }
+    : authentication.secretRef
+      ? { mode: "secret_manager", secretRef: normalizedReference }
+      : { mode: "secret_manager", credentialProfile: normalizedReference };
+};
+
 export interface SanitizedSupplierSource {
+  supplierAccountId: string;
   supplierName: string;
   name: string;
   supplierType: string;
@@ -214,6 +282,12 @@ export function sanitizeSupplierSource(
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new ApiError("Supplier source is invalid.", 400);
   assertNoCredentialValues(value);
   const source = value as Record<string, unknown>;
+  const supplierAccountId = cleanText(
+    source.supplierAccountId ?? context.existingSource?.supplierAccountId,
+    "Supplier account ID",
+    MAX_ID_LENGTH,
+  );
+  if (supplierAccountId.includes("/")) throw new ApiError("Supplier account ID is invalid.", 400);
   const supplierName = cleanText(source.supplierName ?? source.name, "Supplier name", 160, true);
   const supplierType = cleanText(source.supplierType ?? source.type ?? source.connectorType, "Supplier connector type", 40, true).toLowerCase();
   if (!SOURCE_TYPES.has(supplierType)) throw new ApiError("Supplier connector type is invalid.", 400);
@@ -228,7 +302,17 @@ export function sanitizeSupplierSource(
   const currency = (cleanText(source.currency, "Supplier currency", 8) || "LKR").toUpperCase();
   const timezone = cleanText(source.timezone, "Supplier timezone", 100) || "Asia/Colombo";
   const syncSchedule = cleanText(source.syncSchedule, "Supplier sync schedule", 50) || "Off";
+  const allowLegacyGlobalA2ZProfile = connectorType === "a2z" && isExistingGlobalA2ZSource(context.existingSource);
+  const authentication = cleanAuthentication(
+    source.authentication,
+    allowLegacyGlobalA2ZProfile,
+  );
+  if (connectorType === "a2z") {
+    const targetUrl = buildSupplierTargetUrl(websiteUrl, endpoint);
+    if (new URL(targetUrl).protocol !== "https:") throw new ApiError("A2Z supplier URLs must use HTTPS.", 400);
+  }
   return {
+    supplierAccountId,
     supplierName,
     name: supplierName,
     supplierType,
@@ -242,10 +326,9 @@ export function sanitizeSupplierSource(
     timezone,
     syncSchedule,
     capabilities: cleanStringList(source.capabilities, "Supplier capabilities", 30, 80),
-    authentication: cleanAuthentication(
-      source.authentication,
-      connectorType === "a2z" && isMigratedLegacyA2ZSource(context.existingSource),
-    ),
+    authentication: connectorType === "a2z"
+      ? validateA2ZAuthenticationReference(authentication, allowLegacyGlobalA2ZProfile)
+      : authentication,
     config: cleanConfig(source.config),
     settings: cleanSettings(source.settings),
   };
@@ -278,6 +361,27 @@ export async function saveSupplierSource(
     const source = sanitizeSupplierSource(value, {
       existingSource: existing.exists ? existing.data() : undefined,
     });
+    if (source.supplierAccountId) {
+      const [supplierAccount, supplierProfile] = await Promise.all([
+        transaction.get(db.collection("users").doc(source.supplierAccountId)),
+        transaction.get(db.collection("supplier_profiles").doc(source.supplierAccountId)),
+      ]);
+      if (!supplierAccount.exists || supplierAccount.data()?.role !== "supplier") {
+        throw new ApiError("Supplier account ID must reference a supplier account.", 400);
+      }
+      if (!supplierProfile.exists
+        || String(supplierProfile.data()?.profileStatus || "pending").trim().toLowerCase() !== "active") {
+        throw new ApiError("Supplier account must have an active Supplier Portal profile.", 409);
+      }
+    }
+    if (source.connectorType === "a2z") {
+      await getA2ZCredentials({
+        credentialReference: source.authentication.secretRef || source.authentication.credentialProfile,
+        targetUrl: buildSupplierTargetUrl(source.websiteUrl, source.endpoint),
+        supplierId: String(existing.data()?.supplierId || sourceId),
+        sourceId,
+      });
+    }
     transaction.set(reference, {
       ...source,
       supplierId: existing.data()?.supplierId || sourceId,

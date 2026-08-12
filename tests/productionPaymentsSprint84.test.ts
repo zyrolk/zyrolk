@@ -170,10 +170,12 @@ test('private payment and notification collections cannot be read or written by 
 
 test('email notifications are escaped, idempotent and future-ready for additional channels', () => {
   const notifications = readFileSync('functions/src/triggers/orderNotifications.ts', 'utf8');
+  const transactionalOutbox = readFileSync('functions/src/api/orders/orderFulfilmentNotifications.ts', 'utf8');
+  const notificationArchitecture = `${notifications}\n${transactionalOutbox}`;
   assert.match(notifications, /escapeHtml/);
   assert.match(notifications, /notificationId\(eventId, orderId, message\.kind, message\.to\)/);
-  assert.match(notifications, /collection\("notification_outbox"\)/);
-  assert.match(notifications, /channel:\s*"email"/);
+  assert.match(notificationArchitecture, /collection\("notification_outbox"\)/);
+  assert.match(notificationArchitecture, /channel:\s*"email"/);
   assert.match(notifications, /order_confirmation/);
   assert.match(notifications, /payment_confirmation/);
   assert.match(notifications, /order_status/);

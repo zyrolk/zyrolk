@@ -30,6 +30,11 @@ import {
   SupplierSyncJobRecord,
 } from "../suppliers/supplierSyncJobs";
 import {
+  parseSupplierSyncRequest,
+  resolveEnabledSupplierSyncSourceIds,
+  validateSupplierSyncSources,
+} from "../suppliers/supplierSyncRequest";
+import {
   listSupplierQueuePage,
   SupplierReviewBusinessFilter,
   processDueSupplierReviewQueueItems,
@@ -63,6 +68,24 @@ const readSourceIds = (value: unknown): string[] => {
     throw new ApiError("sourceIds contains an invalid supplier source ID.", 400);
   }
   return sourceIds;
+};
+
+const readManualSupplierSyncRequest = async (
+  body: unknown,
+  options: { requireExplicitMode?: boolean; fallbackSourceIds?: readonly string[] } = {},
+) => {
+  const input = body && typeof body === "object" && !Array.isArray(body)
+    ? body as Record<string, unknown>
+    : {};
+  const syncRequest = parseSupplierSyncRequest(input, { requireExplicitMode: options.requireExplicitMode });
+  const requestedSourceIds = options.fallbackSourceIds?.length
+    ? readSourceIds([...options.fallbackSourceIds])
+    : readSourceIds(input.sourceIds);
+  const sourceIds = requestedSourceIds.length
+    ? requestedSourceIds
+    : await resolveEnabledSupplierSyncSourceIds(adminDb);
+  await validateSupplierSyncSources(adminDb, sourceIds, syncRequest);
+  return { sourceIds, syncRequest };
 };
 
 const readQueueItemId = (value: unknown): string => {
@@ -103,12 +126,12 @@ const readSupplierQueueView = (value: unknown): "review" | "import" | "changes" 
   return view;
 };
 
-const readSupplierReviewQueueState = (value: unknown): "active" | "review_pending" | "conflict" | "approved" | "rejected" => {
+const readSupplierReviewQueueState = (value: unknown): "active" | "review_pending" | "conflict" | "approved" | "rejected" | "history" => {
   const state = typeof value === "string" ? value.trim().toLowerCase() : "active";
-  if (!(["active", "review_pending", "conflict", "approved", "rejected"] as const).includes(state as never)) {
+  if (!(["active", "review_pending", "conflict", "approved", "rejected", "history"] as const).includes(state as never)) {
     throw new ApiError("Supplier review queue status filter is invalid.", 400);
   }
-  return state as "active" | "review_pending" | "conflict" | "approved" | "rejected";
+  return state as "active" | "review_pending" | "conflict" | "approved" | "rejected" | "history";
 };
 
 const readSupplierReviewBusinessFilter = (value: unknown): SupplierReviewBusinessFilter | undefined => {
@@ -211,6 +234,7 @@ export function registerSupplierRoutes(app: express.Express): void {
           ...(action === "rejected" ? { rejectionReason: req.body?.rejectionReason } : {}),
           ...(action === "deleted" ? { deletionReason: req.body?.deletionReason } : {}),
           ...(action === "approved" ? { resolveConflict: req.body?.resolveConflict === true } : {}),
+          expectedPendingRevision: req.body?.expectedPendingRevision,
         },
       );
       res.status(result.success ? 200 : 409).json(result);
@@ -271,12 +295,15 @@ export function registerSupplierRoutes(app: express.Express): void {
         lastConnectionTestAt: new Date().toISOString(),
       }, { merge: true });
       const startInitialSync = req.body?.startInitialSync !== false;
-      const initialSync = startInitialSync
+      const initialRequest = startInitialSync
+        ? await readManualSupplierSyncRequest({ mode: "full" }, { fallbackSourceIds: [sourceId] })
+        : null;
+      const initialSync = initialRequest
         ? await createSupplierSyncJob(adminDb, {
           trigger: "manual",
-          sourceIds: [sourceId],
+          sourceIds: initialRequest.sourceIds,
+          syncRequest: initialRequest.syncRequest,
           requestedBy: reviewer,
-          dedupeKey: `initial-sync-${sourceId}`,
         })
         : null;
       const savedSource = await adminDb.collection("supplierSources").doc(sourceId).get();
@@ -291,7 +318,7 @@ export function registerSupplierRoutes(app: express.Express): void {
           job: projectSupplierSyncJobForAdmin(initialSync.job),
         } : {}),
       });
-      if (initialSync) startLocalSupplierSyncJob(initialSync.job.id);
+      if (initialSync?.created) startLocalSupplierSyncJob(initialSync.job.id);
     } catch (error: unknown) {
       if (!connectionVerified) {
         await recordSupplierOperationalAlertSafely({
@@ -468,6 +495,7 @@ export function registerSupplierRoutes(app: express.Express): void {
         results.push(await decideSupplierQueueItem(adminDb, queueItemIds[index], "approved", reviewer, {
           draft: parseSupplierApprovalDraft(items[index]?.draft),
           resolveConflict: items[index]?.resolveConflict === true,
+          expectedPendingRevision: items[index]?.expectedPendingRevision,
         }));
       }
       const hasConflict = results.some((result) => !result.success);
@@ -483,12 +511,18 @@ export function registerSupplierRoutes(app: express.Express): void {
 
   app.post("/api/supplier-review-queue/bulk-reject", requireSupplierHubAdmin, async (req, res) => {
     try {
-      const queueItemIds = parseSupplierReviewQueueItemIds(req.body?.queueItemIds);
+      const items = Array.isArray(req.body?.items) ? req.body.items : null;
+      const queueItemIds = parseSupplierReviewQueueItemIds(items
+        ? items.map((item: Record<string, unknown>) => item?.queueItemId)
+        : req.body?.queueItemIds);
       const reviewer = reviewerFor(res);
       const rejectionReason = req.body?.rejectionReason || "Bulk rejected by admin.";
       const results = [];
-      for (const queueItemId of queueItemIds) {
-        results.push(await decideSupplierQueueItem(adminDb, queueItemId, "rejected", reviewer, { rejectionReason }));
+      for (let index = 0; index < queueItemIds.length; index += 1) {
+        results.push(await decideSupplierQueueItem(adminDb, queueItemIds[index], "rejected", reviewer, {
+          rejectionReason,
+          expectedPendingRevision: items?.[index]?.expectedPendingRevision,
+        }));
       }
       res.status(200).json({ success: true, results });
     } catch (error: unknown) {
@@ -563,20 +597,24 @@ export function registerSupplierRoutes(app: express.Express): void {
   app.post("/api/supplier-sync", requireSupplierHubAdmin, async (req, res) => {
     try {
       const reviewer = reviewerFor(res);
+      const manualRequest = await readManualSupplierSyncRequest(req.body, { requireExplicitMode: true });
       const result = await createSupplierSyncJob(adminDb, {
         trigger: "manual",
-        sourceIds: readSourceIds(req.body?.sourceIds),
+        sourceIds: manualRequest.sourceIds,
+        syncRequest: manualRequest.syncRequest,
         requestedBy: reviewer,
       });
       res.status(202).json({
         success: true,
         accepted: true,
+        created: result.created,
+        deduplicated: !result.created,
         jobId: result.job.id,
         batchId: result.job.id,
         status: "Pending",
         job: projectSupplierSyncJobForAdmin(result.job),
       });
-      startLocalSupplierSyncJob(result.job.id);
+      if (result.created) startLocalSupplierSyncJob(result.job.id);
     } catch (error: unknown) {
       sendSupplierFailure(res, error, {
         logMessage: "Supplier synchronization failed.",
@@ -721,20 +759,24 @@ export function registerSupplierRoutes(app: express.Express): void {
       const sourceSnapshot = await sourceReference.get();
       if (!sourceSnapshot.exists) throw new ApiError("Supplier source was not found.", 404);
       if (action === "sync" || action === "retry") {
+        const manualRequest = await readManualSupplierSyncRequest({ mode: "full" }, { fallbackSourceIds: [sourceId] });
         const result = await createSupplierSyncJob(adminDb, {
           trigger: "manual",
-          sourceIds: [sourceId],
+          sourceIds: manualRequest.sourceIds,
+          syncRequest: manualRequest.syncRequest,
           requestedBy: reviewerFor(res),
         });
         res.status(202).json({
           success: true,
           accepted: true,
+          created: result.created,
+          deduplicated: !result.created,
           jobId: result.job.id,
           batchId: result.job.id,
           status: "Pending",
           job: projectSupplierSyncJobForAdmin(result.job),
         });
-        startLocalSupplierSyncJob(result.job.id);
+        if (result.created) startLocalSupplierSyncJob(result.job.id);
         return;
       }
       const enabled = action === "resume";
@@ -846,6 +888,7 @@ export function registerSupplierRoutes(app: express.Express): void {
         results.push(await decideSupplierQueueItem(adminDb, queueItemIds[index], "approved", reviewer, {
           draft: parseSupplierApprovalDraft(items[index]?.draft),
           resolveConflict: true,
+          expectedPendingRevision: items[index]?.expectedPendingRevision,
         }));
       }
       const hasConflict = results.some((result) => !result.success);

@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { onDocumentWritten } from "firebase-functions/v2/firestore";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { adminDb } from "../api/firebase";
@@ -6,6 +5,7 @@ import { appLogger } from "../api/logging";
 import {
   ORDER_EMAIL_MAX_ATTEMPTS, projectOrderEmailDelivery, safeOrderEmailFailure,
 } from "../api/orders/orderNotificationLogic";
+import { enqueueTransactionalEmail, fulfilmentNotificationId } from "../api/orders/orderFulfilmentNotifications";
 
 const ADMIN_EMAIL = "zyrolkofficial@gmail.com";
 
@@ -28,33 +28,14 @@ const validEmail = (value: unknown): string => {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && email !== "guest@zyro.lk" ? email : "";
 };
 const money = (value: unknown): string => `LKR ${(Number(value) || 0).toFixed(2)}`;
-const notificationId = (eventId: string, orderId: string, kind: string, recipient: string): string => createHash("sha256")
-  .update(`${eventId}:${orderId}:${kind}:${recipient}`).digest("hex");
-
+const notificationId = fulfilmentNotificationId;
 async function queueEmail(eventId: string, orderId: string, message: EmailMessage): Promise<void> {
   const id = notificationId(eventId, orderId, message.kind, message.to);
   await adminDb.runTransaction(async (transaction) => {
     const outboxRef = adminDb.collection("notification_outbox").doc(id);
     const existing = await transaction.get(outboxRef);
     if (existing.exists) return;
-    transaction.create(outboxRef, {
-      channel: "email",
-      kind: message.kind,
-      orderId,
-      recipientHash: createHash("sha256").update(message.to).digest("hex"),
-      status: "handed_off",
-      provider: "firebase-trigger-email",
-      attemptCount: 1,
-      maxAttempts: ORDER_EMAIL_MAX_ATTEMPTS,
-      currentMailId: id,
-      createdAt: FieldValue.serverTimestamp(),
-      handedOffAt: FieldValue.serverTimestamp(),
-    });
-    transaction.create(adminDb.collection("mail").doc(id), {
-      to: [message.to],
-      message: { subject: message.subject, text: message.text, html: message.html },
-      metadata: { orderId, kind: message.kind, notificationId: id, deliveryAttempt: 1 },
-    });
+    enqueueTransactionalEmail(transaction, adminDb, eventId, orderId, message);
   });
 }
 
@@ -140,7 +121,14 @@ export const sendOrderNotifications = onDocumentWritten("orders/{orderId}", asyn
     if (admin) messages.push(admin);
   }
 
-  if (orderNotificationsEnabled && before && before.status !== after.status && !paymentBecamePaid) {
+  const hasSafeFulfilmentShipments = Array.isArray(after.shipments) && after.shipments.length > 0;
+  const explicitFulfilmentEmailOwnsStatus = hasSafeFulfilmentShipments
+    && ["shipped", "delivered"].includes(String(after.status || "").toLowerCase());
+  if (orderNotificationsEnabled
+    && before
+    && before.status !== after.status
+    && !paymentBecamePaid
+    && !explicitFulfilmentEmailOwnsStatus) {
     const customer = statusEmail(order);
     if (customer) messages.push(customer);
   }

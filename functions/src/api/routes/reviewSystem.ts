@@ -15,7 +15,24 @@ import { hasAdminAccess } from "../security/adminAuthorization";
 
 interface ReviewSystemDependencies {
   db: Firestore;
-  verifyIdToken: (token: string) => Promise<DecodedIdToken>;
+  verifyIdToken: (token: string, checkRevoked?: boolean) => Promise<DecodedIdToken>;
+}
+
+export async function verifyReviewSystemUser(
+  verifyIdToken: ReviewSystemDependencies["verifyIdToken"],
+  bearerToken: string,
+  access: "customer" | "privileged",
+): Promise<DecodedIdToken> {
+  let token: DecodedIdToken;
+  try {
+    token = await verifyIdToken(bearerToken, access === "privileged");
+  } catch {
+    throw new ReviewSystemError("Invalid or expired authentication token", 401);
+  }
+  if (access === "privileged" && !hasAdminAccess(token)) {
+    throw new ReviewSystemError("Seller access required", 403);
+  }
+  return token;
 }
 
 const rateBuckets = new Map<string, number[]>();
@@ -83,9 +100,11 @@ async function applyVote(
 export function registerReviewSystemRoutes(app: express.Express, dependencies: ReviewSystemDependencies): void {
   const authenticate: express.RequestHandler = async (req, res, next) => {
     try {
-      const token = await dependencies.verifyIdToken(readBearerToken(req));
+      const bearerToken = readBearerToken(req);
+      const token = await verifyReviewSystemUser(dependencies.verifyIdToken, bearerToken, "customer");
       enforceRateLimit(token.uid);
       res.locals.reviewUser = token;
+      res.locals.reviewBearerToken = bearerToken;
       next();
     } catch (error) {
       sendError(res, error instanceof ReviewSystemError ? error : new ReviewSystemError("Invalid or expired authentication token", 401));
@@ -199,7 +218,11 @@ export function registerReviewSystemRoutes(app: express.Express, dependencies: R
       }
 
       if (action === "reply") {
-        if (!hasAdminAccess(user)) throw new ReviewSystemError("Seller access required", 403);
+        await verifyReviewSystemUser(
+          dependencies.verifyIdToken,
+          String(res.locals.reviewBearerToken || readBearerToken(req)),
+          "privileged",
+        );
         const reply = cleanReviewText(req.body?.reply, "Seller reply", 2, 2000);
         const review = await reviewRef.get();
         if (!review.exists) throw new ReviewSystemError("Review not found", 404);
@@ -274,7 +297,11 @@ export function registerReviewSystemRoutes(app: express.Express, dependencies: R
       }
 
       if (action === "reply") {
-        if (!hasAdminAccess(user)) throw new ReviewSystemError("Seller access required", 403);
+        await verifyReviewSystemUser(
+          dependencies.verifyIdToken,
+          String(res.locals.reviewBearerToken || readBearerToken(req)),
+          "privileged",
+        );
         const answer = cleanReviewText(req.body?.answer, "Answer", 2, 2000);
         const question = await questionRef.get();
         if (!question.exists) throw new ReviewSystemError("Question not found", 404);

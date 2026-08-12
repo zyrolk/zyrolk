@@ -3,12 +3,22 @@ import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { adminDb } from "../api/firebase";
 import { appLogger } from "../api/logging";
 import { appendPaymentTimeline, createPaymentTimelineEvent } from "../api/payments/payhereLogic";
-import { collectOrderStockQuantities, requireCurrentProductStock } from "../api/orders/orderStatusLogic";
+import {
+  collectOrderStockQuantities,
+  hasSupplierAssignment,
+  hasSupplierFulfilmentStarted,
+  requireCurrentProductStock,
+} from "../api/orders/orderStatusLogic";
 
-async function expireReservation(orderRef: FirebaseFirestore.DocumentReference): Promise<boolean> {
-  return adminDb.runTransaction(async (transaction) => {
+type ReservationExpiryOutcome = "expired" | "not_eligible" | "blocked_by_fulfilment";
+
+export async function expireReservation(
+  orderRef: FirebaseFirestore.DocumentReference,
+  db: FirebaseFirestore.Firestore = adminDb,
+): Promise<boolean> {
+  const outcome = await db.runTransaction<ReservationExpiryOutcome>(async (transaction) => {
     const orderSnapshot = await transaction.get(orderRef);
-    if (!orderSnapshot.exists) return false;
+    if (!orderSnapshot.exists) return "not_eligible";
     const order = orderSnapshot.data()!;
     const expiresAt = order.stockReservationExpiresAt instanceof Timestamp
       ? order.stockReservationExpiresAt.toMillis()
@@ -16,13 +26,19 @@ async function expireReservation(orderRef: FirebaseFirestore.DocumentReference):
     const isPayHereReservation = order.paymentMethod === "payhere"
       && new Set(["awaiting_payment", "pending"]).has(String(order.paymentStatus || ""));
     const isOfflineConfirmationReservation = order.paymentMethod !== "payhere"
-      && String(order.status || "pending") === "pending"
       && order.paymentStatus === "not_required";
-    if ((!isPayHereReservation && !isOfflineConfirmationReservation) || order.stockReservationStatus !== "reserved" || expiresAt > Date.now()) return false;
+    const isPending = String(order.status || "pending").trim().toLowerCase() === "pending";
+    if ((!isPayHereReservation && !isOfflineConfirmationReservation)
+      || !isPending
+      || order.stockReservationStatus !== "reserved"
+      || expiresAt > Date.now()) return "not_eligible";
+    if (hasSupplierAssignment(order) || hasSupplierFulfilmentStarted(order.supplierFulfilmentStatus)) {
+      return "blocked_by_fulfilment";
+    }
 
     const productUpdates: Array<{ ref: FirebaseFirestore.DocumentReference; stock: number }> = [];
     for (const [productId, quantity] of collectOrderStockQuantities(order.items)) {
-      const productRef = adminDb.collection("products").doc(productId);
+      const productRef = db.collection("products").doc(productId);
       const productSnapshot = await transaction.get(productRef);
       const stock = requireCurrentProductStock(productSnapshot.exists, productSnapshot.data()?.stock);
       productUpdates.push({ ref: productRef, stock: stock + quantity });
@@ -46,13 +62,19 @@ async function expireReservation(orderRef: FirebaseFirestore.DocumentReference):
       updatedAt: FieldValue.serverTimestamp(),
     });
     if (isPayHereReservation && typeof order.paymentGatewayOrderId === "string") {
-      transaction.set(adminDb.collection("payment_transactions").doc(order.paymentGatewayOrderId), {
+      transaction.set(db.collection("payment_transactions").doc(order.paymentGatewayOrderId), {
         status: "expired",
         updatedAt: FieldValue.serverTimestamp(),
       }, { merge: true });
     }
-    return true;
+    return "expired";
   });
+  if (outcome === "blocked_by_fulfilment") {
+    appLogger.error("Reservation expiry was blocked by supplier assignment or fulfilment state.", {
+      orderId: orderRef.id,
+    });
+  }
+  return outcome === "expired";
 }
 
 export const expirePaymentReservations = onSchedule("every 5 minutes", async () => {

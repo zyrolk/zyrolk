@@ -92,7 +92,10 @@ test('all privileged review and admin authorization uses custom claims instead o
   assert.equal(hasSupplierHubAdminAccess({ role: 'admin' }), true);
   assert.equal(hasSupplierHubAdminAccess({ email: 'zyrolkofficial@gmail.com' }), false);
 
-  assert.match(reviewRoute, /hasAdminAccess\(user\)/);
+  assert.match(reviewRoute, /hasAdminAccess\(token\)/);
+  assert.match(reviewRoute, /verifyIdToken\(bearerToken, access === "privileged"\)/);
+  assert.match(functionsApp, /verifyIdToken: \(token, checkRevoked\) => adminAuth\.verifyIdToken\(token, checkRevoked\)/);
+  assert.ok(functionsApp.indexOf('adminAppCheck.verifyToken(token)') < functionsApp.indexOf('registerReviewSystemRoutes(app'));
   assert.doesNotMatch(reviewRoute, /isAdminEmail|ADMIN_EMAIL/);
   assert.match(storefrontApp, /hasAdminAccess\(tokenResult\.claims\)/);
   assert.doesNotMatch(storefrontApp, /isProductionAdminEmail/);

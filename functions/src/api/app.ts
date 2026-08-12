@@ -7,6 +7,7 @@ import { registerOrderRoutes } from "./routes/orders";
 import { registerReviewSystemRoutes } from "./routes/reviewSystem";
 import { registerAdminConfigurationRoutes } from "./routes/adminConfiguration";
 import { registerContactRoutes } from "./routes/contact";
+import { registerAdminProductRoutes } from "./routes/adminProducts";
 import { adminAppCheck, adminAuth, adminDb } from "./firebase";
 import { appLogger } from "./logging";
 import { recordSupplierOperationalAlertSafely } from "./suppliers/supplierOperationalAlerts";
@@ -65,7 +66,7 @@ export function createApiApp(): express.Express {
       return;
     }
 
-    res.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.set("Access-Control-Allow-Methods", "GET, POST, PATCH, OPTIONS");
     res.set("Access-Control-Allow-Headers", "Content-Type, Authorization, Idempotency-Key, X-Firebase-AppCheck");
     res.set("X-Content-Type-Options", "nosniff");
     res.set("X-Frame-Options", "DENY");
@@ -123,12 +124,13 @@ export function createApiApp(): express.Express {
 
   // PayHere routes deliberately remain unregistered during the COD-only launch period.
   registerAdminConfigurationRoutes(app, { auth: adminAuth, db: adminDb });
+  registerAdminProductRoutes(app);
   registerCheckoutRoutes(app);
   registerContactRoutes(app, { db: adminDb });
   registerOrderRoutes(app);
   registerReviewSystemRoutes(app, {
     db: adminDb,
-    verifyIdToken: (token) => adminAuth.verifyIdToken(token),
+    verifyIdToken: (token, checkRevoked) => adminAuth.verifyIdToken(token, checkRevoked),
   });
   registerSupplierRoutes(app);
   registerSupplierPortalRoutes(app, { db: adminDb, auth: adminAuth });

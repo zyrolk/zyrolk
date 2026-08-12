@@ -17,20 +17,26 @@ jobs:
   verify:
     name: Verify
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Use latest LTS Node.js
+      - name: Use production Functions Node.js runtime
         uses: actions/setup-node@v4
         with:
-          node-version: "lts/*"
+          node-version: "20"
           cache: npm
           cache-dependency-path: |
             package-lock.json
             functions/package-lock.json
+
+      - name: Use Firebase Emulator Java runtime
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
 
       - name: Prepare log directory
         run: mkdir -p ci-logs
@@ -66,11 +72,25 @@ jobs:
           set -o pipefail
           npm run build 2>&1 | tee ../ci-logs/functions-build.log
 
+      - name: Validate repository production configuration
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run release:config:check 2>&1 | tee ci-logs/production-config.log
+
       - name: Run automated tests
         shell: bash
         run: |
           set -o pipefail
           npm test 2>&1 | tee ci-logs/root-test.log
+
+      - name: Run required Firebase Emulator tests
+        shell: bash
+        env:
+          FUNCTIONS_EMULATOR_HOST: 127.0.0.1:5001
+        run: |
+          set -o pipefail
+          npx --yes firebase-tools@15.26.0 emulators:exec --project demo-zyro-ci --only auth,firestore,functions,storage "npm run test:emulator-critical" 2>&1 | tee ci-logs/emulator-critical.log
 
       - name: Upload failure logs
         if: failure()

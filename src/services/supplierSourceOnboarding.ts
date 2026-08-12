@@ -1,6 +1,6 @@
 export type SupplierOnboardingType = 'a2z' | 'website' | 'api';
 
-export const A2Z_GLOBAL_SECRET_PROFILE = 'firebase-functions:a2z-global';
+export const A2Z_GLOBAL_SECRET_PROFILE = 'a2z-global';
 
 export interface SupplierOnboardingInput {
   id: string;
@@ -9,6 +9,7 @@ export interface SupplierOnboardingInput {
   description?: string;
   websiteUrl?: string;
   endpoint?: string;
+  credentialProfile?: string;
   apiMethod?: string;
   apiDataPath?: string;
   connectionStatus?: string;
@@ -70,7 +71,10 @@ export function buildSupplierOnboardingSource(input: SupplierOnboardingInput): R
     },
     capabilities: ['catalog.fetch', 'connection.test'],
     authentication: connectorType === 'a2z'
-      ? { mode: 'secret_manager', credentialProfile: A2Z_GLOBAL_SECRET_PROFILE }
+      ? {
+        mode: 'secret_manager',
+        ...(input.credentialProfile?.trim() ? { credentialProfile: input.credentialProfile.trim() } : {}),
+      }
       : { mode: 'none' },
     connectionStatus: input.connectionStatus || 'Not Synced',
     lastSync: null,

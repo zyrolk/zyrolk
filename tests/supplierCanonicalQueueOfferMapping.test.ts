@@ -3,6 +3,7 @@ import test from 'node:test';
 import { buildAutoProductSku, decideSupplierQueueItem } from '../functions/src/api/suppliers/supplierApproval';
 import { buildSupplierProductApprovalBaseline } from '../functions/src/api/suppliers/supplierApprovalConcurrency';
 import {
+  buildSupplierOfferPendingObservation,
   buildSupplierProductOffer,
   reconcileSupplierProductOfferFailover,
 } from '../functions/src/api/suppliers/supplierOfferEngine';
@@ -172,7 +173,7 @@ const canonicalProduct: StoredDocument = {
   visible: true,
 };
 
-const queueItem = (queueState = 'review_pending'): StoredDocument => ({
+const queueItem = (queueState = 'review_pending', pendingRevision = ''): StoredDocument => ({
   status: queueState === 'dead_letter' ? 'Failed' : 'Pending',
   queueState,
   sourceId: 'source-b',
@@ -180,6 +181,7 @@ const queueItem = (queueState = 'review_pending'): StoredDocument => ({
   canonicalProductId: 'stale-product',
   productId: 'stale-product',
   supplierOfferId: offer('source-a', 100).id,
+  ...(pendingRevision ? { supplierOfferPendingRevision: pendingRevision } : {}),
   productName: 'Supplier B product',
   productPayload: {
     id: 'stale-product',
@@ -209,12 +211,21 @@ const queueItem = (queueState = 'review_pending'): StoredDocument => ({
 
 const decisionFixture = (state = 'review_pending') => {
   const sourceA = offer('source-a', 100);
-  const sourceB = offer('source-b', 200);
+  const observedSourceB = offer('source-b', 200);
+  const pendingObservation = buildSupplierOfferPendingObservation({
+    offer: observedSourceB,
+    kind: 'catalog_upsert',
+    reviewQueueItemId: 'review-1',
+    observedAt: '2026-07-26T00:00:00.000Z',
+    traversalId: 'traversal-1',
+  });
+  const sourceB = { ...observedSourceB, stateVersion: 1, pendingObservation };
   return {
     sourceA,
     sourceB,
+    pendingRevision: pendingObservation.revision,
     ...createFakeFirestore({
-      'supplier_review_queue/review-1': queueItem(state),
+      'supplier_review_queue/review-1': queueItem(state, pendingObservation.revision),
       'products/canonical-product': { ...canonicalProduct },
       'product_private/canonical-product': {},
       'categories/category-1': {
@@ -230,10 +241,120 @@ const decisionFixture = (state = 'review_pending') => {
   };
 };
 
-test('review approval resolves the canonical product through the deterministic Sprint 3 offer', async () => {
-  const { db, documents, sourceA, sourceB } = decisionFixture();
+const approvedPendingDecisionFixture = () => {
+  const sourceA = offer('source-a', 100, { reviewStatus: 'approved', stock: 8 });
+  const effectiveSourceB = offer('source-b', 200, {
+    reviewStatus: 'approved',
+    price: 100,
+    cost: 70,
+    stock: 10,
+    availability: 'available',
+  });
+  const observedSourceB = buildSupplierProductOffer({
+    sourceId: effectiveSourceB.sourceId,
+    supplierId: effectiveSourceB.supplierId,
+    supplierProductId: effectiveSourceB.supplierProductId,
+    sku: effectiveSourceB.sku,
+    barcode: effectiveSourceB.barcode,
+    productId: effectiveSourceB.productId,
+    price: 120,
+    cost: 80,
+    stock: 0,
+    availability: 'out_of_stock',
+    priority: effectiveSourceB.priority,
+    health: effectiveSourceB.health,
+    lastSyncAt: '2026-07-27T00:00:00.000Z',
+    reviewStatus: 'approved',
+    catalogPayload: { ...effectiveSourceB.catalogPayload, price: 120, stock: 0 },
+    supplierSnapshot: { ...effectiveSourceB.supplierSnapshot, wholesalePrice: 80, stock: 0 },
+    existing: effectiveSourceB,
+    timestamp: '2026-07-27T00:00:00.000Z',
+  });
+  const pendingObservation = buildSupplierOfferPendingObservation({
+    offer: observedSourceB,
+    kind: 'catalog_upsert',
+    reviewQueueItemId: 'review-1',
+    observedAt: '2026-07-27T00:00:00.000Z',
+    traversalId: 'traversal-2',
+  });
+  const sourceB = { ...effectiveSourceB, stateVersion: 1, pendingObservation };
+  const review = {
+    ...queueItem('review_pending', pendingObservation.revision),
+    supplierOfferId: sourceB.id,
+    comparisonStatus: 'PRICE_CHANGED',
+    productPayload: {
+      ...canonicalProduct,
+      id: 'canonical-product',
+      price: 120,
+      originalPrice: 180,
+      stock: 0,
+    },
+  };
+  return {
+    sourceA,
+    sourceB,
+    pendingObservation,
+    ...createFakeFirestore({
+      'supplier_review_queue/review-1': review,
+      'products/canonical-product': { ...canonicalProduct },
+      'product_private/canonical-product': {},
+      'categories/category-1': {
+        name: 'Category',
+        isActive: true,
+        subcategories: [{ id: 'subcategory-1', name: 'Subcategory', isActive: true }],
+        specificationTemplate: [],
+      },
+      'brands/brand-1': { name: 'Brand', isActive: true },
+      [`supplier_product_offers/${sourceA.id}`]: { ...sourceA },
+      [`supplier_product_offers/${sourceB.id}`]: { ...sourceB },
+    }),
+  };
+};
 
-  const result = await decideSupplierQueueItem(db as never, 'review-1', 'approved', { uid: 'admin-1', email: 'admin@zyro.lk' });
+const approvedPendingRemovalFixture = () => {
+  const fixture = approvedPendingDecisionFixture();
+  const removalObserved = buildSupplierProductOffer({
+    ...fixture.pendingObservation.effective,
+    productId: fixture.sourceB.productId,
+    stock: 0,
+    availability: 'unavailable',
+    reviewStatus: 'approved',
+    existing: fixture.sourceB,
+    timestamp: '2026-07-29T00:00:00.000Z',
+  });
+  const pendingObservation = buildSupplierOfferPendingObservation({
+    offer: removalObserved,
+    kind: 'catalog_removal',
+    reviewQueueItemId: 'review-1',
+    observedAt: '2026-07-29T00:00:00.000Z',
+    traversalId: 'traversal-removal',
+  });
+  fixture.documents.set(`supplier_product_offers/${fixture.sourceB.id}`, {
+    ...fixture.sourceB,
+    stateVersion: 2,
+    pendingObservation,
+  });
+  fixture.documents.set('supplier_review_queue/review-1', {
+    ...fixture.documents.get('supplier_review_queue/review-1'),
+    supplierOfferPendingRevision: pendingObservation.revision,
+    comparisonStatus: 'SUPPLIER_OFFER_REMOVED',
+    reconciliationAction: 'supplier_offer_unavailable',
+    productPayload: {
+      ...canonicalProduct,
+      id: 'canonical-product',
+      stock: 0,
+      isActive: false,
+      active: false,
+      visible: false,
+    },
+  });
+  return { ...fixture, pendingObservation };
+};
+
+test('review approval resolves the canonical product through the deterministic Sprint 3 offer', async () => {
+  const { db, documents, sourceA, sourceB, pendingRevision } = decisionFixture();
+
+  const result = await decideSupplierQueueItem(db as never, 'review-1', 'approved', { uid: 'admin-1', email: 'admin@zyro.lk' }, { expectedPendingRevision: pendingRevision });
 
   assert.equal(result.success, true, JSON.stringify(result));
   assert.equal(result.productId, 'canonical-product');
@@ -245,7 +366,7 @@ test('review approval resolves the canonical product through the deterministic S
 });
 
 test('approval stores edited commercial values and auto SKU only in the private product record', async () => {
-  const { db, documents } = decisionFixture();
+  const { db, documents, pendingRevision } = decisionFixture();
   const result = await decideSupplierQueueItem(db as never, 'review-1', 'approved', { uid: 'admin-1', email: 'admin@zyro.lk' }, {
     draft: {
       productName: 'Canonical product',
@@ -264,6 +385,7 @@ test('approval stores edited commercial values and auto SKU only in the private 
       fieldOwnership: { costPrice: 'admin', marketPrice: 'admin' },
       editedFields: ['costPrice', 'marketPrice'],
     },
+    expectedPendingRevision: pendingRevision,
   });
 
   assert.equal(result.success, true, JSON.stringify(result));
@@ -280,10 +402,173 @@ test('approval stores edited commercial values and auto SKU only in the private 
   assert.equal((privateProduct.supplierFieldOwnership as StoredDocument).costPrice && ((privateProduct.supplierFieldOwnership as StoredDocument).costPrice as StoredDocument).owner, 'admin');
 });
 
+test('approval preserves an existing legacy Zyro SKU without allocating a replacement claim', async () => {
+  const { db, documents, pendingRevision } = decisionFixture();
+  const legacySku = 'ZY-LEGACY-0001';
+  documents.set('product_private/canonical-product', { sku: legacySku, productId: 'canonical-product' });
+
+  const result = await decideSupplierQueueItem(db as never, 'review-1', 'approved', {
+    uid: 'admin-1', email: 'admin@zyro.lk',
+  }, { expectedPendingRevision: pendingRevision });
+
+  assert.equal(result.success, true, JSON.stringify(result));
+  assert.equal(result.sku, legacySku);
+  assert.equal(documents.get('product_private/canonical-product')?.sku, legacySku);
+  assert.equal([...documents.keys()].some((key) => key.startsWith('zyro_sku_claims/')), false);
+});
+
+test('approval atomically promotes the exact pending supplier observation', async () => {
+  const { db, documents, sourceB, pendingObservation } = approvedPendingDecisionFixture();
+
+  const result = await decideSupplierQueueItem(db as never, 'review-1', 'approved', {
+    uid: 'admin-1', email: 'admin@zyro.lk',
+  }, { expectedPendingRevision: pendingObservation.revision });
+
+  assert.equal(result.success, true);
+  const promoted = documents.get(`supplier_product_offers/${sourceB.id}`) || {};
+  assert.equal(promoted.price, 120);
+  assert.equal(promoted.stock, 0);
+  assert.equal(promoted.reviewStatus, 'approved');
+  assert.equal(promoted.pendingObservation, null);
+  assert.equal(documents.get('products/canonical-product')?.price, canonicalProduct.price, 'legacy admin-owned price remains protected');
+});
+
+test('rejection clears only pending observation and preserves approved effective offer state', async () => {
+  const { db, documents, sourceB, pendingObservation } = approvedPendingDecisionFixture();
+
+  const result = await decideSupplierQueueItem(db as never, 'review-1', 'rejected', {
+    uid: 'admin-1', email: 'admin@zyro.lk',
+  }, { rejectionReason: 'Keep current offer.', expectedPendingRevision: pendingObservation.revision });
+
+  assert.equal(result.success, true);
+  const preserved = documents.get(`supplier_product_offers/${sourceB.id}`) || {};
+  assert.equal(preserved.price, 100);
+  assert.equal(preserved.stock, 10);
+  assert.equal(preserved.reviewStatus, 'approved');
+  assert.equal(preserved.pendingObservation, null);
+  assert.equal(documents.get('products/canonical-product')?.price, canonicalProduct.price);
+});
+
+test('approved removal promotes unavailability only through the controlled approval transaction', async () => {
+  const { db, documents, sourceA, sourceB, pendingObservation } = approvedPendingRemovalFixture();
+
+  const result = await decideSupplierQueueItem(db as never, 'review-1', 'approved', {
+    uid: 'admin-1', email: 'admin@zyro.lk',
+  }, { expectedPendingRevision: pendingObservation.revision });
+
+  assert.equal(result.success, true);
+  const removed = documents.get(`supplier_product_offers/${sourceB.id}`) || {};
+  assert.equal(removed.stock, 0);
+  assert.equal(removed.availability, 'unavailable');
+  assert.equal(removed.pendingObservation, null);
+  assert.equal((documents.get('product_private/canonical-product')?.supplierOfferSelection as StoredDocument).activeOfferId, sourceA.id);
+});
+
+test('approved removal without a replacement cannot be undone by legacy admin-ownership defaults', async () => {
+  const { db, documents, sourceA, pendingObservation } = approvedPendingRemovalFixture();
+  documents.delete(`supplier_product_offers/${sourceA.id}`);
+
+  const result = await decideSupplierQueueItem(db as never, 'review-1', 'approved', {
+    uid: 'admin-1', email: 'admin@zyro.lk',
+  }, { expectedPendingRevision: pendingObservation.revision });
+
+  assert.equal(result.success, true);
+  const product = documents.get('products/canonical-product') || {};
+  assert.equal(product.stock, 0);
+  assert.equal(product.availability, 'unavailable');
+  assert.equal(product.isActive, false);
+  assert.equal(product.active, false);
+  assert.equal(product.visible, false);
+});
+
+test('rejected removal preserves effective availability and live product state', async () => {
+  const { db, documents, sourceB, pendingObservation } = approvedPendingRemovalFixture();
+
+  await decideSupplierQueueItem(db as never, 'review-1', 'rejected', {
+    uid: 'admin-1', email: 'admin@zyro.lk',
+  }, { rejectionReason: 'Supplier removal not accepted.', expectedPendingRevision: pendingObservation.revision });
+
+  const preserved = documents.get(`supplier_product_offers/${sourceB.id}`) || {};
+  assert.equal(preserved.stock, 10);
+  assert.equal(preserved.availability, 'in_stock');
+  assert.equal(preserved.reviewStatus, 'approved');
+  assert.equal(documents.get('products/canonical-product')?.stock, canonicalProduct.stock);
+});
+
+test('stale approval and rejection cannot decide a newer pending observation', async (t) => {
+  for (const action of ['approved', 'rejected'] as const) {
+    await t.test(action, async () => {
+      const fixture = approvedPendingDecisionFixture();
+      const newerObserved = buildSupplierProductOffer({
+        ...fixture.sourceB.pendingObservation!.effective,
+        productId: fixture.sourceB.productId,
+        price: 130,
+        stock: 5,
+        reviewStatus: 'approved',
+        existing: fixture.sourceB,
+        timestamp: '2026-07-28T00:00:00.000Z',
+      });
+      const newerPending = buildSupplierOfferPendingObservation({
+        offer: newerObserved,
+        kind: 'catalog_upsert',
+        reviewQueueItemId: 'review-1',
+        observedAt: '2026-07-28T00:00:00.000Z',
+        traversalId: 'traversal-3',
+      });
+      fixture.documents.set(`supplier_product_offers/${fixture.sourceB.id}`, {
+        ...fixture.sourceB,
+        stateVersion: 2,
+        pendingObservation: newerPending,
+      });
+
+      await assert.rejects(decideSupplierQueueItem(
+        fixture.db as never,
+        'review-1',
+        action,
+        { uid: 'admin-1', email: 'admin@zyro.lk' },
+        action === 'approved'
+          ? { expectedPendingRevision: fixture.pendingObservation.revision }
+          : { rejectionReason: 'Reject old observation.', expectedPendingRevision: fixture.pendingObservation.revision },
+      ), /observation changed|reload Product Review/i);
+      assert.equal((fixture.documents.get(`supplier_product_offers/${fixture.sourceB.id}`)?.pendingObservation as StoredDocument).revision, newerPending.revision);
+    });
+  }
+});
+
+test('ambiguous legacy pending updates fail closed instead of guessing an approved baseline', async () => {
+  const fixture = approvedPendingDecisionFixture();
+  fixture.documents.set(`supplier_product_offers/${fixture.sourceB.id}`, {
+    ...fixture.sourceB,
+    reviewStatus: 'review_pending',
+    pendingObservation: null,
+    stateVersion: 0,
+  });
+  const review = { ...(fixture.documents.get('supplier_review_queue/review-1') || {}) };
+  delete review.supplierOfferPendingRevision;
+  fixture.documents.set('supplier_review_queue/review-1', review);
+
+  await assert.rejects(decideSupplierQueueItem(
+    fixture.db as never,
+    'review-1',
+    'approved',
+    { uid: 'admin-1', email: 'admin@zyro.lk' },
+  ), /no provable approved baseline/i);
+});
+
 for (const action of ['rejected', 'deleted'] as const) {
   test(`review ${action} updates only the deterministic supplier offer`, async () => {
-    const { db, documents, sourceA, sourceB } = decisionFixture();
-    const options = action === 'rejected' ? { rejectionReason: 'Not suitable.' } : { deletionReason: 'Remove queue item.' };
+    const { db, documents, sourceA, sourceB, pendingRevision } = decisionFixture();
+    if (action === 'deleted') {
+      documents.set('supplier_review_queue/review-1', {
+        ...(documents.get('supplier_review_queue/review-1') || {}),
+        queueState: 'conflict',
+        status: 'CONFLICT',
+        approvalConflict: { reason: 'Duplicate supplier identity requires an administrator decision.' },
+      });
+    }
+    const options = action === 'rejected'
+      ? { rejectionReason: 'Not suitable.', expectedPendingRevision: pendingRevision }
+      : { deletionReason: 'Remove queue item.', expectedPendingRevision: pendingRevision };
 
     const result = await decideSupplierQueueItem(db as never, 'review-1', action, { uid: 'admin-1', email: 'admin@zyro.lk' }, options);
 
@@ -294,6 +579,20 @@ for (const action of ['rejected', 'deleted'] as const) {
     assert.equal(documents.get('supplier_review_queue/review-1')?.supplierOfferId, sourceB.id);
   });
 }
+
+test('ordinary ready reviews cannot be dismissed through the trusted API', async () => {
+  const { db, documents, pendingRevision } = decisionFixture();
+
+  await assert.rejects(decideSupplierQueueItem(
+    db as never,
+    'review-1',
+    'deleted',
+    { uid: 'admin-1', email: 'admin@zyro.lk' },
+    { deletionReason: 'Attempt to bypass a normal review.', expectedPendingRevision: pendingRevision },
+  ), /Only conflicts or reviews needing attention can be dismissed/i);
+
+  assert.equal(documents.get('supplier_review_queue/review-1')?.queueState, 'review_pending');
+});
 
 test('dead-letter retry repairs stale queue identity before returning the item to workers', async () => {
   const { db, documents, sourceB } = decisionFixture('dead_letter');
@@ -326,6 +625,32 @@ test('multi-supplier failover continues to select only an eligible approved offe
   assert.equal(result.activeOfferId, sourceA.id);
   assert.equal((documents.get('product_private/canonical-product')?.supplierOfferSelection as StoredDocument).activeOfferId, sourceA.id);
   assert.equal(documents.get('product_private/canonical-product')?.supplierSourceId, 'source-a');
+  const audit = [...documents.entries()].find(([key]) => key.startsWith('supplier_operations_audit/'))?.[1];
+  const publicCommerce = ((audit?.before as StoredDocument)?.publicCommerce || {}) as StoredDocument;
+  assert.equal(Object.values(publicCommerce).includes(undefined), false);
+  assert.equal(Object.hasOwn(publicCommerce, 'discount'), false);
+});
+
+test('ambiguous selected legacy offer state cannot mutate the public product through failover', async (t) => {
+  for (const reviewStatus of ['review_pending', 'rejected'] as const) await t.test(reviewStatus, async () => {
+    const legacySelected = offer('source-b', 200, { reviewStatus, stock: 0, availability: 'out_of_stock' });
+    const { db, documents } = createFakeFirestore({
+      'products/canonical-product': { ...canonicalProduct, price: 450, stock: 8, visible: true },
+      'product_private/canonical-product': {
+        supplierOfferSelection: { activeOfferId: legacySelected.id, lockedOfferId: null, failoverEnabled: true },
+        supplierMetadata: { activeOfferId: legacySelected.id, inventoryLevel: 10 },
+      },
+      [`supplier_product_offers/${legacySelected.id}`]: { ...legacySelected },
+    });
+
+    const result = await reconcileSupplierProductOfferFailover(db as never, 'canonical-product', 'legacy ambiguous state');
+
+    assert.equal(result.changed, false);
+    assert.equal(result.activeOfferId, legacySelected.id);
+    assert.equal(documents.get('products/canonical-product')?.price, 450);
+    assert.equal(documents.get('products/canonical-product')?.stock, 8);
+    assert.equal(documents.get('products/canonical-product')?.visible, true);
+  });
 });
 
 test('queue identity candidate derives the same deterministic offer identity used by synchronization', async () => {

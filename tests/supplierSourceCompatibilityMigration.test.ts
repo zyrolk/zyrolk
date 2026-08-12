@@ -67,7 +67,10 @@ test("migrated legacy A2Z sources may retain global Secret Manager authenticatio
   }, { existingSource: migrated });
 
   assert.equal(sanitized.connectorType, "a2z");
-  assert.deepEqual(sanitized.authentication, { mode: "secret_manager" });
+  assert.deepEqual(sanitized.authentication, {
+    mode: "secret_manager",
+    credentialProfile: "a2z-global",
+  });
 });
 
 test("new A2Z sources still require a Secret Manager reference or credential profile", () => {
@@ -82,18 +85,18 @@ test("new A2Z sources still require a Secret Manager reference or credential pro
   }), /Secret Manager reference or credential profile is required/);
 });
 
-test("ordinary per-source Secret Manager references remain valid", () => {
+test("ordinary per-source credential profile references remain valid", () => {
   const sanitized = sanitizeSupplierSource({
     supplierName: "Referenced A2Z Supplier",
     supplierType: "a2z",
     connectorType: "a2z",
     websiteUrl: "https://supplier.example.com",
-    authentication: { mode: "secret_manager", secretRef: "A2Z_REFERENCED_SUPPLIER" },
+    authentication: { mode: "secret_manager", credentialProfile: "supplier-referenced" },
   });
 
   assert.deepEqual(sanitized.authentication, {
     mode: "secret_manager",
-    secretRef: "A2Z_REFERENCED_SUPPLIER",
+    credentialProfile: "supplier-referenced",
   });
 });
 

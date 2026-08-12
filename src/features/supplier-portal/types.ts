@@ -71,7 +71,18 @@ export interface SupplierPortalOrder {
   items: Array<{ productId: string; name: string; price: number; quantity: number; imageUrl: string }>;
   supplierTotal: number;
   status: string;
-  supplierFulfilmentStatus: 'pending' | 'processing' | 'packed' | 'shipped';
+  supplierFulfilmentStatus: 'pending' | 'assigned' | 'accepted' | 'processing' | 'packed' | 'shipped' | 'delivered';
+  groupId: string;
+  groupRevision: number;
+  orderPrivateRevision: number;
+  attributionAvailable: boolean;
+  tracking: {
+    courierName: string;
+    trackingNumber: string;
+    trackingUrl: string | null;
+    recordedAt: string;
+    revision: number;
+  } | null;
   paymentMethod: string;
   paymentStatus: string;
   createdAt: string;

@@ -133,7 +133,7 @@ test('Sprint 1 canonical empty behavior distinguishes sparse preservation from i
   assert.equal(requiredChange?.after, null);
 });
 
-test('Sprint 1 every field is routed through its explicit sync group without unknown-field fallthrough', () => {
+test('Sprint 1 every canonical field reaches Product Review despite legacy sync-group flags', () => {
   for (const field of manifest) {
     const change = changeForField(field);
     const comparison = { status: 'DESCRIPTION_CHANGED' as const, changedFields: [change.label], fieldChanges: [change] };
@@ -148,7 +148,7 @@ test('Sprint 1 every field is routed through its explicit sync group without unk
         : field.syncGroup === 'media'
           ? { syncImageUpdates: false }
           : { syncDescriptionUpdates: false };
-    assert.equal(filterSupplierComparison(comparison, disabledSettings), null, `${field.id}: explicit group opt-out`);
+    assert.deepEqual(filterSupplierComparison(comparison, disabledSettings), comparison, `${field.id}: legacy flag cannot discard`);
   }
 });
 

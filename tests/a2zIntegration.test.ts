@@ -54,7 +54,7 @@ test("A2Z structured diagnostics redact cookies and bound response bodies", () =
   assert.equal(sanitizedHeaders["content-type"], "application/json");
   assert.equal(sanitizedHeaders["set-cookie"], "[redacted; cookie-names=ci_session]");
   assert.equal(JSON.stringify(sanitizedHeaders).includes("top-secret"), false);
-  assert.equal(sanitizeA2ZResponseBody(`line 1\n${"x".repeat(600)}`).length, 500);
+  assert.match(sanitizeA2ZResponseBody(`line 1\n${"x".repeat(600)}`), /^\[redacted supplier response body; length=\d+\]$/);
 });
 
 test("A2Z connector preserves the current form-session authentication contract", () => {
@@ -194,13 +194,12 @@ test("A2Z credential diagnostics fingerprint exact UTF-8 bytes without plaintext
   assert.equal(JSON.stringify(fingerprint).includes("päss"), false);
 });
 
-test("A2Z credential resolution emits redacted forensics for every connection test", () => {
+test("A2Z credential resolution uses one server-only profile path without logging credential hashes", () => {
   const credentials = readFileSync("functions/src/api/suppliers/credentials.ts", "utf8");
   const connector = readFileSync("functions/src/api/suppliers/a2z/A2ZSupplierConnector.ts", "utf8");
 
-  assert.match(credentials, /fingerprintA2ZCredentials\(credentials\.username, credentials\.password\)/);
   assert.match(credentials, /event: "a2z_credentials_resolved"/);
-  assert.match(credentials, /\.\.\.credentialForensics/);
+  assert.doesNotMatch(credentials, /passwordSha256|usernameSha256|credentialForensics/);
 
   const fetchProductsBody = connector.match(
     /public async fetchProducts\(\): Promise<SupplierFetchResult> \{([\s\S]*?)\n  \}/,
@@ -210,7 +209,7 @@ test("A2Z credential resolution emits redacted forensics for every connection te
   )?.[1] || "";
 
   assert.match(testConnectionBody, /await this\.fetchProducts\(\)/);
-  assert.match(fetchProductsBody, /await getA2ZCredentials\(this\.id\)/);
+  assert.match(fetchProductsBody, /await this\.resolveCredentials\(\)/);
 });
 
 test("A2Z credentials reject BOM, CRLF, newlines, and boundary whitespace without normalization", () => {

@@ -47,7 +47,7 @@ export function buildA2ZSessionScopeKey(scope: A2ZSessionScope): string {
 
 export class A2ZConnectorService {
   private session: A2ZAuthenticatedSession | null = null;
-  private loginInFlight: Promise<A2ZAuthenticatedSession> | null = null;
+  private loginInFlight: { credentialFingerprint: string; promise: Promise<A2ZAuthenticatedSession> } | null = null;
   private readonly sessionScopeKey: string;
   private readonly fetchOutbound: typeof fetchSupplierOutbound;
   private readonly now: () => number;
@@ -212,8 +212,6 @@ export class A2ZConnectorService {
     }
 
     assertA2ZCredentialByteSafety(username, password);
-    this.debugLog(JSON.stringify(fingerprintA2ZCredentials(username, password)));
-
     try {
       const preLoginUrl = `${baseDomain}/dash`;
       this.debugLog(`[A2Z-Connector] Pre-authenticating GET request to: ${preLoginUrl}`);
@@ -291,7 +289,7 @@ export class A2ZConnectorService {
       }
 
       if (!isSuccess) {
-        throw new Error(`Authentication rejected by A2Z. Message: ${authBody.substring(0, 200)}`);
+        throw new Error("Authentication was rejected by the A2Z supplier.");
       }
 
       const authSetCookie = authRes.headers.get("set-cookie");
@@ -314,9 +312,11 @@ export class A2ZConnectorService {
         credentialFingerprint,
       };
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : "Unknown Error";
-      console.error("[A2Z-Connector] Authentication failed:", message);
-      throw new Error(`A2Z Authentication Failed: ${message}`);
+      const message = error instanceof Error ? error.message : "A2Z authentication failed.";
+      console.error("[A2Z-Connector] Authentication failed.");
+      throw new Error(message.startsWith("Authentication") || message.startsWith("A2Z")
+        ? message
+        : "A2Z authentication failed.");
     }
   }
 
@@ -328,13 +328,17 @@ export class A2ZConnectorService {
     this.assertScopedTarget(baseUrl);
     const credentialFingerprint = this.credentialFingerprint(credentials);
     if (this.loginInFlight) {
-      const sharedSession = await this.loginInFlight;
+      const pendingLogin = this.loginInFlight;
+      const sharedSession = await pendingLogin.promise;
       this.session = sharedSession;
-      return sharedSession.cookie;
+      if (pendingLogin.credentialFingerprint === credentialFingerprint) return sharedSession.cookie;
+      const rotatedSession = this.reusableSession(credentials);
+      if (rotatedSession) return rotatedSession.cookie;
     }
 
     const pendingLogin = this.performLogin(baseUrl, credentials, outboundPolicy, credentialFingerprint);
-    this.loginInFlight = pendingLogin;
+    const inFlight = { credentialFingerprint, promise: pendingLogin };
+    this.loginInFlight = inFlight;
     try {
       const session = await pendingLogin;
       this.session = session;
@@ -343,7 +347,7 @@ export class A2ZConnectorService {
       this.session = null;
       throw error;
     } finally {
-      if (this.loginInFlight === pendingLogin) this.loginInFlight = null;
+      if (this.loginInFlight === inFlight) this.loginInFlight = null;
     }
   }
 
@@ -493,8 +497,19 @@ export class A2ZConnectorService {
       : usesLocalPagination
         ? `a2z-local:${consumed}`
         : String(consumed);
+    const catalogTotalCount = usesLocalPagination ? rawList.length : reportedTotal;
+    const catalogTotal = Number.isSafeInteger(catalogTotalCount) && catalogTotalCount >= consumed
+      ? { count: catalogTotalCount, reliability: "reported" as const }
+      : undefined;
     this.debugLog(`[A2Z-Connector] Successfully retrieved, parsed, and mapped ${parsedProducts.length} live products.`);
-    return { products: parsedProducts, targetUrl: productsUrl, nextCursor, complete, invalidProducts };
+    return {
+      products: parsedProducts,
+      targetUrl: productsUrl,
+      nextCursor,
+      complete,
+      invalidProducts,
+      ...(catalogTotal ? { catalogTotal } : {}),
+    };
   }
 
   public async fetchCatalog(

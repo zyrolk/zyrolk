@@ -14,12 +14,14 @@ export const PRODUCT_REVIEW_FILTERS: ReadonlyArray<{ id: ProductReviewFilter; la
   { id: 'removed_products', label: 'Removed Products' },
   { id: 'conflicts', label: 'Conflicts' },
   { id: 'needs_attention', label: 'Needs Attention' },
-  { id: 'approved_history', label: 'Approved History' },
+  { id: 'approved_history', label: 'Approval History' },
 ];
 
 interface ReviewPresentationItem {
   status?: unknown;
   queueState?: unknown;
+  decisionAction?: unknown;
+  mediaStatus?: unknown;
   comparison?: { comparisonStatus?: unknown } | null;
   productValidation?: { readyToPublish?: unknown; missingFields?: unknown[]; errors?: unknown[] } | null;
 }
@@ -56,6 +58,17 @@ export function formatSupplierTimestamp(value: unknown, missingLabel = 'Not upda
   }
 
   return parsed && Number.isFinite(parsed.getTime()) ? parsed.toLocaleString() : missingLabel;
+}
+
+/** Formats persisted sync latency without inventing a duration when no run exists. */
+export function formatSupplierDuration(value: unknown, missingLabel = 'Not available'): string {
+  const milliseconds = Number(value);
+  if (!Number.isFinite(milliseconds) || milliseconds < 0) return missingLabel;
+  if (milliseconds < 1_000) return `${Math.round(milliseconds)} ms`;
+  if (milliseconds < 60_000) return `${(milliseconds / 1_000).toFixed(1)} sec`;
+  const minutes = Math.floor(milliseconds / 60_000);
+  const seconds = Math.round((milliseconds % 60_000) / 1_000);
+  return seconds > 0 ? `${minutes} min ${seconds} sec` : `${minutes} min`;
 }
 
 interface SupplierAdminIdentity {
@@ -98,8 +111,9 @@ export function supplierReviewStatusLabel(item: ReviewPresentationItem): string 
   if (state === 'review_pending') return 'Ready for Review';
   if (state === 'retryable_failure') return 'Needs Attention';
   if (state === 'dead_letter') return 'Needs Attention';
-  if (state === 'conflict') return 'Needs Attention';
+  if (state === 'conflict') return 'Conflict';
   if (state === 'approved') return 'Approved';
+  if ((state === 'rejected' || state === 'suppressed') && normalized(item.decisionAction) === 'deleted') return 'Dismissed';
   if (state === 'rejected' || state === 'suppressed') return 'Rejected';
   if (!state && normalized(item.status) === 'pending') return 'Ready for Review';
   return String(item.status || 'Preparing');
@@ -157,9 +171,15 @@ const isApproved = (item: ReviewPresentationItem | ChangePresentationItem): bool
   normalized(item.status) === 'approved' || normalized(item.queueState) === 'approved'
 );
 
+const isTerminalReviewDecision = (item: ReviewPresentationItem): boolean => (
+  isApproved(item)
+  || normalized(item.status) === 'rejected'
+  || ['rejected', 'suppressed'].includes(normalized(item.queueState))
+);
+
 export function matchesProductReviewFilter(item: ReviewPresentationItem, filter: ProductReviewFilter): boolean {
   const comparisonStatus = normalized(item.comparison?.comparisonStatus);
-  if (filter === 'approved_history') return isApproved(item);
+  if (filter === 'approved_history') return isTerminalReviewDecision(item);
   if (filter === 'conflicts') return isConflict(item);
   if (filter === 'removed_products') return isRemovedChange(comparisonStatus);
   if (filter === 'new_products') return comparisonStatus === 'new_product';
@@ -167,6 +187,7 @@ export function matchesProductReviewFilter(item: ReviewPresentationItem, filter:
     return item.productValidation?.readyToPublish === false
       || (item.productValidation?.missingFields?.length || 0) > 0
       || (item.productValidation?.errors?.length || 0) > 0
+      || ['failed', 'partial'].includes(normalized(item.mediaStatus))
       || ['retryable_failure', 'dead_letter'].includes(normalized(item.queueState));
   }
   return !isApproved(item)
@@ -191,7 +212,8 @@ export function supplierHealthLabel(source: Record<string, unknown>): string {
   if (operationalState === 'paused') return 'Paused';
   if (!enabled || status === 'disabled' || status === 'inactive') return 'Disabled';
   if (status === 'paused') return 'Paused';
-  if (source.lastError) return 'Needs attention';
+  const lastError = normalized(source.lastError);
+  if (lastError && lastError !== 'none') return 'Needs attention';
   if (normalized(source.connectionStatus) === 'connected') return 'Healthy';
   return 'Not checked';
 }
@@ -228,8 +250,8 @@ export function supplierConnectionPresentation(
   return { state: 'problem', label: 'Connection Problem' };
 }
 
-export function supplierReviewApiState(filter: ProductReviewFilter): 'active' | 'conflict' | 'approved' {
-  if (filter === 'approved_history') return 'approved';
+export function supplierReviewApiState(filter: ProductReviewFilter): 'active' | 'conflict' | 'history' {
+  if (filter === 'approved_history') return 'history';
   if (filter === 'conflicts') return 'conflict';
   return 'active';
 }

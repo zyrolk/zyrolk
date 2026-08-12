@@ -143,6 +143,22 @@ test('an A2Z session is reused before expiry and refreshed after expiry', async 
   assert.equal(harness.authenticationCount('expiry-user'), 2);
 });
 
+test('credential rotation on one A2Z source cannot reuse its previous authenticated session', async () => {
+  const harness = createHarness();
+  const service = new A2ZConnectorService(scope(), { fetchOutbound: harness.fetchOutbound });
+
+  await service.fetchCatalog(scope().targetUrl, { username: 'before-rotation', password: 'password-1' }, policy('source-a'));
+  await service.fetchCatalog(scope().targetUrl, { username: 'after-rotation', password: 'password-2' }, policy('source-a'));
+
+  assert.equal(harness.authenticationCount('before-rotation'), 1);
+  assert.equal(harness.authenticationCount('after-rotation'), 1);
+  const catalogCookies = harness.calls
+    .filter((call) => new URL(call.url).pathname === '/Product/getAllproducts2')
+    .map((call) => call.cookie);
+  assert.ok(catalogCookies.some((cookie) => cookie.includes('session=before-rotation-1')));
+  assert.ok(catalogCookies.some((cookie) => cookie.includes('session=after-rotation-1')));
+});
+
 test('catalog authentication rejection refreshes only the affected supplier session and retries once', async () => {
   const harness = createHarness({ rejectFirstCatalogFor: 'retry-user' });
   const service = new A2ZConnectorService(scope(), { fetchOutbound: harness.fetchOutbound });
@@ -186,10 +202,15 @@ test('the A2Z registry integration supplies every session isolation dimension', 
   const registry = readFileSync('functions/src/api/suppliers/SupplierRegistry.ts', 'utf8');
   const service = readFileSync('functions/src/api/suppliers/a2z/A2ZConnectorService.ts', 'utf8');
 
-  assert.match(connector, /supplierId: options\.supplierId \|\| this\.id/);
+  assert.match(connector, /this\.supplierId = options\.supplierId \|\| this\.id/);
+  assert.match(connector, /supplierId: this\.supplierId/);
   assert.match(connector, /sourceId: this\.id/);
   assert.match(connector, /targetUrl,/);
-  assert.match(connector, /credentialReference: options\.credentialReference/);
+  assert.match(
+    connector,
+    /this\.credentialReference = normalizeA2ZCredentialReference\(options\.credentialReference \|\| DEFAULT_A2Z_CREDENTIAL_REFERENCE\)/,
+  );
+  assert.match(connector, /credentialReference: this\.credentialReference/);
   assert.match(registry, /supplierId: source\.supplierId/);
   assert.match(registry, /sourceId: source\.id/);
   assert.match(registry, /source\.authentication\.secretRef/);

@@ -95,6 +95,26 @@ test('manual sync still rejects administratively disabled or inactive sources', 
   }, {}, 'manual', Date.now()), false);
 });
 
+test('manual and scheduled source selection accepts every registered connector type', () => {
+  const restSource = {
+    ...activeManualSource,
+    id: 'rest-catalog',
+    supplierType: 'rest',
+    connectorType: 'rest',
+    settings: { autoSync: '1 Hour' },
+  };
+  assert.equal(isSupplierSourceEligibleForSync(restSource, {}, 'manual', Date.now()), true);
+  assert.equal(isSupplierSourceEligibleForSync(restSource, { autoSyncEnabled: true }, 'scheduled', Date.now()), true);
+
+  const unsupportedSource = {
+    ...activeManualSource,
+    id: 'csv-catalog',
+    supplierType: 'csv',
+    connectorType: 'csv',
+  };
+  assert.equal(isSupplierSourceEligibleForSync(unsupportedSource, {}, 'manual', Date.now()), false);
+});
+
 test('scheduled sync still rejects a paused source and the worker forwards requested source IDs', () => {
   const pausedSource = {
     ...activeManualSource,

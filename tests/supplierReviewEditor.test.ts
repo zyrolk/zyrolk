@@ -55,6 +55,8 @@ test('supplier review draft projects editable product values with safe defaults'
     keyFeatures: [],
     whatsIncluded: [],
     slug: '',
+    metaDescription: '',
+    keywords: [],
     sellingPrice: 1500,
     comparePrice: 1700,
     costPrice: 1000,
@@ -73,6 +75,7 @@ test('supplier review draft projects editable product values with safe defaults'
     fieldOwnership: {
       name: 'admin', shortDescription: 'admin', description: 'admin', model: 'admin', barcode: 'admin',
       productType: 'admin', tags: 'admin', keyFeatures: 'admin', whatsIncluded: 'admin', slug: 'admin',
+      metaDescription: 'admin', keywords: 'admin',
       price: 'admin', originalPrice: 'admin', costPrice: 'admin', marketPrice: 'admin', stock: 'admin', category: 'admin', subcategory: 'admin',
       brand: 'admin', specs: 'admin', isActive: 'admin', isNew: 'admin', isFeatured: 'admin',
       isBestSeller: 'admin', imageUrl: 'admin', imageUrls: 'admin',

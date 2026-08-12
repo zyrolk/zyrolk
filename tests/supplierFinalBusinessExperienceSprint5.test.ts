@@ -37,7 +37,7 @@ test('new supplier save is explicit and never starts Initial Sync from the Sprin
   assert.match(hub, /Go to Product Review/);
   assert.doesNotMatch(hub, /Save & Start Initial Sync/);
   assert.match(routes, /const startInitialSync = req\.body\?\.startInitialSync !== false/);
-  assert.match(routes, /const initialSync = startInitialSync[\s\S]*createSupplierSyncJob/);
+  assert.match(routes, /const initialRequest = startInitialSync[\s\S]*const initialSync = initialRequest[\s\S]*createSupplierSyncJob/);
 });
 
 test('supplier cards expose only business controls and delay Auto Sync until Initial Sync completes', () => {
@@ -61,7 +61,8 @@ test('supplier cards expose only business controls and delay Auto Sync until Ini
   assert.match(connectionBadge, /supplierConnectionPresentation/);
   assert.equal(supplierConnectionPresentation({ connectionStatus: 'failed' }).label, 'Connection Problem');
   assert.match(hub, /disabled=\{savingSettingsSourceId !== null \|\| !supplierHasCompletedInitialSync\(source\)\}/);
-  assert.match(hub, /handleSyncSupplier\(\[id\]\)/);
+  assert.match(hub, /runManualSupplierSync\(\{ sourceIds: \[id\], mode: 'full' \}\)/);
+  assert.match(hub, /<SupplierManualSyncDialog/);
 });
 
 test('Product Review is the only normal approval workspace and uses business language', () => {
@@ -73,7 +74,7 @@ test('Product Review is the only normal approval workspace and uses business lan
     'Removed Products',
     'Conflicts',
     'Needs Attention',
-    'Approved History',
+    'Approval History',
   ]);
   for (const label of [
     'Images',

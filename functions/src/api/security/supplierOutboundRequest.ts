@@ -58,7 +58,9 @@ const responseHeaders = (headers: IncomingHttpHeaders): Headers => {
   return normalized;
 };
 
-const isDifferentHost = (left: string, right: string): boolean => new URL(left).host.toLowerCase() !== new URL(right).host.toLowerCase();
+const isDifferentOrigin = (left: string, right: string): boolean => (
+  new URL(left).origin.toLowerCase() !== new URL(right).origin.toLowerCase()
+);
 
 export const createPinnedLookup = (address: string): LookupFunction => {
   const family = address.includes(":") ? 6 : 4;
@@ -80,11 +82,14 @@ const removeSensitiveHeaders = (headers: HeadersInit | undefined): Headers => {
 const redirectInit = (init: RequestInit, fromUrl: string, toUrl: string, status: number): RequestInit => {
   const method = (init.method || "GET").toUpperCase();
   const mustSwitchToGet = status === 303 || ((status === 301 || status === 302) && method === "POST");
-  const crossHost = isDifferentHost(fromUrl, toUrl);
+  const crossOrigin = isDifferentOrigin(fromUrl, toUrl);
+  if (crossOrigin && init.body !== undefined && init.body !== null && !mustSwitchToGet) {
+    throw new SupplierUrlValidationError("Supplier request bodies cannot be redirected across origins.");
+  }
   return {
     ...init,
     ...(mustSwitchToGet ? { method: "GET", body: undefined } : {}),
-    ...(crossHost ? { headers: removeSensitiveHeaders(init.headers) } : {}),
+    ...(crossOrigin ? { headers: removeSensitiveHeaders(init.headers) } : {}),
   };
 };
 

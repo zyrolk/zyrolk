@@ -25,11 +25,14 @@ import { Product } from '../types';
 import { getSupplierApi, patchSupplierApi, postSupplierApi, requestSupplierApi } from '../services/supplierHubApi';
 import { matchesSupplierSearch } from '../services/supplierSearch';
 import { normalizeSupplierSourceForUi } from '../services/supplierSourceUtils';
-import { buildSupplierOnboardingSource, SupplierOnboardingType } from '../services/supplierSourceOnboarding';
+import { A2Z_GLOBAL_SECRET_PROFILE, buildSupplierOnboardingSource, SupplierOnboardingType } from '../services/supplierSourceOnboarding';
 import { reportSupplierImageFailure } from '../services/supplierImageDiagnostics';
 import { reportClientIssue } from '../services/observability/clientDiagnostics';
 import SupplierReviewEditorModal from './SupplierReviewEditorModal';
+import SupplierReviewHistoryModal, { SupplierReviewAuditEvent } from './SupplierReviewHistoryModal';
 import SupplierOperationsDashboard from './supplier-operations/SupplierOperationsDashboard';
+import SupplierManagementDashboard from './supplier-management/SupplierManagementDashboard';
+import SupplierManualSyncDialog from './supplier-management/SupplierManualSyncDialog';
 import SupplierConnectionBadge from './supplier-ui/SupplierConnectionBadge';
 import { createSupplierReviewDraft, SupplierReviewDraft } from '../services/supplierReviewEditor';
 import { normalizeSupplierCategory } from '../services/supplierCategoryMapping';
@@ -43,16 +46,19 @@ import {
   formatSupplierSyncEta,
   formatSupplierSyncProgress,
   isSupplierSyncJobActive,
+  isSupplierSyncProgressDeterminate,
   selectSupplierSyncJobForDisplay,
   supplierSyncJobStateLabel,
   SupplierSyncJobView,
 } from '../services/supplierSyncJobs';
+import { SupplierManualSyncRequest } from '../services/supplierManualSync';
 import {
   matchesProductReviewFilter,
   PRODUCT_REVIEW_FILTERS,
   ProductReviewFilter,
   hasSupplierHubAdvancedAccess,
   supplierHealthLabel,
+  supplierConnectionPresentation,
   SupplierHubSection,
   supplierReviewDecisionReady,
   supplierReviewChangeLabel,
@@ -60,12 +66,15 @@ import {
   supplierReviewStatusLabel,
   supplierBusinessErrorMessage,
   formatSupplierTimestamp,
+  formatSupplierDuration,
   supplierAdministratorLabel,
 } from '../services/supplierHubPresentation';
 
 interface SupplierHubFiveStarsProps {
   isDarkMode?: boolean;
 }
+
+const SUPPLIER_AUTO_SYNC_SCHEDULES = ['1 Hour', '3 Hours', '6 Hours', 'Daily'] as const;
 
 function SupplierImagePreview({ src, alt }: { src?: string; alt: string }) {
   const [failed, setFailed] = useState(false);
@@ -143,6 +152,7 @@ export interface ReviewQueueItem {
   createdAt?: string;
   updatedAt?: string;
   supplierSnapshot?: Record<string, unknown>;
+  supplierOfferPendingRevision?: string;
   managedMedia?: Array<Record<string, unknown>>;
   mediaFailures?: Array<{ originalSupplierUrl?: string; reason?: string; retryable?: boolean; failedAt?: string }>;
   mediaStatus?: string;
@@ -175,6 +185,10 @@ export interface ReviewQueueItem {
     previousVersion?: string;
     currentVersion?: string;
   };
+  supplierOfferId?: string;
+  decisionAction?: 'approved' | 'rejected' | 'deleted';
+  decisionCompletedAt?: unknown;
+  decisionCompletedBy?: unknown;
 }
 
 interface SupplierQueuePageResponse {
@@ -197,6 +211,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
   const [supplierReviewLoading, setSupplierReviewLoading] = useState(false);
   const [supplierQueueError, setSupplierQueueError] = useState<string | null>(null);
   const supplierQueueRequestIdRef = useRef(0);
+  const supplierAuditRequestIdRef = useRef(0);
   const supplierReviewLoadedPagesRef = useRef(1);
   
   // Syncing state
@@ -237,6 +252,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
   const [newSupplierCode, setNewSupplierCode] = useState<string>("");
   
   const [newSupplierUrl, setNewSupplierUrl] = useState<string>("");
+  const [newSupplierCredentialProfile, setNewSupplierCredentialProfile] = useState<string>('');
 
   // API specific
   const [apiEndpoint, setApiEndpoint] = useState<string>("");
@@ -245,6 +261,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
 
   const [savingSupplier, setSavingSupplier] = useState<boolean>(false);
   const [syncingSourceId, setSyncingSourceId] = useState<string | null>(null);
+  const [manualSyncSource, setManualSyncSource] = useState<any | null>(null);
   
   // Connection Testing states
   const [testingSourceId, setTestingSourceId] = useState<string | null>(null);
@@ -411,6 +428,9 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
   const [editSupplierName, setEditSupplierName] = useState<string>('');
   const [editWebsiteUrl, setEditWebsiteUrl] = useState<string>('');
   const [editEndpoint, setEditEndpoint] = useState<string>('');
+  const [editCredentialProfile, setEditCredentialProfile] = useState<string>(A2Z_GLOBAL_SECRET_PROFILE);
+  const [editSyncMode, setEditSyncMode] = useState<'manual' | 'auto'>('manual');
+  const [editAutoSyncSchedule, setEditAutoSyncSchedule] = useState<string>('1 Hour');
   
   // Sync settings
   const [editCategoriesFilter, setEditCategoriesFilter] = useState<string[]>([]);
@@ -427,7 +447,13 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
   const [supplierOfferActionId, setSupplierOfferActionId] = useState<string | null>(null);
   const [supplierOfferError, setSupplierOfferError] = useState<string | null>(null);
   const [rejectingReviewItem, setRejectingReviewItem] = useState<ReviewQueueItem | null>(null);
+  const [reviewDecisionAction, setReviewDecisionAction] = useState<'reject' | 'delete'>('reject');
   const [rejectionReasonDraft, setRejectionReasonDraft] = useState('');
+  const [historyReviewItem, setHistoryReviewItem] = useState<ReviewQueueItem | null>(null);
+  const [reviewAuditEvents, setReviewAuditEvents] = useState<SupplierReviewAuditEvent[]>([]);
+  const [reviewAuditCursor, setReviewAuditCursor] = useState<string | null>(null);
+  const [reviewAuditLoading, setReviewAuditLoading] = useState(false);
+  const [reviewAuditError, setReviewAuditError] = useState<string | null>(null);
   // 3. Settings states
   const [supplierSettings, setSupplierSettings] = useState<any>({
     autoSyncEnabled: true,
@@ -458,7 +484,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
     options: {
       append?: boolean;
       after?: string | null;
-      reviewState?: 'active' | 'conflict' | 'approved';
+      reviewState?: 'active' | 'conflict' | 'history';
       pageCount?: number;
     } = {},
   ): Promise<void> => {
@@ -509,10 +535,6 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
   const refreshSupplierQueueViews = async (): Promise<void> => {
     await loadSupplierQueueView({ pageCount: supplierReviewLoadedPagesRef.current });
   };
-
-  useEffect(() => onIdTokenChanged(auth, (currentUser) => {
-    if (currentUser) void loadSupplierQueueView();
-  }), []);
 
   useEffect(() => {
     if (activeSubTab !== 'review' || !auth.currentUser) return;
@@ -588,7 +610,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
       const result = await response.json().catch(() => ({})) as { success?: boolean; job?: SupplierSyncJobView; error?: string };
       if (!response.ok || result.success !== true || !result.job) throw new Error(result.error || `Synchronization could not ${action}.`);
       applyActiveSyncJob(result.job);
-      setSyncStatusMsg(`${supplierSyncJobStateLabel(result.job.state)} · ${result.job.progress.percent}%`);
+      setSyncStatusMsg(formatSupplierSyncProgress(result.job));
     } catch (error) {
       setSyncErrorMsg(error instanceof Error ? error.message : `Synchronization could not ${action}.`);
     } finally {
@@ -688,7 +710,46 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
     return result;
   };
 
-  const handleSyncSupplier = useCallback(async (sourceIds?: string[]): Promise<boolean> => {
+  const loadSupplierReviewAudit = async (item: ReviewQueueItem, after?: string, append = false): Promise<void> => {
+    const requestId = ++supplierAuditRequestIdRef.current;
+    setReviewAuditLoading(true);
+    if (!append) {
+      setReviewAuditEvents([]);
+      setReviewAuditCursor(null);
+      setReviewAuditError(null);
+    }
+    try {
+      const parameters = new URLSearchParams({ limit: '50' });
+      if (after) parameters.set('after', after);
+      const response = await getSupplierApi(`/api/supplier-review-queue/${encodeURIComponent(item.id)}/audit?${parameters.toString()}`);
+      const result = await response.json().catch(() => ({})) as {
+        success?: boolean;
+        events?: SupplierReviewAuditEvent[];
+        nextCursor?: string | null;
+        error?: string;
+      };
+      if (!response.ok || result.success !== true || !Array.isArray(result.events)) {
+        throw new Error(result.error || 'Approval history could not be loaded.');
+      }
+      if (requestId !== supplierAuditRequestIdRef.current) return;
+      setReviewAuditEvents((current) => append ? mergeSupplierQueuePage(current, result.events || []) : result.events || []);
+      setReviewAuditCursor(result.nextCursor || null);
+      setReviewAuditError(null);
+    } catch (error) {
+      if (requestId === supplierAuditRequestIdRef.current) {
+        setReviewAuditError(error instanceof Error ? error.message : 'Approval history could not be loaded.');
+      }
+    } finally {
+      if (requestId === supplierAuditRequestIdRef.current) setReviewAuditLoading(false);
+    }
+  };
+
+  const openSupplierReviewHistory = (item: ReviewQueueItem) => {
+    setHistoryReviewItem(item);
+    void loadSupplierReviewAudit(item);
+  };
+
+  const handleSyncSupplier = useCallback(async (request: SupplierManualSyncRequest): Promise<boolean> => {
     const currentJob = activeSyncJobRef.current;
     if (syncStartInFlightRef.current || isSupplierSyncJobActive(currentJob)) {
       if (currentJob) setSyncStatusMsg(formatSupplierSyncProgress(currentJob));
@@ -700,20 +761,25 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
     setSyncErrorMsg(null);
       setSyncStatusMsg('Starting the supplier product update...');
     try {
-      const response = await postSupplierApi('/api/supplier-sync', sourceIds?.length ? { sourceIds } : {});
+      const response = await postSupplierApi('/api/supplier-sync', { ...request });
       const result = await response.json().catch(() => ({})) as {
         success?: boolean;
         accepted?: boolean;
+        created?: boolean;
+        deduplicated?: boolean;
         job?: SupplierSyncJobView;
         jobId?: string;
         status?: string;
         error?: string;
       };
-      if (!response.ok || result.success !== true || result.accepted !== true || !result.job) {
+      const followsExistingActiveJob = result.deduplicated === true && Boolean(result.job) && isSupplierSyncJobActive(result.job);
+      if ((!response.ok && !followsExistingActiveJob) || result.success !== true || !result.job) {
         throw new Error(result.error || 'Supplier synchronization could not be completed.');
       }
       applyActiveSyncJob(result.job);
-      setSyncStatusMsg('Supplier product update started.');
+      setSyncStatusMsg(followsExistingActiveJob || result.created === false
+        ? 'This supplier update is already in progress.'
+        : 'Supplier product update started.');
       accepted = true;
       return true;
     } catch (error: any) {
@@ -737,6 +803,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
       supplierType: newSupplierType,
       websiteUrl: newSupplierUrl,
       endpoint: apiEndpoint,
+      credentialProfile: newSupplierCredentialProfile,
       apiMethod,
       apiDataPath,
       connectionStatus,
@@ -845,6 +912,11 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
       setTimeout(() => setErrorMsg(null), 5000);
       return;
     }
+    if (newSupplierType === 'a2z' && !newSupplierCredentialProfile.trim()) {
+      setModalTestStatus('Failed');
+      setModalTestError('A server-configured credential profile ID is required to test this supplier.');
+      return;
+    }
     
     // Generate code if empty
     const code = newSupplierCode.trim() || generateSlug(newSupplierName);
@@ -882,6 +954,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
       setApiEndpoint("");
       setApiMethod("GET");
       setApiDataPath("products");
+      setNewSupplierCredentialProfile('');
       
       setModalTestStatus('idle');
       setModalTestError(null);
@@ -901,11 +974,13 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
     }
   };
 
-  const handleTriggerSync = async (id: string) => {
-    setSyncingSourceId(id);
+  const runManualSupplierSync = async (request: SupplierManualSyncRequest): Promise<boolean> => {
+    const sourceId = request.sourceIds[0] || '';
+    let succeeded = false;
+    setSyncingSourceId(sourceId);
     setSuccessMsg('Checking this supplier for catalog updates...');
     try {
-      const succeeded = await handleSyncSupplier([id]);
+      succeeded = await handleSyncSupplier(request);
       if (succeeded) {
         setSuccessMsg('Supplier update started. Progress will update automatically.');
       } else {
@@ -919,6 +994,20 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
       setSyncingSourceId(null);
       setTimeout(() => setSuccessMsg(null), 3000);
     }
+    return succeeded;
+  };
+
+  const handleTriggerSync = async (id: string) => {
+    const source = supplierSources.find((item) => String(item.id) === id);
+    if (!source) {
+      setErrorMsg('Supplier was not found.');
+      return;
+    }
+    if (supplierHasCompletedInitialSync(source)) {
+      setManualSyncSource(source);
+      return;
+    }
+    await runManualSupplierSync({ sourceIds: [id], mode: 'full' });
   };
 
   const handleOpenSettings = (source: any) => {
@@ -928,17 +1017,23 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
     setEditSupplierName(source.supplierName || source.name || '');
     setEditWebsiteUrl(source.websiteUrl || '');
     setEditEndpoint(source.endpoint || '');
+    setEditCredentialProfile(String(source.authentication?.secretRef || source.authentication?.credentialProfile || A2Z_GLOBAL_SECRET_PROFILE));
     // Initialize advanced source settings without changing the supplier workflow.
     const currentSettings = source.settings || {};
     setEditCategoriesFilter(currentSettings.categoriesFilter || []);
     setEditBrandFilter(currentSettings.brandFilter || '');
     setEditProductLimit(currentSettings.productLimit || 'All');
+    const configuredSchedule = String(currentSettings.autoSync || source.syncSchedule || 'Off').trim();
+    setEditSyncMode(configuredSchedule.toLowerCase() === 'off' ? 'manual' : 'auto');
+    setEditAutoSyncSchedule(configuredSchedule.toLowerCase() === 'off' ? '1 Hour' : configuredSchedule);
     
   };
 
   const handleSaveSupplierProfile = async (sourceId: string) => {
     setSavingSettingsSourceId(sourceId);
     try {
+      const currentSource = supplierSources.find((source) => source.id === sourceId);
+      if (!currentSource) throw new Error('Supplier was not found.');
       if (!editSupplierName.trim()) throw new Error('Supplier name is required.');
       let supplierUrl: URL;
       try {
@@ -950,10 +1045,22 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
         throw new Error('Supplier website URL must use HTTP or HTTPS.');
       }
 
+      const syncSchedule = editSyncMode === 'auto' ? editAutoSyncSchedule : 'Off';
       const updatedData = {
         supplierName: editSupplierName.trim(),
         name: editSupplierName.trim(), // for backwards compatibility
         websiteUrl: editWebsiteUrl.trim(),
+        syncSchedule,
+        settings: {
+          ...(currentSource.settings || {}),
+          autoSync: syncSchedule,
+        },
+        ...(String(currentSource.connectorType || '').toLowerCase() === 'a2z' ? {
+          authentication: {
+            mode: 'secret_manager',
+            credentialProfile: editCredentialProfile.trim() || A2Z_GLOBAL_SECRET_PROFILE,
+          },
+        } : {}),
       };
       
       const response = await patchSupplierApi(`/api/supplier-sources/${encodeURIComponent(sourceId)}`, { source: updatedData });
@@ -986,6 +1093,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
       const result = await decideSupplierReviewQueueItem(item.id, 'approve', {
         draft,
         resolveConflict: item.queueState === 'conflict' || item.status === 'CONFLICT',
+        expectedPendingRevision: item.supplierOfferPendingRevision,
       });
       if (result.success !== true && result.status === 'conflict') {
         setEditingReviewItem({
@@ -1017,9 +1125,13 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
   const handleRejectReviewItem = async (item: ReviewQueueItem, rejectionReason: string) => {
     setProcessingChangeId(item.id);
     try {
-      await decideSupplierReviewQueueItem(item.id, 'reject', { rejectionReason: rejectionReason.trim() });
+      await decideSupplierReviewQueueItem(item.id, 'reject', {
+        rejectionReason: rejectionReason.trim(),
+        expectedPendingRevision: item.supplierOfferPendingRevision,
+      });
       setProcessingChangeId(null);
       setRejectingReviewItem(null);
+      setReviewDecisionAction('reject');
       setRejectionReasonDraft('');
       void refreshSupplierQueueViews();
       setSuccessMsg(`Product "${item.productName}" rejected.`);
@@ -1055,6 +1167,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
       const approvals = selectedReviewItems.map((item) => ({
         queueItemId: item.id,
         draft: createSupplierReviewDraft(item),
+        expectedPendingRevision: item.supplierOfferPendingRevision,
       }));
       const response = await postSupplierApi('/api/supplier-review-queue/bulk-approve', { items: approvals });
       const result = await response.json().catch(() => ({})) as { success?: boolean; error?: string };
@@ -1080,7 +1193,10 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
     setErrorMsg(null);
     try {
       const response = await postSupplierApi('/api/supplier-review-queue/bulk-reject', {
-        queueItemIds: selectedReviewItems.map((item) => item.id),
+        items: selectedReviewItems.map((item) => ({
+          queueItemId: item.id,
+          expectedPendingRevision: item.supplierOfferPendingRevision,
+        })),
         rejectionReason: 'Bulk rejected by admin.',
       });
       const result = await response.json().catch(() => ({})) as { success?: boolean; error?: string };
@@ -1194,6 +1310,28 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
       setErrorMsg(error instanceof Error ? error.message : 'Advanced supplier settings could not be saved.');
     } finally {
       setSavingSettingsSourceId(null);
+    }
+  };
+
+  const handleDismissReviewItem = async (item: ReviewQueueItem, deletionReason: string) => {
+    setProcessingChangeId(item.id);
+    try {
+      await decideSupplierReviewQueueItem(item.id, 'delete', {
+        deletionReason: deletionReason.trim(),
+        expectedPendingRevision: item.supplierOfferPendingRevision,
+      });
+      setRejectingReviewItem(null);
+      setReviewDecisionAction('reject');
+      setRejectionReasonDraft('');
+      void refreshSupplierQueueViews();
+      setSuccessMsg(`Product "${item.productName}" dismissed from the current review.`);
+      setTimeout(() => setSuccessMsg(null), 3000);
+    } catch (error: any) {
+      console.error('Review dismissal error:', error);
+      setErrorMsg(`Failed to dismiss: ${error.message || 'Unknown error'}`);
+      setTimeout(() => setErrorMsg(null), 4000);
+    } finally {
+      setProcessingChangeId(null);
     }
   };
 
@@ -1338,11 +1476,15 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                 </p>
               </div>
               <p className="text-[11px] text-slate-500 dark:text-slate-400" aria-live="polite">
-                {isSupplierSyncJobActive(activeSyncJob) && activeSyncJob.progress.percent <= 0 && activeSyncJob.progress.pagesProcessed > 0
+                {isSupplierSyncJobActive(activeSyncJob) && !isSupplierSyncProgressDeterminate(activeSyncJob) && activeSyncJob.progress.pagesProcessed > 0
                   ? 'In progress · '
-                  : activeSyncJob.progress.percent > 0 ? `${activeSyncJob.progress.percent}% · ` : ''}
+                  : isSupplierSyncProgressDeterminate(activeSyncJob) ? `${activeSyncJob.progress.percent}% · ` : ''}
                 {activeSyncJob.progress.productsScanned} products checked · {activeSyncJob.progress.productsQueued} changes found
-                {isSupplierSyncJobActive(activeSyncJob) ? ` · ${formatSupplierSyncEta(activeSyncJob.progress.etaMs)}` : ''}
+                {isSupplierSyncJobActive(activeSyncJob)
+                  && isSupplierSyncProgressDeterminate(activeSyncJob)
+                  && activeSyncJob.progress.etaMs !== null
+                  ? ` · ${formatSupplierSyncEta(activeSyncJob.progress.etaMs)}`
+                  : ''}
               </p>
               {activeSyncJob.state === 'waiting' && activeSyncJob.waitingReason ? (
                 <p className="text-[11px] font-semibold text-amber-600 dark:text-amber-400">
@@ -1389,12 +1531,14 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
             aria-label="Supplier catalog update progress"
             aria-valuemin={0}
             aria-valuemax={100}
-            aria-valuenow={activeSyncJob.progress.percent}
+            aria-valuenow={isSupplierSyncProgressDeterminate(activeSyncJob) ? activeSyncJob.progress.percent : undefined}
             aria-valuetext={formatSupplierSyncProgress(activeSyncJob)}
           >
             <div
-              className="h-full rounded-full bg-gradient-to-r from-blue-600 to-cyan-500 transition-[width] duration-500 motion-reduce:transition-none"
-              style={{ width: `${Math.max(0, Math.min(100, activeSyncJob.progress.percent))}%` }}
+              className={`h-full rounded-full bg-gradient-to-r from-blue-600 to-cyan-500 transition-[width] duration-500 motion-reduce:transition-none ${isSupplierSyncProgressDeterminate(activeSyncJob) ? '' : 'w-1/3 animate-pulse motion-reduce:animate-none'}`}
+              style={isSupplierSyncProgressDeterminate(activeSyncJob)
+                ? { width: `${Math.max(0, Math.min(100, activeSyncJob.progress.percent))}%` }
+                : undefined}
             />
           </div>
         </section>
@@ -1501,12 +1645,13 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                     type="search"
                     value={reviewSearch}
                     onChange={(event) => setReviewSearch(event.target.value)}
-                    placeholder="Search products or supplier codes..."
-                    aria-label="Search products awaiting review"
+                    placeholder="Search loaded products or supplier codes..."
+                    aria-label="Search currently loaded Product Review records"
                     className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-9 pr-3 text-xs focus:outline-none dark:border-slate-800 dark:bg-slate-900/50"
                   />
                 </div>
               </div>
+              <p className="mt-2 text-[10px] text-slate-400">Search is intentionally limited to the products loaded on this page. Use Load more products to extend the bounded search.</p>
               <div className="mt-4 flex flex-wrap gap-2 pb-1" role="tablist" aria-label="Product review filters">
                 {PRODUCT_REVIEW_FILTERS.map((filter) => (
                   <button
@@ -1621,12 +1766,14 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                         </dl>
                         {!item.productValidation?.readyToPublish && <p className="mx-4 mt-3 rounded-xl bg-amber-500/10 p-2 text-[10px] font-bold text-amber-700 dark:text-amber-300">{(item.productValidation?.missingFields || ['Review required']).join(', ')}</p>}
                         {supplierReviewDecisionReady(item) && (
-                          <div className="sticky bottom-0 z-10 mt-3 grid grid-cols-3 gap-2 border-t border-slate-100 bg-white/95 p-3 backdrop-blur dark:border-slate-800 dark:bg-slate-950/95">
-                            <button type="button" onClick={() => openSupplierReviewEditor(item)} disabled={processingChangeId === item.id || bulkAction !== null} className="min-h-11 rounded-xl bg-emerald-600 text-[10px] font-black text-white disabled:opacity-50">Edit</button>
-                            <button type="button" onClick={() => void handleApproveReviewItem(item, createSupplierReviewDraft(item))} disabled={processingChangeId === item.id || bulkAction !== null || item.productValidation?.readyToPublish === false} className="min-h-11 rounded-xl bg-blue-600 text-[10px] font-black text-white disabled:opacity-50">Approve</button>
-                            <button type="button" onClick={() => { setRejectingReviewItem(item); setRejectionReasonDraft(''); }} disabled={processingChangeId === item.id || bulkAction !== null} className="min-h-11 rounded-xl bg-red-600 text-[10px] font-black text-white disabled:opacity-50">Reject</button>
-                          </div>
-                        )}
+                           <div className="sticky bottom-0 z-10 mt-3 grid grid-cols-2 gap-2 border-t border-slate-100 bg-white/95 p-3 backdrop-blur dark:border-slate-800 dark:bg-slate-950/95 sm:grid-cols-4">
+                             <button type="button" onClick={() => openSupplierReviewEditor(item)} disabled={processingChangeId === item.id || bulkAction !== null} className="min-h-11 rounded-xl bg-emerald-600 text-[10px] font-black text-white disabled:opacity-50">{item.queueState === 'conflict' || item.status === 'CONFLICT' ? 'Review & Resolve' : 'Edit'}</button>
+                             <button type="button" onClick={() => void handleApproveReviewItem(item, createSupplierReviewDraft(item))} disabled={processingChangeId === item.id || bulkAction !== null || item.productValidation?.readyToPublish === false} className="min-h-11 rounded-xl bg-blue-600 text-[10px] font-black text-white disabled:opacity-50">Approve</button>
+                             <button type="button" onClick={() => { setRejectingReviewItem(item); setReviewDecisionAction('reject'); setRejectionReasonDraft(''); }} disabled={processingChangeId === item.id || bulkAction !== null} className="min-h-11 rounded-xl bg-red-600 text-[10px] font-black text-white disabled:opacity-50">Reject</button>
+                             {(reviewFilter === 'conflicts' || reviewFilter === 'needs_attention') && <button type="button" onClick={() => { setRejectingReviewItem(item); setReviewDecisionAction('delete'); setRejectionReasonDraft(''); }} disabled={processingChangeId === item.id || bulkAction !== null} className="min-h-11 rounded-xl border border-slate-300 text-[10px] font-black text-slate-600 disabled:opacity-50 dark:border-slate-700 dark:text-slate-300">Dismiss</button>}
+                           </div>
+                         )}
+                        {!supplierReviewDecisionReady(item) && ['Approved', 'Rejected'].includes(item.status) && <div className="p-3"><button type="button" onClick={() => openSupplierReviewHistory(item)} className="min-h-11 w-full rounded-xl border border-blue-500/20 bg-blue-500/10 px-4 text-[10px] font-black text-blue-700 dark:text-blue-300">View decision history</button></div>}
                       </article>
                     );
                   })}
@@ -1759,7 +1906,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                                   className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-700 text-white font-bold rounded-lg text-[10px] transition-colors flex items-center gap-1 cursor-pointer"
                                 >
                                   <Check className="h-3 w-3" />
-                                  Edit
+                                  {item.queueState === 'conflict' || item.status === 'CONFLICT' ? 'Review & Resolve' : 'Edit'}
                                 </button>
                                 <button
                                   onClick={() => void handleApproveReviewItem(item, createSupplierReviewDraft(item))}
@@ -1769,23 +1916,33 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                                   <Check className="h-3 w-3" /> Approve
                                 </button>
                                 <button
-                                  onClick={() => {
-                                    setRejectingReviewItem(item);
-                                    setRejectionReasonDraft('');
+                                   onClick={() => {
+                                     setRejectingReviewItem(item);
+                                     setReviewDecisionAction('reject');
+                                     setRejectionReasonDraft('');
                                   }}
                                   disabled={processingChangeId === item.id || bulkAction !== null}
                                   className="px-3 py-1.5 bg-red-600 hover:bg-red-700 disabled:bg-slate-700 text-white font-bold rounded-lg text-[10px] transition-colors flex items-center gap-1 cursor-pointer"
                                 >
-                                  <X className="h-3 w-3" />
-                                  Reject
-                                </button>
-                              </div>
-                            )}
-                            {item.status === 'Approved' && (
-                              <span className="text-emerald-500 font-bold text-[10px]">Approved</span>
-                            )}
-                            {item.status === 'Rejected' && (
-                              <span className="text-red-500 font-bold text-[10px]">Rejected</span>
+                                   <X className="h-3 w-3" />
+                                   Reject
+                                 </button>
+                                 {(reviewFilter === 'conflicts' || reviewFilter === 'needs_attention') && <button
+                                   type="button"
+                                   onClick={() => {
+                                     setRejectingReviewItem(item);
+                                     setReviewDecisionAction('delete');
+                                     setRejectionReasonDraft('');
+                                   }}
+                                   disabled={processingChangeId === item.id || bulkAction !== null}
+                                   className="px-3 py-1.5 rounded-lg border border-slate-300 text-[10px] font-bold text-slate-600 disabled:opacity-50 dark:border-slate-700 dark:text-slate-300"
+                                 >
+                                   Dismiss
+                                 </button>}
+                               </div>
+                             )}
+                            {!supplierReviewDecisionReady(item) && ['Approved', 'Rejected'].includes(item.status) && (
+                              <button type="button" onClick={() => openSupplierReviewHistory(item)} className="min-h-9 rounded-lg border border-blue-500/20 bg-blue-500/10 px-3 text-[10px] font-black text-blue-700 dark:text-blue-300">View history</button>
                             )}
                           </td>
                         </tr>
@@ -1828,6 +1985,8 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
               </div>
             </div>
 
+            <SupplierManagementDashboard requestApi={requestSupplierApi} refreshKey={operationsRefreshKey} />
+
             {supplierSources.length === 0 ? (
               <div className="p-12 text-center rounded-3xl border border-dashed border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/10 space-y-3">
                 <span className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-emerald-500/10 text-emerald-500"><Globe className="h-8 w-8" aria-hidden="true" /></span>
@@ -1861,33 +2020,45 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                       <SupplierConnectionBadge source={source} isSyncing={sourceIsSyncing(String(source.id))} />
                     </div>
 
-                    <div className="grid grid-cols-2 gap-4 mt-6 p-3 bg-slate-50 dark:bg-slate-900/40 rounded-2xl border border-slate-100/50 dark:border-slate-800/40 text-xs">
+                    <div className="mt-6 grid grid-cols-2 gap-4 rounded-2xl border border-slate-100/50 bg-slate-50 p-3 text-xs dark:border-slate-800/40 dark:bg-slate-900/40">
                       <div className="space-y-0.5">
-                        <span className="text-slate-400 font-bold block text-[10px] uppercase">Status</span>
+                        <span className="block text-[10px] font-bold uppercase text-slate-400">Current Status</span>
                         <button type="button" onClick={() => void handleSupplierPauseAction(source)} disabled={savingSettingsSourceId !== null} className="font-bold text-blue-600 disabled:opacity-50">
-                          {String(source.operationalState || '').toLowerCase() === 'paused' || source.enabled === false ? 'Paused' : 'Active'}
+                          {supplierConnectionPresentation(source, sourceIsSyncing(String(source.id))).label}
                         </button>
                       </div>
                       <div className="space-y-0.5">
                         <span className="text-slate-400 font-bold block text-[10px] uppercase">Auto Sync</span>
                         <button type="button" onClick={() => void handleToggleSupplierAutoSync(source)} disabled={savingSettingsSourceId !== null || !supplierHasCompletedInitialSync(source)} title={supplierHasCompletedInitialSync(source) ? 'Enable or disable automatic synchronization' : 'Run Initial Sync before enabling Auto Sync'} className={`font-bold disabled:cursor-not-allowed disabled:opacity-50 ${String(source.settings?.autoSync || source.syncSchedule || 'Off').toLowerCase() === 'off' ? 'text-slate-500' : 'text-emerald-500'}`}>
-                          {String(source.settings?.autoSync || source.syncSchedule || 'Off').toLowerCase() === 'off' ? 'OFF' : 'ON'}
+                          {String(source.settings?.autoSync || source.syncSchedule || 'Off').toLowerCase() === 'off'
+                            ? 'Manual Mode'
+                            : `Auto · ${String(source.settings?.autoSync || source.syncSchedule)}`}
                         </button>
                       </div>
                       <div className="space-y-0.5 border-t border-slate-100 pt-2 dark:border-slate-800/40">
+                        <span className="text-slate-400 font-bold block text-[10px] uppercase">Last Sync</span>
+                        <span className="text-slate-700 dark:text-slate-200 font-medium">{formatSupplierTimestamp(source.lastSync, 'Not updated yet')}</span>
+                      </div>
+                      <div className="space-y-0.5 border-t border-slate-100 pt-2 dark:border-slate-800/40">
+                        <span className="block text-[10px] font-bold uppercase text-slate-400">Next Sync</span>
+                        <span className="font-medium text-slate-700 dark:text-slate-200">{formatSupplierTimestamp(source.nextScheduledSyncAt || source.nextScheduledSync || source.nextSyncAt || source.schedule?.nextRunAt, 'Manual mode')}</span>
+                      </div>
+                      <div className="space-y-0.5 border-t border-slate-100 pt-2 dark:border-slate-800/40">
                         <span className="text-slate-400 font-bold block text-[10px] uppercase">Last Successful Sync</span>
-                        <span className="text-slate-700 dark:text-slate-200 font-medium">{formatSupplierTimestamp(source.lastSuccessfulSync || source.lastSuccess || source.lastSync, 'Not updated yet')}</span>
+                        <span className="text-slate-700 dark:text-slate-200 font-medium">{formatSupplierTimestamp(source.lastSuccessfulSyncAt || source.lastSuccessfulSync || source.lastSuccess, 'Not updated yet')}</span>
+                      </div>
+                      <div className="space-y-0.5 border-t border-slate-100 pt-2 dark:border-slate-800/40">
+                        <span className="block text-[10px] font-bold uppercase text-slate-400">Last Failed Sync</span>
+                        <span className="font-medium text-slate-700 dark:text-slate-200">{formatSupplierTimestamp(source.lastFailedSyncAt || source.lastFailure, 'No failures')}</span>
+                      </div>
+                      <div className="space-y-0.5 border-t border-slate-100 pt-2 dark:border-slate-800/40">
+                        <span className="block text-[10px] font-bold uppercase text-slate-400">Sync Duration</span>
+                        <span className="font-medium text-slate-700 dark:text-slate-200">{formatSupplierDuration(source.syncMetrics?.durationMs ?? source.syncHealth?.averageLatencyMs)}</span>
                       </div>
                       <div className="space-y-0.5 border-t border-slate-100 pt-2 dark:border-slate-800/40">
                         <span className="text-slate-400 font-bold block text-[10px] uppercase">Health</span>
                         <span className={`inline-flex rounded-full px-2 py-0.5 font-black ${supplierHealthLabel(source) === 'Needs attention' ? 'bg-rose-500/10 text-rose-500' : supplierHealthLabel(source) === 'Healthy' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-slate-500/10 text-slate-500'}`}>{supplierHealthLabel(source) === 'Needs attention' ? 'Needs Attention' : supplierHealthLabel(source)}</span>
                       </div>
-                      {(source.nextScheduledSync || source.nextSyncAt || source.schedule?.nextRunAt) && (
-                        <div className="col-span-2 border-t border-slate-100 pt-2 dark:border-slate-800/40">
-                          <span className="block text-[10px] font-bold uppercase text-slate-400">Next Scheduled Sync</span>
-                          <span className="font-medium text-slate-700 dark:text-slate-200">{formatSupplierTimestamp(source.nextScheduledSync || source.nextSyncAt || source.schedule?.nextRunAt)}</span>
-                        </div>
-                      )}
                     </div>
 
                     <div className="mt-5 flex w-full flex-wrap items-center gap-3 sm:justify-end">
@@ -1989,6 +2160,70 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                               />
                             </div>
 
+                            <div className="space-y-1">
+                              <span className="block text-[10px] font-bold text-slate-400 dark:text-slate-500">Platform</span>
+                              <span className="block rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold capitalize text-slate-700 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200">
+                                {String(source.connectorType || source.type || 'Supplier').replaceAll('_', ' ')}
+                              </span>
+                            </div>
+
+                            <div className="space-y-1">
+                              <span className="block text-[10px] font-bold text-slate-400 dark:text-slate-500">Username</span>
+                              <span className="block rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200">
+                                {source.authentication?.mode === 'none' ? 'Not required' : 'Managed in Secret Manager'}
+                              </span>
+                            </div>
+
+                            <div className="space-y-1 sm:col-span-2">
+                              <label className="block text-[10px] font-bold text-slate-400 dark:text-slate-500" htmlFor={`supplier-credential-profile-${source.id}`}>
+                                Credential profile ID
+                              </label>
+                              {String(source.connectorType || '').toLowerCase() === 'a2z' ? (
+                                <input
+                                  id={`supplier-credential-profile-${source.id}`}
+                                  type="text"
+                                  required
+                                  maxLength={160}
+                                  pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,159}"
+                                  value={editCredentialProfile}
+                                  onChange={(event) => setEditCredentialProfile(event.target.value)}
+                                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 font-mono text-[10px] font-semibold text-slate-700 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200"
+                                />
+                              ) : (
+                                <span className="block rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-[10px] font-semibold text-slate-700 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200">
+                                  {source.authentication?.mode === 'none' ? 'No authentication required' : 'Managed server-side'}
+                                </span>
+                              )}
+                              <span className="block text-[9px] text-slate-400">Only a server-configured identifier is stored. Credential values remain in Secret Manager.</span>
+                            </div>
+
+                            <label className="space-y-1">
+                              <span className="block text-[10px] font-bold text-slate-400 dark:text-slate-500">Synchronization Mode</span>
+                              <select
+                                value={editSyncMode}
+                                onChange={(event) => setEditSyncMode(event.target.value as 'manual' | 'auto')}
+                                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold dark:border-slate-800 dark:bg-slate-950 dark:text-white"
+                              >
+                                <option value="manual">Manual Mode</option>
+                                <option value="auto">Auto Mode</option>
+                              </select>
+                            </label>
+
+                            <label className="space-y-1">
+                              <span className="block text-[10px] font-bold text-slate-400 dark:text-slate-500">Auto Sync Schedule</span>
+                              <select
+                                value={editAutoSyncSchedule}
+                                onChange={(event) => setEditAutoSyncSchedule(event.target.value)}
+                                disabled={editSyncMode !== 'auto'}
+                                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-800 dark:bg-slate-950 dark:text-white"
+                              >
+                                {!SUPPLIER_AUTO_SYNC_SCHEDULES.includes(editAutoSyncSchedule as typeof SUPPLIER_AUTO_SYNC_SCHEDULES[number]) && (
+                                  <option value={editAutoSyncSchedule}>{editAutoSyncSchedule} (legacy schedule)</option>
+                                )}
+                                {SUPPLIER_AUTO_SYNC_SCHEDULES.map((schedule) => <option key={schedule} value={schedule}>{schedule === '1 Hour' ? 'Hourly' : schedule === 'Daily' ? 'Daily' : `Every ${schedule}`}</option>)}
+                              </select>
+                            </label>
+
                           </div>
                         </div>
 
@@ -2082,7 +2317,10 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                       onChange={(event) => setSupplierSettings((current: any) => ({ ...current, syncInterval: event.target.value }))}
                       className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-bold dark:border-slate-700 dark:bg-slate-900"
                     >
-                      {['15 Minutes', '30 Minutes', '1 Hour', '6 Hours', 'Daily'].map((interval) => <option key={interval} value={interval}>{interval}</option>)}
+                      {!SUPPLIER_AUTO_SYNC_SCHEDULES.includes(String(supplierSettings.syncInterval || '1 Hour') as typeof SUPPLIER_AUTO_SYNC_SCHEDULES[number]) && (
+                        <option value={String(supplierSettings.syncInterval)}>{String(supplierSettings.syncInterval)} (legacy schedule)</option>
+                      )}
+                      {SUPPLIER_AUTO_SYNC_SCHEDULES.map((interval) => <option key={interval} value={interval}>{interval === '1 Hour' ? 'Hourly' : interval === 'Daily' ? 'Daily' : `Every ${interval}`}</option>)}
                     </select>
                   </label>
 
@@ -2314,6 +2552,15 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
       </div>
 
       {/* --- ALL INLINE MODALS --- */}
+      {manualSyncSource && (
+        <SupplierManualSyncDialog
+          source={manualSyncSource}
+          busy={syncingSourceId === String(manualSyncSource.id)}
+          onClose={() => setManualSyncSource(null)}
+          onSubmit={runManualSupplierSync}
+        />
+      )}
+
       {showConnectModal && (
         <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white dark:bg-[#111928] border border-slate-200/50 dark:border-slate-800 rounded-3xl max-w-xl w-full p-6 text-left shadow-2xl flex flex-col space-y-4">
@@ -2403,6 +2650,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                   onChange={(e) => {
                     setNewSupplierType(e.target.value as SupplierOnboardingType);
                     setNewSupplierUrl("");
+                    setNewSupplierCredentialProfile('');
                     setApiEndpoint("");
                     setModalTestStatus('idle');
                     setModalTestError(null);
@@ -2446,9 +2694,29 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                     />
                   </div>}
                   {newSupplierType === 'a2z' && (
-                    <p className="text-[10px] font-semibold leading-relaxed text-amber-700/80 dark:text-amber-400/80">
-                      Credentials are resolved only from the Firebase Functions A2Z Secret Manager profile; no credential values are sent by this form.
-                    </p>
+                    <div className="space-y-1">
+                      <label className="text-amber-600 dark:text-amber-500 font-black block text-[9px] uppercase tracking-wider">
+                        Credential profile ID
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        maxLength={160}
+                        pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,159}"
+                        placeholder="supplier-profile-id"
+                        value={newSupplierCredentialProfile}
+                        onChange={(event) => {
+                          setNewSupplierCredentialProfile(event.target.value);
+                          setModalTestStatus('idle');
+                          testedSupplierConfigurationRef.current = null;
+                        }}
+                        className="w-full px-3 py-2.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl focus:outline-hidden focus:border-amber-500 transition-colors text-xs dark:text-white font-mono"
+                        aria-describedby="a2z-credential-profile-help"
+                      />
+                      <p id="a2z-credential-profile-help" className="text-[10px] font-semibold leading-relaxed text-amber-700/80 dark:text-amber-400/80">
+                        Enter only the server-configured profile ID. Credentials remain in Firebase Secret Manager and are never sent by this form.
+                      </p>
+                    </div>
                   )}
                 </div>
               )}
@@ -2554,21 +2822,42 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
         />
       )}
 
+      {historyReviewItem && (
+        <SupplierReviewHistoryModal
+          item={historyReviewItem}
+          events={reviewAuditEvents}
+          loading={reviewAuditLoading}
+          error={reviewAuditError ? supplierBusinessErrorMessage(reviewAuditError, 'Approval history could not be loaded.') : null}
+          nextCursor={reviewAuditCursor}
+          currentAdmin={auth.currentUser}
+          onLoadMore={() => loadSupplierReviewAudit(historyReviewItem, reviewAuditCursor || undefined, true)}
+          onClose={() => {
+            supplierAuditRequestIdRef.current += 1;
+            setHistoryReviewItem(null);
+            setReviewAuditEvents([]);
+            setReviewAuditCursor(null);
+            setReviewAuditError(null);
+          }}
+        />
+      )}
+
       {rejectingReviewItem && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-xs" role="dialog" aria-modal="true" aria-labelledby="supplier-rejection-title">
           <form
             className="w-full max-w-md space-y-4 rounded-3xl border border-slate-200 bg-white p-6 text-left shadow-2xl dark:border-slate-800 dark:bg-[#111928]"
             onSubmit={(event) => {
               event.preventDefault();
-              if (rejectionReasonDraft.trim()) void handleRejectReviewItem(rejectingReviewItem, rejectionReasonDraft);
+              if (!rejectionReasonDraft.trim()) return;
+              if (reviewDecisionAction === 'delete') void handleDismissReviewItem(rejectingReviewItem, rejectionReasonDraft);
+              else void handleRejectReviewItem(rejectingReviewItem, rejectionReasonDraft);
             }}
           >
             <div>
-              <h3 id="supplier-rejection-title" className="text-sm font-extrabold text-slate-900 dark:text-white">Reject supplier product</h3>
-              <p className="mt-1 text-xs text-slate-500">Give the supplier a clear reason they can act on.</p>
+              <h3 id="supplier-rejection-title" className="text-sm font-extrabold text-slate-900 dark:text-white">{reviewDecisionAction === 'delete' ? 'Dismiss this review' : 'Reject supplier product'}</h3>
+              <p className="mt-1 text-xs text-slate-500">{reviewDecisionAction === 'delete' ? 'Dismissal preserves the immutable audit record and does not delete the product or supplier evidence. A later supplier observation may require review again.' : 'Give the supplier a clear reason they can act on.'}</p>
             </div>
             <label className="block text-xs font-bold text-slate-600 dark:text-slate-300">
-              Rejection reason
+              {reviewDecisionAction === 'delete' ? 'Dismissal reason' : 'Rejection reason'}
               <textarea
                 autoFocus
                 required
@@ -2579,8 +2868,8 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
               />
             </label>
             <div className="flex justify-end gap-2">
-              <button type="button" onClick={() => { setRejectingReviewItem(null); setRejectionReasonDraft(''); }} className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-bold text-slate-600 dark:border-slate-700 dark:text-slate-300">Cancel</button>
-              <button type="submit" disabled={!rejectionReasonDraft.trim() || processingChangeId === rejectingReviewItem.id} className="rounded-xl bg-red-600 px-4 py-2 text-xs font-bold text-white disabled:opacity-50">Reject Product</button>
+              <button type="button" onClick={() => { setRejectingReviewItem(null); setReviewDecisionAction('reject'); setRejectionReasonDraft(''); }} className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-bold text-slate-600 dark:border-slate-700 dark:text-slate-300">Cancel</button>
+              <button type="submit" disabled={!rejectionReasonDraft.trim() || processingChangeId === rejectingReviewItem.id} className="rounded-xl bg-red-600 px-4 py-2 text-xs font-bold text-white disabled:opacity-50">{reviewDecisionAction === 'delete' ? 'Dismiss Review' : 'Reject Product'}</button>
             </div>
           </form>
         </div>

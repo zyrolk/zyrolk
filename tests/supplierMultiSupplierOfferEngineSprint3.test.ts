@@ -22,6 +22,7 @@ const offer = (sourceId: string, priority: number, overrides: Record<string, unk
   priority,
   health: { availability: 'available' },
   lastSyncAt: '2026-07-26T00:00:00.000Z',
+  reviewStatus: 'approved',
   catalogPayload: { id: 'zyro-product', name: 'Product' },
   supplierSnapshot: { supplierProductId: `${sourceId}-product` },
   timestamp: '2026-07-26T00:00:00.000Z',

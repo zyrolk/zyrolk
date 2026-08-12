@@ -1,5 +1,4 @@
 import { FieldValue, Firestore } from "firebase-admin/firestore";
-import { createHash } from "node:crypto";
 import { ApiError } from "../errors";
 import { COMMERCIAL_PRODUCT_FIELDS, PRODUCT_PRIVATE_COLLECTION, splitProductData } from "../products/productCommercialData";
 import { isValidSupplierImageUrl } from "./a2z/ProductParser";
@@ -15,6 +14,7 @@ import {
   validateSupplierProductForApproval,
 } from "./supplierProductMapping";
 import {
+  buildSupplierProductApprovalBaseline,
   detectSupplierApprovalConflict,
   parseSupplierProductApprovalBaseline,
   rebaseSupplierApprovalConflict,
@@ -32,6 +32,7 @@ import {
   buildSupplierRemovalPublicProjection,
   isSupplierOfferAvailableForCommerce,
   parseSupplierOfferSelection,
+  promoteSupplierOfferPendingObservation,
   projectSupplierOfferForAdmin,
   resolveActiveSupplierOffer,
   SupplierProductOffer,
@@ -41,6 +42,12 @@ import {
   buildSupplierQueueIdentityProjection,
   resolveSupplierQueueIdentity,
 } from "./supplierQueueIdentity";
+import {
+  assertZyroBarcodeAvailable,
+  buildZyroProductId,
+  buildZyroSkuCandidates,
+  reserveZyroSku,
+} from "./supplierProductIdentity";
 
 // Every decision transaction appends an immutable supplier_approval_audit event
 // through the shared server-only audit trail helper.
@@ -56,6 +63,8 @@ export interface SupplierApprovalDraft {
   keyFeatures?: string[];
   whatsIncluded?: string[];
   slug?: string;
+  metaDescription?: string;
+  keywords?: string[];
   sellingPrice: number;
   comparePrice: number;
   costPrice?: number;
@@ -88,6 +97,8 @@ export interface SupplierQueueDecisionSuccessResult {
   action: SupplierQueueDecisionAction;
   status: "approved" | "rejected" | "deleted";
   productId?: string;
+  sku?: string;
+  idempotent?: boolean;
 }
 
 export interface SupplierQueueDecisionConflictResult {
@@ -100,6 +111,10 @@ export interface SupplierQueueDecisionConflictResult {
 }
 
 export type SupplierQueueDecisionResult = SupplierQueueDecisionSuccessResult | SupplierQueueDecisionConflictResult;
+
+export interface SupplierApprovalIdentityDependencies {
+  buildSkuCandidates?: (productId: string) => readonly string[];
+}
 
 interface QueueItemRecord extends Record<string, unknown> {
   id?: unknown;
@@ -116,6 +131,7 @@ interface QueueItemRecord extends Record<string, unknown> {
   batchId?: unknown;
   approvalBaseline?: unknown;
   managedMedia?: unknown;
+  supplierOfferPendingRevision?: unknown;
 }
 
 const MAX_QUEUE_ID_LENGTH = 160;
@@ -188,6 +204,7 @@ export function parseSupplierApprovalDraft(value: unknown): SupplierApprovalDraf
   const barcode = cleanOptionalText(draft.barcode, "Barcode", 64);
   const productType = cleanOptionalText(draft.productType, "Product type", 160);
   const slug = cleanOptionalText(draft.slug, "SEO slug", 160);
+  const metaDescription = cleanOptionalText(draft.metaDescription, "Meta description", 500);
   const category = cleanText(draft.category, "Category", 160);
   const subcategory = typeof draft.subcategory === "string" ? cleanText(draft.subcategory, "Subcategory", 160, false) : undefined;
   const specifications = draft.specifications === undefined ? undefined : cleanSpecifications(draft.specifications);
@@ -229,6 +246,8 @@ export function parseSupplierApprovalDraft(value: unknown): SupplierApprovalDraf
     ...(draft.keyFeatures !== undefined ? { keyFeatures: cleanTextList(draft.keyFeatures, "Key features") } : {}),
     ...(draft.whatsIncluded !== undefined ? { whatsIncluded: cleanTextList(draft.whatsIncluded, "What's included") } : {}),
     ...(draft.slug !== undefined ? { slug } : {}),
+    ...(draft.metaDescription !== undefined ? { metaDescription } : {}),
+    ...(draft.keywords !== undefined ? { keywords: cleanTextList(draft.keywords, "SEO keywords") } : {}),
     sellingPrice,
     comparePrice,
     ...(costPrice !== undefined ? { costPrice } : {}),
@@ -280,12 +299,35 @@ const record = (value: unknown): Record<string, unknown> => value && typeof valu
   ? value as Record<string, unknown>
   : {};
 
+const supplierReviewAllowsDismissal = (queueItem: QueueItemRecord): boolean => {
+  const queueState = String(queueItem.queueState || "").trim().toLowerCase();
+  const status = String(queueItem.status || "").trim().toLowerCase();
+  const validation = record(queueItem.productValidation);
+  const missingFields = Array.isArray(validation.missingFields) ? validation.missingFields : [];
+  const validationErrors = Array.isArray(validation.errors) ? validation.errors : [];
+  const mediaStatus = String(queueItem.mediaStatus || "").trim().toLowerCase();
+
+  return queueState === "conflict"
+    || status === "conflict"
+    || validation.readyToPublish === false
+    || missingFields.length > 0
+    || validationErrors.length > 0
+    || mediaStatus === "failed"
+    || mediaStatus === "partial";
+};
+
 const stringValue = (value: unknown): string => typeof value === "string" ? value.trim() : "";
 
+const cleanPendingRevision = (value: unknown): string => {
+  if (value === undefined || value === null || value === "") return "";
+  if (typeof value !== "string" || !/^[a-f0-9]{64}$/u.test(value.trim())) {
+    throw new ApiError("The supplier observation revision is invalid.", 400);
+  }
+  return value.trim();
+};
+
 export function buildAutoProductSku(productId: string): string {
-  const normalizedProductId = cleanText(productId, "Product ID", 160).toLocaleLowerCase("en");
-  const digest = createHash("sha256").update(normalizedProductId).digest("hex").slice(0, 12).toUpperCase();
-  return `ZY-${digest}`;
+  return buildZyroSkuCandidates(cleanText(productId, "Product ID", 160))[0];
 }
 
 const normalizeSupplierCategory = (value: unknown): string => String(value || "")
@@ -344,6 +386,8 @@ const toPublicProductPayload = (queueItem: QueueItemRecord, draft: SupplierAppro
     keyFeatures: draft?.keyFeatures ?? originalPayload.keyFeatures,
     whatsIncluded: draft?.whatsIncluded ?? originalPayload.whatsIncluded,
     slug: draft?.slug ?? originalPayload.slug,
+    metaDescription: draft?.metaDescription ?? originalPayload.metaDescription,
+    keywords: draft?.keywords ?? originalPayload.keywords,
     price,
     originalPrice: normalizedComparePrice,
     costPrice: draft?.costPrice ?? Number(originalPayload.costPrice ?? 0),
@@ -374,7 +418,14 @@ export async function decideSupplierQueueItem(
   queueItemIdInput: unknown,
   action: SupplierQueueDecisionAction,
   reviewer: SupplierAdminReviewer,
-  options: { draft?: SupplierApprovalDraft; rejectionReason?: unknown; deletionReason?: unknown; resolveConflict?: boolean } = {},
+  options: {
+    draft?: SupplierApprovalDraft;
+    rejectionReason?: unknown;
+    deletionReason?: unknown;
+    resolveConflict?: boolean;
+    expectedPendingRevision?: unknown;
+  } = {},
+  identityDependencies: SupplierApprovalIdentityDependencies = {},
 ): Promise<SupplierQueueDecisionResult> {
   const requestedQueueItemId = cleanQueueItemId(queueItemIdInput);
   const reviewQueueItemId = cleanQueueItemId(queueIdFor(requestedQueueItemId));
@@ -384,6 +435,7 @@ export async function decideSupplierQueueItem(
   const deletionReason = action === "deleted"
     ? cleanText(options.deletionReason, "Deletion reason", MAX_REJECTION_REASON_LENGTH)
     : "";
+  const requestedPendingRevision = cleanPendingRevision(options.expectedPendingRevision);
   let effectiveDraft = options.draft;
   if (action === "approved") {
     const requestedImages = options.draft
@@ -403,7 +455,12 @@ export async function decideSupplierQueueItem(
       };
     }
   }
-  const transactionResult = await db.runTransaction(async (transaction): Promise<{ productId?: string; conflict?: SupplierApprovalConflict }> => {
+  const transactionResult = await db.runTransaction(async (transaction): Promise<{
+    productId?: string;
+    sku?: string;
+    idempotent?: boolean;
+    conflict?: SupplierApprovalConflict;
+  }> => {
     const reviewReference = db.collection("supplier_review_queue").doc(reviewQueueItemId);
     const pendingReference = db.collection("supplier_pending_changes").doc(`change-${reviewQueueItemId}`);
     const importReference = db.collection("supplier_import_queue").doc(reviewQueueItemId);
@@ -412,11 +469,28 @@ export async function decideSupplierQueueItem(
       transaction.get(reviewReference),
       transaction.get(pendingReference),
     ]);
-    const selectedSnapshot = requestedQueueItemId.startsWith("change-") ? pendingSnapshot : reviewSnapshot;
+    const selectedSnapshot = requestedQueueItemId.startsWith("change-") && pendingSnapshot.exists
+      ? pendingSnapshot
+      : reviewSnapshot;
     if (!selectedSnapshot.exists) throw new ApiError("Supplier review item was already processed or no longer exists.", 409);
-    const selectedState = String(selectedSnapshot.data()?.queueState || selectedSnapshot.data()?.status || "").toLowerCase();
+    const selectedData = selectedSnapshot.data() || {};
+    const selectedState = String(selectedData.queueState || selectedData.status || "").toLowerCase();
     const selectedIsConflict = selectedState === "conflict";
-    if (!isPending(selectedSnapshot.data()?.status) && !selectedIsConflict) {
+    if (!isPending(selectedData.status) && !selectedIsConflict) {
+      const decisionRevision = cleanPendingRevision(selectedData.decisionPendingRevision);
+      const decisionAction = String(selectedData.decisionAction || "").toLowerCase();
+      if (
+        decisionAction === action
+        && decisionRevision
+        && requestedPendingRevision === decisionRevision
+        && stringValue(selectedData.decisionAuditId)
+      ) {
+        return {
+          productId: stringValue(selectedData.decisionProductId || selectedData.canonicalProductId || selectedData.productId) || undefined,
+          sku: stringValue(selectedData.zyroSku) || undefined,
+          idempotent: true,
+        };
+      }
       throw new ApiError("Supplier review item is no longer pending; reload and try again.", 409);
     }
     const reviewQueueState = String(reviewSnapshot.data()?.queueState || "").toLowerCase();
@@ -437,9 +511,50 @@ export async function decideSupplierQueueItem(
       id: requestedQueueItemId,
       reviewQueueItemId,
     };
+    if (action === "deleted" && !supplierReviewAllowsDismissal(queueItem)) {
+      throw new ApiError("Only conflicts or reviews needing attention can be dismissed.", 409);
+    }
     const resolvedQueueIdentity = await resolveSupplierQueueIdentity(db, transaction, queueItem);
-    const queueIdentityProjection = buildSupplierQueueIdentityProjection(queueItem, resolvedQueueIdentity);
+    const approvalBaselineCandidate = parseSupplierProductApprovalBaseline(queueItem.approvalBaseline);
+    const comparisonStatus = stringValue(
+      queueItem.comparisonStatus || record(queueItem.comparison).comparisonStatus,
+    ).toUpperCase();
+    const createsNewZyroProduct = action === "approved"
+      && comparisonStatus === "NEW_PRODUCT"
+      && approvalBaselineCandidate?.exists === false
+      && resolvedQueueIdentity.offer?.reviewStatus !== "approved";
+    const supplierSnapshotForIdentity = record(queueItem.supplierSnapshot);
+    const approvalProductId = createsNewZyroProduct
+      ? buildZyroProductId({
+        offerId: resolvedQueueIdentity.offer?.id,
+        sourceId: queueItem.sourceId || supplierSnapshotForIdentity.sourceId,
+        supplierId: queueItem.supplierId || supplierSnapshotForIdentity.supplierId,
+        supplierProductId: supplierSnapshotForIdentity.supplierProductId
+          || supplierSnapshotForIdentity.supplierSku
+          || queueItem.supplierCode,
+        portalRequestId: queueItem.portalRequestId,
+      })
+      : resolvedQueueIdentity.canonicalProductId;
+    const queueIdentityProjection = buildSupplierQueueIdentityProjection(queueItem, {
+      canonicalProductId: approvalProductId,
+      supplierOfferId: resolvedQueueIdentity.supplierOfferId,
+    });
     queueItem = { ...queueItem, ...queueIdentityProjection };
+    const queuePendingRevision = cleanPendingRevision(queueItem.supplierOfferPendingRevision);
+    const currentPendingObservation = resolvedQueueIdentity.offer?.pendingObservation || null;
+    if (currentPendingObservation) {
+      if (currentPendingObservation.reviewQueueItemId !== reviewQueueItemId) {
+        throw new ApiError("The supplier observation belongs to a different Product Review item.", 409);
+      }
+      if (!queuePendingRevision || queuePendingRevision !== currentPendingObservation.revision) {
+        throw new ApiError("The supplier observation changed; reload Product Review before deciding.", 409);
+      }
+      if (!requestedPendingRevision || requestedPendingRevision !== queuePendingRevision) {
+        throw new ApiError("Product Review changed after it was opened; reload before deciding.", 409);
+      }
+    } else if (queuePendingRevision || requestedPendingRevision) {
+      throw new ApiError("The supplier observation is no longer pending; reload Product Review.", 409);
+    }
     const isSupplierOfferRemoval = action === "approved"
       && stringValue(queueItem.reconciliationAction) === "supplier_offer_unavailable";
     let approvedPayload = action === "approved" ? toPublicProductPayload(queueItem, effectiveDraft) : undefined;
@@ -448,6 +563,9 @@ export async function decideSupplierQueueItem(
     const brandReference = approvedBrandId ? db.collection("brands").doc(approvedBrandId) : null;
     const needsCategoryMapping = Boolean(approvedPayload && Array.isArray(record(queueItem.supplierSnapshot).categoryHierarchy));
     const productReference = approvedPayload ? db.collection("products").doc(String(approvedPayload.id)) : null;
+    const decisionProductReference = productReference || (resolvedQueueIdentity.offer
+      ? db.collection("products").doc(resolvedQueueIdentity.canonicalProductId)
+      : null);
     const privateProductReference = approvedPayload ? db.collection(PRODUCT_PRIVATE_COLLECTION).doc(String(approvedPayload.id)) : null;
     const approvedSupplierOffer = resolvedQueueIdentity.offer;
     const supplierOfferReference = resolvedQueueIdentity.offerReference;
@@ -478,7 +596,7 @@ export async function decideSupplierQueueItem(
       categoryReference ? transaction.get(categoryReference) : Promise.resolve(null),
       brandReference ? transaction.get(brandReference) : Promise.resolve(null),
       needsCategoryMapping ? transaction.get(settingsReference) : Promise.resolve(null),
-      productReference ? transaction.get(productReference) : Promise.resolve(null),
+      decisionProductReference ? transaction.get(decisionProductReference) : Promise.resolve(null),
       privateProductReference ? transaction.get(privateProductReference) : Promise.resolve(null),
       categoryMappingReference ? transaction.get(categoryMappingReference) : Promise.resolve(null),
       brandMappingReference ? transaction.get(brandMappingReference) : Promise.resolve(null),
@@ -488,11 +606,29 @@ export async function decideSupplierQueueItem(
     ]);
     const now = FieldValue.serverTimestamp();
     const previousState = reviewQueueState || "review_pending";
+    const legacyAmbiguousPendingOffer = Boolean(
+      approvedSupplierOffer
+      && !currentPendingObservation
+      && approvedSupplierOffer.reviewStatus === "review_pending"
+      && existingProductSnapshot?.exists
+      && stringValue(queueItem.comparisonStatus) !== "NEW_PRODUCT",
+    );
+    if (legacyAmbiguousPendingOffer) {
+      throw new ApiError(
+        "This legacy pending supplier offer has no provable approved baseline. Run a fresh sync and review the new observation.",
+        409,
+      );
+    }
 
     if (approvedPayload && productReference) {
-      const approvalBaselineCandidate = parseSupplierProductApprovalBaseline(queueItem.approvalBaseline);
       const approvalBaseline = approvalBaselineCandidate?.productId === String(approvedPayload.id)
         ? approvalBaselineCandidate
+        : createsNewZyroProduct && approvalBaselineCandidate?.exists === false
+          ? buildSupplierProductApprovalBaseline(
+            String(approvedPayload.id),
+            undefined,
+            approvalBaselineCandidate.capturedAt,
+          )
         : null;
       const currentProduct = existingProductSnapshot?.exists ? existingProductSnapshot.data() : undefined;
       const conflict = detectSupplierApprovalConflict(approvalBaseline, String(approvedPayload.id), currentProduct);
@@ -539,29 +675,40 @@ export async function decideSupplierQueueItem(
       }
     }
 
+    let decisionSupplierOffer = approvedSupplierOffer;
+    if (action === "approved" && approvedSupplierOffer && currentPendingObservation) {
+      try {
+        decisionSupplierOffer = promoteSupplierOfferPendingObservation(
+          approvedSupplierOffer,
+          currentPendingObservation.revision,
+        );
+      } catch (error) {
+        throw new ApiError(error instanceof Error ? error.message : "The supplier observation could not be promoted.", 409);
+      }
+    }
     const currentOfferSelection = parseSupplierOfferSelection(existingPrivateProductSnapshot?.data()?.supplierOfferSelection);
     const approvedOffers = (productOffersSnapshot?.docs || [])
       .map((document) => projectSupplierOfferForAdmin({ id: document.id, ...document.data() }))
       .filter((offer): offer is SupplierProductOffer => Boolean(offer))
-      .map((offer) => approvedSupplierOffer && offer.id === approvedSupplierOffer.id
-        ? { ...approvedSupplierOffer, reviewStatus: isSupplierOfferRemoval ? approvedSupplierOffer.reviewStatus : "approved" as const }
+      .map((offer) => decisionSupplierOffer && offer.id === decisionSupplierOffer.id
+        ? { ...decisionSupplierOffer, reviewStatus: isSupplierOfferRemoval ? decisionSupplierOffer.reviewStatus : "approved" as const }
         : offer)
-      .filter((offer) => offer.reviewStatus === "approved" && (!isSupplierOfferRemoval || offer.id !== approvedSupplierOffer?.id));
-    if (approvedSupplierOffer && !isSupplierOfferRemoval && !approvedOffers.some((offer) => offer.id === approvedSupplierOffer.id)) {
-      approvedOffers.push({ ...approvedSupplierOffer, reviewStatus: "approved" });
+      .filter((offer) => offer.reviewStatus === "approved" && (!isSupplierOfferRemoval || offer.id !== decisionSupplierOffer?.id));
+    if (decisionSupplierOffer && !isSupplierOfferRemoval && !approvedOffers.some((offer) => offer.id === decisionSupplierOffer.id)) {
+      approvedOffers.push({ ...decisionSupplierOffer, reviewStatus: "approved" });
     }
-    const activeSupplierOffer = approvedSupplierOffer && approvedPayload
+    const activeSupplierOffer = decisionSupplierOffer && approvedPayload
       ? (isSupplierOfferRemoval
         ? resolveActiveSupplierOffer(approvedOffers, currentOfferSelection)
         : !currentOfferSelection.activeOfferId
-          ? approvedSupplierOffer
-          : resolveActiveSupplierOffer(approvedOffers, currentOfferSelection) || approvedSupplierOffer)
+          ? decisionSupplierOffer
+          : resolveActiveSupplierOffer(approvedOffers, currentOfferSelection) || decisionSupplierOffer)
       : null;
     const activeCommerceOffer = activeSupplierOffer && isSupplierOfferAvailableForCommerce(activeSupplierOffer)
       ? activeSupplierOffer
       : null;
     const projectedSupplierOffer = isSupplierOfferRemoval ? activeCommerceOffer : activeSupplierOffer;
-    const nextOfferSelection = approvedSupplierOffer && approvedPayload ? {
+    const nextOfferSelection = decisionSupplierOffer && approvedPayload ? {
       ...currentOfferSelection,
       activeOfferId: activeCommerceOffer?.id || (isSupplierOfferRemoval ? null : activeSupplierOffer?.id || null),
       updatedAt: now,
@@ -570,7 +717,7 @@ export async function decideSupplierQueueItem(
     const shouldProjectApprovedOffer = isSupplierOfferRemoval
       || !approvedSupplierOffer
       || !existingProductSnapshot?.exists
-      || nextOfferSelection.activeOfferId === approvedSupplierOffer.id;
+      || nextOfferSelection.activeOfferId === decisionSupplierOffer?.id;
 
     let resolvedOwnership = existingPrivateProductSnapshot?.data()?.supplierFieldOwnership;
     if (approvedPayload && isSupplierOfferRemoval) {
@@ -584,7 +731,7 @@ export async function decideSupplierQueueItem(
         ),
       };
     }
-    if (approvedPayload && approvedSupplierOffer) approvedPayload.supplierOfferSelection = nextOfferSelection;
+    if (approvedPayload && decisionSupplierOffer) approvedPayload.supplierOfferSelection = nextOfferSelection;
     if (approvedPayload && projectedSupplierOffer) {
       approvedPayload.supplierId = projectedSupplierOffer.supplierId;
       approvedPayload.supplierSourceId = projectedSupplierOffer.sourceId;
@@ -613,10 +760,29 @@ export async function decideSupplierQueueItem(
       };
     }
 
+    let zyroSkuClaimId = "";
     if (approvedPayload) {
+      await assertZyroBarcodeAvailable(
+        db,
+        transaction,
+        String(approvedPayload.id),
+        approvedPayload.barcode,
+      );
       const existingSku = stringValue(existingPrivateProductSnapshot?.data()?.sku)
         || stringValue(existingProductSnapshot?.data()?.sku);
-      approvedPayload.sku = existingSku || buildAutoProductSku(String(approvedPayload.id));
+      if (existingSku) {
+        approvedPayload.sku = existingSku;
+      } else {
+        const productId = String(approvedPayload.id);
+        const reservation = await reserveZyroSku(
+          db,
+          transaction,
+          productId,
+          identityDependencies.buildSkuCandidates?.(productId),
+        );
+        approvedPayload.sku = reservation.sku;
+        zyroSkuClaimId = reservation.claimId;
+      }
     }
 
     // Apply ownership after the active supplier offer is projected. This is
@@ -652,6 +818,17 @@ export async function decideSupplierQueueItem(
         approvedPayload = preservedProduct;
       }
       approvedPayload.supplierFieldOwnership = resolvedOwnership;
+    }
+
+    // Approving the removal is itself the administrator's explicit decision
+    // to withdraw the product when no approved replacement offer exists.
+    // Legacy field-ownership defaults must not restore the live stock or
+    // visibility values after the controlled removal projection is built.
+    if (approvedPayload && isSupplierOfferRemoval && !activeCommerceOffer) {
+      Object.assign(
+        approvedPayload,
+        buildSupplierRemovalPublicProjection(null, existingProductSnapshot?.data()),
+      );
     }
 
     if (approvedPayload) {
@@ -723,10 +900,15 @@ export async function decideSupplierQueueItem(
           updatedAt: now,
         }, { merge: true });
       }
-      if (supplierOfferReference && approvedSupplierOffer) {
+      if (supplierOfferReference && decisionSupplierOffer) {
         transaction.set(supplierOfferReference, {
+          ...(currentPendingObservation ? decisionSupplierOffer : {}),
           productId: decidedProductId,
           reviewStatus: "approved",
+          pendingObservation: null,
+          stateVersion: currentPendingObservation
+            ? decisionSupplierOffer.stateVersion
+            : decisionSupplierOffer.stateVersion + 1,
           approvedAt: now,
           approvedBy: reviewer.uid,
           updatedAt: now,
@@ -823,6 +1005,7 @@ export async function decideSupplierQueueItem(
       const reason = action === "rejected" ? rejectionReason : action === "deleted" ? deletionReason : "";
       transaction.set(db.collection("supplier_product_requests").doc(portalRequestId), {
         status: requestStatus,
+        ...(action === "approved" && decidedProductId ? { productId: decidedProductId } : {}),
         reviewedAt: now,
         reviewedBy: reviewer,
         ...(reason ? { rejectionReason: reason } : {}),
@@ -846,8 +1029,11 @@ export async function decideSupplierQueueItem(
 
     const terminalState = action === "approved" ? "approved" : action === "rejected" ? "rejected" : "suppressed";
     if (action !== "approved" && supplierOfferReference && approvedSupplierOffer) {
+      const preservesApprovedEffectiveState = approvedSupplierOffer.reviewStatus === "approved";
       transaction.set(supplierOfferReference, {
-        reviewStatus: terminalState,
+        reviewStatus: preservesApprovedEffectiveState ? "approved" : terminalState,
+        pendingObservation: null,
+        stateVersion: approvedSupplierOffer.stateVersion + 1,
         reviewedAt: now,
         reviewedBy: reviewer.uid,
         updatedAt: now,
@@ -856,7 +1042,11 @@ export async function decideSupplierQueueItem(
     const approvedProduct = approvedProductPayload ? splitProductData(approvedProductPayload) : undefined;
     const auditId = createSupplierAuditEvent(db, transaction, {
       queueItemId: reviewQueueItemId,
-      queueItem: { ...queueItem, ...(decidedProductId ? { productId: decidedProductId } : {}) },
+      queueItem: {
+        ...queueItem,
+        ...(decidedProductId ? { productId: decidedProductId, canonicalProductId: decidedProductId } : {}),
+        ...(approvedProductPayload?.sku ? { zyroSku: approvedProductPayload.sku } : {}),
+      },
       action: action === "approved" ? "approve" : action === "rejected" ? "reject" : "delete",
       previousState,
       newState: terminalState,
@@ -870,17 +1060,32 @@ export async function decideSupplierQueueItem(
     });
     transaction.set(reviewReference, {
       ...queueIdentityProjection,
+      ...(decidedProductId ? {
+        canonicalProductId: decidedProductId,
+        productId: decidedProductId,
+        productPayload: {
+          ...record(queueIdentityProjection.productPayload),
+          id: decidedProductId,
+        },
+      } : {}),
       queueState: terminalState,
       status: action === "approved" ? "Approved" : "Rejected",
       decisionAction: action,
       decisionAuditId: auditId,
+      decisionPendingRevision: queuePendingRevision || null,
+      ...(decidedProductId ? { decisionProductId: decidedProductId } : {}),
+      ...(approvedProductPayload?.sku ? { zyroSku: approvedProductPayload.sku } : {}),
+      ...(zyroSkuClaimId ? { zyroSkuClaimId } : {}),
       decisionCompletedAt: now,
       decisionCompletedBy: reviewer,
       approvalConflict: FieldValue.delete(),
     }, { merge: true });
     transaction.delete(pendingReference);
     transaction.delete(importReference);
-    return { ...(decidedProductId ? { productId: decidedProductId } : {}) };
+    return {
+      ...(decidedProductId ? { productId: decidedProductId } : {}),
+      ...(approvedProductPayload?.sku ? { sku: String(approvedProductPayload.sku) } : {}),
+    };
   });
 
   if (transactionResult.conflict) {
@@ -900,5 +1105,7 @@ export async function decideSupplierQueueItem(
     action,
     status: action,
     ...(transactionResult.productId ? { productId: transactionResult.productId } : {}),
+    ...(transactionResult.sku ? { sku: transactionResult.sku } : {}),
+    ...(transactionResult.idempotent ? { idempotent: true } : {}),
   };
 }

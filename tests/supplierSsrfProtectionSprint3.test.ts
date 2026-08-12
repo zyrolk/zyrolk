@@ -141,6 +141,48 @@ test('public redirects succeed only after each hop is validated and sensitive he
   assert.deepEqual(visited, [publicHost, 'cdn.supplier.example.com']);
 });
 
+test('credential-bearing 307 and 308 redirects cannot replay a request body to another supplier origin', async () => {
+  for (const status of [307, 308]) {
+    const visited: string[] = [];
+    const transport: SupplierOutboundTransport = async (target) => {
+      visited.push(target.hostname);
+      return response(status, 'https://supplier-b.example.com/auth');
+    };
+    await assert.rejects(
+      () => fetchSupplierOutbound(`https://${publicHost}/auth`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: 'un=supplier-a&pw=credential-body',
+      }, {
+        approvedHosts: [publicHost, 'supplier-b.example.com'],
+        connector: 'a2z',
+        sourceId: 'supplier-a',
+        resolveHost: async () => [publicAddress],
+      }, transport),
+      /request bodies cannot be redirected across origins/,
+    );
+    assert.deepEqual(visited, [publicHost]);
+  }
+});
+
+test('same-origin 307 preserves a request body without weakening redirect validation', async () => {
+  const visited: Array<{ path: string; body: BodyInit | null | undefined }> = [];
+  const transport: SupplierOutboundTransport = async (target, init) => {
+    visited.push({ path: new URL(target.targetUrl).pathname, body: init.body });
+    return visited.length === 1 ? response(307, '/auth/continue') : response(200);
+  };
+  const result = await fetchSupplierOutbound(`https://${publicHost}/auth`, {
+    method: 'POST', body: 'bounded-body',
+  }, {
+    approvedHosts: [publicHost], connector: 'test', resolveHost: async () => [publicAddress],
+  }, transport);
+  assert.equal(result.status, 200);
+  assert.deepEqual(visited, [
+    { path: '/auth', body: 'bounded-body' },
+    { path: '/auth/continue', body: 'bounded-body' },
+  ]);
+});
+
 test('A2Z and generic HTTP connectors share the central outbound request policy', () => {
   const genericConnector = readFileSync('functions/src/api/suppliers/HttpSupplierConnector.ts', 'utf8');
   const a2zConnector = readFileSync('functions/src/api/suppliers/a2z/A2ZConnectorService.ts', 'utf8');

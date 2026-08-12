@@ -147,6 +147,10 @@ export async function loadSupplierOperationsSummary(db: Firestore): Promise<Reco
     mediaReuseSnapshot,
     missingImageSnapshot,
     mediaDurationSnapshot,
+    totalOfferSnapshot,
+    approvedOfferSnapshot,
+    updatedReviewSnapshot,
+    removedReviewSnapshot,
     operationalAlertSnapshot,
     ...stateCounts
   ] = await Promise.all([
@@ -164,6 +168,15 @@ export async function loadSupplierOperationsSummary(db: Firestore): Promise<Reco
     db.collection("supplier_media_audit").where("event", "==", "supplier_media_reused").count().get(),
     db.collection("supplier_review_queue").where("productValidation.missingFields", "array-contains", "images").count().get(),
     db.collection("supplier_media_audit").where("processingDurationMs", ">", 0).limit(500).get(),
+    db.collection("supplier_product_offers").count().get(),
+    db.collection("supplier_product_offers").where("reviewStatus", "==", "approved").count().get(),
+    db.collection("supplier_review_queue").where("comparisonStatus", "in", [
+      "PRICE_CHANGED",
+      "STOCK_CHANGED",
+      "DESCRIPTION_CHANGED",
+      "IMAGE_CHANGED",
+    ]).count().get(),
+    db.collection("supplier_review_queue").where("comparisonStatus", "==", "SUPPLIER_OFFER_REMOVED").count().get(),
     db.collection("supplier_operational_alerts")
       .where("status", "in", ["open", "acknowledged"])
       .orderBy("lastOccurrence", "desc")
@@ -246,6 +259,11 @@ export async function loadSupplierOperationsSummary(db: Firestore): Promise<Reco
       productsImportedToday: importedToday,
       productsUpdatedToday: updatedToday,
       productsPublishedToday: publishedToday,
+      totalProducts: totalOfferSnapshot.data().count,
+      pendingReview: number(queueCounts.review_pending) + number(queueCounts.conflict),
+      approvedProducts: approvedOfferSnapshot.data().count,
+      updatedProducts: updatedReviewSnapshot.data().count,
+      removedProducts: removedReviewSnapshot.data().count,
       failedImports: number(queueCounts.retryable_failure) + number(queueCounts.dead_letter),
       failedApprovals: number(queueCounts.conflict),
     },

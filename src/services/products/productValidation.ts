@@ -13,12 +13,15 @@ export interface ProductValidationInput {
   readonly categories: readonly Readonly<Category>[];
   readonly brands?: readonly Readonly<Brand>[];
   readonly editingProductId?: string;
+  readonly serverAssignedIdentity?: boolean;
 }
 
-export const validateProductForSave = ({ product, products, categories, brands, editingProductId }: ProductValidationInput): readonly string[] => {
+export const validateProductForSave = ({
+  product, products, categories, brands, editingProductId, serverAssignedIdentity = false,
+}: ProductValidationInput): readonly string[] => {
   const errors: string[] = [];
   if (!product.name?.trim()) errors.push('Product name is required.');
-  if (!product.id?.trim()) errors.push('Product slug / ID cannot be empty.');
+  if (!serverAssignedIdentity && !product.id?.trim()) errors.push('Product slug / ID cannot be empty.');
 
   const sellingPrice = Number(product.price);
   if (!Number.isFinite(sellingPrice) || sellingPrice <= 0) errors.push('Sale price must be greater than zero.');
@@ -70,10 +73,12 @@ export const validateProductForSave = ({ product, products, categories, brands, 
     errors.push('Barcode must contain 8 to 14 digits.');
   }
 
-  const normalizedSku = product.sku?.trim().toLocaleLowerCase();
-  if (!normalizedSku) errors.push('Product SKU is required.');
-  else if (products.some((candidate) => candidate.id !== editingProductId && candidate.sku?.trim().toLocaleLowerCase() === normalizedSku)) {
-    errors.push(`Product SKU "${product.sku?.trim()}" is already in use.`);
+  if (!serverAssignedIdentity) {
+    const normalizedSku = product.sku?.trim().toLocaleLowerCase();
+    if (!normalizedSku) errors.push('Product SKU is required.');
+    else if (products.some((candidate) => candidate.id !== editingProductId && candidate.sku?.trim().toLocaleLowerCase() === normalizedSku)) {
+      errors.push(`Product SKU "${product.sku?.trim()}" is already in use.`);
+    }
   }
   return errors;
 };

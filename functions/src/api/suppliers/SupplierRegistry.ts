@@ -6,11 +6,21 @@ import { HttpSupplierConnector } from "./HttpSupplierConnector";
 import { normalizeSupplierSourceConfig } from "./supplierSourceCompatibility";
 import {
   SupplierConnector,
+  SupplierConnectorSyncCapabilities,
   SupplierConnectorType,
   SupplierSourceConfig,
 } from "./types";
+import {
+  normalizeSupplierConnectorSyncCapabilities,
+  SERVER_FILTERED_FULL_CATALOG_CAPABILITIES,
+  UNSUPPORTED_SUPPLIER_SYNC_CAPABILITIES,
+} from "./supplierSyncCapabilities";
 
 type SupplierConnectorFactory = (targetUrl: string, source: SupplierSourceConfig, approvedHosts: string[]) => SupplierConnector;
+interface SupplierConnectorRegistration {
+  factory: SupplierConnectorFactory;
+  syncCapabilities: Readonly<SupplierConnectorSyncCapabilities>;
+}
 
 const normalizePriority = (value: unknown): number => {
   const priority = Number(value);
@@ -22,17 +32,29 @@ const normalizePriority = (value: unknown): number => {
  * the sync worker never needs connector-specific branching.
  */
 export class SupplierRegistry {
-  private static readonly connectorFactories = new Map<SupplierConnectorType, SupplierConnectorFactory>();
+  private static readonly connectorFactories = new Map<SupplierConnectorType, SupplierConnectorRegistration>();
 
-  public static registerConnectorFactory(type: SupplierConnectorType, factory: SupplierConnectorFactory): void {
+  public static registerConnectorFactory(
+    type: SupplierConnectorType,
+    factory: SupplierConnectorFactory,
+    syncCapabilities: Readonly<SupplierConnectorSyncCapabilities> = UNSUPPORTED_SUPPLIER_SYNC_CAPABILITIES,
+  ): void {
     const normalized = String(type).trim().toLowerCase();
     if (!normalized) throw new Error("Supplier connector type is required.");
     if (this.connectorFactories.has(normalized)) throw new Error(`Supplier connector type "${normalized}" is already registered.`);
-    this.connectorFactories.set(normalized, factory);
+    this.connectorFactories.set(normalized, {
+      factory,
+      syncCapabilities: normalizeSupplierConnectorSyncCapabilities(syncCapabilities),
+    });
   }
 
   public static supportedConnectorTypes(): string[] {
     return [...this.connectorFactories.keys()].sort();
+  }
+
+  public static getConnectorSyncCapabilities(type: unknown): Readonly<SupplierConnectorSyncCapabilities> {
+    const normalized = String(type || "").trim().toLowerCase();
+    return this.connectorFactories.get(normalized)?.syncCapabilities || UNSUPPORTED_SUPPLIER_SYNC_CAPABILITIES;
   }
 
   public static toSupplierSourceConfig(id: string, data: FirebaseFirestore.DocumentData): SupplierSourceConfig {
@@ -134,9 +156,9 @@ export class SupplierRegistry {
   }
 
   private static createConnector(targetUrl: string, source: SupplierSourceConfig, approvedHosts: string[]): SupplierConnector {
-    const factory = this.connectorFactories.get(source.connectorType);
-    if (!factory) throw new Error(`Supplier connector type "${source.connectorType}" is not registered.`);
-    return factory(targetUrl, source, approvedHosts);
+    const registration = this.connectorFactories.get(source.connectorType);
+    if (!registration) throw new Error(`Supplier connector type "${source.connectorType}" is not registered.`);
+    return registration.factory(targetUrl, source, approvedHosts);
   }
 }
 
@@ -151,8 +173,8 @@ const createHttpConnector: SupplierConnectorFactory = (targetUrl, source, approv
   outboundPolicy: { approvedHosts, connector: "http", sourceId: source.id } satisfies SupplierOutboundPolicy,
 });
 
-SupplierRegistry.registerConnectorFactory("http", createHttpConnector);
-SupplierRegistry.registerConnectorFactory("rest", createHttpConnector);
+SupplierRegistry.registerConnectorFactory("http", createHttpConnector, SERVER_FILTERED_FULL_CATALOG_CAPABILITIES);
+SupplierRegistry.registerConnectorFactory("rest", createHttpConnector, SERVER_FILTERED_FULL_CATALOG_CAPABILITIES);
 SupplierRegistry.registerConnectorFactory("a2z", (targetUrl, source, approvedHosts) => new A2ZSupplierConnector(targetUrl, {
   id: source.id,
   supplierId: source.supplierId,
@@ -166,4 +188,4 @@ SupplierRegistry.registerConnectorFactory("a2z", (targetUrl, source, approvedHos
     || source.authentication.credentialProfile
     || DEFAULT_A2Z_CREDENTIAL_REFERENCE,
   outboundPolicy: { approvedHosts, connector: "a2z", sourceId: source.id } satisfies SupplierOutboundPolicy,
-}));
+}), SERVER_FILTERED_FULL_CATALOG_CAPABILITIES);

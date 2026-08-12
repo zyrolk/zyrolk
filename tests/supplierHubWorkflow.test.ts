@@ -32,7 +32,8 @@ test("visible supplier sync controls invoke the real queue synchronization pipel
   const source = readFileSync("src/components/SupplierHubFiveStars.tsx", "utf8");
   const scheduledSync = readFileSync("functions/src/scheduled/supplierSync.ts", "utf8");
   assert.equal(source.includes("Placeholder Action Only"), false);
-  assert.match(source, /await handleSyncSupplier\(\[id\]\)/);
+  assert.match(source, /await runManualSupplierSync\(\{ sourceIds: \[id\], mode: 'full' \}\)/);
+  assert.match(source, /<SupplierManualSyncDialog/);
   assert.match(source, /onClick=\{\(\) => handleTriggerSync\(source\.id\)\}/);
   assert.match(source, /postSupplierApi\('\/api\/supplier-sync'/);
   assert.match(scheduledSync, /selectSupplierComparisonForReview/);

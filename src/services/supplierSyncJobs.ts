@@ -26,6 +26,9 @@ export interface SupplierSyncJobView {
   lastFailureReason?: string | null;
   waitingReason?: string | null;
   progress: {
+    modelVersion?: 2;
+    determination?: 'determinate' | 'indeterminate';
+    basis?: 'catalog_total' | 'limit_upper_bound' | 'unknown' | 'completed';
     phase: string;
     percent: number;
     completedSources: number;
@@ -33,10 +36,14 @@ export interface SupplierSyncJobView {
     currentSourceId: string | null;
     pagesProcessed: number;
     productsDiscovered: number;
+    productsObserved?: number;
     productsScanned: number;
     productsQueued: number;
     productsFailed: number;
+    totalProducts?: number | null;
+    totalProductsReliability?: 'exact' | 'reported' | 'unknown';
     elapsedMs: number;
+    activeElapsedMs?: number;
     etaMs: number | null;
     etaAt: string | null;
     updatedAt: string;
@@ -91,11 +98,20 @@ export const supplierSyncJobStateLabel = (state: SupplierSyncJobState): string =
 })[state];
 
 export const formatSupplierSyncEta = (etaMs: number | null | undefined): string => {
-  if (etaMs === null || etaMs === undefined || !Number.isFinite(etaMs) || etaMs < 0) return 'Calculating ETA';
+  if (etaMs === null || etaMs === undefined || !Number.isFinite(etaMs) || etaMs < 0) return 'Time remaining unavailable';
   if (etaMs < 60_000) return 'Less than a minute remaining';
   const minutes = Math.max(1, Math.ceil(etaMs / 60_000));
   return `${minutes} minute${minutes === 1 ? '' : 's'} remaining`;
 };
+
+export const isSupplierSyncProgressDeterminate = (job: SupplierSyncJobView): boolean => (
+  job.progress.determination === 'determinate'
+  && (job.progress.basis === 'completed'
+    || (job.progress.basis === 'catalog_total'
+      && job.progress.totalProductsReliability === 'exact'
+      && Number.isFinite(job.progress.totalProducts)
+      && Number(job.progress.totalProducts) > 0))
+);
 
 export const formatSupplierSyncProgress = (job: SupplierSyncJobView): string => {
   const label = supplierSyncJobStateLabel(job.state);
@@ -104,12 +120,14 @@ export const formatSupplierSyncProgress = (job: SupplierSyncJobView): string => 
     return `${label} · ${productsScanned} scanned · ${productsQueued} queued`;
   }
 
-  // Connectors do not always expose a total page count, so avoid presenting an
-  // active, advancing single-source traversal as a misleading zero percent.
-  const progressLabel = percent > 0
+  const determinate = isSupplierSyncProgressDeterminate(job);
+  const progressLabel = determinate
     ? `${percent}%`
     : pagesProcessed > 0 || productsScanned > 0
       ? 'In progress'
       : 'Starting';
-  return `${label} · ${progressLabel} · ${productsScanned} scanned · ${formatSupplierSyncEta(job.progress.etaMs)}`;
+  const etaLabel = determinate && job.progress.etaMs !== null
+    ? ` · ${formatSupplierSyncEta(job.progress.etaMs)}`
+    : '';
+  return `${label} · ${progressLabel} · ${productsScanned} scanned${etaLabel}`;
 };

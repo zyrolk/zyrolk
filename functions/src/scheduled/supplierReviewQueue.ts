@@ -120,7 +120,10 @@ export async function ensureSupplierReviewQueueManagedMedia(
   const existingUrls = existingAssets.map((asset) => asset.firebaseStorageUrl);
   const requestedExistingMedia = requestedUrls !== undefined
     && requestedUrls.length === existingUrls.length
-    && requestedUrls.every((url, index) => url === existingUrls[index]);
+    && requestedUrls.every((url, index) => (
+      url === existingUrls[index]
+      || url === existingAssets[index]?.originalSupplierUrl
+    ));
   if ((options.imageUrls === undefined || requestedExistingMedia) && existingAssets.length > 0) {
     return {
       assets: existingAssets,
@@ -686,7 +689,7 @@ export async function getSupplierReviewQueueMetrics(db: Firestore, now = Date.no
 }
 
 export type SupplierQueuePageView = "review" | "import" | "changes";
-export type SupplierReviewQueuePageState = "active" | "review_pending" | "conflict" | "approved" | "rejected";
+export type SupplierReviewQueuePageState = "active" | "review_pending" | "conflict" | "approved" | "rejected" | "history";
 export type SupplierReviewBusinessFilter =
   | "new_products"
   | "product_updates"
@@ -706,12 +709,14 @@ const reviewStatusValues = (state: SupplierReviewQueuePageState): string[] => {
   if (state === "conflict") return ["CONFLICT"];
   if (state === "approved") return ["Approved"];
   if (state === "rejected") return ["Rejected"];
+  if (state === "history") return ["Approved", "Rejected"];
   if (state === "review_pending") return ["Pending"];
   return ["Pending", "CONFLICT"];
 };
 
 const reviewRecordMatchesState = (record: SupplierQueueRecord, state: SupplierReviewQueuePageState): boolean => {
   const queueState = stateFor(record);
+  if (state === "history") return ["approved", "rejected", "suppressed"].includes(queueState);
   if (state === "active") {
     return [
       "queued",
@@ -736,6 +741,12 @@ const reviewRecordIsApproved = (record: SupplierQueueRecord): boolean => (
   normalizedReviewValue(record.status) === "approved" || normalizedReviewValue(record.queueState) === "approved"
 );
 
+const reviewRecordIsTerminalDecision = (record: SupplierQueueRecord): boolean => (
+  reviewRecordIsApproved(record)
+  || normalizedReviewValue(record.status) === "rejected"
+  || ["rejected", "suppressed"].includes(normalizedReviewValue(record.queueState))
+);
+
 const reviewComparisonIsRemoval = (value: unknown): boolean => {
   const comparisonStatus = normalizedReviewValue(value);
   return comparisonStatus.includes("removed")
@@ -749,7 +760,7 @@ export const reviewRecordMatchesBusinessFilter = (
   filter: SupplierReviewBusinessFilter,
 ): boolean => {
   const comparisonStatus = normalizedReviewValue(asRecord(record.comparison).comparisonStatus);
-  if (filter === "approved_history") return reviewRecordIsApproved(record);
+  if (filter === "approved_history") return reviewRecordIsTerminalDecision(record);
   if (filter === "conflicts") return reviewRecordIsConflict(record);
   if (filter === "removed_products") return reviewComparisonIsRemoval(comparisonStatus);
   if (filter === "new_products") return comparisonStatus === "new_product";
@@ -758,6 +769,7 @@ export const reviewRecordMatchesBusinessFilter = (
     return validation.readyToPublish === false
       || (Array.isArray(validation.missingFields) && validation.missingFields.length > 0)
       || (Array.isArray(validation.errors) && validation.errors.length > 0)
+      || ["failed", "partial"].includes(normalizedReviewValue(record.mediaStatus))
       || ["retryable_failure", "dead_letter"].includes(normalizedReviewValue(record.queueState));
   }
   return !reviewRecordIsApproved(record)

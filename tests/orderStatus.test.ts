@@ -6,6 +6,8 @@ import {
   assertValidOrderStatusTransition,
   buildOrderStatusPlan,
   collectOrderStockQuantities,
+  hasSupplierAssignment,
+  hasSupplierFulfilmentStarted,
   requireCurrentProductStock,
 } from '../functions/src/api/orders/orderStatusLogic';
 
@@ -52,6 +54,22 @@ test('orders without a trusted stock deduction marker cannot add inventory', () 
   const plan = buildOrderStatusPlan('pending', 'cancelled', undefined, false, [{ productId: 'p1', quantity: 5 }]);
   assert.equal(plan.shouldRestoreStock, false);
   assert.equal(plan.quantities.size, 0);
+});
+
+test('supplier fulfilment state fences cancellation and treats unknown active states safely', () => {
+  assert.equal(hasSupplierFulfilmentStarted(undefined), false);
+  assert.equal(hasSupplierFulfilmentStarted('pending'), false);
+  assert.equal(hasSupplierFulfilmentStarted('processing'), true);
+  assert.equal(hasSupplierFulfilmentStarted('packed'), true);
+  assert.equal(hasSupplierFulfilmentStarted('shipped'), true);
+  assert.equal(hasSupplierFulfilmentStarted('unexpected-state'), true);
+  assert.equal(hasSupplierAssignment({ supplierId: 'supplier-a' }), true);
+  assert.equal(hasSupplierAssignment({ supplierIds: ['supplier-a'] }), true);
+  assert.equal(hasSupplierAssignment({}), false);
+  assert.throws(
+    () => buildOrderStatusPlan('confirmed', 'cancelled', true, false, [{ productId: 'p1', quantity: 1 }], 'processing'),
+    /cannot be cancelled after supplier fulfilment has started/i,
+  );
 });
 
 test('inventory reconciliation aggregates duplicate lines and rejects corrupt order data', () => {

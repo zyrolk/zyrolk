@@ -6,7 +6,7 @@ import { PRODUCT_PRIVATE_COLLECTION } from "../products/productCommercialData";
 import { reconcileSupplierApprovalStock } from "./supplierApprovalConcurrency";
 
 export const SUPPLIER_PRODUCT_OFFERS_COLLECTION = "supplier_product_offers";
-export const SUPPLIER_OFFER_SCHEMA_VERSION = 1;
+export const SUPPLIER_OFFER_SCHEMA_VERSION = 2;
 
 export type SupplierOfferAvailability = "in_stock" | "out_of_stock" | "unavailable" | "unknown";
 
@@ -39,8 +39,47 @@ export interface SupplierProductOffer {
   ownership: SupplierOfferFieldOwnership;
   catalogPayload: Record<string, unknown>;
   supplierSnapshot: Record<string, unknown>;
+  /** Monotonic concurrency fence. Legacy documents are version zero. */
+  stateVersion: number;
+  /** Unreviewed supplier data. Commerce readers must never consume this state. */
+  pendingObservation: SupplierOfferPendingObservation | null;
   createdAt: unknown;
   updatedAt: unknown;
+}
+
+export type SupplierOfferObservationKind = "catalog_upsert" | "catalog_removal";
+
+export interface SupplierOfferEffectiveSnapshot {
+  supplierId: string;
+  sourceId: string;
+  supplierProductId: string;
+  sku: string;
+  skuNormalized: string;
+  barcode: string;
+  barcodeNormalized: string;
+  price: number;
+  cost: number;
+  stock: number;
+  availability: SupplierOfferAvailability;
+  health: Record<string, unknown>;
+  lastSyncAt: string;
+  catalogPayload: Record<string, unknown>;
+  supplierSnapshot: Record<string, unknown>;
+}
+
+export interface SupplierOfferPendingObservation {
+  revision: string;
+  kind: SupplierOfferObservationKind;
+  reviewQueueItemId: string;
+  observedAt: string;
+  traversalId: string | null;
+  effective: SupplierOfferEffectiveSnapshot;
+}
+
+export interface SupplierOfferStateExpectation {
+  exists: boolean;
+  stateVersion: number;
+  pendingRevision: string | null;
 }
 
 export interface SupplierOfferSelection {
@@ -80,6 +119,189 @@ const stock = (value: unknown): number => {
   return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : 0;
 };
 
+const stateVersion = (value: unknown): number => {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : 0;
+};
+
+const stableValue = (value: unknown): unknown => {
+  if (Array.isArray(value)) return value.map(stableValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+      .filter(([key]) => key !== "observedAt")
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => [key, stableValue(entry)]));
+  }
+  return value ?? null;
+};
+
+const effectiveSnapshot = (offer: Pick<SupplierProductOffer,
+  "supplierId" | "sourceId" | "supplierProductId" | "sku" | "skuNormalized" | "barcode" | "barcodeNormalized"
+  | "price" | "cost" | "stock" | "availability" | "health" | "lastSyncAt" | "catalogPayload" | "supplierSnapshot"
+>): SupplierOfferEffectiveSnapshot => ({
+  supplierId: offer.supplierId,
+  sourceId: offer.sourceId,
+  supplierProductId: offer.supplierProductId,
+  sku: offer.sku,
+  skuNormalized: offer.skuNormalized,
+  barcode: offer.barcode,
+  barcodeNormalized: offer.barcodeNormalized,
+  price: offer.price,
+  cost: offer.cost,
+  stock: offer.stock,
+  availability: offer.availability,
+  health: asRecord(offer.health),
+  lastSyncAt: offer.lastSyncAt,
+  catalogPayload: asRecord(offer.catalogPayload),
+  supplierSnapshot: asRecord(offer.supplierSnapshot),
+});
+
+const observationRevision = (
+  kind: SupplierOfferObservationKind,
+  effective: SupplierOfferEffectiveSnapshot,
+): string => {
+  const reviewEffective = Object.fromEntries(
+    Object.entries(effective).filter(([key]) => key !== "lastSyncAt"),
+  );
+  return createHash("sha256")
+    .update(JSON.stringify(stableValue({ kind, effective: reviewEffective })))
+    .digest("hex");
+};
+
+const parseEffectiveSnapshot = (value: unknown): SupplierOfferEffectiveSnapshot | null => {
+  const candidate = asRecord(value);
+  const sourceId = text(candidate.sourceId, 160);
+  const supplierProductId = text(candidate.supplierProductId, 300);
+  const sku = text(candidate.sku, 300);
+  if (!sourceId || (!supplierProductId && !sku)) return null;
+  return {
+    supplierId: text(candidate.supplierId, 160) || sourceId,
+    sourceId,
+    supplierProductId: supplierProductId || sku,
+    sku,
+    skuNormalized: normalizeSupplierOfferIdentity(candidate.skuNormalized || sku),
+    barcode: text(candidate.barcode, 300),
+    barcodeNormalized: normalizeSupplierOfferIdentity(candidate.barcodeNormalized || candidate.barcode),
+    price: money(candidate.price),
+    cost: money(candidate.cost),
+    stock: stock(candidate.stock),
+    availability: supplierOfferAvailability(candidate.availability, candidate.stock),
+    health: asRecord(candidate.health),
+    lastSyncAt: text(candidate.lastSyncAt, 80),
+    catalogPayload: asRecord(candidate.catalogPayload),
+    supplierSnapshot: asRecord(candidate.supplierSnapshot),
+  };
+};
+
+export function parseSupplierOfferPendingObservation(value: unknown): SupplierOfferPendingObservation | null {
+  const candidate = asRecord(value);
+  const kind = candidate.kind === "catalog_removal" ? "catalog_removal"
+    : candidate.kind === "catalog_upsert" ? "catalog_upsert" : null;
+  const effective = parseEffectiveSnapshot(candidate.effective);
+  const reviewQueueItemId = text(candidate.reviewQueueItemId, 180);
+  const observedAt = text(candidate.observedAt, 80);
+  const revision = text(candidate.revision, 128);
+  if (!kind || !effective || !reviewQueueItemId || !observedAt || !revision) return null;
+  if (revision !== observationRevision(kind, effective)) return null;
+  return {
+    revision,
+    kind,
+    reviewQueueItemId,
+    observedAt,
+    traversalId: text(candidate.traversalId, 180) || null,
+    effective,
+  };
+}
+
+export function buildSupplierOfferPendingObservation(input: {
+  offer: SupplierProductOffer;
+  kind: SupplierOfferObservationKind;
+  reviewQueueItemId: string;
+  observedAt: string;
+  traversalId?: string | null;
+}): SupplierOfferPendingObservation {
+  const effective = effectiveSnapshot(input.offer);
+  return {
+    revision: observationRevision(input.kind, effective),
+    kind: input.kind,
+    reviewQueueItemId: text(input.reviewQueueItemId, 180),
+    observedAt: text(input.observedAt, 80),
+    traversalId: text(input.traversalId, 180) || null,
+    effective,
+  };
+}
+
+export const supplierOfferStateExpectation = (value: unknown): SupplierOfferStateExpectation => {
+  const offer = asRecord(value);
+  const pending = parseSupplierOfferPendingObservation(offer.pendingObservation);
+  return {
+    exists: Object.keys(offer).length > 0,
+    stateVersion: stateVersion(offer.stateVersion),
+    pendingRevision: pending?.revision || null,
+  };
+};
+
+export const supplierOfferStateMatchesExpectation = (
+  value: unknown,
+  expectation: SupplierOfferStateExpectation,
+  exists = true,
+): boolean => {
+  if (exists !== expectation.exists) return false;
+  if (!exists) return true;
+  const current = supplierOfferStateExpectation(value);
+  return current.stateVersion === expectation.stateVersion
+    && current.pendingRevision === expectation.pendingRevision;
+};
+
+/**
+ * Stages an observation without changing effective commerce fields on an
+ * approved offer. Never-approved offers retain their legacy top-level shape so
+ * existing Product Review readers remain compatible.
+ */
+export function buildSupplierOfferObservationWrite(input: {
+  existing: SupplierProductOffer | null;
+  observed: SupplierProductOffer;
+  pending: SupplierOfferPendingObservation;
+  traversalId: string;
+  observedAt: string;
+}): Record<string, unknown> {
+  const currentVersion = input.existing?.stateVersion || 0;
+  const samePending = input.existing?.pendingObservation?.revision === input.pending.revision
+    && input.existing.pendingObservation.reviewQueueItemId === input.pending.reviewQueueItemId;
+  const common = {
+    schemaVersion: SUPPLIER_OFFER_SCHEMA_VERSION,
+    pendingObservation: input.pending,
+    stateVersion: samePending ? currentVersion : currentVersion + 1,
+    supplierCatalogTraversalId: input.traversalId,
+    supplierCatalogSeenAt: input.observedAt,
+    updatedAt: input.observedAt,
+  };
+  if (input.existing?.reviewStatus === "approved") return common;
+  return {
+    ...input.observed,
+    reviewStatus: "review_pending",
+    ...common,
+  };
+}
+
+/** Promotes only the exact server-staged observation reviewed by the admin. */
+export function promoteSupplierOfferPendingObservation(
+  offer: SupplierProductOffer,
+  revision: string,
+): SupplierProductOffer {
+  const pending = offer.pendingObservation;
+  if (!pending || pending.revision !== revision) throw new Error("The supplier offer observation changed after it was reviewed.");
+  return {
+    ...offer,
+    schemaVersion: SUPPLIER_OFFER_SCHEMA_VERSION,
+    ...pending.effective,
+    reviewStatus: "approved",
+    stateVersion: offer.stateVersion + 1,
+    pendingObservation: null,
+    updatedAt: pending.observedAt,
+  };
+}
+
 export const normalizeSupplierOfferPriority = (value: unknown): number => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? Math.max(0, Math.min(10_000, Math.floor(parsed))) : 100;
@@ -118,6 +340,8 @@ export interface BuildSupplierProductOfferInput {
   reviewStatus?: unknown;
   catalogPayload?: unknown;
   supplierSnapshot?: unknown;
+  stateVersion?: unknown;
+  pendingObservation?: unknown;
   existing?: unknown;
   timestamp: unknown;
 }
@@ -157,6 +381,10 @@ export function buildSupplierProductOffer(input: BuildSupplierProductOfferInput)
     ownership: SUPPLIER_OFFER_FIELD_OWNERSHIP,
     catalogPayload: asRecord(input.catalogPayload),
     supplierSnapshot: asRecord(input.supplierSnapshot),
+    stateVersion: stateVersion(input.stateVersion ?? existing.stateVersion),
+    pendingObservation: input.pendingObservation === null
+      ? null
+      : parseSupplierOfferPendingObservation(input.pendingObservation ?? existing.pendingObservation),
     createdAt: existing.createdAt ?? input.timestamp,
     updatedAt: input.timestamp,
   };
@@ -193,7 +421,10 @@ export function resolveActiveSupplierOffer(
   selectionValue: unknown,
 ): SupplierProductOffer | null {
   const selection = parseSupplierOfferSelection(selectionValue);
-  const enabled = offers.filter((offer) => offer.enabled).sort(byPriority);
+  // Pending observations are stored separately and review-pending offers have
+  // never become effective. Selection is therefore restricted to approved
+  // top-level state even when a caller forgets to pre-filter.
+  const enabled = offers.filter((offer) => offer.enabled && offer.reviewStatus === "approved").sort(byPriority);
   if (selection.lockedOfferId) return enabled.find((offer) => offer.id === selection.lockedOfferId) || null;
   const active = enabled.find((offer) => offer.id === selection.activeOfferId);
   if (active && (!selection.failoverEnabled || isSupplierOfferAvailableForCommerce(active))) return active;
@@ -211,6 +442,9 @@ export function buildSupplierOfferPublicProjection(
   currentProductValue: unknown,
   previousSupplierStockValue?: unknown,
 ): Record<string, unknown> {
+  if (offer.reviewStatus !== "approved") {
+    throw new Error("Only an approved supplier offer can be projected to the public catalogue.");
+  }
   const currentProduct = asRecord(currentProductValue);
   const previousSupplierStock = previousSupplierStockValue === undefined
     ? currentProduct.stock
@@ -280,6 +514,8 @@ export function projectSupplierOfferForAdmin(value: unknown): SupplierProductOff
     reviewStatus: offer.reviewStatus,
     catalogPayload: offer.catalogPayload,
     supplierSnapshot: offer.supplierSnapshot,
+    stateVersion: offer.stateVersion,
+    pendingObservation: offer.pendingObservation,
     existing: offer,
     timestamp: offer.updatedAt ?? null,
   });
@@ -393,6 +629,19 @@ export async function reconcileSupplierProductOfferFailover(
       return { productId, changed: false, previousOfferId: null, activeOfferId: null };
     }
     const previousOffer = offers.find((offer) => offer.id === previousSelection.activeOfferId) || null;
+    // A selected legacy offer can carry a pre-SH-2D pending/rejected state whose
+    // last approved values cannot be proven. Never guess from those values and
+    // never let that ambiguous review state mutate the current public product.
+    // A fresh Product Review decision will establish the separated effective
+    // state before automatic failover is allowed again.
+    if (previousOffer && previousOffer.reviewStatus !== "approved") {
+      return {
+        productId,
+        changed: false,
+        previousOfferId: previousOffer.id,
+        activeOfferId: previousOffer.id,
+      };
+    }
     const previousOfferEligible = Boolean(
       previousOffer
       && previousOffer.reviewStatus === "approved"
@@ -463,13 +712,13 @@ export async function reconcileSupplierProductOfferFailover(
       reason,
       before: {
         selection: previousSelection,
-        publicCommerce: {
+        publicCommerce: Object.fromEntries(Object.entries({
           price: productSnapshot.data()?.price,
           originalPrice: productSnapshot.data()?.originalPrice,
           discount: productSnapshot.data()?.discount,
           stock: productSnapshot.data()?.stock,
           availability: productSnapshot.data()?.availability,
-        },
+        }).filter(([, value]) => value !== undefined)),
       },
       after: { selection: nextSelection, publicCommerce: publicProjection },
       timestamp: FieldValue.serverTimestamp(),

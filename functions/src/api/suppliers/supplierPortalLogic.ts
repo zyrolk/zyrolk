@@ -1,7 +1,10 @@
 import { ApiError } from "../errors";
+import { assertOrderCanProgressSupplierFulfilment } from "../orders/orderStatusLogic";
 
 export const SUPPLIER_REQUEST_STATUSES = ["draft", "pending", "approved", "rejected"] as const;
 export const SUPPLIER_FULFILMENT_STATUSES = ["pending", "processing", "packed", "shipped"] as const;
+/** Virtual source used only for authenticated Supplier Portal submissions. */
+export const SUPPLIER_PORTAL_SOURCE_ID = "supplier-portal";
 
 export type SupplierRequestStatus = typeof SUPPLIER_REQUEST_STATUSES[number];
 export type SupplierFulfilmentStatus = typeof SUPPLIER_FULFILMENT_STATUSES[number];
@@ -177,7 +180,13 @@ export function validateSupplierProductForSubmission(
   return errors;
 }
 
-export function assertSupplierOrderTransition(current: unknown, next: unknown, orderStatus: unknown): SupplierFulfilmentStatus {
+export function assertSupplierOrderTransition(
+  current: unknown,
+  next: unknown,
+  orderStatus: unknown,
+  stockReservationStatus: unknown,
+  stockRestorationApplied?: unknown,
+): SupplierFulfilmentStatus {
   const currentStatus = text(current, 30).toLocaleLowerCase() || "pending";
   const nextStatus = text(next, 30).toLocaleLowerCase() as SupplierFulfilmentStatus;
   const allowedNext: Record<string, SupplierFulfilmentStatus[]> = {
@@ -186,9 +195,7 @@ export function assertSupplierOrderTransition(current: unknown, next: unknown, o
     packed: ["shipped"],
     shipped: [],
   };
-  if (["cancelled", "delivered"].includes(text(orderStatus, 30).toLocaleLowerCase())) {
-    throw new ApiError("Completed or cancelled orders cannot be changed by suppliers", 409);
-  }
+  assertOrderCanProgressSupplierFulfilment(orderStatus, stockReservationStatus, stockRestorationApplied);
   if (!allowedNext[currentStatus]?.includes(nextStatus)) {
     throw new ApiError(`Fulfilment cannot move from ${currentStatus} to ${nextStatus}`, 409);
   }

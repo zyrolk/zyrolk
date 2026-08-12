@@ -34,7 +34,7 @@ test('Product Review presents the required business filters and maps them to exi
     'Removed Products',
     'Conflicts',
     'Needs Attention',
-    'Approved History',
+    'Approval History',
   ]);
   assert.equal(matchesProductReviewFilter({ comparison: { comparisonStatus: 'NEW_PRODUCT' } }, 'new_products'), true);
   assert.equal(matchesProductReviewFilter({ comparison: { comparisonStatus: 'PRICE_CHANGED' } }, 'product_updates'), true);
@@ -44,7 +44,7 @@ test('Product Review presents the required business filters and maps them to exi
   assert.equal(matchesProductReviewFilter({ status: 'Approved' }, 'approved_history'), true);
   assert.equal(matchesProductChangeFilter({ changeType: 'PRODUCT_REMOVED' }, 'removed_products'), true);
   assert.equal(supplierReviewApiState('conflicts'), 'conflict');
-  assert.equal(supplierReviewApiState('approved_history'), 'approved');
+  assert.equal(supplierReviewApiState('approved_history'), 'history');
 });
 
 test('supplier cards use business health labels and retain existing actions', () => {

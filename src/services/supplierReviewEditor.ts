@@ -13,6 +13,14 @@ export interface SupplierReviewSourceItem {
   imageUrl?: string;
   sourceId?: string;
   batchId?: string;
+  matchedProductId?: string | null;
+  supplierOfferId?: string;
+  approvalConflict?: {
+    reason?: string;
+    changedFields?: string[];
+    previousVersion?: string;
+    currentVersion?: string;
+  };
   productPayload?: Product & Record<string, unknown>;
   supplierSnapshot?: Record<string, unknown>;
   managedMedia?: Array<Record<string, unknown>>;
@@ -85,6 +93,8 @@ export interface SupplierReviewDraft {
   keyFeatures: string[];
   whatsIncluded: string[];
   slug: string;
+  metaDescription: string;
+  keywords: string[];
   sellingPrice: number;
   comparePrice: number;
   costPrice: number;
@@ -106,7 +116,7 @@ export interface SupplierReviewDraft {
 
 export const SUPPLIER_REVIEW_EDITABLE_FIELDS = [
   'name', 'shortDescription', 'description', 'model', 'barcode', 'productType', 'tags', 'keyFeatures',
-  'whatsIncluded', 'slug', 'price', 'originalPrice', 'costPrice', 'marketPrice', 'stock', 'category', 'subcategory', 'brand', 'specs',
+  'whatsIncluded', 'slug', 'metaDescription', 'keywords', 'price', 'originalPrice', 'costPrice', 'marketPrice', 'stock', 'category', 'subcategory', 'brand', 'specs',
   'isActive', 'isNew', 'isFeatured', 'isBestSeller', 'imageUrl', 'imageUrls',
 ] as const;
 
@@ -127,6 +137,8 @@ export interface SupplierReviewValidationErrors {
   barcode?: string;
   productType?: string;
   slug?: string;
+  metaDescription?: string;
+  keywords?: string;
   sellingPrice?: string;
   comparePrice?: string;
   costPrice?: string;
@@ -302,6 +314,8 @@ export function createSupplierReviewDraft(item: SupplierReviewSourceItem): Suppl
     keyFeatures: textList(payload?.keyFeatures || payload?.features),
     whatsIncluded: textList(payload?.whatsIncluded),
     slug: String(payload?.slug || ''),
+    metaDescription: String(payload?.metaDescription || ''),
+    keywords: textList(payload?.keywords),
     sellingPrice: finiteNumber(payload?.price, finiteNumber(item.marketPrice)),
     comparePrice: finiteNumber(payload?.originalPrice, finiteNumber(item.marketPrice)),
     costPrice: finiteNumber(payload?.costPrice, finiteNumber(item.costPrice)),
@@ -374,6 +388,10 @@ export function validateSupplierReviewDraft(
   if ((draft.barcode || '').length > 64) errors.barcode = 'Barcode must contain 64 characters or fewer.';
   if ((draft.productType || '').length > 160) errors.productType = 'Product type must contain 160 characters or fewer.';
   if ((draft.slug || '').length > 160) errors.slug = 'SEO slug must contain 160 characters or fewer.';
+  if ((draft.metaDescription || '').length > 500) errors.metaDescription = 'Meta description must contain 500 characters or fewer.';
+  if (draft.keywords.length > 40 || draft.keywords.some((keyword) => keyword.length > 240)) {
+    errors.keywords = 'Use no more than 40 keywords, with 240 characters or fewer per keyword.';
+  }
   if (!Number.isFinite(draft.sellingPrice) || draft.sellingPrice <= 0) errors.sellingPrice = 'Selling price must be greater than zero.';
   if (!Number.isFinite(draft.comparePrice) || draft.comparePrice < 0) errors.comparePrice = 'Compare price cannot be negative.';
   if (draft.comparePrice > 0 && draft.comparePrice < draft.sellingPrice) errors.comparePrice = 'Compare price must be at least the selling price.';
@@ -496,6 +514,8 @@ export function buildSupplierApprovalItem(
       keyFeatures: textList(draft.keyFeatures),
       whatsIncluded: textList(draft.whatsIncluded),
       slug: String(draft.slug || '').trim(),
+      metaDescription: String(draft.metaDescription || '').trim(),
+      keywords: textList(draft.keywords),
       price: sellingPrice,
       originalPrice: normalizedComparePrice,
       costPrice: finiteNumber(draft.costPrice),

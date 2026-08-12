@@ -10,7 +10,6 @@ import { SupplierRegistry } from '../functions/src/api/suppliers/SupplierRegistr
 import { normalizeSupplierSourceConfig } from '../functions/src/api/suppliers/supplierSourceCompatibility';
 import { isSupplierSourceEnabled } from '../functions/src/scheduled/supplierSync';
 import {
-  A2Z_GLOBAL_SECRET_PROFILE,
   buildSupplierOnboardingSource,
 } from '../src/services/supplierSourceOnboarding';
 import { normalizeSupplierSourceForUi } from '../src/services/supplierSourceUtils';
@@ -22,11 +21,12 @@ test('new A2Z onboarding produces a secure registry-compatible source from UI th
     supplierType: 'a2z',
     websiteUrl: 'https://supplier.example.com/dash',
     description: 'Production A2Z feed',
+    credentialProfile: 'supplier-a',
   });
 
   assert.deepEqual(browserPayload.authentication, {
     mode: 'secret_manager',
-    credentialProfile: A2Z_GLOBAL_SECRET_PROFILE,
+    credentialProfile: 'supplier-a',
   });
   assert.doesNotMatch(JSON.stringify(browserPayload), /"(?:username|password|apiKey|token)"/i);
 
@@ -34,7 +34,7 @@ test('new A2Z onboarding produces a secure registry-compatible source from UI th
   const registrySource = normalizeSupplierSourceConfig('new-a2z', stored);
   assert.equal(stored.supplierType, 'website');
   assert.equal(registrySource.connectorType, 'a2z');
-  assert.equal(registrySource.authentication.credentialProfile, A2Z_GLOBAL_SECRET_PROFILE);
+  assert.equal(registrySource.authentication.credentialProfile, 'supplier-a');
   assert.equal(isSupplierSourceEnabled({ id: 'new-a2z', ...stored }, {}), true);
   assert.ok(SupplierRegistry.supportedConnectorTypes().includes(registrySource.connectorType));
 });
@@ -116,7 +116,8 @@ test('connection testing uses the exact source registry record while retaining t
   assert.match(routes, /createOnly: true/);
   assert.match(routes, /testProposedSupplierSource\(sourceId, req\.body\?\.source\)/);
   assert.match(routes, /const startInitialSync = req\.body\?\.startInitialSync !== false/);
-  assert.match(routes, /startInitialSync[\s\S]*createSupplierSyncJob\(adminDb, \{[\s\S]*trigger: "manual",[\s\S]*sourceIds: \[sourceId\]/);
+  assert.match(routes, /startInitialSync[\s\S]*readManualSupplierSyncRequest\(\{ mode: "full" \}, \{ fallbackSourceIds: \[sourceId\] \}\)/);
+  assert.match(routes, /createSupplierSyncJob\(adminDb, \{[\s\S]*trigger: "manual",[\s\S]*sourceIds: initialRequest\.sourceIds,[\s\S]*syncRequest: initialRequest\.syncRequest/);
   assert.ok(routes.indexOf('testProposedSupplierSource(sourceId, req.body?.source)') < routes.indexOf('saveSupplierSource(adminDb, sourceId, source'));
   assert.ok(routes.indexOf('saveSupplierSource(adminDb, sourceId, source') < routes.indexOf('createSupplierSyncJob(adminDb'));
   assert.match(hub, /sourceId: source\.id/);

@@ -1,5 +1,11 @@
 # Sprint L5.1 Release Readiness
 
+> **Historical only.** This checklist describes an earlier PayHere-capable and
+> hard-delete product workflow. It is not valid for the current COD-only,
+> server-authoritative Product ID/SKU and archive-based release. Use
+> `docs/PRODUCTION_OPERATIONS_RUNBOOK.md` as the only current deployment and
+> smoke-test procedure.
+
 Prepared: 2026-07-19
 
 This document is a deployment and release checklist only. Sprint L5.1 does not

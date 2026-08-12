@@ -25,6 +25,13 @@ import {
 import { sendApiError } from "../errors";
 import { adminAuth, adminDb } from "../firebase";
 import { appLogger } from "../logging";
+import {
+  buildOrderPrivateDocument,
+  CheckoutProductAttributionInput,
+  ORDER_PRIVATE_COLLECTION,
+  resolveOrderPrivateAttributionLines,
+} from "../orders/orderPrivateAttribution";
+import { PRODUCT_PRIVATE_COLLECTION } from "../products/productCommercialData";
 
 const enforceCheckoutRateLimit = createCheckoutRateLimiter();
 const enforceCouponRateLimit = createCheckoutRateLimiter();
@@ -189,10 +196,15 @@ export function registerCheckoutRoutes(app: express.Express): void {
         let itemsSubtotal = 0;
         const verifiedItems = [];
         const productUpdates: Array<{ ref: FirebaseFirestore.DocumentReference; newStock: number }> = [];
+        const attributionInputs: CheckoutProductAttributionInput[] = [];
 
         for (const item of validatedCartItems) {
           const productRef = adminDb.collection("products").doc(item.productId);
-          const productSnap = await transaction.get(productRef);
+          const privateProductRef = adminDb.collection(PRODUCT_PRIVATE_COLLECTION).doc(item.productId);
+          const [productSnap, privateProductSnap] = await Promise.all([
+            transaction.get(productRef),
+            transaction.get(privateProductRef),
+          ]);
 
           if (!productSnap.exists) {
             throw new CheckoutError(`Product with ID "${item.productId}" was not found.`, 404);
@@ -227,7 +239,20 @@ export function registerCheckoutRoutes(app: express.Express): void {
             ref: productRef,
             newStock: currentStock - item.quantity,
           });
+          attributionInputs.push({
+            productId: item.productId,
+            publicProduct: pData,
+            privateProduct: privateProductSnap.exists ? privateProductSnap.data()! : null,
+          });
         }
+
+        const capturedAt = new Date().toISOString();
+        const privateLines = await resolveOrderPrivateAttributionLines(
+          adminDb,
+          transaction,
+          attributionInputs,
+          capturedAt,
+        );
 
         const settingsRef = adminDb.collection("settings").doc("website");
         const settingsSnap = await transaction.get(settingsRef);
@@ -266,6 +291,7 @@ export function registerCheckoutRoutes(app: express.Express): void {
         }
 
         const orderRef = adminDb.collection("orders").doc();
+        const orderPrivateRef = adminDb.collection(ORDER_PRIVATE_COLLECTION).doc(orderRef.id);
         const orderData = {
           orderNumber,
           customerUid: customerUid || "guest",
@@ -289,10 +315,11 @@ export function registerCheckoutRoutes(app: express.Express): void {
           stockReservationStatus: "reserved",
           stockReservationExpiresAt: new Date(Date.now() + COD_CONFIRMATION_WINDOW_MS),
           stockRestorationApplied: false,
-          createdAt: new Date().toISOString()
+          createdAt: capturedAt
         };
 
         transaction.set(orderRef, orderData);
+        transaction.create(orderPrivateRef, buildOrderPrivateDocument(orderRef.id, privateLines, capturedAt));
 
         const order = {
           id: orderRef.id,
@@ -307,8 +334,8 @@ export function registerCheckoutRoutes(app: express.Express): void {
             orderId: orderRef.id,
             orderNumber,
             order,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
+            createdAt: capturedAt,
+            updatedAt: capturedAt,
           }, { merge: true });
         }
 

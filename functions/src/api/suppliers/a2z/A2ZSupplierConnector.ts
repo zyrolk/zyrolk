@@ -1,7 +1,9 @@
 import { A2ZConnectorService } from "./A2ZConnectorService";
 import { getA2ZCredentials } from "../credentials";
-import { SupplierCatalogPageRequest, SupplierCatalogPageResult, SupplierConnectionTestResult, SupplierConnector, SupplierConnectorType, SupplierFetchResult } from "../types";
+import { SupplierCatalogPageRequest, SupplierCatalogPageResult, SupplierConnectionTestResult, SupplierConnector, SupplierConnectorSyncCapabilities, SupplierConnectorType, SupplierFetchResult } from "../types";
 import { SupplierOutboundPolicy } from "../../security/supplierOutboundRequest";
+import { SERVER_FILTERED_FULL_CATALOG_CAPABILITIES } from "../supplierSyncCapabilities";
+import { normalizeA2ZCredentialReference } from "../a2zCredentialProfiles";
 
 export const DEFAULT_A2Z_CREDENTIAL_REFERENCE = "firebase-secret-manager:A2Z_USERNAME+A2Z_PASSWORD";
 
@@ -12,8 +14,11 @@ export class A2ZSupplierConnector implements SupplierConnector {
   public readonly enabled: boolean;
   public readonly priority: number;
   public readonly capabilities: readonly string[];
+  public readonly syncCapabilities: Readonly<SupplierConnectorSyncCapabilities> = SERVER_FILTERED_FULL_CATALOG_CAPABILITIES;
   private readonly outboundPolicy: SupplierOutboundPolicy;
   private readonly connectorService: A2ZConnectorService;
+  private readonly supplierId: string;
+  private readonly credentialReference: string;
 
   constructor(
     private readonly targetUrl: string,
@@ -37,16 +42,27 @@ export class A2ZSupplierConnector implements SupplierConnector {
     this.priority = options.priority || 100;
     this.capabilities = options.capabilities || ["catalog.fetch", "connection.test", "inventory.read"];
     this.outboundPolicy = options.outboundPolicy;
+    this.supplierId = options.supplierId || this.id;
+    this.credentialReference = normalizeA2ZCredentialReference(options.credentialReference || DEFAULT_A2Z_CREDENTIAL_REFERENCE);
     this.connectorService = new A2ZConnectorService({
-      supplierId: options.supplierId || this.id,
+      supplierId: this.supplierId,
       sourceId: this.id,
       targetUrl,
-      credentialReference: options.credentialReference || DEFAULT_A2Z_CREDENTIAL_REFERENCE,
+      credentialReference: this.credentialReference,
+    });
+  }
+
+  private resolveCredentials(): Promise<{ username: string; password: string }> {
+    return getA2ZCredentials({
+      credentialReference: this.credentialReference,
+      targetUrl: this.targetUrl,
+      supplierId: this.supplierId,
+      sourceId: this.id,
     });
   }
 
   public async fetchProducts(): Promise<SupplierFetchResult> {
-    const credentials = await getA2ZCredentials(this.id);
+    const credentials = await this.resolveCredentials();
     const products = await this.connectorService.fetchCatalog(this.targetUrl, credentials, this.outboundPolicy);
     return {
       products,
@@ -55,7 +71,8 @@ export class A2ZSupplierConnector implements SupplierConnector {
   }
 
   public async fetchProductPage(request: SupplierCatalogPageRequest): Promise<SupplierCatalogPageResult> {
-    const credentials = await getA2ZCredentials(this.id);
+    if (request.mode === "incremental") throw new Error("A2Z does not support native incremental synchronization.");
+    const credentials = await this.resolveCredentials();
     return this.connectorService.fetchCatalogPage(this.targetUrl, credentials, this.outboundPolicy, request);
   }
 

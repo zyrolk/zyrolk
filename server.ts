@@ -8,8 +8,8 @@ import { getAuth } from "firebase-admin/auth";
 import { getAppCheck } from "firebase-admin/app-check";
 import { FieldValue, getFirestore } from "firebase-admin/firestore";
 import {
-  assertCustomerCanCancelOrder, buildOrderStatusPlan, requireCurrentProductStock,
-} from "./functions/src/api/orders/orderStatusLogic";
+  updateOrderStatus,
+} from "./functions/src/api/routes/orders";
 import { registerReviewSystemRoutes } from "./functions/src/api/routes/reviewSystem";
 import {
   buildInitialPayHereOrderFields,
@@ -33,6 +33,13 @@ import { registerSupplierPortalRoutes } from "./functions/src/api/routes/supplie
 import { registerAdminConfigurationRoutes } from "./functions/src/api/routes/adminConfiguration";
 import { hasAdminAccess } from "./functions/src/api/security/adminAuthorization";
 import { registerContactRoutes } from "./functions/src/api/routes/contact";
+import {
+  buildOrderPrivateDocument,
+  CheckoutProductAttributionInput,
+  ORDER_PRIVATE_COLLECTION,
+  resolveOrderPrivateAttributionLines,
+} from "./functions/src/api/orders/orderPrivateAttribution";
+import { PRODUCT_PRIVATE_COLLECTION } from "./functions/src/api/products/productCommercialData";
 
 const app = express();
 const PORT = 3000;
@@ -495,11 +502,16 @@ app.post("/api/checkout", async (req, res) => {
       let itemsSubtotal = 0;
       const verifiedItems = [];
       const productUpdates: Array<{ ref: FirebaseFirestore.DocumentReference; newStock: number }> = [];
+      const attributionInputs: CheckoutProductAttributionInput[] = [];
 
       // 1. Fetch, validate, and price each product inside the transaction
       for (const item of validatedCartItems) {
         const productRef = adminDb.collection("products").doc(item.productId);
-        const productSnap = await transaction.get(productRef);
+        const privateProductRef = adminDb.collection(PRODUCT_PRIVATE_COLLECTION).doc(item.productId);
+        const [productSnap, privateProductSnap] = await Promise.all([
+          transaction.get(productRef),
+          transaction.get(privateProductRef),
+        ]);
 
         if (!productSnap.exists) {
           throw new CheckoutError(`Product with ID "${item.productId}" was not found.`, 404);
@@ -530,7 +542,20 @@ app.post("/api/checkout", async (req, res) => {
           imageUrl: pData.imageUrl || ""
         });
         productUpdates.push({ ref: productRef, newStock: currentStock - item.quantity });
+        attributionInputs.push({
+          productId: item.productId,
+          publicProduct: pData,
+          privateProduct: privateProductSnap.exists ? privateProductSnap.data()! : null,
+        });
       }
+
+      const capturedAt = new Date().toISOString();
+      const privateLines = await resolveOrderPrivateAttributionLines(
+        adminDb,
+        transaction,
+        attributionInputs,
+        capturedAt,
+      );
 
       // 2. Fetch shipping options from website settings securely
       const settingsRef = adminDb.collection("settings").doc("website");
@@ -568,6 +593,7 @@ app.post("/api/checkout", async (req, res) => {
 
       // 5. Store the finalized order document
       const orderRef = adminDb.collection("orders").doc();
+      const orderPrivateRef = adminDb.collection(ORDER_PRIVATE_COLLECTION).doc(orderRef.id);
       const payHereFields = validatedPaymentMethod === "payhere"
         ? buildInitialPayHereOrderFields(orderRef.id, totals.grandTotalPrice)
         : null;
@@ -606,10 +632,11 @@ app.post("/api/checkout", async (req, res) => {
           stockReservationExpiresAt: new Date(Date.now() + COD_CONFIRMATION_WINDOW_MS),
           stockRestorationApplied: false,
         }),
-        createdAt: new Date().toISOString()
+        createdAt: capturedAt
       };
 
       transaction.set(orderRef, orderData);
+      transaction.create(orderPrivateRef, buildOrderPrivateDocument(orderRef.id, privateLines, capturedAt));
       if (paymentTransaction) {
         transaction.create(adminDb.collection("payment_transactions").doc(paymentTransaction.gatewayOrderId), {
           provider: "payhere",
@@ -619,8 +646,8 @@ app.post("/api/checkout", async (req, res) => {
           amount: paymentTransaction.amount,
           currency: paymentTransaction.currency,
           status: "initialized",
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
+          createdAt: capturedAt,
+          updatedAt: capturedAt,
         });
       }
 
@@ -701,57 +728,7 @@ app.post("/api/orders/:orderId/cancel", requireCustomerAuth, async (req, res) =>
   if (!orderId) return res.status(400).json({ error: "A valid order ID is required" });
 
   try {
-    const result = await adminDb.runTransaction(async (transaction) => {
-      const orderRef = adminDb.collection("orders").doc(orderId);
-      const orderSnap = await transaction.get(orderRef);
-      if (!orderSnap.exists) throw new CheckoutError("Order not found", 404);
-
-      const order = orderSnap.data()!;
-      const currentStatus = String(order.status || "pending").toLowerCase();
-      assertCustomerCanCancelOrder(res.locals.customerUid, order.customerUid, currentStatus);
-      const { shouldRestoreStock, quantities } = buildOrderStatusPlan(
-        order.status, "cancelled", order.stockDeducted, order.stockRestorationApplied, order.items,
-      );
-      const cancellingUnsettledPayHere = shouldRestoreStock
-        && order.paymentMethod === "payhere"
-        && new Set(["awaiting_payment", "pending"]).has(String(order.paymentStatus || ""));
-      const cancellingPaidPayHere = shouldRestoreStock && order.paymentMethod === "payhere" && order.paymentStatus === "paid";
-
-      const productStocks: Array<{ ref: FirebaseFirestore.DocumentReference; stock: number; quantity: number }> = [];
-      for (const [productId, quantity] of quantities) {
-        const productRef = adminDb.collection("products").doc(productId);
-        const productSnap = await transaction.get(productRef);
-        const stock = requireCurrentProductStock(productSnap.exists, productSnap.data()?.stock);
-        productStocks.push({ ref: productRef, stock, quantity });
-      }
-
-      productStocks.forEach(({ ref, stock, quantity }) => transaction.update(ref, { stock: stock + quantity }));
-      transaction.update(orderRef, {
-        status: "cancelled",
-        statusUpdatedAt: FieldValue.serverTimestamp(),
-        ...(shouldRestoreStock ? {
-          stockRestorationApplied: true,
-          stockRestoredAt: FieldValue.serverTimestamp(),
-          stockReservationStatus: "released",
-          stockReservationExpiresAt: FieldValue.delete(),
-          ...(cancellingUnsettledPayHere ? {
-            paymentStatus: "cancelled",
-            paymentTimeline: appendPaymentTimeline(order.paymentTimeline, createPaymentTimelineEvent("cancelled", "Order cancelled and reserved stock released", "customer")),
-          } : {}),
-          ...(cancellingPaidPayHere ? {
-            paymentReviewRequired: true,
-            paymentReviewReason: "cancelled_paid_order",
-          } : {}),
-        } : {}),
-      });
-      if (cancellingUnsettledPayHere && typeof order.paymentGatewayOrderId === "string") {
-        transaction.set(adminDb.collection("payment_transactions").doc(order.paymentGatewayOrderId), {
-          status: "cancelled",
-          updatedAt: FieldValue.serverTimestamp(),
-        }, { merge: true });
-      }
-      return { status: "cancelled", stockRestored: shouldRestoreStock };
-    });
+    const result = await updateOrderStatus(orderId, "cancelled", res.locals.customerUid, adminDb);
     return res.json({ success: true, ...result });
   } catch (error: any) {
     return res.status(error.statusCode || 500).json({ error: error.message || "Failed to cancel order" });
@@ -767,62 +744,10 @@ app.post("/api/orders/:orderId/status", requireSupplierAdminAuth, async (req, re
   }
 
   try {
-    const result = await adminDb.runTransaction(async (transaction) => {
-      const orderRef = adminDb.collection("orders").doc(orderId);
-      const orderSnap = await transaction.get(orderRef);
-      if (!orderSnap.exists) throw new CheckoutError("Order not found", 404);
-      const order = orderSnap.data()!;
-      const { shouldRestoreStock, quantities } = buildOrderStatusPlan(
-        order.status, newStatus, order.stockDeducted, order.stockRestorationApplied, order.items,
-      );
-      const cancellingUnsettledPayHere = shouldRestoreStock
-        && order.paymentMethod === "payhere"
-        && new Set(["awaiting_payment", "pending"]).has(String(order.paymentStatus || ""));
-      const cancellingPaidPayHere = shouldRestoreStock && order.paymentMethod === "payhere" && order.paymentStatus === "paid";
-      const committingOfflineReservation = !shouldRestoreStock
-        && order.paymentMethod !== "payhere"
-        && order.stockReservationStatus === "reserved"
-        && newStatus !== "pending"
-        && newStatus !== "cancelled";
-      const productStocks: Array<{ ref: FirebaseFirestore.DocumentReference; stock: number; quantity: number }> = [];
-      for (const [productId, quantity] of quantities) {
-        const productRef = adminDb.collection("products").doc(productId);
-        const productSnap = await transaction.get(productRef);
-        const stock = requireCurrentProductStock(productSnap.exists, productSnap.data()?.stock);
-        productStocks.push({ ref: productRef, stock, quantity });
-      }
-
-      productStocks.forEach(({ ref, stock, quantity }) => transaction.update(ref, { stock: stock + quantity }));
-      transaction.update(orderRef, {
-        status: newStatus,
-        statusUpdatedAt: FieldValue.serverTimestamp(),
-        ...(committingOfflineReservation ? {
-          stockReservationStatus: "committed",
-          stockReservationExpiresAt: FieldValue.delete(),
-          stockReservationCommittedAt: FieldValue.serverTimestamp(),
-        } : {}),
-        ...(shouldRestoreStock ? {
-          stockRestorationApplied: true,
-          stockRestoredAt: FieldValue.serverTimestamp(),
-          stockReservationStatus: "released",
-          stockReservationExpiresAt: FieldValue.delete(),
-          ...(cancellingUnsettledPayHere ? {
-            paymentStatus: "cancelled",
-            paymentTimeline: appendPaymentTimeline(order.paymentTimeline, createPaymentTimelineEvent("cancelled", "Order cancelled and reserved stock released", "system")),
-          } : {}),
-          ...(cancellingPaidPayHere ? {
-            paymentReviewRequired: true,
-            paymentReviewReason: "cancelled_paid_order",
-          } : {}),
-        } : {}),
-      });
-      if (cancellingUnsettledPayHere && typeof order.paymentGatewayOrderId === "string") {
-        transaction.set(adminDb.collection("payment_transactions").doc(order.paymentGatewayOrderId), {
-          status: "cancelled",
-          updatedAt: FieldValue.serverTimestamp(),
-        }, { merge: true });
-      }
-      return { status: newStatus, stockRestored: shouldRestoreStock };
+    const result = await updateOrderStatus(orderId, newStatus, undefined, adminDb, {
+      adminUid: String(res.locals.supplierAdmin?.uid || "unknown-admin"),
+      expectedOrderPrivateRevision: req.body?.expectedOrderPrivateRevision,
+      expectedGroupRevisions: req.body?.expectedGroupRevisions,
     });
     return res.json({ success: true, ...result });
   } catch (error: any) {

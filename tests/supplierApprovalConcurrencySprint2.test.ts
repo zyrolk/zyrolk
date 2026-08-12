@@ -114,9 +114,10 @@ test('Sprint 2 production queue creation and approval paths carry and transactio
   const approval = readFileSync('functions/src/api/suppliers/supplierApproval.ts', 'utf8');
   const routes = readFileSync('functions/src/api/routes/supplier.ts', 'utf8');
 
-  assert.match(sync, /approvalBaseline: buildSupplierProductApprovalBaseline/);
+  assert.match(sync, /approvalBaseline: existingQueueItem\.approvalBaseline \|\| buildSupplierProductApprovalBaseline/);
+  assert.match(sync, /approvalBaseline: activeRemovalData\.approvalBaseline[\s\S]*?\|\| buildSupplierProductApprovalBaseline/);
   assert.match(portal, /approvalBaseline: buildSupplierProductApprovalBaseline/);
-  assert.match(approval, /transaction\.get\(productReference\)/);
+  assert.match(approval, /transaction\.get\(decisionProductReference\)/);
   assert.match(approval, /detectSupplierApprovalConflict/);
   assert.match(approval, /queueState: "conflict"/);
   assert.match(approval, /status: "CONFLICT"/);

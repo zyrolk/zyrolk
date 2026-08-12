@@ -44,22 +44,35 @@ test('image limits and initial pricing use persisted financial settings consiste
   });
 });
 
-test('every persisted supplier sync-mode flag filters its own change group', () => {
+test('legacy supplier sync-mode flags cannot discard canonical Product Review changes', () => {
   policies.forEach(({ filterSupplierComparison }) => {
-    assert.equal(filterSupplierComparison({ status: 'NEW_PRODUCT', changedFields: [] }, { syncNewProducts: false }), null);
-    assert.equal(filterSupplierComparison({ status: 'PRICE_CHANGED', changedFields: ['Cost Price'] }, { syncPriceUpdates: false }), null);
-    assert.equal(filterSupplierComparison({ status: 'STOCK_CHANGED', changedFields: ['Stock'] }, { syncStockUpdates: false }), null);
-    assert.equal(filterSupplierComparison({ status: 'DESCRIPTION_CHANGED', changedFields: ['Description'] }, { syncDescriptionUpdates: false }), null);
-    assert.equal(filterSupplierComparison({ status: 'IMAGE_CHANGED', changedFields: ['Primary Image'] }, { syncImageUpdates: false }), null);
-    assert.equal(filterSupplierComparison({ status: 'IMAGE_CHANGED', changedFields: ['Images'] }, { syncImageUpdates: false }), null);
+    const cases = [
+      [{ status: 'NEW_PRODUCT' as const, changedFields: [] }, { syncNewProducts: false }],
+      [{ status: 'PRICE_CHANGED' as const, changedFields: ['Cost Price'] }, { syncPriceUpdates: false }],
+      [{ status: 'STOCK_CHANGED' as const, changedFields: ['Stock'] }, { syncStockUpdates: false }],
+      [{ status: 'DESCRIPTION_CHANGED' as const, changedFields: ['Description'] }, { syncDescriptionUpdates: false }],
+      [{ status: 'IMAGE_CHANGED' as const, changedFields: ['Primary Image'] }, { syncImageUpdates: false }],
+      [{ status: 'IMAGE_CHANGED' as const, changedFields: ['Images'] }, { syncImageUpdates: false }],
+    ] as const;
+    cases.forEach(([comparison, settings]) => {
+      const mutableComparison = { status: comparison.status, changedFields: [...comparison.changedFields] };
+      assert.deepEqual(filterSupplierComparison(mutableComparison, settings), mutableComparison);
+      if ('selectSupplierComparisonForReview' in scheduledPolicy) {
+        assert.deepEqual(
+          scheduledPolicy.selectSupplierComparisonForReview(mutableComparison, settings, 'approved', false),
+          mutableComparison,
+        );
+      }
+    });
 
     assert.deepEqual(
       filterSupplierComparison(
         { status: 'PRICE_CHANGED', changedFields: ['Cost Price', 'Stock', 'Primary Image'] },
         { syncPriceUpdates: false, syncStockUpdates: true, syncImageUpdates: false },
       ),
-      { status: 'STOCK_CHANGED', changedFields: ['Stock'] },
+      { status: 'PRICE_CHANGED', changedFields: ['Cost Price', 'Stock', 'Primary Image'] }
     );
+    assert.equal(filterSupplierComparison({ status: 'UNCHANGED', changedFields: [] }, {}), null);
   });
 });
 
@@ -120,5 +133,9 @@ test('per-source auto sync intervals enforce Off and due timestamps', () => {
     assert.equal(isSupplierSourceAutoSyncDue('15 Minutes', now - 15 * 60 * 1000, now), true);
     assert.equal(isSupplierSourceAutoSyncDue('Daily', { toMillis: () => now - 24 * 60 * 60 * 1000 }, now), true);
     assert.equal(isSupplierSourceAutoSyncDue('1 Hour', now + 5 * 60 * 60 * 1000, now), true);
+    assert.equal(isSupplierSourceAutoSyncDue('1 Hour', now - 59 * 60 * 1000, now), false);
+    assert.equal(isSupplierSourceAutoSyncDue('1 Hour', now - 60 * 60 * 1000, now), true);
+    assert.equal(isSupplierSourceAutoSyncDue('Daily', now - 23 * 60 * 60 * 1000, now), false);
+    assert.equal(isSupplierSourceAutoSyncDue('Daily', now - 24 * 60 * 60 * 1000, now), true);
   });
 });

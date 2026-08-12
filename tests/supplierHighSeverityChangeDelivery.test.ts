@@ -137,9 +137,12 @@ test('pre-approval removal updates the existing deterministic review item withou
     offer,
     source: { id: 'a2z-traders', supplierName: 'A2Z Traders', connectorType: 'a2z' },
     traversal: {
-      traversalId: 'traversal-2', cursor: null, pagesProcessed: 2, productsScanned: 100, productsImported: 0,
+      traversalId: 'traversal-2', cursor: null, pagesProcessed: 2, productsScanned: 100, productsObserved: 100, productsImported: 0,
       invalidProducts: 0, deletionReconciliationEligible: true, resumeCount: 0,
-      startedAt: detectedAt, lastCheckpointAt: detectedAt, lastPageFingerprint: 'fingerprint', status: 'reconciling',
+      startedAt: detectedAt, lastCheckpointAt: detectedAt, lastPageFingerprint: 'fingerprint', syncMode: 'full',
+      requestFingerprint: null, syncJobId: 'manual-2', totalProductLimit: null,
+      catalogTotalProducts: null, catalogTotalReliability: 'unknown', deltaToken: null,
+      terminationReason: null, status: 'reconciling',
     },
     batchId: 'manual-2',
     detectedAt,
@@ -152,19 +155,25 @@ test('pre-approval removal updates the existing deterministic review item withou
   assert.equal((removal.data.productPayload as Record<string, unknown>).stock, 0);
   assert.equal((removal.data.productPayload as Record<string, unknown>).visible, false);
   assert.deepEqual(removal.data.approvalBaseline, approvalBaseline);
-  assert.equal(buildPreApprovalSupplierRemovalQueueItem({
+  const repeatedRemoval = buildPreApprovalSupplierRemovalQueueItem({
     queueItemId: removal.id,
     queueItem: removal.data,
     offer,
     source: { id: 'a2z-traders' },
     traversal: {
-      traversalId: 'traversal-2', cursor: null, pagesProcessed: 2, productsScanned: 100, productsImported: 0,
+      traversalId: 'traversal-2', cursor: null, pagesProcessed: 2, productsScanned: 100, productsObserved: 100, productsImported: 0,
       invalidProducts: 0, deletionReconciliationEligible: true, resumeCount: 0,
-      startedAt: detectedAt, lastCheckpointAt: detectedAt, lastPageFingerprint: 'fingerprint', status: 'reconciling',
+      startedAt: detectedAt, lastCheckpointAt: detectedAt, lastPageFingerprint: 'fingerprint', syncMode: 'full',
+      requestFingerprint: null, syncJobId: 'manual-2', totalProductLimit: null,
+      catalogTotalProducts: null, catalogTotalReliability: 'unknown', deltaToken: null,
+      terminationReason: null, status: 'reconciling',
     },
     batchId: 'manual-2',
     detectedAt,
-  }), null);
+  });
+  assert.ok(repeatedRemoval);
+  assert.equal(repeatedRemoval.id, removal.id);
+  assert.deepEqual(repeatedRemoval.data.approvalBaseline, approvalBaseline);
 });
 
 test('full traversal reconnects a missing pre-approval offer to its existing review item atomically', () => {
@@ -173,4 +182,7 @@ test('full traversal reconnects a missing pre-approval offer to its existing rev
   assert.match(syncSource, /const atomicGroup = activePreApprovalReview\?\.id \|\| queueItemId/u);
   assert.match(syncSource, /buildPreApprovalSupplierRemovalQueueItem\(\{/u);
   assert.match(syncSource, /collection: "supplier_review_queue", id: removal\.id, data: removal\.data, atomicGroup: removal\.id/u);
+  assert.match(syncSource, /where\("canonicalProductId", "in", productIds\)\.limit\(300\)/u);
+  assert.match(syncSource, /const queueItemId = activeRemovalReview\?\.id \|\| \(stableIsTerminal/u);
+  assert.match(syncSource, /approvalBaseline: activeRemovalData\.approvalBaseline/u);
 });

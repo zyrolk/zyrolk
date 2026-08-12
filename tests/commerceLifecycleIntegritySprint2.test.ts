@@ -83,8 +83,8 @@ test('Sprint 2 order mutations use the server-authoritative transition and resto
   assert.match(orders, /buildOrderStatusPlan/);
   assert.match(orders, /requireAdminAuth/);
   assert.match(orders, /requireCurrentProductStock/);
-  assert.match(preview, /buildOrderStatusPlan/);
-  assert.match(admin, /<option value="processing">Processing<\/option>/);
+  assert.match(preview, /updateOrderStatus/);
+  assert.match(admin, /<option value="processing" disabled=\{Boolean\(selectedOrderFulfilment\?\.groups\.length\)\}>/);
 });
 
 test('Sprint 2 supplier stock approval remains reservation-aware', () => {

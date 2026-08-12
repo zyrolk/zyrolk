@@ -15,6 +15,17 @@ export interface CustomerOrderItem {
   imageUrl: string;
 }
 
+export interface CustomerShipment {
+  shipmentId: string;
+  productIds: string[];
+  status: 'shipped' | 'delivered';
+  courierName: string;
+  trackingNumber: string;
+  trackingUrl: string | null;
+  shippedAt: string;
+  deliveredAt?: string;
+}
+
 export interface CustomerOrder {
   id: string;
   orderNumber?: string;
@@ -27,6 +38,7 @@ export interface CustomerOrder {
   district: string;
   city?: string;
   items: CustomerOrderItem[];
+  shipments: CustomerShipment[];
   totalPrice: number;
   itemsSubtotal?: number;
   deliveryFee?: number;
@@ -81,6 +93,16 @@ const normalizeStatus = (value: unknown): CustomerOrderStatus => {
     : 'pending';
 };
 
+const safeTrackingUrl = (value: unknown): string | null => {
+  const url = cleanText(value, 2_000);
+  if (!url) return null;
+  try {
+    return new URL(url).protocol === 'https:' ? url : null;
+  } catch {
+    return null;
+  }
+};
+
 export function normalizeCustomerOrder(id: string, value: Record<string, unknown>): CustomerOrder {
   const rawItems = Array.isArray(value.items) ? value.items : [];
   const items = rawItems.map((rawItem): CustomerOrderItem | null => {
@@ -111,6 +133,28 @@ export function normalizeCustomerOrder(id: string, value: Record<string, unknown
       at: cleanText(event.at, 80) || undefined,
     }];
   }).slice(-20);
+  const shipments = (Array.isArray(value.shipments) ? value.shipments : []).flatMap((rawShipment): CustomerShipment[] => {
+    if (!rawShipment || typeof rawShipment !== 'object') return [];
+    const shipment = rawShipment as Record<string, unknown>;
+    const status = cleanText(shipment.status, 30).toLowerCase();
+    const shipmentId = cleanText(shipment.shipmentId, 200);
+    const courierName = cleanText(shipment.courierName, 80);
+    const trackingNumber = cleanText(shipment.trackingNumber, 120);
+    const shippedAt = cleanText(shipment.shippedAt, 80);
+    if (!shipmentId || !courierName || !trackingNumber || !shippedAt || !['shipped', 'delivered'].includes(status)) return [];
+    return [{
+      shipmentId,
+      productIds: Array.isArray(shipment.productIds)
+        ? [...new Set(shipment.productIds.map((productId) => cleanText(productId, 200)).filter(Boolean))].slice(0, 50)
+        : [],
+      status: status as CustomerShipment['status'],
+      courierName,
+      trackingNumber,
+      trackingUrl: safeTrackingUrl(shipment.trackingUrl),
+      shippedAt,
+      deliveredAt: cleanText(shipment.deliveredAt, 80) || undefined,
+    }];
+  }).slice(0, 50);
 
   return {
     id: cleanText(id, 200),
@@ -124,6 +168,7 @@ export function normalizeCustomerOrder(id: string, value: Record<string, unknown
     district: cleanText(value.district, 80),
     city: cleanText(value.city, 80) || undefined,
     items,
+    shipments,
     totalPrice: safeNumber(value.totalPrice),
     itemsSubtotal: value.itemsSubtotal === undefined ? undefined : safeNumber(value.itemsSubtotal),
     deliveryFee: value.deliveryFee === undefined ? undefined : safeNumber(value.deliveryFee),
