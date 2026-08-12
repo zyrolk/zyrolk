@@ -1,8 +1,13 @@
 import assert from "node:assert/strict";
+import { createRequire } from "node:module";
 import test from "node:test";
 import type { DecodedIdToken } from "firebase-admin/auth";
-import { ReviewSystemError } from "../functions/src/api/reviews/reviewSystemLogic";
-import { verifyReviewSystemUser } from "../functions/src/api/routes/reviewSystem";
+
+// functions/ is a CommonJS package in the Node 20 production runtime. Load the
+// error class and route from one cache so instanceof assertions remain stable.
+const requireFunctions = createRequire(import.meta.url);
+const { ReviewSystemError } = requireFunctions("../functions/src/api/reviews/reviewSystemLogic.ts") as typeof import("../functions/src/api/reviews/reviewSystemLogic");
+const { verifyReviewSystemUser } = requireFunctions("../functions/src/api/routes/reviewSystem.ts") as typeof import("../functions/src/api/routes/reviewSystem");
 
 const token = (claims: Partial<DecodedIdToken>): DecodedIdToken => ({
   aud: "demo-zyro-sh5a",
