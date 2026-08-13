@@ -18,6 +18,7 @@ test('new A2Z onboarding produces a secure registry-compatible source from UI th
   const browserPayload = buildSupplierOnboardingSource({
     id: 'new-a2z',
     supplierName: 'New A2Z Supplier',
+    supplierAccountId: 'supplier-account-1',
     supplierType: 'a2z',
     websiteUrl: 'https://supplier.example.com/dash',
     description: 'Production A2Z feed',
@@ -43,6 +44,7 @@ test('new REST onboarding selects the registered REST connector without adding b
   const browserPayload = buildSupplierOnboardingSource({
     id: 'rest-catalog',
     supplierName: 'REST Catalog',
+    supplierAccountId: 'supplier-account-1',
     supplierType: 'api',
     endpoint: 'https://api.example.com/v1/products',
     apiMethod: 'GET',
@@ -65,6 +67,7 @@ test('generic HTTP onboarding preserves endpoint composition and the existing we
   const browserPayload = buildSupplierOnboardingSource({
     id: 'http-catalog',
     supplierName: 'HTTP Catalog',
+    supplierAccountId: 'supplier-account-1',
     supplierType: 'website',
     websiteUrl: 'https://feed.example.com/catalog/',
     endpoint: 'products.json',

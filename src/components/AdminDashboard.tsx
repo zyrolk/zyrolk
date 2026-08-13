@@ -1359,6 +1359,8 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
       ...prod,
       id: '',
       sku: '',
+      supplierId: undefined,
+      supplierItemCode: undefined,
       name: duplicatedName,
       isActive: prod.isActive !== false,
       imageUrls: prod.imageUrls || []
@@ -5090,21 +5092,6 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                       </div>
                     </div>
 
-                    <div className="space-y-1">
-                      <label className="font-bold text-slate-400">Assigned Supplier</label>
-                      <select
-                        value={newProduct.supplierId || ''}
-                        onChange={(event) => setNewProduct((previous) => ({ ...previous, supplierId: event.target.value || undefined }))}
-                        className="w-full cursor-pointer rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs transition-colors focus:border-blue-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-900"
-                      >
-                        <option value="">No supplier portal account assigned</option>
-                        {users.filter((account) => account.role === 'supplier').map((account) => (
-                          <option key={account.id} value={account.id}>{account.displayName || account.email || account.id}</option>
-                        ))}
-                      </select>
-                      <p className="text-[9px] text-slate-400">Assignment controls Supplier Portal visibility only; it does not grant direct product editing.</p>
-                    </div>
-
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                       <div className="space-y-1">
                         <label className="font-bold text-slate-400">Barcode</label>
@@ -5396,16 +5383,8 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                   {/* Corporate Group */}
                   <div className="space-y-3.5 p-4 rounded-2xl border border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/10">
                     <span className="block text-[9px] font-black text-blue-500 uppercase tracking-widest">Corporate Record Details</span>
+                    <p className="text-[10px] text-slate-400">Manual products are fulfilled internally. Supplier routing is established only through an approved Supplier Product Review offer.</p>
                     <div className="grid grid-cols-3 gap-2.5">
-                      <div className="space-y-1">
-                        <label className="text-slate-400 font-bold">Supplier Code <span className="font-normal">(Admin Only)</span></label>
-                        <input
-                          type="text"
-                          value={newProduct.supplierItemCode || ""}
-                          onChange={(e) => setNewProduct(prev => ({ ...prev, supplierItemCode: e.target.value }))}
-                          className="w-full text-xs px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-hidden"
-                        />
-                      </div>
                       <div className="space-y-1">
                         <label className="text-slate-400 font-bold">Cost (LKR) <span className="font-normal">(Admin Only)</span></label>
                         <input

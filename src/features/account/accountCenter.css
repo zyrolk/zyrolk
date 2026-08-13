@@ -254,6 +254,8 @@ button:disabled { cursor: not-allowed; opacity: .62; }
 .zy-account-setting-row input::after { position: absolute; top: .19rem; left: .2rem; width: 1.07rem; height: 1.07rem; border-radius: 50%; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.2); content: ''; transition: transform .2s ease; }
 .zy-account-setting-row input:checked { background: var(--account-blue); }
 .zy-account-setting-row input:checked::after { transform: translateX(1.18rem); }
+.zy-account-setting-row.is-always-on { cursor: default; }
+.zy-account-setting-row.is-always-on > b { padding: .35rem .65rem; border-radius: 999px; color: #14532d; background: #dcfce7; font-size: .68rem; white-space: nowrap; }
 
 .zy-account-skeleton { display: grid; gap: .75rem; padding: 1.2rem; border: 1px solid var(--account-line); border-radius: 1.2rem; background: #fff; }
 .zy-account-skeleton i { display: block; height: 4.4rem; border-radius: .8rem; background: linear-gradient(100deg, #edf1f5 25%, #f8fafc 42%, #edf1f5 60%); background-size: 300% 100%; animation: zy-account-shimmer 1.4s infinite linear; }

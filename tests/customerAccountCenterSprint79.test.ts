@@ -56,12 +56,14 @@ test('notification preferences have conservative defaults and normalize stored v
     marketingEmail: false,
   });
   assert.deepEqual(normalizeNotificationSettings({ orderUpdates: false, marketingEmail: true }), {
-    orderUpdates: false,
+    orderUpdates: true,
     wishlistUpdates: true,
     promotions: false,
     marketingEmail: true,
   });
-  assert.match(account, /customerSettings: notificationSettings/);
+  assert.match(account, /customerSettings: nextSettings/);
+  assert.match(account, /Essential order status and delivery messages are always enabled/);
+  assert.match(account, /Essential transactional order messages are sent/);
   assert.match(account, /Marketing email opt-in/);
 });
 

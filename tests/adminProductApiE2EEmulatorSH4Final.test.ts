@@ -116,6 +116,7 @@ test("SH-4 final manual Product API enforces the real Auth boundary and trusted 
     assert.equal(product.data()?.id, created.productId);
     assert.equal(privateProduct.data()?.productId, created.productId);
     assert.equal(privateProduct.data()?.sku, created.sku);
+    assert.equal(privateProduct.data()?.fulfilmentMode, "internal");
     assert.equal(claim.size, 1);
     assert.equal(audit.size, 1);
     assert.equal(audit.docs[0].data().actor.uid, adminUser.user.uid);
@@ -130,6 +131,31 @@ test("SH-4 final manual Product API enforces the real Auth boundary and trusted 
     assert.equal(conflictingRetry.status, 409);
     const injected = await request({ draft: { ...draft, zyroSkuClaimId: "browser-claim" } }, randomUUID());
     assert.equal(injected.status, 400);
+
+    const checkoutResponse = await fetch(`http://${functionsHost}/${projectId}/us-central1/api/api/checkout`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": `sh4-internal-checkout-${suffix}`,
+        "X-Forwarded-For": "203.0.113.41",
+      },
+      body: JSON.stringify({
+        customerUid: "guest",
+        customerName: "Internal Product Customer",
+        customerPhone: "0771234567",
+        customerEmail: "internal-product@example.test",
+        customerAddress: "1 Internal Product Road",
+        district: "Colombo",
+        city: "Colombo",
+        paymentMethod: "cod",
+        cartItems: [{ productId: created.productId, quantity: 1, expectedUnitPrice: draft.price }],
+      }),
+    });
+    const checkout = await checkoutResponse.json() as { order?: { id?: string }; error?: string };
+    assert.equal(checkoutResponse.status, 200, checkout.error);
+    const orderPrivate = await adminDb.collection("order_private").doc(checkout.order!.id!).get();
+    assert.equal(orderPrivate.data()?.lines?.[0]?.fulfilmentMode, "internal");
+    assert.equal(orderPrivate.data()?.lines?.[0]?.supplierAccountId, null);
   } finally {
     await signOut(clientAuth).catch(() => undefined);
     await deleteApp(clientApp);

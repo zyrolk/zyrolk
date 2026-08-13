@@ -119,6 +119,7 @@ interface SupplierSource {
   type?: string;
   connectorType?: string;
   supplierId?: string;
+  supplierAccountId?: string;
   priority?: unknown;
   capabilities?: string[];
   authentication?: {
@@ -499,7 +500,7 @@ export function isSupplierSourceEnabled(source: SupplierSource, _settings: Suppl
   const status = String(source.sourceStatus || "active").trim().toLowerCase();
   const connectorType = normalizeSupplierSourceConfig(source.id, source).connectorType;
   const connectorIsRegistered = SupplierRegistry.supportedConnectorTypes().includes(connectorType);
-  return status === "active" && source.enabled !== false && connectorIsRegistered;
+  return status === "active" && source.enabled !== false && Boolean(String(source.supplierAccountId || "").trim()) && connectorIsRegistered;
 }
 
 export function isSupplierSourceEligibleForSync(
@@ -514,7 +515,9 @@ export function isSupplierSourceEligibleForSync(
     const manuallyAvailable = operationalState === "paused"
       || (operationalState !== "disabled" && source.enabled !== false && status === "active");
     const connectorType = normalizeSupplierSourceConfig(source.id, source).connectorType;
-    return manuallyAvailable && SupplierRegistry.supportedConnectorTypes().includes(connectorType);
+    return manuallyAvailable
+      && Boolean(String(source.supplierAccountId || "").trim())
+      && SupplierRegistry.supportedConnectorTypes().includes(connectorType);
   }
 
   return isSupplierSourceEnabled(source, settings)

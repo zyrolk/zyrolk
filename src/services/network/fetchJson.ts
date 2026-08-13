@@ -6,12 +6,14 @@ const DEFAULT_ERROR_MESSAGE = 'The service is temporarily unavailable. Please tr
 export class NetworkRequestError extends Error {
   readonly status?: number;
   readonly kind: 'http' | 'network' | 'timeout' | 'invalid-response';
+  readonly body?: unknown;
 
-  constructor(message: string, kind: NetworkRequestError['kind'], status?: number) {
+  constructor(message: string, kind: NetworkRequestError['kind'], status?: number, body?: unknown) {
     super(message);
     this.name = 'NetworkRequestError';
     this.kind = kind;
     this.status = status;
+    this.body = body;
   }
 }
 
@@ -52,7 +54,7 @@ export async function fetchJson<T>(input: RequestInfo | URL, init: RequestInit =
     }
 
     if (!response.ok) {
-      throw new NetworkRequestError(extractErrorMessage(body, fallbackMessage), 'http', response.status);
+      throw new NetworkRequestError(extractErrorMessage(body, fallbackMessage), 'http', response.status, body);
     }
 
     return body as T;

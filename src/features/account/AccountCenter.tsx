@@ -351,10 +351,12 @@ export default function AccountCenter({
     setSettingsError('');
     setSettingsMessage('');
     try {
+      const nextSettings = { ...notificationSettings, orderUpdates: true };
       await setDoc(doc(db, 'users', user.uid), {
-        customerSettings: notificationSettings,
+        customerSettings: nextSettings,
         updatedAt: serverTimestamp(),
       }, { merge: true });
+      setNotificationSettings(nextSettings);
       setSettingsMessage('Your communication preferences have been saved.');
     } catch (error) {
       reportClientIssue('account-settings-save', error, 'warning');
@@ -560,13 +562,13 @@ export default function AccountCenter({
         {section === 'settings' && (
           loadingProfile ? <Skeleton rows={4} /> : <form className="zy-account-form-card zy-account-settings" onSubmit={handleSettingsSave}>
             <div className="zy-account-panel-heading"><div><small>Communication controls</small><h2>Notification preferences</h2></div><Bell /></div>
+            <div className="zy-account-setting-row is-always-on"><span><PackageCheck /></span><div><strong>Order updates</strong><p>Essential order status and delivery messages are always enabled.</p></div><b>Always on</b></div>
             {([
-              ['orderUpdates', 'Order updates', 'Receive important order status and delivery messages.', PackageCheck],
               ['wishlistUpdates', 'Wishlist updates', 'Receive useful changes related to products you saved.', Heart],
               ['promotions', 'Marketplace promotions', 'Receive occasional promotional announcements.', Bell],
               ['marketingEmail', 'Marketing email opt-in', 'Allow Zyro.lk to send marketing emails to your account address.', MailCheck],
             ] as const).map(([key, title, description, Icon]) => <label className="zy-account-setting-row" key={key}><span><Icon /></span><div><strong>{title}</strong><p>{description}</p></div><input type="checkbox" checked={notificationSettings[key]} onChange={event => setNotificationSettings(current => ({ ...current, [key]: event.target.checked }))} aria-label={title} /></label>)}
-            <p className="zy-account-foundation-note">These preferences are stored now as a Phase 1 foundation. Automated notification delivery will be connected in a future communications sprint.</p>
+            <p className="zy-account-foundation-note">Essential transactional order messages are sent when the store's email service is configured. Optional preferences are saved for the communication channels that support them.</p>
             <div className="zy-account-form-actions">{settingsError && <p role="alert" className="is-error">{settingsError}</p>}{settingsMessage && <p role="status" className="is-success">{settingsMessage}</p>}<button type="submit" disabled={settingsSaving}>{settingsSaving ? <LoaderCircle className="animate-spin" /> : <Save />} {settingsSaving ? 'Saving preferences' : 'Save preferences'}</button></div>
           </form>
         )}

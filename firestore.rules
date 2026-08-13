@@ -121,7 +121,7 @@ service cloud.firestore {
 
     // Reviews Rules
     match /reviews/{reviewId} {
-      allow read: if true;
+      allow read: if !resource.data.keys().hasAny(['userId', 'orderId']);
       // Review mutations require trusted verification of purchase, ownership and duplicate prevention.
       allow create, update, delete: if false;
 
@@ -134,14 +134,22 @@ service cloud.firestore {
       }
     }
 
+    match /review_private/{reviewId} {
+      allow read, create, update, delete: if false;
+    }
+
     // Product Q&A is public to read and is mutated only through the authenticated review API.
     match /productQuestions/{questionId} {
-      allow read: if true;
+      allow read: if !resource.data.keys().hasAny(['userId', 'orderId']);
       allow create, update, delete: if false;
 
       match /votes/{userId} {
         allow read, write: if false;
       }
+    }
+
+    match /product_question_private/{questionId} {
+      allow read, create, update, delete: if false;
     }
 
     // Settings Rules - Only authenticated admins can edit website settings

@@ -263,6 +263,36 @@ export function registerSupplierRoutes(app: express.Express): void {
     }
   });
 
+  app.get("/api/supplier-accounts", requireSupplierHubAdmin, async (_req, res) => {
+    try {
+      const profiles = await adminDb.collection("supplier_profiles")
+        .where("profileStatus", "==", "active")
+        .limit(200)
+        .get();
+      const users = profiles.empty
+        ? []
+        : await adminDb.getAll(...profiles.docs.map((profile) => adminDb.collection("users").doc(profile.id)));
+      const userById = new Map(users.filter((user) => user.exists).map((user) => [user.id, user.data() || {}]));
+      const accounts = profiles.docs.flatMap((profile) => {
+        const user = userById.get(profile.id);
+        if (!user || user.role !== "supplier") return [];
+        return [{
+          id: profile.id,
+          companyName: String(profile.data().companyName || "").slice(0, 160),
+          email: String(user.email || "").slice(0, 320),
+          profileStatus: "active",
+        }];
+      });
+      res.status(200).json({ success: true, accounts });
+    } catch (error: unknown) {
+      sendSupplierFailure(res, error, {
+        logMessage: "Supplier account listing failed.",
+        fallbackMessage: "Active supplier accounts could not be loaded.",
+        context: { route: "/api/supplier-accounts" },
+      });
+    }
+  });
+
   app.get("/api/supplier-sync-investigation/:batchId", requireSupplierHubAdmin, async (req, res) => {
     try {
       const batchId = readSyncJobId(req.params.batchId);

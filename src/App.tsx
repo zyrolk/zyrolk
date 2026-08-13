@@ -862,6 +862,21 @@ export default function App() {
     setCart([]);
   }, []);
 
+  const handleRefreshCartProducts = useCallback(async (productIds: string[]) => {
+    const refreshedProducts = await loadStorefrontProductsByIds(db, productIds);
+    const refreshedById = new Map(refreshedProducts.map((product) => [product.id, product]));
+    setCart((current) => current.flatMap((item) => {
+      if (!productIds.includes(item.product.id)) return [item];
+      const refreshed = refreshedById.get(item.product.id);
+      if (!refreshed || refreshed.isActive === false || refreshed.stock <= 0) return [];
+      return [{
+        ...item,
+        product: refreshed,
+        quantity: Math.min(item.quantity, refreshed.stock),
+      }];
+    }));
+  }, []);
+
   const finishPaymentReturn = useCallback((destination: 'home' | 'account-orders') => {
     window.history.replaceState({}, document.title, window.location.pathname);
     setPaymentReturnContext(null);
@@ -2182,6 +2197,7 @@ export default function App() {
             onUpdateQuantity={handleUpdateCartQuantity}
             onRemoveItem={handleRemoveFromCart}
             onClearCart={handleClearCart}
+            onRefreshCartProducts={handleRefreshCartProducts}
             settings={settings}
             setCurrentPage={setCurrentPage}
           />

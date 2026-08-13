@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import type { CartDrawerProps } from '../../components/CartDrawer';
 import { db } from '../../firebase';
-import { fetchJson } from '../../services/network/fetchJson';
+import { fetchJson, NetworkRequestError } from '../../services/network/fetchJson';
 import { reportClientIssue } from '../../services/observability/clientDiagnostics';
 import { CustomerAddress, SRI_LANKA_DISTRICTS, sortCustomerAddresses } from '../account/accountData';
 import {
@@ -56,7 +56,7 @@ function Field({ field, label, error, children }: { field: CheckoutField; label:
 }
 
 export default function PremiumCheckoutDrawer({
-  isOpen, user, onClose, cartItems, onUpdateQuantity, onRemoveItem, onClearCart, settings, setCurrentPage,
+  isOpen, user, onClose, cartItems, onUpdateQuantity, onRemoveItem, onClearCart, onRefreshCartProducts, settings, setCurrentPage,
 }: CartDrawerProps) {
   const [form, setForm] = useState<CheckoutFormValues>(() => typeof window === 'undefined' ? EMPTY_CHECKOUT_FORM : readCheckoutDraft(window.sessionStorage));
   const [errors, setErrors] = useState<CheckoutErrors>({});
@@ -68,6 +68,7 @@ export default function PremiumCheckoutDrawer({
   const [couponError, setCouponError] = useState('');
   const [couponLoading, setCouponLoading] = useState(false);
   const [checkoutError, setCheckoutError] = useState('');
+  const [requiresPriceReconfirmation, setRequiresPriceReconfirmation] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [placedOrder, setPlacedOrder] = useState<Order | null>(null);
   const [copied, setCopied] = useState(false);
@@ -188,7 +189,11 @@ export default function PremiumCheckoutDrawer({
     try {
       const result = await fetchJson<{ success: boolean; code: string; discountAmount: number }>('/api/checkout/coupon', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ couponCode: couponInput, cartItems: cartItems.map(item => ({ productId: item.product.id, quantity: item.quantity })) }),
+        body: JSON.stringify({ couponCode: couponInput, cartItems: cartItems.map(item => ({
+          productId: item.product.id,
+          quantity: item.quantity,
+          expectedUnitPrice: item.product.price,
+        })) }),
       }, { fallbackMessage: 'The coupon could not be checked right now.' });
       setCouponQuote({ code: result.code, discountAmount: result.discountAmount, cartSignature });
       setCouponInput(result.code);
@@ -226,7 +231,11 @@ export default function PremiumCheckoutDrawer({
         customerPhone2: normalized.customerPhone2, customerEmail: normalized.customerEmail || 'guest@zyro.lk',
         customerAddress: normalized.customerAddress, district: normalized.district, city: normalized.city,
         paymentMethod, couponCode: couponQuote?.code || '',
-        cartItems: cartItems.map(item => ({ productId: item.product.id, quantity: item.quantity })),
+        cartItems: cartItems.map(item => ({
+          productId: item.product.id,
+          quantity: item.quantity,
+          expectedUnitPrice: item.product.price,
+        })),
       };
       const idempotencyKey = getIdempotencyKey(JSON.stringify(payload));
       const result = await fetchJson<{ success: boolean; order: Order; error?: string }>('/api/checkout', {
@@ -242,7 +251,29 @@ export default function PremiumCheckoutDrawer({
       onClearCart();
     } catch (error) {
       reportClientIssue('checkout-request', error, 'warning');
-      setCheckoutError(error instanceof Error ? error.message : 'The order could not be placed. Your cart remains saved.');
+      const responseBody = error instanceof NetworkRequestError && error.body && typeof error.body === 'object'
+        ? error.body as { code?: unknown; priceChanges?: unknown }
+        : null;
+      if (error instanceof NetworkRequestError && error.status === 409 && responseBody?.code === 'CHECKOUT_PRICE_CHANGED') {
+        const productIds = Array.isArray(responseBody.priceChanges)
+          ? responseBody.priceChanges.flatMap((change) => (
+            change && typeof change === 'object' && typeof (change as { productId?: unknown }).productId === 'string'
+              ? [(change as { productId: string }).productId]
+              : []
+          ))
+          : [];
+        try {
+          await onRefreshCartProducts(productIds);
+          setCouponQuote(null);
+          setRequiresPriceReconfirmation(true);
+          setCheckoutError('A product price changed. We refreshed your cart. Review the updated total, then confirm your order again.');
+        } catch (refreshError) {
+          reportClientIssue('checkout-price-refresh', refreshError, 'warning');
+          setCheckoutError('A product price changed, but the cart could not be refreshed. Close checkout and try again.');
+        }
+      } else {
+        setCheckoutError(error instanceof Error ? error.message : 'The order could not be placed. Your cart remains saved.');
+      }
     } finally { setIsSubmitting(false); }
   };
 
@@ -307,7 +338,7 @@ export default function PremiumCheckoutDrawer({
           <fieldset className="zy-payment-options"><legend>Payment method</legend><label className="is-selected"><input type="radio" name="paymentMethod" value="cod" checked readOnly /><ShieldCheck /><span><b>Cash on Delivery</b><small>Pay when your confirmed order arrives.</small></span><CheckCircle2 /></label></fieldset>
           <aside className="zy-checkout-summary" aria-labelledby="checkout-summary-title"><h3 id="checkout-summary-title">Order summary</h3><div><span>Items subtotal</span><b>{formatPrice(itemsSubtotal)}</b></div>{discountAmount > 0 && <div className="is-discount"><span>Coupon discount</span><b>−{formatPrice(discountAmount)}</b></div>}<div><span>Delivery to {form.district}</span><b>{deliveryFee === 0 ? 'Free' : formatPrice(deliveryFee)}</b></div><div className="is-total"><span>Total payable</span><b>{formatPrice(grandTotal)}</b></div></aside>
           {checkoutError && <div className="zy-checkout-error" role="alert">{checkoutError}<small>Your cart and delivery draft are still saved.</small></div>}
-          <button className="zy-place-order" type="submit" disabled={isSubmitting || cartItems.length === 0} aria-busy={isSubmitting}>{isSubmitting ? <><LoaderCircle className="is-spinning" />Placing your order securely…</> : <><LockKeyhole />Place COD order · {formatPrice(grandTotal)}<ChevronRight /></>}</button>
+          <button className="zy-place-order" type="submit" disabled={isSubmitting || cartItems.length === 0} aria-busy={isSubmitting}>{isSubmitting ? <><LoaderCircle className="is-spinning" />Placing your order securely…</> : <><LockKeyhole />{requiresPriceReconfirmation ? 'Confirm updated COD total' : 'Place COD order'} · {formatPrice(grandTotal)}<ChevronRight /></>}</button>
           <p className="zy-checkout-assurance"><LockKeyhole />Prices, coupons, stock, delivery, and totals are verified again by the secure checkout service.</p>
         </section>
       </form>}

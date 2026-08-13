@@ -18,6 +18,20 @@ interface ReviewSystemDependencies {
   verifyIdToken: (token: string, checkRevoked?: boolean) => Promise<DecodedIdToken>;
 }
 
+export const REVIEW_PRIVATE_COLLECTION = "review_private";
+export const PRODUCT_QUESTION_PRIVATE_COLLECTION = "product_question_private";
+
+const ownershipReference = (
+  db: Firestore,
+  kind: "review" | "question",
+  documentId: string,
+) => db.collection(kind === "review" ? REVIEW_PRIVATE_COLLECTION : PRODUCT_QUESTION_PRIVATE_COLLECTION).doc(documentId);
+
+const ownershipUserId = (
+  privateData: FirebaseFirestore.DocumentData | undefined,
+  legacyPublicData: FirebaseFirestore.DocumentData | undefined,
+): string => String(privateData?.userId || legacyPublicData?.userId || "").trim();
+
 export async function verifyReviewSystemUser(
   verifyIdToken: ReviewSystemDependencies["verifyIdToken"],
   bearerToken: string,
@@ -38,6 +52,7 @@ export async function verifyReviewSystemUser(
 const rateBuckets = new Map<string, number[]>();
 const RATE_WINDOW_MS = 60_000;
 const RATE_MAX = 15;
+const MAX_VISIBLE_QUESTION_IDS = 100;
 
 function enforceRateLimit(userId: string): void {
   const now = Date.now();
@@ -51,6 +66,21 @@ function readBearerToken(req: express.Request): string {
   const match = (req.header("Authorization") || "").match(/^Bearer\s+(.+)$/i);
   if (!match) throw new ReviewSystemError("Authentication required", 401);
   return match[1];
+}
+
+function readVisibleQuestionIds(value: unknown): string[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > MAX_VISIBLE_QUESTION_IDS) {
+    throw new ReviewSystemError(`Visible question IDs must contain at most ${MAX_VISIBLE_QUESTION_IDS} items`);
+  }
+  const identifiers = value.map((candidate) => {
+    const identifier = typeof candidate === "string" ? candidate.trim() : "";
+    if (!identifier || identifier.length > 240 || identifier.includes("/")) {
+      throw new ReviewSystemError("Visible question ID is invalid");
+    }
+    return identifier;
+  });
+  return [...new Set(identifiers)];
 }
 
 function sendError(res: express.Response, error: unknown): void {
@@ -116,13 +146,24 @@ export function registerReviewSystemRoutes(app: express.Express, dependencies: R
       const user = res.locals.reviewUser as DecodedIdToken;
       const productId = cleanProductId(req.body?.productId);
       const reviewId = deterministicCustomerDocumentId(user.uid, productId);
-      const [orders, existingReview] = await Promise.all([
+      const visibleQuestionIds = readVisibleQuestionIds(req.body?.visibleQuestionIds);
+      const [orders, existingReview, questionOwnership] = await Promise.all([
         getCustomerOrders(dependencies.db, user.uid),
         dependencies.db.collection("reviews").doc(reviewId).get(),
+        visibleQuestionIds.length === 0
+          ? Promise.resolve([])
+          : dependencies.db.getAll(...visibleQuestionIds.map((questionId) => (
+            ownershipReference(dependencies.db, "question", questionId)
+          ))),
       ]);
       res.json({
         eligible: Boolean(selectVerifiedPurchaseOrder(orders, productId)),
         existingReviewId: existingReview.exists ? reviewId : null,
+        ownedQuestionIds: questionOwnership
+          .filter((ownership) => ownership.exists
+            && ownership.data()?.userId === user.uid
+            && ownership.data()?.productId === productId)
+          .map((ownership) => ownership.id),
       });
     } catch (error) {
       sendError(res, error);
@@ -139,6 +180,7 @@ export function registerReviewSystemRoutes(app: express.Express, dependencies: R
         ? deterministicCustomerDocumentId(user.uid, productId)
         : requestedReviewId || deterministicCustomerDocumentId(user.uid, productId);
       const reviewRef = dependencies.db.collection("reviews").doc(reviewId);
+      const reviewPrivateRef = ownershipReference(dependencies.db, "review", reviewId);
 
       if (action === "create") {
         const [orders, product] = await Promise.all([
@@ -152,25 +194,36 @@ export function registerReviewSystemRoutes(app: express.Express, dependencies: R
         const title = cleanReviewText(req.body?.title, "Review title", 3, 120);
         const body = cleanReviewText(req.body?.body, "Review body", 10, 3000);
         await dependencies.db.runTransaction(async (transaction) => {
-          const existing = await transaction.get(reviewRef);
-          if (existing.exists) throw new ReviewSystemError("You have already reviewed this product", 409);
+          const [existing, existingOwnership] = await Promise.all([
+            transaction.get(reviewRef),
+            transaction.get(reviewPrivateRef),
+          ]);
+          if (existing.exists || existingOwnership.exists) throw new ReviewSystemError("You have already reviewed this product", 409);
           const customerName = safeDisplayName(user);
           transaction.create(reviewRef, {
             schemaVersion: 2,
             productId,
-            userId: user.uid,
             customerName,
             title,
             body,
             comment: body,
             rating,
             verifiedPurchase: true,
-            orderId,
             imageUrls: [],
             helpfulCount: 0,
             notHelpfulCount: 0,
             reportCount: 0,
             approved: true,
+            createdAt: FieldValue.serverTimestamp(),
+            updatedAt: FieldValue.serverTimestamp(),
+          });
+          transaction.create(reviewPrivateRef, {
+            schemaVersion: 1,
+            reviewId,
+            productId,
+            userId: user.uid,
+            orderId,
+            verifiedPurchase: true,
             createdAt: FieldValue.serverTimestamp(),
             updatedAt: FieldValue.serverTimestamp(),
           });
@@ -181,11 +234,19 @@ export function registerReviewSystemRoutes(app: express.Express, dependencies: R
 
       if (action === "update" || action === "delete") {
         await dependencies.db.runTransaction(async (transaction) => {
-          const snapshot = await transaction.get(reviewRef);
+          const [snapshot, ownershipSnapshot] = await Promise.all([
+            transaction.get(reviewRef),
+            transaction.get(reviewPrivateRef),
+          ]);
           if (!snapshot.exists) throw new ReviewSystemError("Review not found", 404);
-          if (snapshot.data()?.userId !== user.uid) throw new ReviewSystemError("You can only manage your own review", 403);
+          if (ownershipUserId(ownershipSnapshot.data(), snapshot.data()) !== user.uid) {
+            throw new ReviewSystemError("You can only manage your own review", 403);
+          }
           if (snapshot.data()?.productId !== productId) throw new ReviewSystemError("Review product mismatch", 400);
-          if (action === "delete") transaction.delete(reviewRef);
+          if (action === "delete") {
+            transaction.delete(reviewRef);
+            if (ownershipSnapshot.exists) transaction.delete(reviewPrivateRef);
+          }
           else {
             const rating = normalizeRating(req.body?.rating);
             const title = cleanReviewText(req.body?.title, "Review title", 3, 120);
@@ -251,22 +312,32 @@ export function registerReviewSystemRoutes(app: express.Express, dependencies: R
       const questionRef = questionId
         ? dependencies.db.collection("productQuestions").doc(questionId)
         : dependencies.db.collection("productQuestions").doc();
+      const questionPrivateRef = ownershipReference(dependencies.db, "question", questionRef.id);
 
       if (action === "create") {
         const question = cleanReviewText(req.body?.question, "Question", 8, 1000);
         const product = await dependencies.db.collection("products").doc(productId).get();
         if (!product.exists) throw new ReviewSystemError("Product not found", 404);
-        await questionRef.create({
-          schemaVersion: 1,
-          productId,
-          userId: user.uid,
-          customerName: safeDisplayName(user),
-          question,
-          answered: false,
-          helpfulCount: 0,
-          notHelpfulCount: 0,
-          createdAt: FieldValue.serverTimestamp(),
-          updatedAt: FieldValue.serverTimestamp(),
+        await dependencies.db.runTransaction(async (transaction) => {
+          transaction.create(questionRef, {
+            schemaVersion: 1,
+            productId,
+            customerName: safeDisplayName(user),
+            question,
+            answered: false,
+            helpfulCount: 0,
+            notHelpfulCount: 0,
+            createdAt: FieldValue.serverTimestamp(),
+            updatedAt: FieldValue.serverTimestamp(),
+          });
+          transaction.create(questionPrivateRef, {
+            schemaVersion: 1,
+            questionId: questionRef.id,
+            productId,
+            userId: user.uid,
+            createdAt: FieldValue.serverTimestamp(),
+            updatedAt: FieldValue.serverTimestamp(),
+          });
         });
         res.status(201).json({ success: true, questionId: questionRef.id });
         return;
@@ -276,11 +347,19 @@ export function registerReviewSystemRoutes(app: express.Express, dependencies: R
 
       if (action === "update" || action === "delete") {
         await dependencies.db.runTransaction(async (transaction) => {
-          const snapshot = await transaction.get(questionRef);
+          const [snapshot, ownershipSnapshot] = await Promise.all([
+            transaction.get(questionRef),
+            transaction.get(questionPrivateRef),
+          ]);
           if (!snapshot.exists) throw new ReviewSystemError("Question not found", 404);
-          if (snapshot.data()?.userId !== user.uid) throw new ReviewSystemError("You can only manage your own question", 403);
+          if (ownershipUserId(ownershipSnapshot.data(), snapshot.data()) !== user.uid) {
+            throw new ReviewSystemError("You can only manage your own question", 403);
+          }
           if (snapshot.data()?.productId !== productId) throw new ReviewSystemError("Question product mismatch", 400);
-          if (action === "delete") transaction.delete(questionRef);
+          if (action === "delete") {
+            transaction.delete(questionRef);
+            if (ownershipSnapshot.exists) transaction.delete(questionPrivateRef);
+          }
           else transaction.update(questionRef, {
             question: cleanReviewText(req.body?.question, "Question", 8, 1000),
             updatedAt: FieldValue.serverTimestamp(),

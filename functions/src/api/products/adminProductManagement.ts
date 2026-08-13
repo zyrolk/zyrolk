@@ -13,6 +13,7 @@ import {
   reserveZyroSku,
 } from "../suppliers/supplierProductIdentity";
 import { parseSupplierProductFieldOwnership } from "../suppliers/supplierFieldOwnership";
+import { resolveOrderPrivateAttributionLines } from "../orders/orderPrivateAttribution";
 
 const ADMIN_PRODUCT_AUDIT_COLLECTION = "admin_product_audit";
 const MAX_TEXT_LIST_ITEMS = 40;
@@ -279,6 +280,7 @@ const productProjection = (
   registeredBrandName: string,
   now: string,
   existingPublic?: Record<string, unknown>,
+  routing: { fulfilmentMode: "internal" | "supplier"; supplierId?: string; supplierItemCode?: string } = { fulfilmentMode: "internal" },
 ): { publicData: Record<string, unknown>; commercialData: Record<string, unknown> } => {
   const discount = draft.originalPrice && draft.originalPrice > draft.price
     ? Math.round(((draft.originalPrice - draft.price) / draft.originalPrice) * 100)
@@ -317,8 +319,9 @@ const productProjection = (
     createdAt: typeof existingPublic?.createdAt === "string" ? existingPublic.createdAt : now,
     updatedAt: now,
     sku,
-    supplierId: draft.supplierId || undefined,
-    supplierItemCode: draft.supplierItemCode || undefined,
+    fulfilmentMode: routing.fulfilmentMode,
+    supplierId: routing.fulfilmentMode === "supplier" ? routing.supplierId : undefined,
+    supplierItemCode: routing.fulfilmentMode === "supplier" ? routing.supplierItemCode : undefined,
     costPrice: draft.costPrice,
     marketPrice: draft.marketPrice,
   });
@@ -364,14 +367,15 @@ const publicUpdate = (
 const privateUpdate = (
   data: Record<string, unknown>,
   draft: AdminProductDraft,
+  fulfilmentMode: "internal" | "supplier",
 ): Record<string, unknown> => ({
   ...data,
   ...(draft.isActive ? {
     archivedAt: FieldValue.delete(),
     archivedBy: FieldValue.delete(),
   } : {}),
-  ...(!draft.supplierId ? { supplierId: FieldValue.delete() } : {}),
-  ...(!draft.supplierItemCode ? {
+  ...(fulfilmentMode === "internal" ? { supplierId: FieldValue.delete() } : {}),
+  ...(fulfilmentMode === "internal" ? {
     supplierItemCode: FieldValue.delete(),
     supplierItemCodeNormalized: FieldValue.delete(),
   } : {}),
@@ -397,6 +401,9 @@ export async function createAdminProduct(
   const draft = parseAdminProductDraft(draftValue);
   if (draft.requestedId) throw new ApiError("Product ID is assigned by the server during product creation.", 400);
   if (draft.requestedSku) throw new ApiError("Zyro SKU is assigned by the server during product creation.", 400);
+  if (draft.supplierId || draft.supplierItemCode) {
+    throw new ApiError("Manual products are internal. Supplier routing must be established through an approved supplier offer.", 422);
+  }
   const requestIdentity = `${validatedActor.uid}|${idempotencyKey}`;
   const productId = buildZyroProductId({ manualRequestId: requestIdentity });
   const requestHash = digest(requestIdentity);
@@ -497,6 +504,25 @@ export async function updateAdminProduct(
     if (draft.requestedSku && existingSku && draft.requestedSku !== existingSku) {
       throw new ApiError("Zyro SKU is immutable after product creation.", 409);
     }
+    const existingSupplierId = cleanDocumentId(existingPrivate.supplierId, "Supplier ID", false);
+    const existingSupplierItemCode = cleanText(existingPrivate.supplierItemCode, "Supplier item code", 300);
+    const selection = record(existingPrivate.supplierOfferSelection);
+    const activeOfferId = typeof selection.activeOfferId === "string" ? selection.activeOfferId.trim() : "";
+    const legacySupplierRouting = existingPrivate.fulfilmentMode !== "internal"
+      && Boolean(activeOfferId && existingSupplierId && existingSupplierItemCode);
+    const supplierBacked = existingPrivate.fulfilmentMode === "supplier" || legacySupplierRouting;
+    if (supplierBacked && !existingSku) {
+      throw new ApiError("Supplier-backed product identity is incomplete and must be repaired before publication.", 409);
+    }
+    if (!supplierBacked && (draft.supplierId || draft.supplierItemCode)) {
+      throw new ApiError("Internal products cannot be converted by entering supplier fields. Attach an approved supplier offer instead.", 422);
+    }
+    if (supplierBacked && (
+      (draft.supplierId && draft.supplierId !== existingSupplierId)
+      || (draft.supplierItemCode && draft.supplierItemCode !== existingSupplierItemCode)
+    )) {
+      throw new ApiError("Supplier routing is managed by the approved supplier offer and cannot be edited here.", 409);
+    }
 
     const categoryReference = db.collection("categories").doc(draft.category);
     const brandReference = db.collection("brands").doc(draft.brand);
@@ -514,7 +540,26 @@ export async function updateAdminProduct(
       identityDependencies.buildSkuCandidates?.(productId),
     );
     const sku = existingSku || reservation!.sku;
-    const projection = productProjection(productId, sku, draft, brandName, now, existingPublic);
+    const projection = productProjection(productId, sku, draft, brandName, now, existingPublic, supplierBacked ? {
+      fulfilmentMode: "supplier",
+      supplierId: existingSupplierId,
+      supplierItemCode: existingSupplierItemCode,
+    } : { fulfilmentMode: "internal" });
+    if (draft.isActive && supplierBacked) {
+      const routingLines = await resolveOrderPrivateAttributionLines(
+        db as FirebaseFirestore.Firestore,
+        transaction as FirebaseFirestore.Transaction,
+        [{
+          productId,
+          publicProduct: projection.publicData,
+          privateProduct: { ...existingPrivate, ...projection.commercialData },
+        }],
+        now,
+      );
+      if (routingLines[0]?.fulfilmentMode !== "supplier") {
+        throw new ApiError("Published supplier products require a valid approved offer and active supplier account.", 422);
+      }
+    }
     const currentProduct = mergeProductData(existingPublic, existingPrivate);
     const nextProduct = mergeProductData(projection.publicData, projection.commercialData);
     const ownership = changedOwnership(currentProduct, nextProduct, existingPrivate.supplierFieldOwnership, validatedActor, now);
@@ -538,7 +583,7 @@ export async function updateAdminProduct(
       ...(reservation ? { zyroSkuClaimId: reservation.claimId } : {}),
       supplierFieldOwnership: ownership,
       updatedAt: now,
-    }, draft), { merge: true });
+    }, draft, supplierBacked ? "supplier" : "internal"), { merge: true });
     transaction.create(auditReference, {
       action: "update",
       productId,

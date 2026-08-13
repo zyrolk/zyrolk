@@ -42,6 +42,22 @@ interface CheckoutOrderResponse {
   [key: string]: unknown;
 }
 
+interface CheckoutPriceChange {
+  productId: string;
+  productName: string;
+  expectedUnitPrice: number;
+  currentUnitPrice: number;
+}
+
+class CheckoutPriceChangedError extends CheckoutError {
+  readonly priceChanges: CheckoutPriceChange[];
+
+  constructor(priceChanges: CheckoutPriceChange[]) {
+    super("One or more product prices changed. Review the updated cart total and confirm again.", 409);
+    this.priceChanges = priceChanges;
+  }
+}
+
 async function resolveCheckoutCustomerUid(authorization: string | undefined): Promise<string> {
   const match = (authorization || "").match(/^Bearer\s+(.+)$/i);
   if (!match) return "guest";
@@ -135,7 +151,7 @@ export function registerCheckoutRoutes(app: express.Express): void {
       }
       validateCheckoutDetails(req.body);
       validatedPaymentMethod = validatePaymentMethod(paymentMethod);
-      validatedCartItems = validateCheckoutCartItems(cartItems);
+      validatedCartItems = validateCheckoutCartItems(cartItems, { requireExpectedUnitPrice: true });
       idempotencyKey = getIdempotencyKeyFromValues(req.header("Idempotency-Key"), req.body?.idempotencyKey);
       requestHash = createCheckoutRequestHash(req.body, validatedCartItems);
       if (paymentMethod && paymentMethod !== "cod") throw new CheckoutError("Only Cash on Delivery is currently available", 400);
@@ -155,7 +171,7 @@ export function registerCheckoutRoutes(app: express.Express): void {
     try {
       appLogger.info("Checkout transaction started.", {
         route: "/api/checkout",
-        customerUid: customerUid || "guest",
+        customerUid: customerUid === "guest" ? "guest" : "authenticated",
         cartItemsCount: validatedCartItems.length,
         idempotencyKeyProvided: !!idempotencyKey,
       });
@@ -194,6 +210,7 @@ export function registerCheckoutRoutes(app: express.Express): void {
         }));
 
         let itemsSubtotal = 0;
+        const priceChanges: CheckoutPriceChange[] = [];
         const verifiedItems = [];
         const productUpdates: Array<{ ref: FirebaseFirestore.DocumentReference; newStock: number }> = [];
         const attributionInputs: CheckoutProductAttributionInput[] = [];
@@ -225,6 +242,15 @@ export function registerCheckoutRoutes(app: express.Express): void {
             throw new Error(`Product "${pData.name}" has an invalid price configuration in the database.`);
           }
 
+          if (item.expectedUnitPrice !== truePrice) {
+            priceChanges.push({
+              productId: item.productId,
+              productName: String(pData.name || item.productId).slice(0, 160),
+              expectedUnitPrice: item.expectedUnitPrice!,
+              currentUnitPrice: truePrice,
+            });
+          }
+
           itemsSubtotal += truePrice * item.quantity;
 
           verifiedItems.push({
@@ -244,6 +270,12 @@ export function registerCheckoutRoutes(app: express.Express): void {
             publicProduct: pData,
             privateProduct: privateProductSnap.exists ? privateProductSnap.data()! : null,
           });
+        }
+
+        // No transaction write has occurred yet. A price mismatch therefore cannot
+        // consume stock, an order number, an idempotency record, or abuse budget.
+        if (priceChanges.length > 0) {
+          throw new CheckoutPriceChangedError(priceChanges);
         }
 
         const capturedAt = new Date().toISOString();
@@ -353,6 +385,19 @@ export function registerCheckoutRoutes(app: express.Express): void {
         order: finalizedOrder,
       });
     } catch (error: any) {
+      if (error instanceof CheckoutPriceChangedError) {
+        appLogger.info("Checkout price consent refresh required.", {
+          route: "/api/checkout",
+          customerUid: customerUid === "guest" ? "guest" : "authenticated",
+          affectedProductIds: error.priceChanges.map((change) => change.productId),
+        });
+        res.status(409).json({
+          error: error.message,
+          code: "CHECKOUT_PRICE_CHANGED",
+          priceChanges: error.priceChanges,
+        });
+        return;
+      }
       sendApiError(res, error, {
         logMessage: "Checkout transaction failed.",
         fallbackMessage: "Failed to process checkout transaction",

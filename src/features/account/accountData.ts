@@ -78,7 +78,8 @@ const cleanText = (value: unknown, maxLength: number): string => (
 export function normalizeNotificationSettings(value: unknown): CustomerNotificationSettings {
   const source = value && typeof value === 'object' ? value as Partial<CustomerNotificationSettings> : {};
   return {
-    orderUpdates: source.orderUpdates !== false,
+    // Transactional order updates are essential service messages and cannot be opted out of.
+    orderUpdates: true,
     wishlistUpdates: source.wishlistUpdates !== false,
     promotions: source.promotions === true,
     marketingEmail: source.marketingEmail === true,

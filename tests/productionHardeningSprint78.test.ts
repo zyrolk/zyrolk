@@ -21,6 +21,7 @@ class MemoryStorage implements Storage {
 }
 
 const app = readFileSync('src/App.tsx', 'utf8');
+const firebaseApp = readFileSync('src/firebaseApp.ts', 'utf8');
 const firebaseClient = readFileSync('src/firebase.ts', 'utf8');
 const firebaseStorage = readFileSync('src/firebaseStorage.ts', 'utf8');
 const admin = readFileSync('src/components/AdminDashboard.tsx', 'utf8');
@@ -30,6 +31,7 @@ const cart = [
   readFileSync('src/components/CartDrawer.tsx', 'utf8'),
   readFileSync('src/features/checkout/PremiumCheckoutDrawer.tsx', 'utf8'),
 ].join('\n');
+const checkoutRoute = readFileSync('functions/src/api/routes/checkout.ts', 'utf8');
 const authModal = readFileSync('src/components/AuthModal.tsx', 'utf8');
 const productDetail = readFileSync('src/components/ProductDetailModal.tsx', 'utf8');
 const contact = readFileSync('src/components/ContactPage.tsx', 'utf8');
@@ -91,8 +93,10 @@ test('JSON requests provide safe success, HTTP, invalid-response, and timeout be
 });
 
 test('Firebase initialization is idempotent, quiet, PII-safe, and defers Storage to admin', () => {
-  assert.match(firebaseClient, /getApps\(\)\[0\] \|\| initializeApp\(firebaseConfig\)/);
+  assert.match(firebaseApp, /getApps\(\)\[0\] \|\| initializeApp\(firebaseConfig\)/);
   assert.match(firebaseClient, /getFirestore\(app\)/);
+  assert.match(firebaseClient, /from '\.\/firebaseApp'/);
+  assert.doesNotMatch(firebaseApp, /firebase\/(auth|firestore|storage)/);
   assert.doesNotMatch(firebaseClient, /deleteApp|getDocFromServer|testConnection|authInfo|currentUser\?\.email/);
   assert.doesNotMatch(firebaseClient, /console\.(log|info|warn|error)/);
   assert.match(firebaseStorage, /getStorage\(app\)/);
@@ -134,6 +138,21 @@ test('customer workflows use safe diagnostics and resilient checkout networking'
     assert.doesNotMatch(customerSurface, /console\.(log|info|warn|error|debug)/);
   }
   assert.match(viteConfig, /pure: \['console\.log', 'console\.info', 'console\.debug'\]/);
+});
+
+test('price-change cart refresh removes unavailable products instead of preserving a false quantity', () => {
+  assert.match(app, /refreshed\.isActive === false \|\| refreshed\.stock <= 0\) return \[\]/);
+  assert.match(app, /quantity: Math\.min\(item\.quantity, refreshed\.stock\)/);
+  assert.doesNotMatch(app, /Math\.max\(1, refreshed\.stock\)/);
+});
+
+test('checkout price-change diagnostics classify authentication without logging a Firebase UID', () => {
+  const priceChangeLog = checkoutRoute.slice(
+    checkoutRoute.indexOf('Checkout price consent refresh required.'),
+    checkoutRoute.indexOf('res.status(409)', checkoutRoute.indexOf('Checkout price consent refresh required.')),
+  );
+  assert.match(priceChangeLog, /customerUid: customerUid === "guest" \? "guest" : "authenticated"/);
+  assert.doesNotMatch(priceChangeLog, /customerUid: customerUid \|\| "guest"/);
 });
 
 test('Firestore and Storage rules tighten existing production boundaries', () => {

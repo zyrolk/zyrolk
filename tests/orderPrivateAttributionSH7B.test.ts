@@ -136,7 +136,7 @@ const seedInternalProduct = async (scenario: string): Promise<{ productId: strin
 };
 
 let phoneSequence = 77_100_000;
-const checkout = async (scenario: string, cartItems: Array<{ productId: string; quantity: number }>, idempotencyKey = `${fixturePrefix}-${scenario}-key`) => {
+const checkout = async (scenario: string, cartItems: Array<{ productId: string; quantity: number; expectedUnitPrice: number }>, idempotencyKey = `${fixturePrefix}-${scenario}-key`) => {
   phoneSequence += 1;
   const body = {
     customerUid: "guest",
@@ -203,7 +203,7 @@ test("SH-7B captures immutable purchase-time supplier attribution through the re
 
   await t.test("supplier-backed checkout records the exact approved offer without changing customer price", async () => {
     const fixture = await seedSupplierProduct("single", { publicPrice: 1_500, offerPrice: 1_200 });
-    const result = await checkout("single", [{ productId: fixture.productId, quantity: 1 }]);
+    const result = await checkout("single", [{ productId: fixture.productId, quantity: 1, expectedUnitPrice: 1_500 }]);
     assert.equal(result.response.status, 200, result.payload.error);
     const order = result.payload.order!;
     const privateOrder = await readPrivateOrder(order.id);
@@ -250,8 +250,8 @@ test("SH-7B captures immutable purchase-time supplier attribution through the re
     const supplierA = await seedSupplierProduct("mixed-a");
     const supplierB = await seedSupplierProduct("mixed-b", { portal: true });
     const result = await checkout("mixed", [
-      { productId: supplierA.productId, quantity: 1 },
-      { productId: supplierB.productId, quantity: 2 },
+      { productId: supplierA.productId, quantity: 1, expectedUnitPrice: 1_500 },
+      { productId: supplierB.productId, quantity: 2, expectedUnitPrice: 1_500 },
     ]);
     assert.equal(result.response.status, 200, result.payload.error);
     const privateOrder = await readPrivateOrder(result.payload.order!.id);
@@ -265,7 +265,7 @@ test("SH-7B captures immutable purchase-time supplier attribution through the re
 
   await t.test("offer failover and mutable catalogue/source changes cannot rewrite historical attribution", async () => {
     const selected = await seedSupplierProduct("history-a");
-    const result = await checkout("history", [{ productId: selected.productId, quantity: 1 }]);
+    const result = await checkout("history", [{ productId: selected.productId, quantity: 1, expectedUnitPrice: 1_500 }]);
     assert.equal(result.response.status, 200, result.payload.error);
     const orderId = result.payload.order!.id;
     const before = await readPrivateOrder(orderId);
@@ -326,7 +326,7 @@ test("SH-7B captures immutable purchase-time supplier attribution through the re
       ["inactive-account", { activeAccount: false }],
     ] as const) {
       const fixture = await seedSupplierProduct(scenario, options);
-      const result = await checkout(scenario, [{ productId: fixture.productId, quantity: 1 }]);
+      const result = await checkout(scenario, [{ productId: fixture.productId, quantity: 1, expectedUnitPrice: 1_500 }]);
       assert.equal(result.response.status, 409);
       assert.match(result.payload.error || "", /supplier (routing is not configured|account is not active)/iu);
       assert.equal((await adminDb.collection("products").doc(fixture.productId).get()).data()?.stock, 8);
@@ -335,7 +335,7 @@ test("SH-7B captures immutable purchase-time supplier attribution through the re
 
   await t.test("a legitimate internal product records null supplier evidence", async () => {
     const fixture = await seedInternalProduct("internal");
-    const result = await checkout("internal", [{ productId: fixture.productId, quantity: 1 }]);
+    const result = await checkout("internal", [{ productId: fixture.productId, quantity: 1, expectedUnitPrice: 900 }]);
     assert.equal(result.response.status, 200, result.payload.error);
     const line = (await readPrivateOrder(result.payload.order!.id)).lines[0];
     assert.equal(line.fulfilmentMode, "internal");

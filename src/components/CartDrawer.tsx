@@ -10,6 +10,7 @@ export interface CartDrawerProps {
   onUpdateQuantity: (productId: string, quantity: number) => void;
   onRemoveItem: (productId: string) => void;
   onClearCart: () => void;
+  onRefreshCartProducts: (productIds: string[]) => Promise<void>;
   settings?: WebsiteSettings | null;
   setCurrentPage?: (page: string) => void;
 }

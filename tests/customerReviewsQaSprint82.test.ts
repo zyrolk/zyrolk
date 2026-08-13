@@ -84,7 +84,7 @@ test('question projection, CRUD controls and search use genuine Firestore conten
 });
 
 test('ownership, unauthorized mutation protection and input sanitization are enforced server-side', () => {
-  assert.match(route, /snapshot\.data\(\)\?\.userId !== user\.uid/);
+  assert.match(route, /ownershipUserId\(ownershipSnapshot\.data\(\), snapshot\.data\(\)\) !== user\.uid/);
   assert.match(route, /Seller access required/);
   assert.match(route, /verifyIdToken/);
   assert.match(route, /enforceRateLimit/);
@@ -93,6 +93,16 @@ test('ownership, unauthorized mutation protection and input sanitization are enf
   const reviewRules = rules.slice(rules.indexOf('match /reviews/{reviewId}'), rules.indexOf('// Product Q&A'));
   assert.match(reviewRules, /allow create, update, delete: if false/);
   assert.match(rules, /match \/productQuestions\/\{questionId\}[\s\S]*allow create, update, delete: if false/);
+});
+
+test('ownership controls use authoritative IDs without a first-100 collection cap or unhandled refresh rejection', () => {
+  assert.doesNotMatch(route, /productQuestions[\s\S]{0,160}limit\(100\)/);
+  assert.match(route, /readVisibleQuestionIds\(req\.body\?\.visibleQuestionIds\)/);
+  assert.match(route, /visibleQuestionIds\.length === 0[\s\S]*dependencies\.db\.getAll/);
+  assert.match(component, /visibleQuestionIds: questions\.map\(\(question\) => question\.id\)/);
+  assert.match(component, /eligible && !existingReviewId/);
+  assert.doesNotMatch(component, /eligible && !ownReview/);
+  assert.match(component, /catch \(reason\)[\s\S]*review-ownership-refresh/);
 });
 
 test('production empty states, accessibility, responsive layout and reduced motion are present', () => {

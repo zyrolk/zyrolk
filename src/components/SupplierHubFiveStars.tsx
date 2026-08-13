@@ -246,6 +246,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
   // 1. Supplier Sources & Connect states
   const [supplierSources, setSupplierSources] = useState<any[]>([]);
   const [supplierSourcesLoaded, setSupplierSourcesLoaded] = useState(false);
+  const [supplierAccounts, setSupplierAccounts] = useState<Array<{ id: string; companyName: string; email: string }>>([]);
   const [showConnectModal, setShowConnectModal] = useState<boolean>(false);
   const [newSupplierName, setNewSupplierName] = useState<string>("");
   const [newSupplierType, setNewSupplierType] = useState<SupplierOnboardingType>("a2z");
@@ -253,6 +254,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
   
   const [newSupplierUrl, setNewSupplierUrl] = useState<string>("");
   const [newSupplierCredentialProfile, setNewSupplierCredentialProfile] = useState<string>('');
+  const [newSupplierAccountId, setNewSupplierAccountId] = useState<string>('');
 
   // API specific
   const [apiEndpoint, setApiEndpoint] = useState<string>("");
@@ -273,16 +275,25 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
   // Supplier source definitions are deliberately projected by Functions. This
   // keeps legacy credential fields out of every browser response.
   const loadSources = useCallback(async () => {
-    const [response, jobsResponse] = await Promise.all([
+    const [response, jobsResponse, accountsResponse] = await Promise.all([
       getSupplierApi('/api/supplier-sources'),
       getSupplierApi('/api/supplier-sync/jobs?limit=20'),
+      getSupplierApi('/api/supplier-accounts'),
     ]);
     const result = await response.json().catch(() => ({})) as { success?: boolean; sources?: any[]; error?: string };
     const jobsResult = await jobsResponse.json().catch(() => ({})) as { success?: boolean; jobs?: SupplierSyncJobView[] };
+    const accountsResult = await accountsResponse.json().catch(() => ({})) as {
+      success?: boolean;
+      accounts?: Array<{ id: string; companyName: string; email: string }>;
+    };
     if (!response.ok || result.success !== true || !Array.isArray(result.sources)) {
       throw new Error(result.error || 'Supplier sources could not be loaded.');
     }
     setSupplierSources(result.sources.map(normalizeSupplierSourceForUi));
+    if (!accountsResponse.ok || accountsResult.success !== true || !Array.isArray(accountsResult.accounts)) {
+      throw new Error('Active supplier accounts could not be loaded.');
+    }
+    setSupplierAccounts(accountsResult.accounts);
     setSupplierSourcesLoaded(true);
     setErrorMsg(null);
     if (jobsResponse.ok && jobsResult.success === true && Array.isArray(jobsResult.jobs)) {
@@ -429,6 +440,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
   const [editWebsiteUrl, setEditWebsiteUrl] = useState<string>('');
   const [editEndpoint, setEditEndpoint] = useState<string>('');
   const [editCredentialProfile, setEditCredentialProfile] = useState<string>(A2Z_GLOBAL_SECRET_PROFILE);
+  const [editSupplierAccountId, setEditSupplierAccountId] = useState<string>('');
   const [editSyncMode, setEditSyncMode] = useState<'manual' | 'auto'>('manual');
   const [editAutoSyncSchedule, setEditAutoSyncSchedule] = useState<string>('1 Hour');
   
@@ -800,6 +812,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
     return buildSupplierOnboardingSource({
       id: code,
       supplierName: newSupplierName,
+      supplierAccountId: newSupplierAccountId,
       supplierType: newSupplierType,
       websiteUrl: newSupplierUrl,
       endpoint: apiEndpoint,
@@ -906,6 +919,10 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
   const handleConnectSupplierSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newSupplierName.trim()) return;
+    if (!newSupplierAccountId) {
+      setErrorMsg('Select the active Supplier Portal account that owns this source.');
+      return;
+    }
     const proposedConfiguration = JSON.stringify(buildNewSupplierSource('Not Synced'));
     if (modalTestStatus !== 'Connected' || testedSupplierConfigurationRef.current !== proposedConfiguration) {
       setErrorMsg('Test this exact supplier configuration before saving and starting the initial sync.');
@@ -955,6 +972,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
       setApiMethod("GET");
       setApiDataPath("products");
       setNewSupplierCredentialProfile('');
+      setNewSupplierAccountId('');
       
       setModalTestStatus('idle');
       setModalTestError(null);
@@ -1018,6 +1036,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
     setEditWebsiteUrl(source.websiteUrl || '');
     setEditEndpoint(source.endpoint || '');
     setEditCredentialProfile(String(source.authentication?.secretRef || source.authentication?.credentialProfile || A2Z_GLOBAL_SECRET_PROFILE));
+    setEditSupplierAccountId(String(source.supplierAccountId || ''));
     // Initialize advanced source settings without changing the supplier workflow.
     const currentSettings = source.settings || {};
     setEditCategoriesFilter(currentSettings.categoriesFilter || []);
@@ -1035,6 +1054,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
       const currentSource = supplierSources.find((source) => source.id === sourceId);
       if (!currentSource) throw new Error('Supplier was not found.');
       if (!editSupplierName.trim()) throw new Error('Supplier name is required.');
+      if (!editSupplierAccountId) throw new Error('Select an active Supplier Portal account.');
       let supplierUrl: URL;
       try {
         supplierUrl = new URL(editWebsiteUrl.trim());
@@ -1049,6 +1069,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
       const updatedData = {
         supplierName: editSupplierName.trim(),
         name: editSupplierName.trim(), // for backwards compatibility
+        supplierAccountId: editSupplierAccountId,
         websiteUrl: editWebsiteUrl.trim(),
         syncSchedule,
         settings: {
@@ -2145,6 +2166,23 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                                 placeholder="Supplier name"
                               />
                             </div>
+
+                            <div className="space-y-1">
+                              <label className="text-[10px] font-bold text-slate-400 dark:text-slate-500">
+                                Supplier Portal Account
+                              </label>
+                              <select
+                                required
+                                value={editSupplierAccountId}
+                                onChange={(event) => setEditSupplierAccountId(event.target.value)}
+                                className="w-full px-3 py-2 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl focus:outline-hidden focus:border-amber-500 transition-colors text-xs dark:text-white font-semibold"
+                              >
+                                <option value="">Select an active supplier account</option>
+                                {supplierAccounts.map((account) => (
+                                  <option key={account.id} value={account.id}>{account.companyName || account.email || account.id}</option>
+                                ))}
+                              </select>
+                            </div>
                             
                             <div className="space-y-1 col-span-1 sm:col-span-2">
                               <label className="text-[10px] font-bold text-slate-400 dark:text-slate-500">
@@ -2638,6 +2676,26 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                     }}
                     className="w-full px-3 py-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-850 rounded-xl focus:outline-hidden focus:border-emerald-500 transition-colors text-xs dark:text-white font-medium"
                   />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-slate-400 font-bold block text-[10px] uppercase">Supplier Portal Account</label>
+                  <select
+                    required
+                    value={newSupplierAccountId}
+                    onChange={(event) => {
+                      setNewSupplierAccountId(event.target.value);
+                      setModalTestStatus('idle');
+                      testedSupplierConfigurationRef.current = null;
+                    }}
+                    className="w-full px-3 py-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-850 rounded-xl focus:outline-hidden focus:border-emerald-500 transition-colors text-xs dark:text-white font-medium"
+                  >
+                    <option value="">Select an active supplier account</option>
+                    {supplierAccounts.map((account) => (
+                      <option key={account.id} value={account.id}>{account.companyName || account.email || account.id}</option>
+                    ))}
+                  </select>
+                  <p className="text-[10px] text-slate-400">This verified account receives fulfilment groups for products from this source.</p>
                 </div>
 
               </div>

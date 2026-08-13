@@ -110,13 +110,27 @@ test('safe route-level bundle boundaries remain in place', () => {
   assert.ok(vite.indexOf("id.includes('recharts')") < vite.indexOf("id.includes('react') ||"));
 });
 
-test('required Firestore indexes cover catalog counts and bounded homepage reviews', () => {
+test('required Firestore indexes cover customer storefront and supplier investigation queries exactly', () => {
   const indexes = JSON.parse(source('firestore.indexes.json')) as {
-    indexes: Array<{ collectionGroup: string; fields: Array<{ fieldPath: string }> }>;
+    indexes: Array<{
+      collectionGroup: string;
+      queryScope: string;
+      fields: Array<{ fieldPath: string; order: string }>;
+    }>;
   };
-  const signatures = indexes.indexes.map((index) => (
-    `${index.collectionGroup}:${index.fields.map((field) => field.fieldPath).join(',')}`
+  const hasIndex = (collectionGroup: string, fields: Array<[string, string]>) => indexes.indexes.some((index) => (
+    index.collectionGroup === collectionGroup
+    && index.queryScope === 'COLLECTION'
+    && index.fields.length === fields.length
+    && index.fields.every((field, position) => (
+      field.fieldPath === fields[position][0] && field.order === fields[position][1]
+    ))
   ));
-  assert.ok(signatures.includes('products:category,isActive'));
-  assert.ok(signatures.includes('reviews:approved,createdAt'));
+  assert.equal(hasIndex('products', [['category', 'ASCENDING'], ['isActive', 'ASCENDING']]), true);
+  assert.equal(hasIndex('products', [['isActive', 'ASCENDING'], ['discount', 'ASCENDING']]), true);
+  assert.equal(hasIndex('reviews', [['approved', 'ASCENDING'], ['createdAt', 'DESCENDING']]), true);
+  assert.equal(hasIndex('supplier_review_queue', [['batchId', 'ASCENDING'], ['createdAt', 'ASCENDING']]), true);
+
+  const investigation = source('functions/src/api/suppliers/supplierInvestigations.ts');
+  assert.match(investigation, /\.where\('batchId', '==', batchId\)\s*\.orderBy\('createdAt', 'asc'\)/u);
 });

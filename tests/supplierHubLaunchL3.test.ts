@@ -166,7 +166,8 @@ test('supplier UI is role-isolated, API-backed, responsive and accessible', () =
   assert.match(portal, /zy-skip-link/);
   assert.match(portal, /sm:grid-cols-2/);
   assert.match(portal, /loading="lazy"/);
-  assert.match(admin, /Assigned Supplier/);
+  assert.doesNotMatch(admin, />Assigned Supplier</);
   assert.match(admin, /handleAssignOrderSupplier/);
-  assert.match(admin, /newProduct\.supplierId/);
+  assert.doesNotMatch(admin, /newProduct\.supplierId/);
+  assert.match(admin, /Manual products are fulfilled internally/);
 });

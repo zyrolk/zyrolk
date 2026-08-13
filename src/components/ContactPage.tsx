@@ -219,7 +219,7 @@ export default function ContactPage({ settings, isAdmin, onEdit }: ContactPagePr
       alert("WhatsApp chat is currently being configured by the store administrator. Please try again soon or contact support!");
       return;
     }
-    window.open(`https://wa.me/${waNumber}?text=${text}`, '_blank');
+    window.open(`https://wa.me/${waNumber}?text=${text}`, '_blank', 'noopener,noreferrer');
   };
 
   // Default values

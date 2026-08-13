@@ -1,5 +1,10 @@
 import React, { useState, useRef } from "react";
 import { Upload, Trash2, Image, Loader2, Settings } from "lucide-react";
+import {
+  buildCloudinaryImageUploadUrl,
+  validateCloudinaryUploadCandidate,
+  validateCloudinaryUploadPreset,
+} from "../services/media/cloudinaryUploadPolicy";
 
 interface CloudinaryUploadProps {
   value: string;
@@ -38,9 +43,19 @@ export const CloudinaryUpload: React.FC<CloudinaryUploadProps> = ({
   });
 
   const handleSaveConfig = () => {
-    localStorage.setItem("cloudinary_cloud_name", cloudName);
-    localStorage.setItem("cloudinary_upload_preset", uploadPreset);
-    setShowConfig(false);
+    try {
+      const uploadUrl = buildCloudinaryImageUploadUrl(cloudName);
+      const normalizedCloudName = cloudName.trim();
+      const normalizedPreset = validateCloudinaryUploadPreset(uploadPreset);
+      setCloudName(normalizedCloudName);
+      setUploadPreset(normalizedPreset);
+      localStorage.setItem("cloudinary_cloud_name", normalizedCloudName);
+      localStorage.setItem("cloudinary_upload_preset", normalizedPreset);
+      setError(null);
+      setShowConfig(false);
+    } catch (configError) {
+      setError(configError instanceof Error ? configError.message : "Cloudinary configuration is invalid.");
+    }
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -50,15 +65,33 @@ export const CloudinaryUpload: React.FC<CloudinaryUploadProps> = ({
   };
 
   const uploadToCloudinary = (file: File) => {
-    setProgress(0);
     setError(null);
+
+    const validationError = validateCloudinaryUploadCandidate(file);
+    if (validationError) {
+      setError(validationError);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      return;
+    }
+
+    let uploadUrl: string;
+    let normalizedPreset: string;
+    try {
+      uploadUrl = buildCloudinaryImageUploadUrl(cloudName);
+      normalizedPreset = validateCloudinaryUploadPreset(uploadPreset);
+    } catch (configError) {
+      setError(configError instanceof Error ? configError.message : "Cloudinary configuration is invalid.");
+      return;
+    }
+
+    setProgress(0);
 
     const formData = new FormData();
     formData.append("file", file);
-    formData.append("upload_preset", uploadPreset);
+    formData.append("upload_preset", normalizedPreset);
 
     const xhr = new XMLHttpRequest();
-    xhr.open("POST", `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`);
+    xhr.open("POST", uploadUrl);
 
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable) {
@@ -256,7 +289,7 @@ export const CloudinaryUpload: React.FC<CloudinaryUploadProps> = ({
         type="file"
         ref={fileInputRef}
         onChange={handleFileChange}
-        accept="image/*"
+        accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp"
         className="hidden"
       />
     </div>

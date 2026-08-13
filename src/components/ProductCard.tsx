@@ -74,8 +74,7 @@ function ProductCard({
       alert("WhatsApp checkout is currently being configured by the store administrator. Please try again soon or contact support!");
       return;
     }
-    // TODO: Add noopener/noreferrer when WhatsApp window-opening behavior is addressed in a dedicated security change.
-    window.open(`https://wa.me/${waNumber}?text=${message}`, '_blank');
+    window.open(`https://wa.me/${waNumber}?text=${message}`, '_blank', 'noopener,noreferrer');
   };
 
   const handleWhatsAppEnquiry = (e: React.MouseEvent) => {
@@ -93,7 +92,7 @@ function ProductCard({
       alert("WhatsApp support is currently being configured by the store administrator. Please try again soon!");
       return;
     }
-    window.open(`https://wa.me/${waNumber}?text=${message}`, '_blank');
+    window.open(`https://wa.me/${waNumber}?text=${message}`, '_blank', 'noopener,noreferrer');
   };
 
   return (

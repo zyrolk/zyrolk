@@ -12,6 +12,8 @@
     "catalog:foundation:apply": "tsx scripts/catalogFoundation.ts --apply",
     "security:products:dry-run": "tsx scripts/migrateProductCommercialData.ts",
     "security:products:apply": "tsx scripts/migrateProductCommercialData.ts --apply",
+    "security:reviews:dry-run": "tsx scripts/migrateReviewOwnershipData.ts",
+    "security:reviews:apply": "tsx scripts/migrateReviewOwnershipData.ts --apply",
     "security:supplier-credentials:dry-run": "tsx scripts/migrateSupplierSourceCredentials.ts",
     "security:supplier-credentials:apply": "tsx scripts/migrateSupplierSourceCredentials.ts --apply",
     "supplier:registry:sprint7:dry-run": "tsx scripts/migrateSupplierSourcesSprint7.ts",

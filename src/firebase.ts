@@ -1,32 +1,10 @@
-import { initializeApp, getApps } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
-import appletConfig from '../firebase-applet-config.json';
 import { reportClientIssue } from './services/observability/clientDiagnostics';
+import { app, appCheckSiteKey, firebaseConfig } from './firebaseApp';
 
-// Construct config directly from the imported JSON, with absolutely no hardcoded values
-const firebaseConfig = {
-  apiKey: appletConfig.apiKey,
-  authDomain: appletConfig.authDomain,
-  projectId: appletConfig.projectId,
-  storageBucket: appletConfig.storageBucket,
-  messagingSenderId: appletConfig.messagingSenderId,
-  appId: appletConfig.appId,
-  measurementId: appletConfig.measurementId
-    || (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env?.VITE_FIREBASE_MEASUREMENT_ID,
-};
-
-// A reCAPTCHA Enterprise site key is public, domain-restricted configuration.
-// Keep the checked-in production value as the Firebase Hosting default while
-// allowing staging builds to override it explicitly.
-const appCheckSiteKey = String(
-  (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env?.VITE_FIREBASE_APP_CHECK_SITE_KEY
-  || appletConfig.appCheckSiteKey
-  || '',
-).trim();
-
-// Reuse the initialized app during development refreshes and production module reuse.
-const app = getApps()[0] || initializeApp(firebaseConfig);
+// These protected SDK services are imported only after main.tsx finishes the
+// App Check bootstrap. Other modules continue consuming the same exports.
 const auth = getAuth(app);
 const db = getFirestore(app);
 

@@ -1,12 +1,16 @@
-import { app, appCheckSiteKey } from '../../firebase';
+import { app, appCheckSiteKey } from '../../firebaseApp';
 
 let initialization: Promise<unknown> | null = null;
+let bootstrapVerification: Promise<void> | null = null;
 
-const isExactLocalDevelopmentHost = (): boolean => {
-  if (typeof window === 'undefined') return false;
-  const hostname = window.location.hostname.trim().toLowerCase();
+export const isExactLocalAppCheckBypassHost = (value: string): boolean => {
+  const hostname = value.trim().toLowerCase();
   return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1' || hostname === '[::1]';
 };
+
+const isExactLocalDevelopmentHost = (): boolean => (
+  typeof window !== 'undefined' && isExactLocalAppCheckBypassHost(window.location.hostname)
+);
 
 async function getAppCheckInstance() {
   if (typeof window === 'undefined' || isExactLocalDevelopmentHost()) return null;
@@ -34,5 +38,14 @@ export async function getAppCheckRequestHeaders(forceRefresh = false): Promise<R
 }
 
 export async function initializeStorefrontAppCheck(): Promise<void> {
-  await getAppCheckInstance();
+  if (!bootstrapVerification) {
+    bootstrapVerification = (async () => {
+      const instance = await getAppCheckInstance();
+      if (!instance) return;
+      const { getToken } = await import('firebase/app-check');
+      const result = await getToken(instance as Parameters<typeof getToken>[0], false);
+      if (!result.token) throw new Error('Firebase App Check did not issue a bootstrap token.');
+    })();
+  }
+  await bootstrapVerification;
 }

@@ -16,6 +16,7 @@ const ALLOWED_PAYMENT_METHODS = new Set(["cod", "whatsapp_confirm", "payhere"]);
 export interface CheckoutCartItem {
   productId: string;
   quantity: number;
+  expectedUnitPrice?: number;
 }
 
 export interface CheckoutSettings {
@@ -283,7 +284,10 @@ export function resolveCouponDiscount(coupon: CheckoutCouponRecord | null, items
   return Math.min(itemsSubtotal, Math.max(0, Math.round(discount)));
 }
 
-export function validateCheckoutCartItems(cartItems: unknown): CheckoutCartItem[] {
+export function validateCheckoutCartItems(
+  cartItems: unknown,
+  options: { requireExpectedUnitPrice?: boolean } = {},
+): CheckoutCartItem[] {
   if (!Array.isArray(cartItems) || cartItems.length === 0) {
     throw new CheckoutError("Cart items are required and must not be empty");
   }
@@ -296,6 +300,7 @@ export function validateCheckoutCartItems(cartItems: unknown): CheckoutCartItem[
     const rawItem = item as Partial<CheckoutCartItem>;
     const productId = typeof rawItem.productId === "string" ? rawItem.productId.trim() : "";
     const quantity = typeof rawItem.quantity === "number" ? rawItem.quantity : NaN;
+    const expectedUnitPrice = typeof rawItem.expectedUnitPrice === "number" ? rawItem.expectedUnitPrice : NaN;
 
     if (!productId) {
       throw new CheckoutError(`Cart item ${index + 1} is missing a valid product ID`);
@@ -305,19 +310,35 @@ export function validateCheckoutCartItems(cartItems: unknown): CheckoutCartItem[
       throw new CheckoutError(`Cart item ${index + 1} must have a quantity between 1 and ${MAX_ITEM_QUANTITY}`);
     }
 
-    return { productId, quantity };
+    if (options.requireExpectedUnitPrice && (!Number.isFinite(expectedUnitPrice) || expectedUnitPrice <= 0)) {
+      throw new CheckoutError(`Cart item ${index + 1} is missing its displayed unit price`);
+    }
+
+    return {
+      productId,
+      quantity,
+      ...(Number.isFinite(expectedUnitPrice) && expectedUnitPrice > 0 ? { expectedUnitPrice } : {}),
+    };
   });
 
-  const consolidated = new Map<string, number>();
-  normalizedItems.forEach(({ productId, quantity }) => {
-    const combinedQuantity = (consolidated.get(productId) || 0) + quantity;
+  const consolidated = new Map<string, CheckoutCartItem>();
+  normalizedItems.forEach(({ productId, quantity, expectedUnitPrice }) => {
+    const existing = consolidated.get(productId);
+    if (existing?.expectedUnitPrice !== undefined && expectedUnitPrice !== undefined && existing.expectedUnitPrice !== expectedUnitPrice) {
+      throw new CheckoutError(`Cart contains conflicting displayed prices for product "${productId}"`);
+    }
+    const combinedQuantity = (existing?.quantity || 0) + quantity;
     if (combinedQuantity > MAX_ITEM_QUANTITY) {
       throw new CheckoutError(`Combined quantity for product "${productId}" cannot exceed ${MAX_ITEM_QUANTITY}`);
     }
-    consolidated.set(productId, combinedQuantity);
+    consolidated.set(productId, {
+      productId,
+      quantity: combinedQuantity,
+      ...(expectedUnitPrice !== undefined ? { expectedUnitPrice } : {}),
+    });
   });
 
-  return Array.from(consolidated, ([productId, quantity]) => ({ productId, quantity }));
+  return Array.from(consolidated.values());
 }
 
 const DISTRICT_DELIVERY: Record<string, number> = {

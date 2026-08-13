@@ -5,6 +5,7 @@ export const A2Z_GLOBAL_SECRET_PROFILE = 'a2z-global';
 export interface SupplierOnboardingInput {
   id: string;
   supplierName: string;
+  supplierAccountId?: string;
   supplierType: SupplierOnboardingType;
   description?: string;
   websiteUrl?: string;
@@ -48,6 +49,7 @@ export function buildSupplierOnboardingSource(input: SupplierOnboardingInput): R
     id: input.id.trim(),
     supplierId: input.id.trim(),
     supplierName: input.supplierName.trim(),
+    ...(input.supplierAccountId?.trim() ? { supplierAccountId: input.supplierAccountId.trim() } : {}),
     name: input.supplierName.trim(),
     supplierType: 'website',
     connectorType,

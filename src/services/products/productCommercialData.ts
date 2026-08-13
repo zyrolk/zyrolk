@@ -34,6 +34,7 @@ export const COMMERCIAL_PRODUCT_FIELDS = [
   'supplierMOQ',
   'supplierFieldOwnership',
   'supplierOfferSelection',
+  'fulfilmentMode',
 ] as const;
 
 export type CommercialProductField = typeof COMMERCIAL_PRODUCT_FIELDS[number];

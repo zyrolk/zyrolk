@@ -16,6 +16,7 @@ const enabledSource = {
   sourceStatus: 'active',
   supplierType: 'website',
   connectorType: 'a2z',
+  supplierAccountId: 'supplier-account-1',
   settings: { autoSync: 'Off' },
 };
 

@@ -13,6 +13,7 @@ const activeManualSource = {
   sourceStatus: 'active',
   supplierType: 'website',
   connectorType: 'a2z',
+  supplierAccountId: 'supplier-account-1',
   settings: { autoSync: 'Off' },
 };
 
@@ -93,6 +94,14 @@ test('manual sync still rejects administratively disabled or inactive sources', 
     ...activeManualSource,
     operationalState: 'disabled',
   }, {}, 'manual', Date.now()), false);
+});
+
+test('manual and scheduled sync fail closed until an active supplier account is routed', () => {
+  const unroutedSource = { ...activeManualSource, supplierAccountId: '' };
+  assert.equal(isSupplierSourceEligibleForSync(unroutedSource, {}, 'manual', Date.now()), false);
+  assert.equal(isSupplierSourceEligibleForSync({ ...unroutedSource, settings: { autoSync: '1 Hour' } }, {
+    autoSyncEnabled: true,
+  }, 'scheduled', Date.now()), false);
 });
 
 test('manual and scheduled source selection accepts every registered connector type', () => {

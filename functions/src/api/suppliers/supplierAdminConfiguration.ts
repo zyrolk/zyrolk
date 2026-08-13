@@ -361,6 +361,9 @@ export async function saveSupplierSource(
     const source = sanitizeSupplierSource(value, {
       existingSource: existing.exists ? existing.data() : undefined,
     });
+    if (source.enabled && !source.supplierAccountId) {
+      throw new ApiError("Select an active Supplier Portal account before enabling this source.", 422);
+    }
     if (source.supplierAccountId) {
       const [supplierAccount, supplierProfile] = await Promise.all([
         transaction.get(db.collection("users").doc(source.supplierAccountId)),
@@ -402,6 +405,8 @@ export async function saveSupplierSource(
       adminEmail: actor.email,
       timestamp: FieldValue.serverTimestamp(),
       changedFields: Object.keys(source).sort(),
+      previousSupplierAccountId: existing.data()?.supplierAccountId || null,
+      supplierAccountId: source.supplierAccountId || null,
     });
     const enabledSupplierIds = addSupplierSourceToConfiguredScope(settingsSnapshot?.data(), sourceId);
     if (enabledSupplierIds) {

@@ -177,13 +177,30 @@ without the completed backup and explicit two-person approval.
 Public `products` documents must contain none of the fields listed by
 `COMMERCIAL_PRODUCT_FIELDS`. Commercial values belong in `product_private`.
 
-1. Deploy reviewed Firestore and Storage Rules.
-2. Run `npm run security:products:dry-run` using approved Application Default
+1. Run `npm run security:products:dry-run` using approved Application Default
    Credentials.
-3. Inspect only counts and field names; the tool must not print field values.
-4. If required, set `PRODUCT_SECURITY_MIGRATION_CONFIRM=zyrolk-e0164` in the
+2. Inspect only counts and field names; the tool must not print field values.
+3. If required, set `PRODUCT_SECURITY_MIGRATION_CONFIRM=zyrolk-e0164` in the
    operator process and run `npm run security:products:apply`.
-5. Re-run the dry-run and require `productsRequiringMigration: 0`.
+4. Re-run the dry-run and require `productsRequiringMigration: 0`.
+
+### Review and question ownership-data migration
+
+Public `reviews` and `productQuestions` documents must not contain `userId` or
+internal `orderId` ownership evidence. That evidence belongs in the server-only
+`review_private` and `product_question_private` companion documents.
+
+1. Deploy the reviewed Functions revision first so all new reviews/questions
+   are written using the split public/private contract. Keep the review change
+   freeze active until Rules are deployed.
+2. Run `npm run security:reviews:dry-run` using approved Application Default
+   Credentials and inspect counts only.
+3. If required, set `REVIEW_OWNERSHIP_MIGRATION_CONFIRM=zyrolk-e0164` in the
+   operator process and run `npm run security:reviews:apply`.
+4. Re-run the dry-run and require `documentsRequiringMigration: 0` and
+   `unsafePublicDocuments: 0`.
+5. Deploy the reviewed Firestore Rules only after zero-result verification.
+   The Rules deliberately fail closed on any unmigrated public document.
 
 ### Supplier credential migration
 
@@ -197,7 +214,8 @@ Public `products` documents must contain none of the fields listed by
 6. Test Connection for every configured supplier before enabling Auto Sync.
 
 The migrations are not a rollback mechanism. Never restore commercial fields
-to public products or raw credentials to supplier documents.
+to public products, ownership evidence to public review/question documents, or
+raw credentials to supplier documents.
 
 ## Trigger Email and operational monitoring
 
@@ -262,10 +280,12 @@ substitute for a controlled manual smoke test.
 3. Run the complete validation and emulator gate on the release revision.
 4. Create and verify Firestore/Storage backups.
 5. Deploy Firestore indexes and wait for `READY`.
-6. Deploy Firestore Rules and Storage Rules.
-7. Run both security migration dry-runs; apply only approved required changes;
-   require zero-result verification.
-8. Deploy Functions, including scheduled workers and triggers.
+6. Deploy Functions, including the split review/Q&A writes, scheduled workers
+   and triggers.
+7. Run all three security migration dry-runs; apply only approved required
+   changes; require zero-result verification.
+8. Deploy Firestore Rules and Storage Rules. Do not deploy the review read
+   fence before the ownership-data migration is verified at zero.
 9. Verify Function revisions, IAM, secrets, schedules, Trigger Email and
    monitoring channels.
 10. Build Hosting with the production App Check key. Deploy Hosting last.
@@ -273,8 +293,8 @@ substitute for a controlled manual smoke test.
 
 ```powershell
 firebase deploy --only firestore:indexes --project zyrolk-e0164
-firebase deploy --only firestore:rules,storage --project zyrolk-e0164
 firebase deploy --only functions --project zyrolk-e0164
+firebase deploy --only firestore:rules,storage --project zyrolk-e0164
 firebase deploy --only hosting --project zyrolk-e0164
 ```
 

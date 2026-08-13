@@ -224,6 +224,7 @@ const seedApprovedFixture = async (identity: string): Promise<ApprovedFixture> =
   await Promise.all([
     adminDb.collection("supplierSources").doc(sourceId).set({
       supplierId,
+      supplierAccountId: supplierId,
       supplierName: `${identity} Supplier`,
       connectorType: CONNECTOR_TYPE,
       supplierType: "website",
@@ -235,6 +236,12 @@ const seedApprovedFixture = async (identity: string): Promise<ApprovedFixture> =
       authentication: { mode: "none" },
       capabilities: ["catalog.fetch", "connection.test"],
       settings: { autoSync: "Off", productLimit: 2 },
+    }),
+    adminDb.collection("users").doc(supplierId).set({ role: "supplier", email: `${supplierId}@example.test` }),
+    adminDb.collection("supplier_profiles").doc(supplierId).set({
+      supplierId,
+      companyName: `${identity} Supplier`,
+      profileStatus: "active",
     }),
     adminDb.collection("products").doc(productId).set(product),
     adminDb.collection("product_private").doc(productId).set({

@@ -49,6 +49,8 @@ export default function ProductReviewsAndQuestions({ productId, productName, cur
   const [status, setStatus] = useState('');
   const [eligible, setEligible] = useState(false);
   const [checkingEligibility, setCheckingEligibility] = useState(false);
+  const [existingReviewId, setExistingReviewId] = useState<string | null>(null);
+  const [ownedQuestionIds, setOwnedQuestionIds] = useState<string[]>([]);
   const [reviewFormOpen, setReviewFormOpen] = useState(false);
   const [reviewTitle, setReviewTitle] = useState('');
   const [reviewBody, setReviewBody] = useState('');
@@ -117,20 +119,31 @@ export default function ProductReviewsAndQuestions({ productId, productName, cur
 
   useEffect(() => {
     setEligible(false);
+    setExistingReviewId(null);
+    setOwnedQuestionIds([]);
     setReviewFormOpen(false);
     setEditingReviewId(null);
+  }, [currentUser, productId]);
+
+  useEffect(() => {
     if (!currentUser) return;
     let active = true;
     setCheckingEligibility(true);
-    callReviewApi(currentUser, 'eligibility', { productId })
-      .then((result) => { if (active) setEligible(result.eligible === true); })
+    callReviewApi(currentUser, 'eligibility', { productId, visibleQuestionIds: questions.map((question) => question.id) })
+      .then((result) => { if (active) {
+        setEligible(result.eligible === true);
+        setExistingReviewId(typeof result.existingReviewId === 'string' ? result.existingReviewId : null);
+        setOwnedQuestionIds(Array.isArray(result.ownedQuestionIds)
+          ? result.ownedQuestionIds.filter((id): id is string => typeof id === 'string')
+          : []);
+      } })
       .catch((reason) => {
         reportClientIssue('review-eligibility-check', reason, 'warning');
         if (active) setError(reason instanceof Error ? reason.message : 'Review eligibility could not be checked.');
       })
       .finally(() => { if (active) setCheckingEligibility(false); });
     return () => { active = false; };
-  }, [currentUser, productId]);
+  }, [currentUser, productId, questions]);
 
   const summary = useMemo(() => calculateProductionRatingSummary(reviews), [reviews]);
   const displayedReviews = useMemo(
@@ -138,7 +151,7 @@ export default function ProductReviewsAndQuestions({ productId, productName, cur
     [reviewFilter, reviewSort, reviews],
   );
   const displayedQuestions = useMemo(() => searchQuestions(questions, questionSearch), [questionSearch, questions]);
-  const ownReview = currentUser ? reviews.find((review) => review.userId === currentUser.uid) : undefined;
+  const ownReview = currentUser && existingReviewId ? reviews.find((review) => review.id === existingReviewId) : undefined;
 
   const announce = (message: string) => {
     setStatus(message);
@@ -162,6 +175,23 @@ export default function ProductReviewsAndQuestions({ productId, productName, cur
     }
   };
 
+  const refreshOwnedContent = async (): Promise<void> => {
+    if (!currentUser) return;
+    try {
+      const result = await callReviewApi(currentUser, 'eligibility', {
+        productId,
+        visibleQuestionIds: questions.map((question) => question.id),
+      });
+      setExistingReviewId(typeof result.existingReviewId === 'string' ? result.existingReviewId : null);
+      setOwnedQuestionIds(Array.isArray(result.ownedQuestionIds)
+        ? result.ownedQuestionIds.filter((id): id is string => typeof id === 'string')
+        : []);
+    } catch (reason) {
+      reportClientIssue('review-ownership-refresh', reason, 'warning');
+      setError('Your update was saved, but ownership controls could not be refreshed. Reload to try again.');
+    }
+  };
+
   const openReviewEditor = (review?: ProductionReview) => {
     setEditingReviewId(review?.id || null);
     setReviewTitle(review?.title || '');
@@ -178,6 +208,7 @@ export default function ProductReviewsAndQuestions({ productId, productName, cur
       () => callReviewApi(currentUser, 'reviews', { action, productId, reviewId: editingReviewId, title: reviewTitle, body: reviewBody, rating: reviewRating }),
       editingReviewId ? 'Your review was updated.' : 'Your verified review was published.',
     ).then((saved) => { if (saved) {
+      void refreshOwnedContent();
       setReviewFormOpen(false);
       setEditingReviewId(null);
       setReviewTitle('');
@@ -193,6 +224,7 @@ export default function ProductReviewsAndQuestions({ productId, productName, cur
       () => callReviewApi(currentUser, 'questions', { action, productId, questionId: editingQuestionId, question: questionText }),
       editingQuestionId ? 'Your question was updated.' : 'Your question was posted.',
     ).then((saved) => { if (saved) {
+      void refreshOwnedContent();
       setQuestionFormOpen(false);
       setEditingQuestionId(null);
       setQuestionText('');
@@ -219,7 +251,7 @@ export default function ProductReviewsAndQuestions({ productId, productName, cur
       <header className="zy-feedback-heading">
         <div><span>Genuine customer activity</span><h2 id="product-feedback-title">Reviews, ratings & product Q&amp;A</h2><p>Every rating below comes from a confirmed Zyro.lk purchase.</p></div>
         <div className="zy-feedback-heading-actions">
-          {currentUser && !checkingEligibility && eligible && !ownReview && (
+          {currentUser && !checkingEligibility && eligible && !existingReviewId && (
             <button type="button" onClick={() => openReviewEditor()}><Pencil aria-hidden="true" />{summary.total === 0 ? 'Write the First Review' : 'Write Review'}</button>
           )}
           {currentUser && <button type="button" onClick={() => { setQuestionFormOpen(true); setEditingQuestionId(null); setQuestionText(''); }}><MessageCircleQuestion aria-hidden="true" />Ask Question</button>}
@@ -264,7 +296,7 @@ export default function ProductReviewsAndQuestions({ productId, productName, cur
       {!loadingReviews && summary.total > 0 && (
         <div className="zy-review-list" role="list">
           {displayedReviews.length === 0 ? <div className="zy-review-empty"><strong>No matching reviews</strong><p>Try another rating or review filter.</p></div> : displayedReviews.slice(0, visibleReviews).map((review) => {
-            const owner = currentUser?.uid === review.userId;
+            const owner = Boolean(currentUser && review.id === existingReviewId);
             return <article key={review.id} role="listitem" className="zy-review-card">
               <header><div><strong>{review.customerName || 'Verified Customer'}</strong><span><BadgeCheck aria-hidden="true" />Verified Purchase</span></div>{review.createdAt && <time dateTime={review.createdAt.toISOString()}>{formatDate(review.createdAt)}</time>}</header>
               <Stars rating={review.rating} />
@@ -277,7 +309,7 @@ export default function ProductReviewsAndQuestions({ productId, productName, cur
                 <button type="button" disabled={!currentUser || busy} onClick={() => currentUser && void run(() => callReviewApi(currentUser, 'reviews', { action: 'vote', productId, reviewId: review.id, vote: 'helpful' }), 'Helpful vote updated.')} aria-label={`Mark review by ${review.customerName || 'Verified Customer'} helpful`}><ThumbsUp aria-hidden="true" />{review.helpfulCount}</button>
                 <button type="button" disabled={!currentUser || busy} onClick={() => currentUser && void run(() => callReviewApi(currentUser, 'reviews', { action: 'vote', productId, reviewId: review.id, vote: 'not_helpful' }), 'Not helpful vote updated.')} aria-label="Mark review not helpful"><ThumbsDown aria-hidden="true" />{review.notHelpfulCount}</button>
                 {currentUser && !owner && <button type="button" disabled={busy} onClick={() => { const reason = window.prompt('Briefly tell us why this review should be checked.'); if (reason) void run(() => callReviewApi(currentUser, 'reviews', { action: 'report', productId, reviewId: review.id, reason }), 'Review reported for moderation.'); }}><Flag aria-hidden="true" />Report</button>}
-                {owner && <><button type="button" onClick={() => openReviewEditor(review)}><Pencil aria-hidden="true" />Edit</button><button type="button" disabled={busy} onClick={() => window.confirm('Delete your review? This cannot be undone.') && currentUser && void run(() => callReviewApi(currentUser, 'reviews', { action: 'delete', productId, reviewId: review.id }), 'Your review was deleted.')}><Trash2 aria-hidden="true" />Delete</button></>}
+                {owner && <><button type="button" onClick={() => openReviewEditor(review)}><Pencil aria-hidden="true" />Edit</button><button type="button" disabled={busy} onClick={() => window.confirm('Delete your review? This cannot be undone.') && currentUser && void run(() => callReviewApi(currentUser, 'reviews', { action: 'delete', productId, reviewId: review.id }), 'Your review was deleted.').then((saved) => { if (saved) void refreshOwnedContent(); })}><Trash2 aria-hidden="true" />Delete</button></>}
                 {isAdmin && <button type="button" onClick={() => { setReplyTarget({ type: 'review', id: review.id }); setReplyText(review.sellerReply); }}><MessageSquare aria-hidden="true" />Seller Reply</button>}
               </footer>
             </article>;
@@ -294,8 +326,8 @@ export default function ProductReviewsAndQuestions({ productId, productName, cur
         {replyTarget && isAdmin && <div className="zy-seller-reply-editor"><label>Seller reply<textarea rows={4} value={replyText} onChange={(event) => setReplyText(event.target.value)} /></label><div><button type="button" onClick={() => setReplyTarget(null)}>Cancel</button><button type="button" disabled={busy || replyText.trim().length < 2} onClick={submitReply}>Publish reply</button></div></div>}
 
         {loadingQuestions ? <div className="zy-feedback-skeleton" role="status" aria-label="Loading product questions"><span /><span /></div> : displayedQuestions.length === 0 ? <div className="zy-review-empty"><HelpCircle aria-hidden="true" /><strong>{questionSearch ? 'No matching questions' : 'No questions yet'}</strong><p>{questionSearch ? 'Try a different search.' : 'Be the first customer to ask about this product.'}</p></div> : <div className="zy-question-list" role="list">{displayedQuestions.map((item) => {
-          const owner = currentUser?.uid === item.userId;
-          return <article key={item.id} role="listitem"><header><strong>Q</strong><div><b>{item.question}</b><span>Asked by {item.customerName || 'Zyro.lk Customer'}{item.createdAt ? ` · ${formatDate(item.createdAt)}` : ''}</span></div></header>{item.answered && <div className="zy-question-answer"><strong>A</strong><div><span><CheckCircle2 aria-hidden="true" />Seller</span><p>{item.answer}</p>{item.answeredAt && <time dateTime={item.answeredAt.toISOString()}>Answered {formatDate(item.answeredAt)}</time>}</div></div>}<footer><button type="button" disabled={!currentUser || busy} onClick={() => currentUser && void run(() => callReviewApi(currentUser, 'questions', { action: 'vote', productId, questionId: item.id, vote: 'helpful' }), 'Helpful vote updated.')}><ThumbsUp aria-hidden="true" />Helpful ({item.helpfulCount})</button>{owner && <><button type="button" onClick={() => { setEditingQuestionId(item.id); setQuestionText(item.question); setQuestionFormOpen(true); }}><Pencil aria-hidden="true" />Edit</button><button type="button" disabled={busy} onClick={() => window.confirm('Delete your question?') && currentUser && void run(() => callReviewApi(currentUser, 'questions', { action: 'delete', productId, questionId: item.id }), 'Your question was deleted.')}><Trash2 aria-hidden="true" />Delete</button></>}{isAdmin && <button type="button" onClick={() => { setReplyTarget({ type: 'question', id: item.id }); setReplyText(item.answer); }}><MessageSquare aria-hidden="true" />{item.answered ? 'Edit Reply' : 'Reply & Mark Answered'}</button>}</footer></article>;
+          const owner = Boolean(currentUser && ownedQuestionIds.includes(item.id));
+          return <article key={item.id} role="listitem"><header><strong>Q</strong><div><b>{item.question}</b><span>Asked by {item.customerName || 'Zyro.lk Customer'}{item.createdAt ? ` · ${formatDate(item.createdAt)}` : ''}</span></div></header>{item.answered && <div className="zy-question-answer"><strong>A</strong><div><span><CheckCircle2 aria-hidden="true" />Seller</span><p>{item.answer}</p>{item.answeredAt && <time dateTime={item.answeredAt.toISOString()}>Answered {formatDate(item.answeredAt)}</time>}</div></div>}<footer><button type="button" disabled={!currentUser || busy} onClick={() => currentUser && void run(() => callReviewApi(currentUser, 'questions', { action: 'vote', productId, questionId: item.id, vote: 'helpful' }), 'Helpful vote updated.')}><ThumbsUp aria-hidden="true" />Helpful ({item.helpfulCount})</button>{owner && <><button type="button" onClick={() => { setEditingQuestionId(item.id); setQuestionText(item.question); setQuestionFormOpen(true); }}><Pencil aria-hidden="true" />Edit</button><button type="button" disabled={busy} onClick={() => window.confirm('Delete your question?') && currentUser && void run(() => callReviewApi(currentUser, 'questions', { action: 'delete', productId, questionId: item.id }), 'Your question was deleted.').then((saved) => { if (saved) void refreshOwnedContent(); })}><Trash2 aria-hidden="true" />Delete</button></>}{isAdmin && <button type="button" onClick={() => { setReplyTarget({ type: 'question', id: item.id }); setReplyText(item.answer); }}><MessageSquare aria-hidden="true" />{item.answered ? 'Edit Reply' : 'Reply & Mark Answered'}</button>}</footer></article>;
         })}</div>}
       </section>
     </section>

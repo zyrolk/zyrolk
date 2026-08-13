@@ -158,10 +158,10 @@ export const loadStorefrontProductsByIds = async (
 
 export const loadStorefrontHomepageProducts = async (firestore: Firestore): Promise<Product[]> => {
   const snapshots = await Promise.all([
-    getDocs(query(collection(firestore, 'products'), where('isFeatured', '==', true), limit(16))),
-    getDocs(query(collection(firestore, 'products'), where('isNew', '==', true), limit(16))),
-    getDocs(query(collection(firestore, 'products'), where('isBestSeller', '==', true), limit(16))),
-    getDocs(query(collection(firestore, 'products'), where('discount', '>', 0), limit(16))),
+    getDocs(query(collection(firestore, 'products'), where('isActive', '==', true), where('isFeatured', '==', true), limit(16))),
+    getDocs(query(collection(firestore, 'products'), where('isActive', '==', true), where('isNew', '==', true), limit(16))),
+    getDocs(query(collection(firestore, 'products'), where('isActive', '==', true), where('isBestSeller', '==', true), limit(16))),
+    getDocs(query(collection(firestore, 'products'), where('isActive', '==', true), where('discount', '>', 0), limit(16))),
   ]);
   return mergeStorefrontProducts([], snapshots.flatMap((snapshot) => snapshot.docs.map((document) => (
     projectStorefrontProduct(document.id, document.data())

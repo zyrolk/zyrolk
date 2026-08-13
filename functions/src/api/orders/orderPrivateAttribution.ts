@@ -74,6 +74,8 @@ const buildLineId = (productId: string): string => (
 );
 
 const hasSupplierCatalogueIdentity = (privateProduct: FirebaseFirestore.DocumentData): boolean => {
+  if (privateProduct.fulfilmentMode === "internal") return false;
+  if (privateProduct.fulfilmentMode === "supplier") return true;
   const selection = parseSupplierOfferSelection(privateProduct.supplierOfferSelection);
   const metadata = privateProduct.supplierMetadata && typeof privateProduct.supplierMetadata === "object"
     ? privateProduct.supplierMetadata as Record<string, unknown>

@@ -1,7 +1,6 @@
 export interface ProductionReview {
   id: string;
   productId: string;
-  userId: string;
   customerName: string;
   title: string;
   body: string;
@@ -19,7 +18,6 @@ export interface ProductionReview {
 export interface ProductQuestion {
   id: string;
   productId: string;
-  userId: string;
   customerName: string;
   question: string;
   answer: string;
@@ -60,13 +58,11 @@ export function dateFromFirestore(value: unknown): Date | null {
 export function projectProductionReview(id: string, data: Record<string, unknown>): ProductionReview | null {
   const rating = Number(data.rating);
   const productId = text(data.productId);
-  const userId = text(data.userId);
   const body = text(data.body) || text(data.comment);
   if (
     data.verifiedPurchase !== true ||
     data.approved === false ||
     !productId ||
-    !userId ||
     !body ||
     !Number.isInteger(rating) ||
     rating < 1 ||
@@ -75,7 +71,6 @@ export function projectProductionReview(id: string, data: Record<string, unknown
   return {
     id,
     productId,
-    userId,
     customerName: text(data.customerName),
     title: text(data.title),
     body,
@@ -93,14 +88,12 @@ export function projectProductionReview(id: string, data: Record<string, unknown
 
 export function projectProductQuestion(id: string, data: Record<string, unknown>): ProductQuestion | null {
   const productId = text(data.productId);
-  const userId = text(data.userId);
   const question = text(data.question);
-  if (!productId || !userId || !question) return null;
+  if (!productId || !question) return null;
   const answer = text(data.answer);
   return {
     id,
     productId,
-    userId,
     customerName: text(data.customerName),
     question,
     answer,

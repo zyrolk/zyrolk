@@ -733,6 +733,7 @@ export async function decideSupplierQueueItem(
     }
     if (approvedPayload && decisionSupplierOffer) approvedPayload.supplierOfferSelection = nextOfferSelection;
     if (approvedPayload && projectedSupplierOffer) {
+      approvedPayload.fulfilmentMode = "supplier";
       approvedPayload.supplierId = projectedSupplierOffer.supplierId;
       approvedPayload.supplierSourceId = projectedSupplierOffer.sourceId;
       approvedPayload.supplierItemCode = projectedSupplierOffer.sku;

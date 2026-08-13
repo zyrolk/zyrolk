@@ -182,6 +182,7 @@ const captureUnrelatedDocuments = async (db: Firestore, collectionName: string) 
   const snapshot = await db.collection(collectionName).get();
   return new Map(snapshot.docs
     .filter((document) => !document.id.startsWith(EMULATOR_FIXTURE_PREFIX))
+    .filter((document) => collectionName !== 'products' || !containsCommercialProductFields(document.data()))
     .map((document) => [document.id, document.data()]));
 };
 
@@ -204,7 +205,10 @@ test('SH-5C migration remains bounded against Firestore Emulator', {
   assert.match(projectId, /^demo-/u);
   assert.match(emulatorHost, /^(?:127\.0\.0\.1|localhost):\d+$/u);
 
-  const app = initializeApp({ projectId }, `sh5c-${Date.now()}`);
+  // Use a dedicated emulator project namespace so other permanent suites can
+  // leave legitimate commercial fixtures without changing this exact proof.
+  const isolatedProjectId = `${projectId}-sh5c-isolated`;
+  const app = initializeApp({ projectId: isolatedProjectId }, `sh5c-${Date.now()}`);
   const db = getFirestore(app);
   try {
     const unrelatedPublicId = 'sh5c-unrelated-safe-product';
@@ -246,7 +250,7 @@ test('SH-5C migration remains bounded against Firestore Emulator', {
 
     const dryRun = await migrateProductCommercialData(db, {
       applyRequested: false,
-      expectedProjectId: projectId,
+      expectedProjectId: isolatedProjectId,
       log: () => undefined,
     });
     assert.equal(dryRun.productsRequiringMigration, 251);
@@ -257,10 +261,11 @@ test('SH-5C migration remains bounded against Firestore Emulator', {
 
     const result = await migrateProductCommercialData(db, {
       applyRequested: true,
-      expectedProjectId: projectId,
+      expectedProjectId: isolatedProjectId,
       log: () => undefined,
     });
     assert.deepEqual(result.batchProductCounts, [100, 100, 51]);
+    assert.equal(result.committedBatches, 3);
     assert.equal(result.migratedProducts, 251);
     assert.equal(result.unsafePublicProducts, 0);
 
@@ -283,7 +288,7 @@ test('SH-5C migration remains bounded against Firestore Emulator', {
 
     const retry = await migrateProductCommercialData(db, {
       applyRequested: true,
-      expectedProjectId: projectId,
+      expectedProjectId: isolatedProjectId,
       log: () => undefined,
     });
     assert.equal(retry.productsRequiringMigration, 0);

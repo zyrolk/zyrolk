@@ -51,6 +51,14 @@
       ]
     },
     {
+      "collectionGroup": "supplier_review_queue",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "batchId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "supplier_approval_audit",
       "queryScope": "COLLECTION",
       "fields": [
@@ -130,6 +138,14 @@
       "fields": [
         { "fieldPath": "category", "order": "ASCENDING" },
         { "fieldPath": "isActive", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "products",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "isActive", "order": "ASCENDING" },
+        { "fieldPath": "discount", "order": "ASCENDING" }
       ]
     },
     {

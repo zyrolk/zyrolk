@@ -20,7 +20,12 @@ test('Sprint 74 composes all five homepage sections from the generic storefront 
 test('shelf product selection stays with the live App-level product projections', () => {
   assert.match(app, /subscribeToStorefrontProductPage\(db/);
   assert.match(app, /loadStorefrontHomepageProducts\(db\)/);
-  assert.match(catalog, /where\('isFeatured', '==', true\)/);
+  const homepageLoader = catalog.slice(
+    catalog.indexOf('export const loadStorefrontHomepageProducts'),
+    catalog.indexOf('export const loadStorefrontCatalogCounts'),
+  );
+  assert.equal((homepageLoader.match(/where\('isActive', '==', true\)/g) || []).length, 4);
+  assert.match(homepageLoader, /where\('isFeatured', '==', true\)/);
   assert.match(app, /activeProducts\.filter\(product => product\.isNew\)\.slice\(0, 8\)/);
   assert.match(app, /activeProducts\.filter\(product => product\.isBestSeller\)\.slice\(0, 8\)/);
   assert.match(app, /featuredProducts\.filter\(product => !dealIds\.has\(product\.id\)\)\.slice\(0, 8\)/);

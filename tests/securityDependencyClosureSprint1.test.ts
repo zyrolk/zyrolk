@@ -79,6 +79,7 @@ test('contact submissions use the App Check protected Functions route and browse
   );
   assert.match(inquiryRule, /allow create: if false/);
   assert.match(firestoreRules, /match \/contact_inquiry_limits\/\{limitId\}[\s\S]*allow read, write: if false/);
+  assert.match(contactPage, /window\.open\(`https:\/\/wa\.me\/\$\{waNumber\}\?text=\$\{text\}`, '_blank', 'noopener,noreferrer'\)/);
 });
 
 test('all privileged review and admin authorization uses custom claims instead of email identity', () => {

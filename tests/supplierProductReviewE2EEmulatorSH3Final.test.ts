@@ -119,6 +119,7 @@ const seedSource = async (identity: string): Promise<{ sourceId: string; supplie
   await Promise.all([
     adminDb.collection("supplierSources").doc(sourceId).set({
       supplierId,
+      supplierAccountId: supplierId,
       supplierName: `${identity} Supplier`,
       connectorType: CONNECTOR_TYPE,
       supplierType: "website",
@@ -130,6 +131,12 @@ const seedSource = async (identity: string): Promise<{ sourceId: string; supplie
       authentication: { mode: "none" },
       capabilities: ["catalog.fetch", "connection.test"],
       settings: { autoSync: "Off", productLimit: 20 },
+    }),
+    adminDb.collection("users").doc(supplierId).set({ role: "supplier", email: `${supplierId}@example.test` }),
+    adminDb.collection("supplier_profiles").doc(supplierId).set({
+      supplierId,
+      companyName: `${identity} Supplier`,
+      profileStatus: "active",
     }),
     adminDb.collection("categories").doc("electronics").set({
       name: "Electronics",

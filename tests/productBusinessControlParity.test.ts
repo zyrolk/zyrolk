@@ -97,7 +97,7 @@ test('new supplier products receive a deterministic Zyro SKU only during approva
   assert.match(sync, /supplierItemCode: product\.sku/);
 });
 
-test('manual and supplier editors label private controls and storefront projections hide SKU', () => {
+test('manual products are explicitly internal while supplier review controls stay private', () => {
   const admin = projectFile('src/components/AdminDashboard.tsx');
   const review = projectFile('src/components/SupplierReviewEditorModal.tsx');
   const card = projectFile('src/components/ProductCard.tsx');
@@ -105,7 +105,9 @@ test('manual and supplier editors label private controls and storefront projecti
   const seo = projectFile('src/services/seo/storefrontSeo.ts');
 
   assert.match(admin, /Product SKU[\s\S]*Admin Only · Read-Only/);
-  assert.match(admin, /Supplier Code[\s\S]*Admin Only/);
+  assert.match(admin, /Manual products are fulfilled internally/);
+  assert.doesNotMatch(admin, /Assigned Supplier/);
+  assert.doesNotMatch(admin, /Supplier Code[\s\S]*Admin Only/);
   assert.match(review, /Zyro SKU[\s\S]*Auto-assigned on approval/);
   assert.match(review, /Cost Price[\s\S]*Admin only/);
   assert.match(review, /Market Price[\s\S]*Admin only/);

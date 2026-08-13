@@ -80,10 +80,50 @@ for (const exportedFunction of [
   requireCondition(functionsIndex.includes(exportedFunction), `Functions export is missing: ${exportedFunction}.`);
 }
 
-const indexes = readJson<{ indexes?: Array<{ collectionGroup?: string }> }>("firestore.indexes.json");
+interface FirestoreIndexEntry {
+  collectionGroup?: string;
+  queryScope?: string;
+  fields?: Array<{ fieldPath?: string; order?: string; arrayConfig?: string }>;
+}
+
+const indexes = readJson<{ indexes?: FirestoreIndexEntry[] }>("firestore.indexes.json");
 const indexedCollections = new Set((indexes.indexes || []).map((entry) => entry.collectionGroup));
 for (const collection of ["orders", "products", "reviews", "supplier_review_queue", "supplier_approval_audit", "supplier_sync_jobs"]) {
   requireCondition(indexedCollections.has(collection), `Required Firestore index group is missing: ${collection}.`);
+}
+
+const hasCompositeIndex = (
+  collectionGroup: string,
+  fields: Array<{ fieldPath: string; order: "ASCENDING" | "DESCENDING" }>,
+): boolean => (indexes.indexes || []).some((entry) => (
+  entry.collectionGroup === collectionGroup
+  && entry.queryScope === "COLLECTION"
+  && entry.fields?.length === fields.length
+  && entry.fields.every((field, index) => (
+    field.fieldPath === fields[index].fieldPath && field.order === fields[index].order
+  ))
+));
+
+for (const requiredIndex of [
+  {
+    collectionGroup: "products",
+    fields: [
+      { fieldPath: "isActive", order: "ASCENDING" as const },
+      { fieldPath: "discount", order: "ASCENDING" as const },
+    ],
+  },
+  {
+    collectionGroup: "supplier_review_queue",
+    fields: [
+      { fieldPath: "batchId", order: "ASCENDING" as const },
+      { fieldPath: "createdAt", order: "ASCENDING" as const },
+    ],
+  },
+]) {
+  requireCondition(
+    hasCompositeIndex(requiredIndex.collectionGroup, requiredIndex.fields),
+    `Required Firestore composite index is missing: ${requiredIndex.collectionGroup}(${requiredIndex.fields.map((field) => `${field.fieldPath} ${field.order}`).join(", ")}).`,
+  );
 }
 
 for (const path of [

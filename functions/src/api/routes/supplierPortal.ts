@@ -13,8 +13,19 @@ import {
   transitionOrderFulfilmentGroup,
 } from "../orders/orderFulfilmentGroups";
 import { PRODUCT_PRIVATE_COLLECTION, sanitizePublicProductData } from "../products/productCommercialData";
-import { buildSupplierAuditEvent, createSupplierAuditEvent } from "../suppliers/supplierAuditTrail";
+import { createSupplierAuditEvent } from "../suppliers/supplierAuditTrail";
 import { buildSupplierProductApprovalBaseline } from "../suppliers/supplierApprovalConcurrency";
+import { RawA2ZProduct } from "../suppliers/a2z/types";
+import {
+  buildSupplierOfferObservationWrite,
+  buildSupplierOfferPendingObservation,
+  buildSupplierProductOffer,
+  parseSupplierOfferSelection,
+  projectSupplierOfferForAdmin,
+  supplierOfferStateExpectation,
+  SUPPLIER_PRODUCT_OFFERS_COLLECTION,
+} from "../suppliers/supplierOfferEngine";
+import { buildSupplierLifecycleFieldChange, buildSupplierProductComparison } from "../suppliers/supplierProductImport";
 import {
   calculateSupplierSummary,
   normalizeProductFingerprint,
@@ -77,6 +88,44 @@ const applyDocumentCursor = <T extends FirebaseFirestore.Query>(query: T, cursor
 );
 
 const hashId = (value: string): string => createHash("sha256").update(value).digest("hex");
+
+const portalSupplierProductId = (supplierAccountId: string, supplierSku: string): string => (
+  `${supplierAccountId}:${normalizeSupplierSku(supplierSku)}`
+);
+
+const portalRawProduct = (
+  draft: ReturnType<typeof sanitizeSupplierProductDraft>,
+  supplierAccountId: string,
+): RawA2ZProduct => ({
+  supplierProductId: portalSupplierProductId(supplierAccountId, draft.supplierSku),
+  sku: draft.supplierSku,
+  title: draft.name,
+  longDescription: draft.description,
+  shortDescription: draft.shortDescription,
+  mediaGallery: [draft.imageUrl, ...draft.imageUrls.filter((url) => url !== draft.imageUrl)],
+  wholesalePrice: draft.price,
+  recommendedRetailPrice: draft.price,
+  price: draft.price,
+  costPrice: draft.price,
+  inventoryLevel: draft.stock,
+  availability: draft.stock > 0 ? "in_stock" : "out_of_stock",
+  barcode: draft.barcode,
+  brand: draft.brand,
+  model: draft.model,
+  categoryHierarchy: [draft.category, draft.subcategory].filter(Boolean),
+  supplierCategory: draft.category,
+  supplierSubcategory: draft.subcategory,
+  productType: draft.productType,
+  tags: draft.tags,
+  specifications: draft.specs,
+  features: draft.keyFeatures,
+  providedFields: [
+    "supplierProductId", "sku", "title", "longDescription", "shortDescription", "mediaGallery",
+    "wholesalePrice", "recommendedRetailPrice", "price", "costPrice", "inventoryLevel",
+    "availability", "barcode", "brand", "model", "categoryHierarchy", "supplierCategory",
+    "supplierSubcategory", "productType", "tags", "specifications", "features",
+  ],
+});
 
 const buildProductId = (supplierId: string, name: string, supplierSku: string): string => {
   const slug = `${name}-${supplierSku}`.normalize("NFKC").toLocaleLowerCase()
@@ -569,13 +618,13 @@ export function registerSupplierPortalRoutes(app: express.Express, dependencies:
         supplierId: identity.uid,
         supplierItemCode: draft.supplierSku || String(baseCommercial.supplierItemCode || ""),
         brand: draft.brand,
-        model: draft.model || undefined,
-        barcode: draft.barcode || undefined,
+        ...(draft.model ? { model: draft.model } : {}),
+        ...(draft.barcode ? { barcode: draft.barcode } : {}),
         productType: draft.productType,
         category: draft.category,
         subcategory: draft.subcategory,
         description: draft.description,
-        shortDescription: draft.shortDescription || undefined,
+        ...(draft.shortDescription ? { shortDescription: draft.shortDescription } : {}),
         price: draft.price,
         stock: draft.stock,
         imageUrl: draft.imageUrl,
@@ -639,22 +688,70 @@ export function registerSupplierPortalRoutes(app: express.Express, dependencies:
     const skuClaimId = hashId(`${identity.uid}|${supplierSkuNormalized}`);
     const productClaimId = requestData.requestType === "new_product" ? hashId(fingerprint) : "";
     const queueId = `portal-${requestId}`;
+    const observedAt = new Date().toISOString();
+    const rawProduct = portalRawProduct(draft, identity.uid);
+    const currentProduct = baselineProductDocument
+      ? { ...baselineProductDocument.data(), ...(commercialByProductId.get(baselineProductDocument.id) || {}) }
+      : undefined;
+    const comparison = buildSupplierProductComparison(rawProduct, currentProduct);
+    const offerCandidate = buildSupplierProductOffer({
+      sourceId: SUPPLIER_PORTAL_SOURCE_ID,
+      supplierId: identity.uid,
+      supplierProductId: rawProduct.supplierProductId,
+      sku: draft.supplierSku,
+      barcode: draft.barcode,
+      productId: queuedProductId,
+      price: draft.price,
+      cost: draft.price,
+      stock: draft.stock,
+      availability: rawProduct.availability,
+      lastSyncAt: observedAt,
+      reviewStatus: "review_pending",
+      catalogPayload: requestData.productPayload,
+      supplierSnapshot: rawProduct,
+      timestamp: observedAt,
+    });
+    const offerReference = dependencies.db.collection(SUPPLIER_PRODUCT_OFFERS_COLLECTION).doc(offerCandidate.id);
     await dependencies.db.runTransaction(async (transaction) => {
-      const [freshRequest, skuClaim, productClaim, profileSnapshot] = await Promise.all([
+      const [freshRequest, skuClaim, productClaim, profileSnapshot, offerSnapshot] = await Promise.all([
         transaction.get(requestReference),
         transaction.get(dependencies.db.collection("supplier_sku_claims").doc(skuClaimId)),
         productClaimId ? transaction.get(dependencies.db.collection("supplier_product_claims").doc(productClaimId)) : Promise.resolve(null),
         transaction.get(dependencies.db.collection("supplier_profiles").doc(identity.uid)),
+        transaction.get(offerReference),
       ]);
       if (!freshRequest.exists || freshRequest.data()?.supplierId !== identity.uid || freshRequest.data()?.status !== "draft") {
         throw new ApiError("Product request changed before submission; reload and try again", 409);
       }
       if (skuClaim.exists && skuClaim.data()?.requestId !== requestId) throw new ApiError("Supplier SKU is already in use", 409);
       if (productClaim?.exists && productClaim.data()?.requestId !== requestId) throw new ApiError("A duplicate product request already exists", 409);
+      const existingOffer = projectSupplierOfferForAdmin(offerSnapshot.exists ? { id: offerSnapshot.id, ...offerSnapshot.data() } : null);
+      const observedOffer = buildSupplierProductOffer({
+        ...offerCandidate,
+        existing: existingOffer,
+        stateVersion: existingOffer?.stateVersion,
+        pendingObservation: existingOffer?.pendingObservation,
+        timestamp: observedAt,
+      });
+      const pendingObservation = buildSupplierOfferPendingObservation({
+        offer: observedOffer,
+        kind: "catalog_upsert",
+        reviewQueueItemId: queueId,
+        observedAt,
+        traversalId: `portal-request:${requestId}`,
+      });
+      const offerWrite = buildSupplierOfferObservationWrite({
+        existing: existingOffer,
+        observed: observedOffer,
+        pending: pendingObservation,
+        traversalId: `portal-request:${requestId}`,
+        observedAt,
+      });
       const now = FieldValue.serverTimestamp();
       transaction.set(dependencies.db.collection("supplier_sku_claims").doc(skuClaimId), { supplierId: identity.uid, requestId, supplierSkuNormalized, updatedAt: now });
       if (productClaimId) transaction.set(dependencies.db.collection("supplier_product_claims").doc(productClaimId), { supplierId: identity.uid, requestId, fingerprint, updatedAt: now });
       transaction.update(requestReference, { status: "pending", submittedAt: now, updatedAt: now, rejectionReason: FieldValue.delete() });
+      transaction.set(offerReference, offerWrite, { merge: true });
       const queueRecord = {
         id: queueId,
         portalRequestId: requestId,
@@ -671,17 +768,35 @@ export function registerSupplierPortalRoutes(app: express.Express, dependencies:
         source: "Supplier Portal",
         connector: "supplier_portal",
         sourceId: SUPPLIER_PORTAL_SOURCE_ID,
+        supplierOfferId: observedOffer.id,
+        supplierOfferPendingRevision: pendingObservation.revision,
+        supplierOfferStateExpectation: supplierOfferStateExpectation(existingOffer || {}),
         canonicalProductId: queuedProductId,
         productId: queuedProductId,
         changeType: requestData.requestType === "new_product" ? "NEW_PRODUCT" : "DESCRIPTION_CHANGED",
-        comparisonStatus: requestData.requestType === "new_product" ? "NEW_PRODUCT" : "DESCRIPTION_CHANGED",
+        comparisonStatus: comparison.status,
+        comparison: {
+          matchFound: Boolean(currentProduct),
+          matchedProductId: currentProduct ? productId : null,
+          comparisonStatus: comparison.status,
+          changedFields: comparison.changedFields,
+          fieldChanges: comparison.fieldChanges,
+        },
         matchedProductId: requestData.requestType === "product_change" ? productId : null,
         productPayload: requestData.productPayload,
         supplierSnapshot: {
           supplierId: identity.uid,
+          sourceId: SUPPLIER_PORTAL_SOURCE_ID,
+          supplierProductId: rawProduct.supplierProductId,
           supplierSku: draft.supplierSku,
           canonicalProductId: queuedProductId,
-          submittedPayload: requestData.productPayload,
+          ...rawProduct,
+        },
+        productValidation: {
+          readyToPublish: true,
+          missingFields: [],
+          errors: [],
+          warnings: [],
         },
         approvalBaseline: buildSupplierProductApprovalBaseline(
           queuedProductId,
@@ -722,80 +837,141 @@ export function registerSupplierPortalRoutes(app: express.Express, dependencies:
     const proposedStock = Number(req.body?.stock);
     if (!Number.isInteger(proposedStock) || proposedStock < 0) throw new ApiError("Stock must be a non-negative whole number", 400);
     const productReference = dependencies.db.collection("products").doc(productId);
-    const [productSnapshot, commercialSnapshot] = await Promise.all([
-      productReference.get(),
-      dependencies.db.collection(PRODUCT_PRIVATE_COLLECTION).doc(productId).get(),
-    ]);
-    const ownerId = commercialSnapshot.data()?.supplierId || productSnapshot.data()?.supplierId;
-    if (!productSnapshot.exists || ownerId !== identity.uid) throw new ApiError("Product is not owned by this supplier", 403);
-    const product = sanitizePublicProductData(productSnapshot.data() || {});
-    const supplierItemCode = String(commercialSnapshot.data()?.supplierItemCode || productSnapshot.data()?.supplierItemCode || product.sku || "");
+    const commercialReference = dependencies.db.collection(PRODUCT_PRIVATE_COLLECTION).doc(productId);
     const requestReference = dependencies.db.collection("supplier_product_requests").doc();
     const queueId = `portal-${requestReference.id}`;
-    const now = FieldValue.serverTimestamp();
-    const productPayload = { ...product, id: productId, supplierItemCode, stock: proposedStock, updatedAt: new Date().toISOString() };
-    const batch = dependencies.db.batch();
-    batch.set(requestReference, {
-      supplierId: identity.uid,
-      supplierEmail: identity.email,
-      requestType: "stock_change",
-      productId,
-      productName: String(product.name || ""),
-      supplierSku: supplierItemCode,
-      status: "pending",
-      productPayload,
-      submittedAt: now,
-      createdAt: now,
-      updatedAt: now,
-    });
-    const queueRecord = {
-      id: queueId,
-      portalRequestId: requestReference.id,
-      supplierId: identity.uid,
-      supplierCode: supplierItemCode,
-      supplierName: identity.email,
-      productName: String(product.name || ""),
-      costPrice: Number(product.price || 0),
-      marketPrice: Number(product.price || 0),
-      stock: proposedStock,
-      imageUrl: String(product.imageUrl || ""),
-      source: "Supplier Portal",
-      connector: "supplier_portal",
-      sourceId: SUPPLIER_PORTAL_SOURCE_ID,
-      canonicalProductId: productId,
-      productId,
-      changeType: "STOCK_CHANGED",
-      comparisonStatus: "STOCK_CHANGED",
-      matchedProductId: productId,
-      productPayload,
-      supplierSnapshot: {
+    const observedAt = new Date().toISOString();
+    await dependencies.db.runTransaction(async (transaction) => {
+      const [productSnapshot, commercialSnapshot] = await Promise.all([
+        transaction.get(productReference),
+        transaction.get(commercialReference),
+      ]);
+      const ownerId = commercialSnapshot.data()?.supplierId || productSnapshot.data()?.supplierId;
+      if (!productSnapshot.exists || ownerId !== identity.uid) throw new ApiError("Product is not owned by this supplier", 403);
+      const product = sanitizePublicProductData(productSnapshot.data() || {});
+      const commercial = commercialSnapshot.data() || {};
+      const currentManagedMedia = Array.isArray(commercial.supplierMedia) ? commercial.supplierMedia : [];
+      const supplierItemCode = String(commercial.supplierItemCode || product.sku || "");
+      const activeOfferId = parseSupplierOfferSelection(commercial.supplierOfferSelection).activeOfferId;
+      if (!activeOfferId) throw new ApiError("Product has no active approved supplier offer", 409);
+      const offerReference = dependencies.db.collection(SUPPLIER_PRODUCT_OFFERS_COLLECTION).doc(activeOfferId);
+      const offerSnapshot = await transaction.get(offerReference);
+      const existingOffer = projectSupplierOfferForAdmin(offerSnapshot.exists ? { id: offerSnapshot.id, ...offerSnapshot.data() } : null);
+      if (!existingOffer || existingOffer.reviewStatus !== "approved" || existingOffer.supplierId !== identity.uid || existingOffer.productId !== productId) {
+        throw new ApiError("Product is not routed through this supplier's approved offer", 403);
+      }
+      const productPayload = { ...product, id: productId, supplierItemCode, stock: proposedStock, updatedAt: observedAt };
+      const observedOffer = buildSupplierProductOffer({
+        ...existingOffer,
+        stock: proposedStock,
+        availability: proposedStock > 0 ? "in_stock" : "out_of_stock",
+        reviewStatus: "review_pending",
+        catalogPayload: productPayload,
+        supplierSnapshot: { ...existingOffer.supplierSnapshot, inventoryLevel: proposedStock },
+        existing: existingOffer,
+        timestamp: observedAt,
+      });
+      const pendingObservation = buildSupplierOfferPendingObservation({
+        offer: observedOffer,
+        kind: "catalog_upsert",
+        reviewQueueItemId: queueId,
+        observedAt,
+        traversalId: `portal-request:${requestReference.id}`,
+      });
+      const comparison = {
+        status: "STOCK_CHANGED" as const,
+        changedFields: ["Stock"],
+        fieldChanges: [buildSupplierLifecycleFieldChange("stock", Number(product.stock || 0), proposedStock)],
+      };
+      const now = FieldValue.serverTimestamp();
+      const queueRecord = {
+        id: queueId,
+        portalRequestId: requestReference.id,
         supplierId: identity.uid,
+        supplierCode: supplierItemCode,
+        supplierName: identity.email,
+        productName: String(product.name || ""),
+        costPrice: Number(existingOffer.cost || 0),
+        marketPrice: Number(existingOffer.price || product.price || 0),
+        stock: proposedStock,
+        imageUrl: String(product.imageUrl || ""),
+        source: "Supplier Portal",
+        connector: "supplier_portal",
+        sourceId: SUPPLIER_PORTAL_SOURCE_ID,
+        supplierOfferId: existingOffer.id,
+        supplierOfferPendingRevision: pendingObservation.revision,
+        supplierOfferStateExpectation: supplierOfferStateExpectation(existingOffer),
         canonicalProductId: productId,
-        previousStock: Number(product.stock || 0),
-        proposedStock,
-      },
-      approvalBaseline: buildSupplierProductApprovalBaseline(productId, productSnapshot.data()),
-      status: "Pending",
-      queueState: "review_pending",
-      retryCount: 0,
-      retryLimit: 5,
-      queueCreatedAt: now,
-      createdAt: now,
-      updatedAt: now,
-    };
-    batch.set(dependencies.db.collection("supplier_review_queue").doc(queueId), queueRecord);
-    for (const eventInput of [
-      { action: "queued" as const, previousState: null, newState: "queued", reason: "Supplier stock proposal entered the approval workflow." },
-      { action: "review_pending" as const, previousState: "queued", newState: "review_pending", reason: "Supplier stock proposal is awaiting administrator review." },
-    ]) {
-      const auditReference = dependencies.db.collection("supplier_approval_audit").doc();
-      batch.create(auditReference, buildSupplierAuditEvent({
-        queueItemId: queueId,
-        queueItem: queueRecord,
-        ...eventInput,
-      }, auditReference.id));
-    }
-    await batch.commit();
+        productId,
+        changeType: comparison.status,
+        comparisonStatus: comparison.status,
+        comparison: {
+          matchFound: true,
+          matchedProductId: productId,
+          comparisonStatus: comparison.status,
+          changedFields: comparison.changedFields,
+          fieldChanges: comparison.fieldChanges,
+        },
+        matchedProductId: productId,
+        productPayload: {
+          ...productPayload,
+          supplierFieldOwnership: commercial.supplierFieldOwnership,
+        },
+        ...(currentManagedMedia.length > 0 ? {
+          managedMedia: currentManagedMedia,
+          mediaStatus: "ready",
+        } : {}),
+        supplierSnapshot: {
+          ...existingOffer.supplierSnapshot,
+          supplierId: identity.uid,
+          sourceId: existingOffer.sourceId,
+          supplierProductId: existingOffer.supplierProductId,
+          supplierSku: supplierItemCode,
+          canonicalProductId: productId,
+          previousStock: Number(product.stock || 0),
+          proposedStock,
+          ...(currentManagedMedia.length > 0 ? { managedMedia: currentManagedMedia } : {}),
+        },
+        productValidation: { readyToPublish: true, missingFields: [], errors: [], warnings: [] },
+        approvalBaseline: buildSupplierProductApprovalBaseline(productId, productSnapshot.data()),
+        status: "Pending",
+        queueState: "review_pending",
+        retryCount: 0,
+        retryLimit: 5,
+        queueCreatedAt: now,
+        createdAt: now,
+        updatedAt: now,
+      };
+      transaction.set(requestReference, {
+        supplierId: identity.uid,
+        supplierEmail: identity.email,
+        requestType: "stock_change",
+        productId,
+        productName: String(product.name || ""),
+        supplierSku: supplierItemCode,
+        status: "pending",
+        productPayload,
+        submittedAt: now,
+        createdAt: now,
+        updatedAt: now,
+      });
+      transaction.set(offerReference, buildSupplierOfferObservationWrite({
+        existing: existingOffer,
+        observed: observedOffer,
+        pending: pendingObservation,
+        traversalId: `portal-request:${requestReference.id}`,
+        observedAt,
+      }), { merge: true });
+      transaction.set(dependencies.db.collection("supplier_review_queue").doc(queueId), queueRecord);
+      createSupplierAuditEvent(dependencies.db, transaction, {
+        queueItemId: queueId, queueItem: queueRecord, action: "queued", previousState: null, newState: "queued",
+        reason: "Supplier stock proposal entered the approval workflow.",
+      });
+      createSupplierAuditEvent(dependencies.db, transaction, {
+        queueItemId: queueId, queueItem: queueRecord, action: "review_pending", previousState: "queued", newState: "review_pending",
+        reason: "Supplier stock proposal is awaiting administrator review.",
+      });
+    });
     res.json({ success: true, status: "pending" });
   }));
 
