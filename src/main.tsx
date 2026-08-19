@@ -4,6 +4,7 @@ import './index.css';
 import './styles/storefrontL6.css';
 import './styles/storefrontL7.css';
 import './styles/storefrontHeader.css';
+import './styles/storefrontPenpot.css';
 import { initializeStorefrontAppCheck } from './services/security/appCheck.ts';
 import { AppCheckBootstrapError, loadProtectedStorefront } from './services/security/storefrontBootstrap.ts';
 

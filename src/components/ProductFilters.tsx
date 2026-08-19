@@ -37,7 +37,7 @@ function ProductFilters({
   const sortInputId = `${idPrefix}-sort-products`;
 
   return (
-    <div className="space-y-6">
+    <div className="zy-penpot-filters space-y-6">
       <div className="flex items-center justify-between border-b border-slate-100 pb-4">
         <h3 className="flex items-center text-sm font-black font-display text-slate-950">
           <Filter className="mr-2 h-4 w-4 text-brand-blue" aria-hidden="true" />

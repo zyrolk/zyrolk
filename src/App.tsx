@@ -1127,7 +1127,10 @@ export default function App() {
   }
 
   return (
-    <div className="zy-l6-shell flex flex-col min-h-screen bg-slate-50 text-slate-800">
+    <div
+      className={`zy-l6-shell flex flex-col min-h-screen bg-slate-50 text-slate-800 ${!isAdminMode ? 'zy-penpot-storefront' : ''}`}
+      data-storefront-page={isAdminMode ? 'admin' : currentPage}
+    >
       <StorefrontSeo
         currentPage={currentPage}
         product={liveSelectedProduct}
@@ -1725,16 +1728,27 @@ export default function App() {
                           {filteredProducts.length} {filteredProducts.length === 1 ? 'product' : 'products'} available
                         </span>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => setIsFilterDrawerOpen(true)}
-                        className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3.5 text-xs font-black text-slate-800 transition-colors hover:border-brand-blue/30 hover:text-brand-blue focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20 lg:hidden"
-                        aria-label={`Open product filters${activeFilterCount ? `, ${activeFilterCount} active` : ''}`}
-                      >
-                        <SlidersHorizontal className="h-4 w-4" aria-hidden="true" />
-                        Filters
-                        {activeFilterCount > 0 && <span className="rounded-full bg-brand-blue px-1.5 py-0.5 text-[10px] text-white">{activeFilterCount}</span>}
-                      </button>
+                      <div className="zy-mobile-list-controls lg:hidden">
+                        <button
+                          type="button"
+                          onClick={() => setIsFilterDrawerOpen(true)}
+                          className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3.5 text-xs font-black text-slate-800 transition-colors hover:border-brand-blue/30 hover:text-brand-blue focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20"
+                          aria-label={`Open product filters${activeFilterCount ? `, ${activeFilterCount} active` : ''}`}
+                        >
+                          <SlidersHorizontal className="h-4 w-4" aria-hidden="true" />
+                          Filters
+                          {activeFilterCount > 0 && <span className="rounded-full bg-brand-blue px-1.5 py-0.5 text-[10px] text-white">{activeFilterCount}</span>}
+                        </button>
+                        <label className="zy-mobile-sort-control">
+                          <span className="sr-only">Sort products</span>
+                          <select value={sortBy} onChange={(event) => setSortBy(event.target.value)} aria-label="Sort products">
+                            <option value="featured">Featured</option>
+                            <option value="price-asc">Price: Low</option>
+                            <option value="price-desc">Price: High</option>
+                            <option value="rating">Top rated</option>
+                          </select>
+                        </label>
+                      </div>
                     </div>
 
                     {activeFilterCount > 0 && (
@@ -1790,7 +1804,7 @@ export default function App() {
                     </div>
                   ) : (
                     <>
-                      <div className="grid grid-cols-1 min-[480px]:grid-cols-2 lg:grid-cols-3 gap-5 sm:gap-6">
+                      <div className="zy-product-grid grid grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-5">
                         {filteredProducts.map((prod) => (
                           <ProductCard
                             key={prod.id}
@@ -1833,20 +1847,30 @@ export default function App() {
                 onClick={() => setIsFilterDrawerOpen(false)}
                 aria-label="Close product filters"
               />
-              <aside className="zy-mobile-panel absolute inset-y-0 right-0 flex w-[min(92vw,390px)] flex-col bg-white shadow-2xl animate-slideInRight">
-                <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+              <aside className="zy-mobile-panel zy-filter-sheet absolute inset-y-0 right-0 flex w-[min(92vw,390px)] flex-col bg-white shadow-2xl animate-slideInRight">
+                <div className="zy-filter-sheet-header flex items-center justify-between border-b border-slate-200 px-5 py-4">
                   <div>
                     <h2 id="mobile-filter-title" className="text-lg font-black font-display text-slate-950">Refine Products</h2>
                     <p className="mt-0.5 text-[11px] font-medium text-slate-500">{filteredProducts.length} matching products</p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setIsFilterDrawerOpen(false)}
-                    className="flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 text-slate-600 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20"
-                    aria-label="Close product filters"
-                  >
-                    <X className="h-5 w-5" aria-hidden="true" />
-                  </button>
+                  <div className="zy-filter-sheet-header-actions">
+                    <button
+                      type="button"
+                      onClick={clearAllFilters}
+                      disabled={activeFilterCount === 0}
+                      className="zy-filter-sheet-reset"
+                    >
+                      Reset
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setIsFilterDrawerOpen(false)}
+                      className="flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 text-slate-600 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20"
+                      aria-label="Close product filters"
+                    >
+                      <X className="h-5 w-5" aria-hidden="true" />
+                    </button>
+                  </div>
                 </div>
                 <div className="flex-1 overflow-y-auto px-5 py-5">
                   <Suspense fallback={<div className="h-72 animate-pulse rounded-2xl bg-slate-100" aria-label="Loading product filters" />}>
@@ -1867,7 +1891,7 @@ export default function App() {
                     />
                   </Suspense>
                 </div>
-                <div className="border-t border-slate-200 bg-white px-5 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
+                <div className="zy-filter-sheet-footer border-t border-slate-200 bg-white px-5 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
                   <button
                     type="button"
                     onClick={() => setIsFilterDrawerOpen(false)}

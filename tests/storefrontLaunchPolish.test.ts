@@ -63,7 +63,7 @@ test('CMS hero keeps campaign behavior and marketplace-safe messaging', () => {
   assert.match(hero, /Everything you need\./);
   assert.match(hero, /One trusted marketplace\./);
   assert.match(hero, /Shop fashion, home, beauty, electronics, lifestyle, accessories and thousands of products in one trusted Sri Lankan marketplace\./);
-  assert.match(hero, /const displaySubtitle = MARKETPLACE_MESSAGE/);
+  assert.match(hero, /const displaySubtitle = activeSlide\.subtitle \|\| MARKETPLACE_MESSAGE/);
   assert.match(hero, /replacePremiumElectronics/);
   assert.doesNotMatch(hero, /PREMIUM_DEFAULT_SLIDES/);
 });

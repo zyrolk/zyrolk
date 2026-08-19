@@ -33,6 +33,8 @@ import {
   sanitizeSupplierProductDraft,
   sanitizeSupplierProfile,
   SUPPLIER_PORTAL_SOURCE_ID,
+  supplierAccountManagesProduct,
+  SupplierSourceAccountMapping,
   supplierOwnsOrder,
   validateSupplierProductForSubmission,
 } from "../suppliers/supplierPortalLogic";
@@ -86,6 +88,30 @@ const readCursor = (value: unknown): string => typeof value === "string" && /^[A
 const applyDocumentCursor = <T extends FirebaseFirestore.Query>(query: T, cursor: string): T => (
   cursor ? query.startAfter(cursor) as T : query
 );
+
+const chunksOf = <T>(values: readonly T[], size: number): T[][] => {
+  const chunks: T[][] = [];
+  for (let index = 0; index < values.length; index += size) chunks.push(values.slice(index, index + size));
+  return chunks;
+};
+
+const sourceAccountMapping = (
+  document: FirebaseFirestore.QueryDocumentSnapshot | FirebaseFirestore.DocumentSnapshot,
+): SupplierSourceAccountMapping => ({
+  id: document.id,
+  supplierId: document.data()?.supplierId || document.id,
+  supplierAccountId: document.data()?.supplierAccountId,
+});
+
+async function readSupplierProductSourceMapping(
+  db: FirebaseFirestore.Firestore,
+  product: Record<string, unknown>,
+): Promise<SupplierSourceAccountMapping[]> {
+  const sourceId = String(product.supplierSourceId || "").trim();
+  if (!sourceId || sourceId === SUPPLIER_PORTAL_SOURCE_ID) return [];
+  const source = await db.collection("supplierSources").doc(sourceId).get();
+  return source.exists ? [sourceAccountMapping(source)] : [];
+}
 
 const hashId = (value: string): string => createHash("sha256").update(value).digest("hex");
 
@@ -467,9 +493,20 @@ export function registerSupplierPortalRoutes(app: express.Express, dependencies:
     const requestCursor = readCursor(req.query.requestsCursor);
     const orderCursor = readCursor(req.query.ordersCursor);
     const notificationCursor = readCursor(req.query.notificationsCursor);
-    const [profileSnapshot, commercialProductSnapshot, legacyProductSnapshot, requestSnapshot, privateOrders, directOrders, sharedOrders, notificationSnapshot, categorySnapshot, brandSnapshot] = await Promise.all([
-      dependencies.db.collection("supplier_profiles").doc(identity.uid).get(),
+    const mappedSourceSnapshot = await dependencies.db.collection("supplierSources")
+      .where("supplierAccountId", "==", identity.uid)
+      .get();
+    const mappedSources = mappedSourceSnapshot.docs.map(sourceAccountMapping);
+    const mappedSourceIds = mappedSources.map((source) => source.id);
+    const commercialProductQueries = [
       applyDocumentCursor(dependencies.db.collection(PRODUCT_PRIVATE_COLLECTION).where("supplierId", "==", identity.uid).orderBy(FieldPath.documentId()).limit(pageSize), productCursor).get(),
+      ...chunksOf(mappedSourceIds, 30).map((sourceIds) => (
+        applyDocumentCursor(dependencies.db.collection(PRODUCT_PRIVATE_COLLECTION).where("supplierSourceId", "in", sourceIds).orderBy(FieldPath.documentId()).limit(pageSize), productCursor).get()
+      )),
+    ];
+    const [profileSnapshot, commercialProductSnapshots, legacyProductSnapshot, requestSnapshot, privateOrders, directOrders, sharedOrders, notificationSnapshot, categorySnapshot, brandSnapshot] = await Promise.all([
+      dependencies.db.collection("supplier_profiles").doc(identity.uid).get(),
+      Promise.all(commercialProductQueries),
       applyDocumentCursor(dependencies.db.collection("products").where("supplierId", "==", identity.uid).orderBy(FieldPath.documentId()).limit(pageSize), productCursor).get(),
       applyDocumentCursor(dependencies.db.collection("supplier_product_requests").where("supplierId", "==", identity.uid).orderBy(FieldPath.documentId()).limit(pageSize), requestCursor).get(),
       applyDocumentCursor(dependencies.db.collection(ORDER_PRIVATE_COLLECTION).where("assignedSupplierAccountIds", "array-contains", identity.uid).orderBy(FieldPath.documentId()).limit(pageSize), orderCursor).get(),
@@ -479,10 +516,22 @@ export function registerSupplierPortalRoutes(app: express.Express, dependencies:
       dependencies.db.collection("categories").get(),
       dependencies.db.collection("brands").get(),
     ]);
-    const commercialById = new Map(commercialProductSnapshot.docs.map((document) => [document.id, document.data()]));
+    const commercialCandidates = new Map(commercialProductSnapshots
+      .flatMap((snapshot) => snapshot.docs)
+      .map((document) => [document.id, document] as const));
+    const ownedCommercialDocuments = [...commercialCandidates.values()]
+      .filter((document) => supplierAccountManagesProduct(document.data(), identity.uid, mappedSources))
+      .sort((left, right) => left.id.localeCompare(right.id))
+      .slice(0, pageSize);
+    const commercialById = new Map(ownedCommercialDocuments.map((document) => [document.id, document.data()]));
+    const legacyProducts = legacyProductSnapshot.docs.filter((document) => supplierAccountManagesProduct(
+      { ...document.data(), ...(commercialCandidates.get(document.id)?.data() || {}) },
+      identity.uid,
+      mappedSources,
+    ));
     const productIds = new Set([
-      ...commercialProductSnapshot.docs.map((document) => document.id),
-      ...legacyProductSnapshot.docs.map((document) => document.id),
+      ...commercialById.keys(),
+      ...legacyProducts.map((document) => document.id),
     ]);
     const productDocuments = productIds.size > 0
       ? await dependencies.db.getAll(...[...productIds].map((productId) => dependencies.db.collection("products").doc(productId)))
@@ -542,12 +591,12 @@ export function registerSupplierPortalRoutes(app: express.Express, dependencies:
       summary: calculateSupplierSummary(products, requests, orders),
       pagination: {
         pageSize,
-        productsCursor: commercialProductSnapshot.docs.at(-1)?.id || legacyProductSnapshot.docs.at(-1)?.id || null,
+        productsCursor: ownedCommercialDocuments.at(-1)?.id || legacyProductSnapshot.docs.at(-1)?.id || null,
         requestsCursor: requestSnapshot.docs.at(-1)?.id || null,
         ordersCursor: privateOrders.docs.at(-1)?.id || directOrders.docs.at(-1)?.id || sharedOrders.docs.at(-1)?.id || null,
         notificationsCursor: notificationSnapshot.docs.at(-1)?.id || null,
         hasMore: {
-          products: commercialProductSnapshot.size === pageSize || legacyProductSnapshot.size === pageSize,
+          products: commercialProductSnapshots.some((snapshot) => snapshot.size === pageSize) || legacyProductSnapshot.size === pageSize,
           requests: requestSnapshot.size === pageSize,
           orders: privateOrders.size === pageSize || directOrders.size === pageSize || sharedOrders.size === pageSize,
           notifications: notificationSnapshot.size === pageSize,
@@ -598,8 +647,11 @@ export function registerSupplierPortalRoutes(app: express.Express, dependencies:
         dependencies.db.collection("products").doc(productId).get(),
         dependencies.db.collection(PRODUCT_PRIVATE_COLLECTION).doc(productId).get(),
       ]);
-      const ownerId = commercialSnapshot.data()?.supplierId || productSnapshot.data()?.supplierId;
-      if (!productSnapshot.exists || ownerId !== identity.uid) throw new ApiError("Product is not owned by this supplier", 403);
+      const productAttribution = { ...(productSnapshot.data() || {}), ...(commercialSnapshot.data() || {}) };
+      const mappedSources = await readSupplierProductSourceMapping(dependencies.db, productAttribution);
+      if (!productSnapshot.exists || !supplierAccountManagesProduct(productAttribution, identity.uid, mappedSources)) {
+        throw new ApiError("Product is not owned by this supplier", 403);
+      }
       baseProduct = sanitizePublicProductData(productSnapshot.data() || {});
       baseCommercial = commercialSnapshot.data() || {};
     }
@@ -615,7 +667,9 @@ export function registerSupplierPortalRoutes(app: express.Express, dependencies:
         id: productDocumentId,
         name: draft.name,
         sku: productId ? String(baseProduct.sku || "") : `${hashId(identity.uid).slice(0, 6)}-${normalizeSupplierSku(draft.supplierSku)}`,
-        supplierId: identity.uid,
+        supplierId: productId ? String(baseCommercial.supplierId || "") : identity.uid,
+        supplierSourceId: productId ? String(baseCommercial.supplierSourceId || "") : SUPPLIER_PORTAL_SOURCE_ID,
+        fulfilmentMode: "supplier",
         supplierItemCode: draft.supplierSku || String(baseCommercial.supplierItemCode || ""),
         brand: draft.brand,
         ...(draft.model ? { model: draft.model } : {}),
@@ -693,8 +747,16 @@ export function registerSupplierPortalRoutes(app: express.Express, dependencies:
     const currentProduct = baselineProductDocument
       ? { ...baselineProductDocument.data(), ...(commercialByProductId.get(baselineProductDocument.id) || {}) }
       : undefined;
+    const currentCommercial = commercialByProductId.get(productId) || {};
+    const isProductChange = requestData.requestType === "product_change";
+    if (isProductChange) {
+      const mappedSources = await readSupplierProductSourceMapping(dependencies.db, currentProduct || {});
+      if (!currentProduct || !supplierAccountManagesProduct(currentProduct, identity.uid, mappedSources)) {
+        throw new ApiError("Product is not owned by this supplier", 403);
+      }
+    }
     const comparison = buildSupplierProductComparison(rawProduct, currentProduct);
-    const offerCandidate = buildSupplierProductOffer({
+    const newProductOfferCandidate = buildSupplierProductOffer({
       sourceId: SUPPLIER_PORTAL_SOURCE_ID,
       supplierId: identity.uid,
       supplierProductId: rawProduct.supplierProductId,
@@ -711,21 +773,77 @@ export function registerSupplierPortalRoutes(app: express.Express, dependencies:
       supplierSnapshot: rawProduct,
       timestamp: observedAt,
     });
-    const offerReference = dependencies.db.collection(SUPPLIER_PRODUCT_OFFERS_COLLECTION).doc(offerCandidate.id);
+    const activeOfferId = isProductChange
+      ? parseSupplierOfferSelection(currentCommercial.supplierOfferSelection).activeOfferId
+      : null;
+    if (isProductChange && !activeOfferId) throw new ApiError("Product has no active approved supplier offer", 409);
+    const offerReference = dependencies.db.collection(SUPPLIER_PRODUCT_OFFERS_COLLECTION).doc(
+      activeOfferId || newProductOfferCandidate.id,
+    );
+    const changeProductReference = isProductChange ? dependencies.db.collection("products").doc(productId) : null;
+    const changeCommercialReference = isProductChange ? dependencies.db.collection(PRODUCT_PRIVATE_COLLECTION).doc(productId) : null;
+    const changeSourceId = isProductChange ? String(currentCommercial.supplierSourceId || "").trim() : "";
+    const changeSourceReference = changeSourceId && changeSourceId !== SUPPLIER_PORTAL_SOURCE_ID
+      ? dependencies.db.collection("supplierSources").doc(changeSourceId)
+      : null;
     await dependencies.db.runTransaction(async (transaction) => {
-      const [freshRequest, skuClaim, productClaim, profileSnapshot, offerSnapshot] = await Promise.all([
+      const [freshRequest, skuClaim, productClaim, profileSnapshot, offerSnapshot, freshProduct, freshCommercial, freshSource] = await Promise.all([
         transaction.get(requestReference),
         transaction.get(dependencies.db.collection("supplier_sku_claims").doc(skuClaimId)),
         productClaimId ? transaction.get(dependencies.db.collection("supplier_product_claims").doc(productClaimId)) : Promise.resolve(null),
         transaction.get(dependencies.db.collection("supplier_profiles").doc(identity.uid)),
         transaction.get(offerReference),
+        changeProductReference ? transaction.get(changeProductReference) : Promise.resolve(null),
+        changeCommercialReference ? transaction.get(changeCommercialReference) : Promise.resolve(null),
+        changeSourceReference ? transaction.get(changeSourceReference) : Promise.resolve(null),
       ]);
       if (!freshRequest.exists || freshRequest.data()?.supplierId !== identity.uid || freshRequest.data()?.status !== "draft") {
         throw new ApiError("Product request changed before submission; reload and try again", 409);
       }
       if (skuClaim.exists && skuClaim.data()?.requestId !== requestId) throw new ApiError("Supplier SKU is already in use", 409);
       if (productClaim?.exists && productClaim.data()?.requestId !== requestId) throw new ApiError("A duplicate product request already exists", 409);
+      const freshProductAttribution = {
+        ...(freshProduct?.data() || {}),
+        ...(freshCommercial?.data() || {}),
+      };
+      const freshMappedSources = freshSource?.exists ? [sourceAccountMapping(freshSource)] : [];
+      if (isProductChange && (
+        !freshProduct?.exists
+        || !supplierAccountManagesProduct(freshProductAttribution, identity.uid, freshMappedSources)
+        || parseSupplierOfferSelection(freshCommercial?.data()?.supplierOfferSelection).activeOfferId !== offerReference.id
+      )) throw new ApiError("Product mapping changed before submission; reload and try again", 409);
       const existingOffer = projectSupplierOfferForAdmin(offerSnapshot.exists ? { id: offerSnapshot.id, ...offerSnapshot.data() } : null);
+      if (isProductChange && (
+        !existingOffer
+        || existingOffer.reviewStatus !== "approved"
+        || existingOffer.productId !== productId
+        || existingOffer.sourceId !== String(freshCommercial?.data()?.supplierSourceId || "")
+        || existingOffer.supplierId !== String(freshCommercial?.data()?.supplierId || "")
+      )) throw new ApiError("Product is not routed through this supplier's approved offer", 403);
+      const offerCandidate = isProductChange && existingOffer
+        ? buildSupplierProductOffer({
+          ...existingOffer,
+          price: draft.price,
+          cost: draft.price,
+          stock: draft.stock,
+          availability: rawProduct.availability,
+          reviewStatus: "review_pending",
+          catalogPayload: requestData.productPayload,
+          supplierSnapshot: {
+            ...rawProduct,
+            ...existingOffer.supplierSnapshot,
+            supplierId: existingOffer.supplierId,
+            sourceId: existingOffer.sourceId,
+            supplierProductId: existingOffer.supplierProductId,
+            sku: existingOffer.sku,
+            inventoryLevel: draft.stock,
+            wholesalePrice: draft.price,
+            recommendedRetailPrice: draft.price,
+          },
+          existing: existingOffer,
+          timestamp: observedAt,
+        })
+        : newProductOfferCandidate;
       const observedOffer = buildSupplierProductOffer({
         ...offerCandidate,
         existing: existingOffer,
@@ -755,7 +873,8 @@ export function registerSupplierPortalRoutes(app: express.Express, dependencies:
       const queueRecord = {
         id: queueId,
         portalRequestId: requestId,
-        supplierId: identity.uid,
+        supplierId: observedOffer.supplierId,
+        supplierAccountId: identity.uid,
         supplierCode: draft.supplierSku,
         supplierSkuClaimId: skuClaimId,
         ...(productClaimId ? { productFingerprintClaimId: productClaimId } : {}),
@@ -765,9 +884,9 @@ export function registerSupplierPortalRoutes(app: express.Express, dependencies:
         marketPrice: draft.price,
         stock: draft.stock,
         imageUrl: draft.imageUrl,
-        source: "Supplier Portal",
+        source: observedOffer.sourceId === SUPPLIER_PORTAL_SOURCE_ID ? "Supplier Portal" : "Mapped Supplier Source",
         connector: "supplier_portal",
-        sourceId: SUPPLIER_PORTAL_SOURCE_ID,
+        sourceId: observedOffer.sourceId,
         supplierOfferId: observedOffer.id,
         supplierOfferPendingRevision: pendingObservation.revision,
         supplierOfferStateExpectation: supplierOfferStateExpectation(existingOffer || {}),
@@ -785,12 +904,13 @@ export function registerSupplierPortalRoutes(app: express.Express, dependencies:
         matchedProductId: requestData.requestType === "product_change" ? productId : null,
         productPayload: requestData.productPayload,
         supplierSnapshot: {
-          supplierId: identity.uid,
-          sourceId: SUPPLIER_PORTAL_SOURCE_ID,
-          supplierProductId: rawProduct.supplierProductId,
-          supplierSku: draft.supplierSku,
-          canonicalProductId: queuedProductId,
           ...rawProduct,
+          ...observedOffer.supplierSnapshot,
+          supplierId: observedOffer.supplierId,
+          sourceId: observedOffer.sourceId,
+          supplierProductId: observedOffer.supplierProductId,
+          supplierSku: observedOffer.sku,
+          canonicalProductId: queuedProductId,
         },
         productValidation: {
           readyToPublish: true,
@@ -846,8 +966,15 @@ export function registerSupplierPortalRoutes(app: express.Express, dependencies:
         transaction.get(productReference),
         transaction.get(commercialReference),
       ]);
-      const ownerId = commercialSnapshot.data()?.supplierId || productSnapshot.data()?.supplierId;
-      if (!productSnapshot.exists || ownerId !== identity.uid) throw new ApiError("Product is not owned by this supplier", 403);
+      const productAttribution = { ...(productSnapshot.data() || {}), ...(commercialSnapshot.data() || {}) };
+      const sourceId = String(productAttribution.supplierSourceId || "").trim();
+      const sourceSnapshot = sourceId && sourceId !== SUPPLIER_PORTAL_SOURCE_ID
+        ? await transaction.get(dependencies.db.collection("supplierSources").doc(sourceId))
+        : null;
+      const mappedSources = sourceSnapshot?.exists ? [sourceAccountMapping(sourceSnapshot)] : [];
+      if (!productSnapshot.exists || !supplierAccountManagesProduct(productAttribution, identity.uid, mappedSources)) {
+        throw new ApiError("Product is not owned by this supplier", 403);
+      }
       const product = sanitizePublicProductData(productSnapshot.data() || {});
       const commercial = commercialSnapshot.data() || {};
       const currentManagedMedia = Array.isArray(commercial.supplierMedia) ? commercial.supplierMedia : [];
@@ -857,7 +984,13 @@ export function registerSupplierPortalRoutes(app: express.Express, dependencies:
       const offerReference = dependencies.db.collection(SUPPLIER_PRODUCT_OFFERS_COLLECTION).doc(activeOfferId);
       const offerSnapshot = await transaction.get(offerReference);
       const existingOffer = projectSupplierOfferForAdmin(offerSnapshot.exists ? { id: offerSnapshot.id, ...offerSnapshot.data() } : null);
-      if (!existingOffer || existingOffer.reviewStatus !== "approved" || existingOffer.supplierId !== identity.uid || existingOffer.productId !== productId) {
+      if (
+        !existingOffer
+        || existingOffer.reviewStatus !== "approved"
+        || existingOffer.supplierId !== String(commercial.supplierId || "")
+        || existingOffer.sourceId !== String(commercial.supplierSourceId || "")
+        || existingOffer.productId !== productId
+      ) {
         throw new ApiError("Product is not routed through this supplier's approved offer", 403);
       }
       const productPayload = { ...product, id: productId, supplierItemCode, stock: proposedStock, updatedAt: observedAt };
@@ -887,7 +1020,8 @@ export function registerSupplierPortalRoutes(app: express.Express, dependencies:
       const queueRecord = {
         id: queueId,
         portalRequestId: requestReference.id,
-        supplierId: identity.uid,
+        supplierId: existingOffer.supplierId,
+        supplierAccountId: identity.uid,
         supplierCode: supplierItemCode,
         supplierName: identity.email,
         productName: String(product.name || ""),
@@ -895,9 +1029,9 @@ export function registerSupplierPortalRoutes(app: express.Express, dependencies:
         marketPrice: Number(existingOffer.price || product.price || 0),
         stock: proposedStock,
         imageUrl: String(product.imageUrl || ""),
-        source: "Supplier Portal",
+        source: existingOffer.sourceId === SUPPLIER_PORTAL_SOURCE_ID ? "Supplier Portal" : "Mapped Supplier Source",
         connector: "supplier_portal",
-        sourceId: SUPPLIER_PORTAL_SOURCE_ID,
+        sourceId: existingOffer.sourceId,
         supplierOfferId: existingOffer.id,
         supplierOfferPendingRevision: pendingObservation.revision,
         supplierOfferStateExpectation: supplierOfferStateExpectation(existingOffer),
@@ -915,7 +1049,9 @@ export function registerSupplierPortalRoutes(app: express.Express, dependencies:
         matchedProductId: productId,
         productPayload: {
           ...productPayload,
-          supplierFieldOwnership: commercial.supplierFieldOwnership,
+          ...(commercial.supplierFieldOwnership
+            ? { supplierFieldOwnership: commercial.supplierFieldOwnership }
+            : {}),
         },
         ...(currentManagedMedia.length > 0 ? {
           managedMedia: currentManagedMedia,
@@ -923,7 +1059,7 @@ export function registerSupplierPortalRoutes(app: express.Express, dependencies:
         } : {}),
         supplierSnapshot: {
           ...existingOffer.supplierSnapshot,
-          supplierId: identity.uid,
+          supplierId: existingOffer.supplierId,
           sourceId: existingOffer.sourceId,
           supplierProductId: existingOffer.supplierProductId,
           supplierSku: supplierItemCode,

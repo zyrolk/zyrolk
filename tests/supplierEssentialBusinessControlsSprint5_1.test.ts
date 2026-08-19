@@ -36,12 +36,13 @@ test('supplier cards retain explicit initial sync and expose essential lifecycle
   assert.match(hub, /historical records will be retained/);
 });
 
-test('bulk review decisions appear only after an eligible multi-selection is active', () => {
+test('launch review decisions are individual and have no bulk controls', () => {
   const hub = projectFile('src/components/SupplierHubFiveStars.tsx');
-  const controls = hub.slice(hub.indexOf("{selectedReviewItems.length > 0 &&"), hub.indexOf('{supplierQueueError'));
-  assert.match(controls, /Bulk Approve/);
-  assert.match(controls, /Bulk Reject/);
-  assert.doesNotMatch(controls, /Bulk Delete/);
+  const quickCard = projectFile('src/components/SupplierReviewQuickCard.tsx');
+  assert.doesNotMatch(hub, /Bulk Approve/);
+  assert.doesNotMatch(hub, /Bulk Reject/);
+  assert.match(hub, /supplierReviewCanQuickApprove/);
+  assert.match(quickCard, /View Details/);
 });
 
 test('Business Settings project only existing synchronization, pricing, and catalogue contracts', () => {

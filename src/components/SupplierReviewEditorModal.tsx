@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, ArrowDown, ArrowUp, Check, Image, LockKeyhole, Package, Plus, RefreshCw, Sparkles, Trash2, X } from 'lucide-react';
+import { AlertTriangle, ArrowDown, ArrowUp, Check, Image, LockKeyhole, Package, Pencil, Plus, RefreshCw, Sparkles, Trash2, X } from 'lucide-react';
 import {
   buildSupplierReviewMetadataSections,
   buildSupplierReviewFieldChanges,
@@ -19,7 +19,7 @@ import {
   supplierOfferIsActive,
   supplierOfferIsLocked,
 } from '../services/supplierOffers';
-import { formatSupplierTimestamp } from '../services/supplierHubPresentation';
+import { formatSupplierTimestamp, supplierReviewSpecificationCount } from '../services/supplierHubPresentation';
 
 interface SupplierReviewEditorModalProps {
   item: SupplierReviewSourceItem;
@@ -90,6 +90,7 @@ export default function SupplierReviewEditorModal({
   onSelectOffer,
 }: SupplierReviewEditorModalProps) {
   const [draft, setDraft] = useState(initialDraft);
+  const [isEditing, setIsEditing] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [galleryInput, setGalleryInput] = useState('');
   const [galleryInputError, setGalleryInputError] = useState('');
@@ -97,6 +98,7 @@ export default function SupplierReviewEditorModal({
   const [specificationValue, setSpecificationValue] = useState('');
   const [failedMediaUrls, setFailedMediaUrls] = useState<Set<string>>(() => new Set());
   const firstInputRef = useRef<HTMLInputElement>(null);
+  const detailsActionRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
   const onCloseRef = useRef(onClose);
@@ -116,6 +118,7 @@ export default function SupplierReviewEditorModal({
   );
   const metadataSections = useMemo(() => buildSupplierReviewMetadataSections(item), [item]);
   const fieldChanges = useMemo(() => buildSupplierReviewFieldChanges(item), [item]);
+  const specificationCount = useMemo(() => supplierReviewSpecificationCount(item), [item]);
   const suggestedCategory = useMemo(
     () => categories.find((category) => category.id === item.categoryMapping?.targetCategoryId),
     [categories, item.categoryMapping?.targetCategoryId],
@@ -159,7 +162,7 @@ export default function SupplierReviewEditorModal({
     previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
-    const focusFrame = window.requestAnimationFrame(() => firstInputRef.current?.focus());
+    const focusFrame = window.requestAnimationFrame(() => detailsActionRef.current?.focus());
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape' && !isPublishingRef.current) onCloseRef.current();
@@ -201,9 +204,22 @@ export default function SupplierReviewEditorModal({
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
+    if (!isEditing) return;
     setSubmitted(true);
     if (Object.keys(validationErrors).length > 0 || isPublishing) return;
     await onPublish(draft);
+  };
+
+  const beginEditing = () => {
+    setIsEditing(true);
+    window.requestAnimationFrame(() => firstInputRef.current?.focus());
+  };
+
+  const cancelEditing = () => {
+    setDraft(initialDraft);
+    setSubmitted(false);
+    setIsEditing(false);
+    window.requestAnimationFrame(() => detailsActionRef.current?.focus());
   };
 
   const setSpecification = (name: string, value: string) => {
@@ -288,8 +304,8 @@ export default function SupplierReviewEditorModal({
           <div className="flex items-center gap-3">
             <span className="rounded-xl bg-blue-500/10 p-2 text-blue-500"><Package className="h-5 w-5" /></span>
             <div>
-              <h3 id="supplier-review-editor-title" className="text-base font-black text-slate-900 dark:text-white">Review & Publish Product</h3>
-              <p className="text-[11px] text-slate-400">Confirm storefront values while preserving the supplier record.</p>
+              <h3 id="supplier-review-editor-title" className="text-base font-black text-slate-900 dark:text-white">{isEditing ? 'Edit product data' : 'Product details'}</h3>
+              <p className="text-[11px] text-slate-400">{isEditing ? 'Update storefront values while preserving the supplier record.' : `Read-only supplier review · ${specificationCount} specifications`}</p>
             </div>
           </div>
           <button type="button" onClick={onClose} disabled={isPublishing} aria-label="Close product editor" className="rounded-full bg-slate-100 p-2 text-slate-500 disabled:opacity-50 dark:bg-slate-800">
@@ -297,7 +313,13 @@ export default function SupplierReviewEditorModal({
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="flex flex-col gap-5">
+        <form onSubmit={handleSubmit} className="flex flex-col gap-5" aria-readonly={!isEditing}>
+          {!isEditing && (
+            <p id="supplier-review-read-only-note" className="order-[-1] rounded-xl border border-blue-500/20 bg-blue-500/10 px-3 py-2 text-[10px] font-semibold text-blue-700 dark:text-blue-200">
+              Details are read-only. Choose Edit product data before changing storefront values.
+            </p>
+          )}
+          <fieldset disabled={!isEditing || isPublishing} className="contents">
           <details className="order-[80] rounded-2xl border border-slate-200 bg-slate-50 p-4 text-xs dark:border-slate-800 dark:bg-slate-900/40">
             <summary className="cursor-pointer font-black text-slate-700 outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-slate-200">Supplier information</summary>
           <div className="mt-3 grid gap-3 sm:grid-cols-3">
@@ -732,12 +754,22 @@ export default function SupplierReviewEditorModal({
             </ul>
             {missingFields.length > 0 && <p id="supplier-publish-blocked-reason" className="mt-3 text-[10px] font-bold">Approve & Publish is unavailable until every failed checklist item is completed.</p>}
           </section>
+          </fieldset>
 
           <div className="sticky bottom-0 z-30 order-[100] -mx-4 -mb-4 flex flex-col-reverse gap-2 border-t border-slate-100 bg-white/95 p-4 backdrop-blur dark:border-slate-800 dark:bg-[#111928]/95 sm:mx-0 sm:mb-0 sm:flex-row sm:justify-end sm:px-0 sm:pb-0">
-            <button type="button" onClick={onClose} disabled={isPublishing} className="min-h-11 w-full rounded-xl border border-slate-200 px-4 text-xs font-bold text-slate-500 disabled:opacity-50 dark:border-slate-700 sm:w-auto">Cancel</button>
-            <button type="submit" disabled={isPublishing || missingFields.length > 0} aria-describedby={missingFields.length > 0 ? 'supplier-publish-blocked-reason' : undefined} title={missingFields.length > 0 ? `Publishing blocked: ${Object.values(validationErrors).join(' ')}` : 'Approve and publish this product'} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 text-xs font-black text-white disabled:cursor-not-allowed disabled:bg-slate-600 sm:w-auto">
-              <Check className="h-4 w-4" />{isPublishing ? 'Publishing...' : 'Approve & Publish'}
-            </button>
+            <button type="button" onClick={onClose} disabled={isPublishing} className="min-h-11 w-full rounded-xl border border-slate-200 px-4 text-xs font-bold text-slate-500 disabled:opacity-50 dark:border-slate-700 sm:w-auto">Close</button>
+            {!isEditing ? (
+              <button ref={detailsActionRef} type="button" onClick={beginEditing} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 text-xs font-black text-white hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 sm:w-auto" aria-describedby="supplier-review-read-only-note">
+                <Pencil className="h-4 w-4" aria-hidden="true" />Edit product data
+              </button>
+            ) : (
+              <>
+                <button type="button" onClick={cancelEditing} disabled={isPublishing} className="min-h-11 w-full rounded-xl border border-slate-200 px-4 text-xs font-bold text-slate-600 disabled:opacity-50 dark:border-slate-700 dark:text-slate-300 sm:w-auto">Cancel editing</button>
+                <button type="submit" disabled={isPublishing || missingFields.length > 0} aria-describedby={missingFields.length > 0 ? 'supplier-publish-blocked-reason' : undefined} title={missingFields.length > 0 ? `Publishing blocked: ${Object.values(validationErrors).join(' ')}` : 'Approve and publish this product'} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 text-xs font-black text-white disabled:cursor-not-allowed disabled:bg-slate-600 sm:w-auto">
+                  <Check className="h-4 w-4" />{isPublishing ? 'Publishing...' : 'Approve & Publish'}
+                </button>
+              </>
+            )}
           </div>
         </form>
       </div>

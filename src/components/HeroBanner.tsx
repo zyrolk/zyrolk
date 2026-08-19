@@ -119,7 +119,7 @@ export default function HeroBanner({
   const displayBadge = replacePremiumElectronics(activeSlide.badge, 'Marketplace offer');
   const displayTitle = replacePremiumElectronics(activeSlide.title, 'Marketplace Collection');
   const displayCta = replacePremiumElectronics(activeSlide.cta, 'Shop Now');
-  const displaySubtitle = MARKETPLACE_MESSAGE;
+  const displaySubtitle = activeSlide.subtitle || MARKETPLACE_MESSAGE;
   const displayDescription = activeSlide.description === LEGACY_MARKETPLACE_MESSAGE
     || activeSlide.title === LEGACY_MARKETPLACE_HEADING
     || /\belectronics?\b/iu.test(activeSlide.description)

@@ -139,11 +139,14 @@ test("bulk delete decisions preserve audit and never write products", () => {
   assert.equal(plan.deletes.length, 3);
 });
 
-test("Supplier Hub exposes only business approval actions while Functions own synchronization and category mapping", () => {
+test("Supplier Hub exposes only individual business approval actions while Functions own synchronization and category mapping", () => {
   const supplierHub = readFileSync("src/components/SupplierHubFiveStars.tsx", "utf8");
+  const quickCard = readFileSync("src/components/SupplierReviewQuickCard.tsx", "utf8");
   const scheduledSync = readFileSync("functions/src/scheduled/supplierSync.ts", "utf8");
-  assert.match(supplierHub, /Bulk Approve/);
-  assert.match(supplierHub, /Bulk Reject/);
+  assert.doesNotMatch(supplierHub, /Bulk Approve/);
+  assert.doesNotMatch(supplierHub, /Bulk Reject/);
+  assert.match(supplierHub, /supplierReviewCanQuickApprove/);
+  assert.match(quickCard, /View Details/);
   assert.doesNotMatch(supplierHub, /Bulk Delete/);
   assert.match(supplierHub, /postSupplierApi\('\/api\/supplier-sync'/);
   assert.doesNotMatch(supplierHub, /runLocalSupplierSync|commitSupplierSyncWrites|resolveSupplierCategory/);

@@ -13,6 +13,7 @@ import { createAdminProduct } from "../functions/src/api/products/adminProductMa
 import { hashValue } from "../functions/src/api/checkout/checkoutLogic";
 import { createSupplierReviewDraft } from "../src/services/supplierReviewEditor";
 import { decideSupplierQueueItem, parseSupplierApprovalDraft } from "../functions/src/api/suppliers/supplierApproval";
+import { buildSupplierProductOffer } from "../functions/src/api/suppliers/supplierOfferEngine";
 import {
   assertReviewOwnershipMigrationAuthorized,
   MAX_REVIEW_MIGRATION_OPERATION_UNITS_PER_BATCH,
@@ -183,6 +184,97 @@ test("P1 production blockers fail closed at trusted and Rules boundaries", {
     } finally {
       await signOut(auth).catch(() => undefined);
       await deleteApp(clientApp);
+    }
+  });
+
+  await t.test("Supplier Portal projects imported products through distinct source-account mappings and preserves source attribution", async () => {
+    const suffix = randomUUID().slice(0, 8);
+    const password = `Zyro-${randomUUID()}!`;
+    const appA = initializeApp({ apiKey: "demo-key", projectId }, `${prefix}-mapped-a-${suffix}`);
+    const appB = initializeApp({ apiKey: "demo-key", projectId }, `${prefix}-mapped-b-${suffix}`);
+    const authA = getAuth(appA);
+    const authB = getAuth(appB);
+    connectAuthEmulator(authA, `http://${authHost}`, { disableWarnings: true });
+    connectAuthEmulator(authB, `http://${authHost}`, { disableWarnings: true });
+    try {
+      const [credentialA, credentialB] = await Promise.all([
+        createUserWithEmailAndPassword(authA, `${prefix}-mapped-a-${suffix}@example.test`, password),
+        createUserWithEmailAndPassword(authB, `${prefix}-mapped-b-${suffix}@example.test`, password),
+      ]);
+      const accountA = credentialA.user.uid;
+      const accountB = credentialB.user.uid;
+      const sourceA = `${prefix}-connector-source-a-${suffix}`;
+      const sourceB = `${prefix}-connector-source-b-${suffix}`;
+      const productA = `${prefix}-mapped-product-a-${suffix}`;
+      const productB = `${prefix}-mapped-product-b-${suffix}`;
+      const fabricated = `${prefix}-fabricated-product-${suffix}`;
+      const manual = `${prefix}-manual-product-${suffix}`;
+      assert.notEqual(sourceA, accountA);
+      assert.notEqual(sourceB, accountB);
+      const importedProduct = (id: string, name: string) => ({
+        id, name, sku: `ZY-${id}`, price: 1_200, stock: 5, isActive: true,
+        imageUrl: `https://supplier.example/${id}.jpg`, updatedAt: "2026-08-13T00:00:00.000Z",
+      });
+      const offerA = buildSupplierProductOffer({
+        sourceId: sourceA, supplierId: sourceA, supplierProductId: `item-${suffix}`, sku: `SUP-${suffix}`,
+        productId: productA, price: 1_200, cost: 900, stock: 5, availability: "in_stock",
+        lastSyncAt: "2026-08-13T00:00:00.000Z", reviewStatus: "approved",
+        catalogPayload: importedProduct(productA, "Mapped product A"),
+        supplierSnapshot: { supplierId: sourceA, sourceId: sourceA, inventoryLevel: 5 },
+        pendingObservation: null, timestamp: "2026-08-13T00:00:00.000Z",
+      });
+      await Promise.all([
+        adminDb.collection("users").doc(accountA).set({ role: "supplier", email: credentialA.user.email }),
+        adminDb.collection("users").doc(accountB).set({ role: "supplier", email: credentialB.user.email }),
+        adminDb.collection("supplier_profiles").doc(accountA).set({ supplierId: accountA, companyName: "Mapped A", profileStatus: "active" }),
+        adminDb.collection("supplier_profiles").doc(accountB).set({ supplierId: accountB, companyName: "Mapped B", profileStatus: "active" }),
+        adminDb.collection("supplierSources").doc(sourceA).set({ supplierId: sourceA, supplierAccountId: accountA, enabled: true }),
+        adminDb.collection("supplierSources").doc(sourceB).set({ supplierId: sourceB, supplierAccountId: accountB, enabled: true }),
+        adminDb.collection("products").doc(productA).set(importedProduct(productA, "Mapped product A")),
+        adminDb.collection("products").doc(productB).set(importedProduct(productB, "Mapped product B")),
+        adminDb.collection("products").doc(fabricated).set(importedProduct(fabricated, "Fabricated attribution")),
+        adminDb.collection("products").doc(manual).set({ ...importedProduct(manual, "Admin manual product"), supplierId: accountA }),
+        adminDb.collection("product_private").doc(productA).set({ fulfilmentMode: "supplier", supplierId: sourceA, supplierSourceId: sourceA, supplierItemCode: `SUP-${suffix}`, supplierOfferSelection: { activeOfferId: offerA.id } }),
+        adminDb.collection("product_private").doc(productB).set({ fulfilmentMode: "supplier", supplierId: sourceB, supplierSourceId: sourceB, supplierItemCode: `SUP-B-${suffix}` }),
+        adminDb.collection("product_private").doc(fabricated).set({ fulfilmentMode: "supplier", supplierId: sourceB, supplierSourceId: sourceA, supplierItemCode: `FAKE-${suffix}` }),
+        adminDb.collection("product_private").doc(manual).set({ fulfilmentMode: "internal", supplierId: accountA, supplierSourceId: "supplier-portal" }),
+        adminDb.collection("supplier_product_offers").doc(offerA.id).set(offerA),
+      ]);
+      const [tokenA, tokenB] = await Promise.all([credentialA.user.getIdToken(), credentialB.user.getIdToken()]);
+      const portal = async (token: string) => {
+        const response = await fetch(`http://${functionsHost}/${projectId}/us-central1/api/api/supplier-portal`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const body = await response.json() as { products?: Array<{ id?: string }>; error?: string };
+        assert.equal(response.status, 200, body.error);
+        return new Set(body.products?.map((product) => product.id));
+      };
+      const [productsA, productsB] = await Promise.all([portal(tokenA), portal(tokenB)]);
+      assert.deepEqual([...productsA], [productA]);
+      assert.deepEqual([...productsB], [productB]);
+      assert.equal(productsA.has(fabricated), false);
+      assert.equal(productsA.has(manual), false);
+
+      const stockResponse = await fetch(`http://${functionsHost}/${projectId}/us-central1/api/api/supplier-portal/products/${productA}/stock-proposal`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${tokenA}` },
+        body: JSON.stringify({ stock: 8 }),
+      });
+      assert.equal(stockResponse.status, 200, await stockResponse.text());
+      const stockRequest = (await adminDb.collection("supplier_product_requests").where("productId", "==", productA).where("requestType", "==", "stock_change").get()).docs[0];
+      const queue = (await adminDb.collection("supplier_review_queue").doc(`portal-${stockRequest.id}`).get()).data()!;
+      assert.equal(queue.supplierId, sourceA);
+      assert.equal(queue.supplierAccountId, accountA);
+      assert.equal(queue.sourceId, sourceA);
+      assert.equal((await adminDb.collection("supplier_product_offers").doc(offerA.id).get()).data()?.supplierId, sourceA);
+
+      await adminDb.collection("supplierSources").doc(sourceA).set({ supplierAccountId: accountB }, { merge: true });
+      const [remappedA, remappedB] = await Promise.all([portal(tokenA), portal(tokenB)]);
+      assert.equal(remappedA.has(productA), false);
+      assert.equal(remappedB.has(productA), true);
+    } finally {
+      await Promise.all([signOut(authA).catch(() => undefined), signOut(authB).catch(() => undefined)]);
+      await Promise.all([deleteApp(appA), deleteApp(appB)]);
     }
   });
 

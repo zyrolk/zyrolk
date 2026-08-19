@@ -101,6 +101,7 @@ export default function MobileBottomNav({
 
   const activeTabClass = "text-brand-blue scale-110";
   const inactiveTabClass = "text-slate-500 hover:text-slate-700";
+  const isAccountPage = currentPage === 'account' || currentPage.startsWith('account-');
 
   return (
     <>
@@ -185,16 +186,26 @@ export default function MobileBottomNav({
 
           {/* Tab 5: Account */}
           <button 
-            onClick={() => setIsMoreMenuOpen(!isMoreMenuOpen)}
+            onClick={() => {
+              if (isAccountPage) {
+                setIsMoreMenuOpen(!isMoreMenuOpen);
+              } else {
+                handleTabClick('account');
+              }
+            }}
             className={`zy-mobile-tab flex min-h-12 flex-col items-center justify-center flex-1 transition-all relative py-1 cursor-pointer rounded-xl active:scale-95 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20 ${
-              isMoreMenuOpen ? 'text-brand-blue scale-110' : 'text-slate-500 hover:text-slate-700'
+              isMoreMenuOpen || isAccountPage ? activeTabClass : inactiveTabClass
             }`}
-            aria-label={isMoreMenuOpen ? 'Close account menu' : 'Open account menu'}
+            aria-label={isMoreMenuOpen ? 'Close account menu' : isAccountPage ? 'Open account options' : 'Go to account'}
+            aria-current={isAccountPage && !isMoreMenuOpen ? 'page' : undefined}
             aria-expanded={isMoreMenuOpen}
             aria-controls="mobile-more-menu"
           >
             {isMoreMenuOpen ? <X className="h-5 w-5" /> : <UserRound className="h-5 w-5" />}
             <span className="text-[9px] font-bold mt-1 tracking-tight">Account</span>
+            {isAccountPage && !isMoreMenuOpen && (
+              <span className="absolute bottom-0 w-1 h-1 bg-brand-blue rounded-full"></span>
+            )}
           </button>
 
         </div>

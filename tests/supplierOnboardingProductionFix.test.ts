@@ -124,10 +124,21 @@ test('connection testing uses the exact source registry record while retaining t
   assert.ok(routes.indexOf('testProposedSupplierSource(sourceId, req.body?.source)') < routes.indexOf('saveSupplierSource(adminDb, sourceId, source'));
   assert.ok(routes.indexOf('saveSupplierSource(adminDb, sourceId, source') < routes.indexOf('createSupplierSyncJob(adminDb'));
   assert.match(hub, /sourceId: source\.id/);
-  assert.match(hub, /source: buildNewSupplierSource\('Not Synced'\)/);
+  assert.match(hub, /const source = buildNewSupplierSource\('Not Synced', null\)/);
+  assert.match(hub, /source,/);
   assert.match(hub, /newSupplierConfigurationVerified/);
   assert.match(hub, /startInitialSync: false/);
   assert.match(hub, /Save Supplier/);
   assert.match(hub, /Run Initial Sync/);
   assert.doesNotMatch(hub, /Save & Start Initial Sync/);
+});
+
+test('connection retry fingerprints the tested source without stale failure state', () => {
+  const hub = readFileSync('src/components/SupplierHubFiveStars.tsx', 'utf8');
+  assert.match(hub, /buildNewSupplierConfigurationFingerprint/);
+  assert.match(hub, /buildNewSupplierSource\('Not Synced', null\)/);
+  assert.match(hub, /const source = buildNewSupplierSource\('Not Synced', null\)/);
+  assert.match(hub, /testedSupplierConfigurationRef\.current === buildNewSupplierConfigurationFingerprint\(\)/);
+  assert.doesNotMatch(hub, /const testedConfiguration = JSON\.stringify\(buildNewSupplierSource\('Not Synced'\)\)/);
+  assert.match(hub, /disabled=\{savingSupplier \|\| !newSupplierConfigurationVerified\}/);
 });

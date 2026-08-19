@@ -74,6 +74,18 @@ export interface SanitizedSupplierProductDraft {
   specs: Record<string, string>;
 }
 
+export interface SupplierProductAttribution {
+  supplierId?: unknown;
+  supplierSourceId?: unknown;
+  fulfilmentMode?: unknown;
+}
+
+export interface SupplierSourceAccountMapping {
+  id: string;
+  supplierId?: unknown;
+  supplierAccountId?: unknown;
+}
+
 const text = (value: unknown, maximum: number): string => typeof value === "string"
   ? value.normalize("NFKC").trim().replace(/\s+/gu, " ").slice(0, maximum)
   : "";
@@ -89,6 +101,27 @@ const numberValue = (value: unknown): number => {
 };
 
 export const normalizeSupplierSku = (value: unknown): string => text(value, 80).toLocaleLowerCase().replace(/[^a-z0-9._-]+/gu, "-");
+
+/** Resolves account access without conflating a connector source with its mapped Supplier Portal account. */
+export function supplierAccountManagesProduct(
+  product: SupplierProductAttribution,
+  supplierAccountId: string,
+  sources: readonly SupplierSourceAccountMapping[],
+): boolean {
+  const accountId = text(supplierAccountId, 160);
+  const supplierId = text(product.supplierId, 160);
+  const sourceId = text(product.supplierSourceId, 160);
+  const fulfilmentMode = text(product.fulfilmentMode, 40).toLocaleLowerCase();
+  if (!accountId || fulfilmentMode !== "supplier") return false;
+  if (sourceId === SUPPLIER_PORTAL_SOURCE_ID) return supplierId === accountId;
+  if (!sourceId) return supplierId === accountId;
+  const source = sources.find((candidate) => text(candidate.id, 160) === sourceId);
+  return Boolean(
+    source
+    && text(source.supplierAccountId, 160) === accountId
+    && text(source.supplierId, 160) === supplierId,
+  );
+}
 
 export const normalizeProductFingerprint = (draft: Pick<SanitizedSupplierProductDraft, "name" | "brand" | "model">): string => (
   [draft.name, draft.brand, draft.model].map((value) => text(value, 160).toLocaleLowerCase()).join("|")

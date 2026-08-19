@@ -124,6 +124,7 @@ interface QueueItemRecord extends Record<string, unknown> {
   supplierSnapshot?: unknown;
   portalRequestId?: unknown;
   supplierId?: unknown;
+  supplierAccountId?: unknown;
   supplierSkuClaimId?: unknown;
   productFingerprintClaimId?: unknown;
   productName?: unknown;
@@ -1000,8 +1001,8 @@ export async function decideSupplierQueueItem(
     }
 
     const portalRequestId = stringValue(queueItem.portalRequestId);
-    const supplierId = stringValue(queueItem.supplierId);
-    if (portalRequestId && supplierId) {
+    const supplierAccountId = stringValue(queueItem.supplierAccountId) || stringValue(queueItem.supplierId);
+    if (portalRequestId && supplierAccountId) {
       const requestStatus = action === "approved" ? "approved" : "rejected";
       const reason = action === "rejected" ? rejectionReason : action === "deleted" ? deletionReason : "";
       transaction.set(db.collection("supplier_product_requests").doc(portalRequestId), {
@@ -1012,7 +1013,7 @@ export async function decideSupplierQueueItem(
         ...(reason ? { rejectionReason: reason } : {}),
       }, { merge: true });
       transaction.set(db.collection("supplier_notifications").doc(`${portalRequestId}-${action}`), {
-        supplierId,
+        supplierId: supplierAccountId,
         type: action === "approved" ? "product_approved" : "product_rejected",
         title: action === "approved" ? "Product approved" : "Product rejected",
         message: action === "approved" ? `${stringValue(queueItem.productName) || "Your product"} was approved.` : reason,

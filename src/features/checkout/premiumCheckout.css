@@ -41,7 +41,7 @@
   align-items: center;
   gap: 0.4rem;
   margin: 0 0 0.3rem;
-  color: #1d4ed8;
+  color: #6547E8;
   font-size: 0.72rem;
   font-weight: 800;
   letter-spacing: 0.1em;
@@ -78,8 +78,8 @@
 .zy-premium-checkout-header ol li { display: flex; align-items: center; gap: 0.4rem; }
 .zy-premium-checkout-header ol li + li::before { content: ""; width: 2.2rem; height: 1px; margin-right: 0.35rem; background: #dbe3ef; }
 .zy-premium-checkout-header ol b { display: grid; width: 1.65rem; height: 1.65rem; place-items: center; border: 1px solid #cbd5e1; border-radius: 999px; }
-.zy-premium-checkout-header ol .is-active { color: #1d4ed8; }
-.zy-premium-checkout-header ol .is-active b { color: #fff; border-color: #1d4ed8; background: #1d4ed8; }
+.zy-premium-checkout-header ol .is-active { color: #6547E8; }
+.zy-premium-checkout-header ol .is-active b { color: #fff; border-color: #6547E8; background: #6547E8; }
 
 .zy-checkout-layout {
   display: grid;
@@ -130,26 +130,26 @@
 
 .zy-coupon-card { margin-top: 1rem; padding: 1rem; border: 1px dashed #93b4ed; border-radius: 1rem; background: #f6f9ff; }
 .zy-coupon-card > div:first-child { display: flex; align-items: center; gap: 0.7rem; }
-.zy-coupon-card > div:first-child svg { color: #2563eb; }
+.zy-coupon-card > div:first-child svg { color: #6547E8; }
 .zy-coupon-card > div:first-child span { display: grid; }
 .zy-coupon-card small { color: #64748b; font-size: 0.72rem; }
 .zy-coupon-card > div:nth-child(2) { display: grid; grid-template-columns: 1fr auto; gap: 0.55rem; margin-top: 0.8rem; }
 .zy-coupon-card input, .zy-coupon-card > div:nth-child(2) button, .zy-saved-addresses select, .zy-checkout-field input, .zy-checkout-field select, .zy-checkout-field textarea { min-height: 2.8rem; border: 1px solid #cfd8e6; border-radius: 0.75rem; color: #0f172a; background: #fff; }
 .zy-coupon-card input { min-width: 0; padding: 0 0.85rem; font-size: 0.82rem; font-weight: 700; letter-spacing: 0.04em; }
-.zy-coupon-card > div:nth-child(2) button { padding: 0 1rem; color: #fff; border-color: #1d4ed8; background: #1d4ed8; font-weight: 800; }
+.zy-coupon-card > div:nth-child(2) button { padding: 0 1rem; color: #fff; border-color: #6547E8; background: #6547E8; font-weight: 800; }
 .zy-coupon-card p { margin: 0.7rem 0 0; font-size: 0.75rem; }
 .zy-coupon-card p.is-success { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; color: #15803d; }
 .zy-coupon-card p.is-success svg { width: 0.9rem; }
-.zy-coupon-card p.is-success button { min-height: 2.75rem; margin-left: auto; padding-inline: .5rem; color: #1d4ed8; text-decoration: underline; background: transparent; }
+.zy-coupon-card p.is-success button { min-height: 2.75rem; margin-left: auto; padding-inline: .5rem; color: #6547E8; text-decoration: underline; background: transparent; }
 .zy-coupon-card p.is-error { color: #b91c1c; }
 
 .zy-saved-addresses, .zy-checkout-guest-note, .zy-payment-method, .zy-checkout-summary { padding: 1rem; border: 1px solid rgba(148, 163, 184, 0.24); border-radius: 1rem; background: #fff; }
 .zy-saved-addresses label { display: flex; align-items: center; gap: 0.45rem; margin-bottom: 0.55rem; font-size: 0.78rem; font-weight: 800; }
-.zy-saved-addresses label svg { width: 1rem; color: #2563eb; }
+.zy-saved-addresses label svg { width: 1rem; color: #6547E8; }
 .zy-saved-addresses select { width: 100%; padding: 0 0.8rem; }
 .zy-saved-addresses p { margin: 0; color: #64748b; font-size: 0.78rem; }
 .zy-address-skeleton { height: 2.8rem; border-radius: 0.75rem; background: linear-gradient(90deg, #edf1f6 25%, #f8fafc 50%, #edf1f6 75%); background-size: 200% 100%; animation: zy-checkout-shimmer 1.3s linear infinite; }
-.zy-checkout-guest-note { display: flex; align-items: center; gap: 0.75rem; color: #1e3a8a; background: #eff6ff; }
+.zy-checkout-guest-note { display: flex; align-items: center; gap: 0.75rem; color: #3b2d80; background: #f3f0ff; }
 .zy-checkout-guest-note > svg { width: 1.2rem; }
 .zy-checkout-guest-note span { display: grid; gap: 0.1rem; }
 .zy-checkout-guest-note small { color: #56709e; font-size: 0.72rem; }
@@ -170,9 +170,9 @@
 .zy-payment-options { display: grid; gap: .65rem; margin: 0; padding: 1rem; border: 1px solid rgba(148, 163, 184, .24); border-radius: 1rem; background: #fff; }
 .zy-payment-options legend { padding: 0 .3rem; color: #334155; font-size: .76rem; font-weight: 800; }
 .zy-payment-options label { position: relative; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: .75rem; min-height: 4rem; padding: .8rem; border: 1px solid #dbe3ef; border-radius: .85rem; cursor: pointer; transition: border-color 180ms ease, background-color 180ms ease, box-shadow 180ms ease; }
-.zy-payment-options label.is-selected { border-color: #60a5fa; background: #eff6ff; box-shadow: 0 0 0 3px rgba(37, 99, 235, .08); }
+.zy-payment-options label.is-selected { border-color: #a594f0; background: #f3f0ff; box-shadow: 0 0 0 3px rgba(101, 71, 232, .08); }
 .zy-payment-options input { position: absolute; width: 1px; height: 1px; opacity: 0; }
-.zy-payment-options label > svg:first-of-type { color: #1d4ed8; }
+.zy-payment-options label > svg:first-of-type { color: #6547E8; }
 .zy-payment-options label > svg:last-of-type { color: #16a34a; opacity: 0; }
 .zy-payment-options label.is-selected > svg:last-of-type { opacity: 1; }
 .zy-payment-options label span { display: grid; gap: .12rem; }
@@ -186,7 +186,7 @@
 .zy-checkout-summary .is-discount, .zy-confirmation-totals .is-discount, .zy-checkout-summary .is-discount b, .zy-confirmation-totals .is-discount b { color: #15803d; }
 .zy-checkout-summary .is-total, .zy-confirmation-totals .is-total { margin-top: 0.35rem; padding-top: 0.8rem; border-top: 1px solid #e2e8f0; color: #0f172a; font-size: 1rem; font-weight: 800; }
 
-.zy-place-order { display: flex; min-height: 3.6rem; align-items: center; justify-content: center; gap: 0.55rem; padding: 0.75rem 1rem; border-radius: 0.9rem; color: #fff; background: linear-gradient(135deg, #1d4ed8, #2563eb); box-shadow: 0 18px 32px -18px rgba(37, 99, 235, 0.85); font-weight: 800; }
+.zy-place-order { display: flex; min-height: 3.6rem; align-items: center; justify-content: center; gap: 0.55rem; padding: 0.75rem 1rem; border-radius: 0.9rem; color: #fff; background: linear-gradient(135deg, #6547E8, #6547E8); box-shadow: 0 18px 32px -18px rgba(101, 71, 232, 0.85); font-weight: 800; }
 .zy-place-order:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 22px 38px -18px rgba(37, 99, 235, 0.95); }
 .zy-place-order:disabled { cursor: not-allowed; opacity: 0.55; }
 .zy-place-order svg { width: 1.1rem; }
@@ -199,7 +199,7 @@
 .zy-checkout-empty > svg { width: 2.5rem; height: 2.5rem; color: #94a3b8; }
 .zy-checkout-empty strong { color: #0f172a; }
 .zy-checkout-empty p { margin: 0; font-size: 0.82rem; }
-.zy-checkout-empty button { min-height: 2.75rem; margin-top: 0.5rem; padding: 0.7rem 1rem; border-radius: 0.75rem; color: #fff; background: #1d4ed8; font-weight: 700; }
+.zy-checkout-empty button { min-height: 2.75rem; margin-top: 0.5rem; padding: 0.7rem 1rem; border-radius: 0.75rem; color: #fff; background: #6547E8; font-weight: 700; }
 
 .zy-order-confirmation { width: min(68rem, calc(100% - 2rem)); margin: 0 auto; padding: clamp(1.5rem, 5vw, 4rem) 0; }
 .zy-confirmation-hero { display: grid; justify-items: center; padding: 1rem 0 2rem; text-align: center; }
@@ -207,23 +207,23 @@
 .zy-confirmation-hero > span svg { width: 2.2rem; height: 2.2rem; }
 .zy-confirmation-hero h1 { margin: 0; font-size: clamp(1.8rem, 5vw, 3rem); }
 .zy-confirmation-hero small { margin-top: 0.55rem; color: #64748b; }
-.zy-confirmation-reference { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 1rem 1.2rem; border: 1px solid #bad0f2; border-radius: 1rem; background: #eff6ff; }
+.zy-confirmation-reference { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 1rem 1.2rem; border: 1px solid #c4b8f5; border-radius: 1rem; background: #f3f0ff; }
 .zy-confirmation-reference div { display: grid; }
-.zy-confirmation-reference small { color: #56709e; }
-.zy-confirmation-reference strong { color: #1e3a8a; font-size: 1.2rem; letter-spacing: 0.05em; }
-.zy-confirmation-reference button { display: flex; min-height: 2.75rem; align-items: center; gap: 0.4rem; padding: 0.65rem 0.85rem; border: 1px solid #a9c3ea; border-radius: 0.7rem; color: #1d4ed8; background: #fff; font-weight: 800; }
+.zy-confirmation-reference small { color: #6d5eac; }
+.zy-confirmation-reference strong { color: #3b2d80; font-size: 1.2rem; letter-spacing: 0.05em; }
+.zy-confirmation-reference button { display: flex; min-height: 2.75rem; align-items: center; gap: 0.4rem; padding: 0.65rem 0.85rem; border: 1px solid #b5a6ee; border-radius: 0.7rem; color: #6547E8; background: #fff; font-weight: 800; }
 .zy-confirmation-reference button svg { width: 1rem; }
 .zy-confirmation-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; margin-top: 1rem; }
 .zy-confirmation-grid > section { padding: 1.2rem; border: 1px solid rgba(148, 163, 184, 0.24); border-radius: 1rem; background: #fff; }
 .zy-confirmation-grid h3 { display: flex; align-items: center; gap: 0.45rem; margin: 0 0 0.9rem; font-size: 0.95rem; }
-.zy-confirmation-grid h3 svg { width: 1.05rem; color: #2563eb; }
+.zy-confirmation-grid h3 svg { width: 1.05rem; color: #6547E8; }
 .zy-confirmation-grid p { color: #64748b; font-size: 0.78rem; line-height: 1.7; }
 .zy-confirmation-grid > section > div { display: flex; justify-content: space-between; gap: 1rem; padding: 0.4rem 0; color: #64748b; font-size: 0.75rem; }
 .zy-confirmation-grid > section > div b { color: #0f172a; white-space: nowrap; }
 .zy-confirmation-totals { display: flex; flex-direction: column; }
 .zy-confirmation-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 0.7rem; margin-top: 1.5rem; }
 .zy-confirmation-actions button { display: flex; min-height: 3rem; align-items: center; gap: 0.45rem; padding: 0.7rem 1rem; border: 1px solid #cbd5e1; border-radius: 0.8rem; color: #334155; background: #fff; font-weight: 800; }
-.zy-confirmation-actions button:first-child { color: #fff; border-color: #1d4ed8; background: #1d4ed8; }
+.zy-confirmation-actions button:first-child { color: #fff; border-color: #6547E8; background: #6547E8; }
 .zy-confirmation-actions svg { width: 1.05rem; }
 
 .is-spinning { animation: zy-checkout-spin 800ms linear infinite; }

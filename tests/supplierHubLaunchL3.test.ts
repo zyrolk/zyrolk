@@ -7,6 +7,7 @@ import {
   normalizeSupplierSku,
   sanitizeSupplierProductDraft,
   sanitizeSupplierProfile,
+  supplierAccountManagesProduct,
   supplierOwnsOrder,
   validateSupplierProductForSubmission,
 } from '../functions/src/api/suppliers/supplierPortalLogic';
@@ -118,7 +119,7 @@ test('Supplier Portal routes enforce role, ownership, duplicate prevention and p
   assert.match(route, /orders\/:orderId\/assign", requireSupplierHubAdmin/);
   assert.match(fulfilment, /supplierSnapshot\.data\(\)\?\.role !== "supplier"/);
   assert.match(route, /userSnapshot\.data\(\)\?\.role !== "supplier"/);
-  assert.match(route, /ownerId !== identity\.uid/);
+  assert.match(route, /supplierAccountManagesProduct\(productAttribution, identity\.uid, mappedSources\)/);
   assert.match(route, /supplierGroupForAccount\(privateOrder, supplierId\)/);
   assert.match(route, /supplier_sku_claims/);
   assert.match(route, /supplier_product_claims/);
@@ -139,6 +140,23 @@ test('supplier fulfilment derives customer order status without touching invento
   assert.match(fulfilmentTransaction, /supplierFulfilmentStatus/);
   assert.match(fulfilmentTransaction, /deriveOrderStatusFromFulfilmentGroups/);
   assert.doesNotMatch(orderMutation, /stockReservation|stockRestoration|paymentStatus|collection\("products"\)/);
+});
+
+test('supplier product access resolves distinct source and account identities through the authoritative mapping', () => {
+  const accountA = 'supplier-account-a';
+  const accountB = 'supplier-account-b';
+  const sourceA = { id: 'connector-source-a', supplierId: 'connector-source-a', supplierAccountId: accountA };
+  const sourceB = { id: 'connector-source-b', supplierId: 'connector-source-b', supplierAccountId: accountB };
+  const importedProduct = { fulfilmentMode: 'supplier', supplierId: sourceA.id, supplierSourceId: sourceA.id };
+
+  assert.notEqual(sourceA.id, accountA);
+  assert.equal(supplierAccountManagesProduct(importedProduct, accountA, [sourceA, sourceB]), true);
+  assert.equal(supplierAccountManagesProduct(importedProduct, accountB, [sourceA, sourceB]), false);
+  assert.equal(supplierAccountManagesProduct(importedProduct, 'fabricated-account', [sourceA, sourceB]), false);
+  assert.equal(supplierAccountManagesProduct(importedProduct, accountA, [{ ...sourceA, supplierAccountId: accountB }]), false);
+  assert.equal(supplierAccountManagesProduct({ ...importedProduct, supplierId: sourceB.id }, accountA, [sourceA, sourceB]), false);
+  assert.equal(supplierAccountManagesProduct({ ...importedProduct, fulfilmentMode: 'internal' }, accountA, [sourceA]), false);
+  assert.equal(supplierAccountManagesProduct({ fulfilmentMode: 'supplier', supplierId: accountA, supplierSourceId: 'supplier-portal' }, accountA, []), true);
 });
 
 test('Firestore rules expose only owned supplier portal records and deny claim access', () => {
@@ -163,6 +181,16 @@ test('supplier UI is role-isolated, API-backed, responsive and accessible', () =
   assert.doesNotMatch(portal, /firebase\/firestore|setDoc|updateDoc|writeBatch/);
   assert.match(portal, /aria-label="Supplier Hub sections"/);
   assert.match(portal, /role="dialog" aria-modal="true"/);
+  const supplierHub = readFileSync('src/components/SupplierHubFiveStars.tsx', 'utf8');
+  assert.match(supplierHub, /role="dialog"/);
+  assert.match(supplierHub, /aria-modal="true"/);
+  assert.match(supplierHub, /aria-labelledby="connect-supplier-title"/);
+  assert.match(supplierHub, /aria-label="Close Connect Supplier"/);
+  for (const id of [
+    'connect-supplier-name', 'connect-supplier-account', 'connect-supplier-type',
+    'connect-supplier-base-url', 'connect-supplier-product-endpoint',
+    'connect-supplier-credential-profile', 'connect-supplier-rest-url', 'connect-supplier-data-path',
+  ]) assert.match(supplierHub, new RegExp(`htmlFor="${id}"[\\s\\S]*id="${id}"`));
   assert.match(portal, /zy-skip-link/);
   assert.match(portal, /sm:grid-cols-2/);
   assert.match(portal, /loading="lazy"/);

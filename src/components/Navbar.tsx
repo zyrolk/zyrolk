@@ -366,9 +366,9 @@ export default function Navbar({
             {hasQuery ? (
               <div className="p-2">
                 {isLoading ? (
-                  <div className="flex items-center gap-3 px-4 py-6 text-sm font-semibold text-slate-600" role="status">
-                    <LoaderCircle className="h-5 w-5 animate-spin text-brand-blue" aria-hidden="true" />
-                    Loading available products...
+                  <div className="zy-search-loading" role="status">
+                    <LoaderCircle className="animate-spin" aria-hidden="true" />
+                    <p>Loading available products...</p>
                   </div>
                 ) : matchingProducts.length > 0 ? (
                   <div className="space-y-1">
@@ -418,10 +418,16 @@ export default function Navbar({
                     </button>
                   </div>
                 ) : (
-                  <div className="px-4 py-7 text-center" role="status">
-                    <PackageSearch className="mx-auto h-8 w-8 text-slate-300" aria-hidden="true" />
-                    <p className="mt-3 text-sm font-black text-slate-800">No matching products found</p>
-                    <p className="mt-1 text-xs leading-relaxed text-slate-500">Try a product name, brand, model, or category.</p>
+                  <div className="zy-search-empty" role="status">
+                    <span className="zy-search-empty-icon" aria-hidden="true">
+                      <PackageSearch />
+                    </span>
+                    <p className="zy-search-empty-title">No matching products found</p>
+                    <p className="zy-search-empty-copy">Try a product name, brand, model, or category.</p>
+                    <button type="button" onClick={clearSearch} className="zy-search-empty-clear">
+                      <X aria-hidden="true" />
+                      Clear search
+                    </button>
                   </div>
                 )}
               </div>
@@ -493,7 +499,7 @@ export default function Navbar({
   };
 
   return (
-    <header className={`zy-market-header sticky top-0 z-50 w-full ${isScrolled ? 'is-scrolled' : ''}`}>
+    <header className={`zy-market-header sticky top-0 z-50 w-full bg-white ${isScrolled ? 'is-scrolled' : ''}`}>
       <div className="zy-announcement-bar">
         <div className="zy-header-container">
           <div className="zy-announcement-benefits" aria-label="Store benefits">
@@ -609,8 +615,16 @@ export default function Navbar({
               </AnimatePresence>
             </div>
           </div>
-        </div>
 
+          <div className="zy-mobile-delivery-context" aria-label="Delivery coverage">
+            <MapPin aria-hidden="true" />
+            <span>
+              <small>Delivering across</small>
+              <strong>Sri Lanka</strong>
+            </span>
+            <b>{settings?.deliveryCharge === 0 ? 'Free delivery' : 'Islandwide'}</b>
+          </div>
+        </div>
         <div className="zy-navbar-mobile-search">{renderSearchBox('mobile')}</div>
       </div>
 

@@ -1,0 +1,157 @@
+import React, { useEffect, useState } from 'react';
+import { isValidSupplierImageUrl } from '../services/connectors/a2z-website/productImages';
+import { reportSupplierImageFailure } from '../services/supplierImageDiagnostics';
+
+export interface SupplierReviewQuickCardProps {
+  productName: string;
+  supplierItemCode: string;
+  managedImageUrl: string;
+  statusLabel: string;
+  changeLabel: string;
+  sellingPrice: number;
+  supplierCost: number;
+  profit: number;
+  marginPercent: number;
+  stock: number;
+  brandLabel: string;
+  categoryLabel: string;
+  subcategoryLabel?: string;
+  storefrontVisible: boolean;
+  supplierAttribution: string;
+  blockingProblems: string[];
+  decisionReady: boolean;
+  canQuickApprove: boolean;
+  needsResolution: boolean;
+  processing: boolean;
+  terminalState?: 'Approved' | 'Rejected';
+  onApprove: () => void;
+  onReject: () => void;
+  onViewDetails: () => void;
+  onViewHistory: () => void;
+}
+
+function ManagedSupplierImage({ src, alt }: { src?: string; alt: string }) {
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    setFailed(false);
+  }, [src]);
+
+  if (!isValidSupplierImageUrl(src) || failed) {
+    return (
+      <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-100 text-center text-[8px] font-bold uppercase leading-tight text-slate-400 dark:bg-slate-800">
+        No image
+      </div>
+    );
+  }
+
+  return (
+    <img
+      src={src}
+      alt={alt}
+      className="h-10 w-10 rounded-lg border border-slate-200 object-cover dark:border-slate-800"
+      referrerPolicy="no-referrer"
+      loading="lazy"
+      onError={(event) => {
+        reportSupplierImageFailure(event.currentTarget);
+        setFailed(true);
+      }}
+    />
+  );
+}
+
+export function SupplierReviewQuickCard({
+  productName,
+  supplierItemCode,
+  managedImageUrl,
+  statusLabel,
+  changeLabel,
+  sellingPrice,
+  supplierCost,
+  profit,
+  marginPercent,
+  stock,
+  brandLabel,
+  categoryLabel,
+  subcategoryLabel,
+  storefrontVisible,
+  supplierAttribution,
+  blockingProblems,
+  decisionReady,
+  canQuickApprove,
+  needsResolution,
+  processing,
+  terminalState,
+  onApprove,
+  onReject,
+  onViewDetails,
+  onViewHistory,
+}: SupplierReviewQuickCardProps) {
+  return (
+    <article className="flex overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
+      <div className="flex min-w-0 flex-1 flex-col">
+        <div className="flex items-start gap-3 p-4">
+          <ManagedSupplierImage src={managedImageUrl} alt={`Managed product image for ${productName}`} />
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div className="min-w-0">
+                <h4 className="break-words text-sm font-black text-slate-900 dark:text-white">{productName}</h4>
+                <p className="mt-1 text-[9px] font-bold uppercase tracking-wide text-slate-400">Supplier SKU <span className="font-mono normal-case">{supplierItemCode || 'Not supplied'}</span></p>
+              </div>
+              <span className="rounded-lg bg-slate-100 px-2 py-1 text-[9px] font-black text-slate-600 dark:bg-slate-800 dark:text-slate-300">{terminalState || statusLabel}</span>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <span className="rounded-full bg-blue-500/10 px-2 py-0.5 text-[9px] font-black text-blue-600">{changeLabel}</span>
+              <span className={`rounded-full px-2 py-0.5 text-[9px] font-black ${storefrontVisible ? 'bg-emerald-500/10 text-emerald-600' : 'bg-slate-500/10 text-slate-600 dark:text-slate-300'}`}>{storefrontVisible ? 'Visible after approval' : 'Approved but hidden'}</span>
+            </div>
+          </div>
+        </div>
+
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-3 border-y border-slate-100 bg-slate-50/70 p-4 text-[10px] dark:border-slate-800 dark:bg-slate-900/40 sm:grid-cols-3">
+          <div><dt className="text-slate-400">Selling price</dt><dd className="font-black text-blue-600">LKR {sellingPrice.toLocaleString()}</dd></div>
+          <div><dt className="text-slate-400">Supplier cost</dt><dd className="font-black">LKR {supplierCost.toLocaleString()}</dd></div>
+          <div><dt className="text-slate-400">Profit</dt><dd className={`font-black ${profit < 0 ? 'text-red-600' : 'text-emerald-600'}`}>LKR {profit.toLocaleString()}</dd></div>
+          <div><dt className="text-slate-400">Margin</dt><dd className={`font-black ${marginPercent < 0 ? 'text-red-600' : 'text-slate-800 dark:text-slate-100'}`}>{marginPercent.toFixed(2)}%</dd></div>
+          <div><dt className="text-slate-400">Stock</dt><dd className="font-black">{stock}</dd></div>
+          <div><dt className="text-slate-400">Brand</dt><dd className="font-bold">{brandLabel}</dd></div>
+          <div><dt className="text-slate-400">Category</dt><dd className="font-bold">{categoryLabel}</dd></div>
+          {subcategoryLabel && <div><dt className="text-slate-400">Subcategory</dt><dd className="font-bold">{subcategoryLabel}</dd></div>}
+          <div><dt className="text-slate-400">Storefront</dt><dd className="font-bold">{storefrontVisible ? 'Visible' : 'Hidden'}</dd></div>
+        </dl>
+
+        <div className="px-4 pt-3 text-[10px] text-slate-500 dark:text-slate-400">
+          <span className="font-black uppercase tracking-wide text-slate-400">Supplier/source</span>
+          <p className="mt-1 font-semibold text-slate-700 dark:text-slate-200">{supplierAttribution}</p>
+        </div>
+
+        {blockingProblems.length > 0 && (
+          <div className="mx-4 mt-3 rounded-xl bg-amber-500/10 p-3 text-[10px] font-bold text-amber-700 dark:text-amber-300" role="status">
+            <p className="font-black">Review required</p>
+            <ul className="mt-1 list-disc space-y-1 pl-4">{blockingProblems.map((problem) => <li key={problem}>{problem}</li>)}</ul>
+          </div>
+        )}
+
+        {decisionReady && !terminalState && (
+          <div className="mt-auto grid grid-cols-2 gap-2 border-t border-slate-100 bg-white/95 p-3 dark:border-slate-800 dark:bg-slate-950/95 sm:grid-cols-3">
+            {canQuickApprove && (
+              <button type="button" onClick={onApprove} disabled={processing} aria-label={`Approve ${productName}`} className="min-h-11 rounded-xl bg-blue-600 px-3 text-[10px] font-black text-white hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50">
+                {processing ? 'Approving…' : 'Approve'}
+              </button>
+            )}
+            <button type="button" onClick={onReject} disabled={processing} aria-label={`Reject ${productName}`} className="min-h-11 rounded-xl bg-red-600 px-3 text-[10px] font-black text-white hover:bg-red-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 disabled:cursor-not-allowed disabled:opacity-50">Reject</button>
+            <button type="button" onClick={onViewDetails} disabled={processing} aria-label={`${needsResolution ? 'Review and resolve' : 'View details for'} ${productName}`} className={`min-h-11 rounded-xl px-3 text-[10px] font-black focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 disabled:cursor-not-allowed disabled:opacity-50 ${needsResolution ? 'col-span-2 border border-amber-500/30 bg-amber-500/10 text-amber-700 sm:col-span-1 dark:text-amber-300' : 'border border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'}`}>{needsResolution ? 'Review & Resolve' : 'View Details'}</button>
+          </div>
+        )}
+
+        {terminalState && (
+          <div className="p-3">
+            <p className="mb-2 text-center text-[10px] font-black text-emerald-700 dark:text-emerald-300" role="status">Decision recorded: {terminalState}</p>
+            <button type="button" onClick={onViewHistory} className="min-h-11 w-full rounded-xl border border-blue-500/20 bg-blue-500/10 px-4 text-[10px] font-black text-blue-700 dark:text-blue-300">View decision history</button>
+          </div>
+        )}
+      </div>
+    </article>
+  );
+}
+
+export default React.memo(SupplierReviewQuickCard);

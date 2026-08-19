@@ -98,6 +98,7 @@ test('Product Review SEO fields use the existing admin ownership and approval co
 
 test('Product Review exposes only server-authoritative decisions and bounded truthful history/search UI', () => {
   const hub = projectFile('src/components/SupplierHubFiveStars.tsx');
+  const quickCard = projectFile('src/components/SupplierReviewQuickCard.tsx');
   const historyModal = projectFile('src/components/SupplierReviewHistoryModal.tsx');
   const routes = projectFile('functions/src/api/routes/supplier.ts');
   const approval = projectFile('functions/src/api/suppliers/supplierApproval.ts');
@@ -107,9 +108,10 @@ test('Product Review exposes only server-authoritative decisions and bounded tru
 
   assert.match(hub, /Search loaded products or supplier codes/);
   assert.match(hub, /Use Load more products to extend the bounded search/);
-  assert.match(hub, /decideSupplierReviewQueueItem\(item\.id, 'delete'/);
+  assert.doesNotMatch(hub, /decideSupplierReviewQueueItem\(item\.id, 'delete'/);
+  assert.match(routes, /supplier-review-queue\/:queueItemId\/delete/);
   assert.match(hub, /expectedPendingRevision: item\.supplierOfferPendingRevision/);
-  assert.match(hub, /View decision history/);
+  assert.match(quickCard, /View decision history/);
   assert.doesNotMatch(hub, /useEffect\(\(\) => onIdTokenChanged\(auth,/);
   assert.match(historyModal, /Immutable review timeline/);
   assert.match(historyModal, /supplierAdministratorLabel/);

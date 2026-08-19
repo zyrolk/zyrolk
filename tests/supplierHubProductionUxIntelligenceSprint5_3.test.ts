@@ -5,6 +5,7 @@ import { supplierConnectionPresentation } from '../src/services/supplierHubPrese
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8');
 const hub = read('../src/components/SupplierHubFiveStars.tsx');
+const quickCard = read('../src/components/SupplierReviewQuickCard.tsx');
 const editor = read('../src/components/SupplierReviewEditorModal.tsx');
 const activity = read('../src/components/supplier-operations/SupplierOperationsDashboard.tsx');
 const badge = read('../src/components/supplier-ui/SupplierConnectionBadge.tsx');
@@ -17,10 +18,11 @@ test('one connection presentation normalizes every supported Supplier Hub state'
   assert.deepEqual(supplierConnectionPresentation({ connectionStatus: 'failed' }), { state: 'problem', label: 'Connection Problem' });
 });
 
-test('Suppliers, Product Review, and Activity share the memoized connection badge', () => {
+test('supplier operations share the memoized connection badge while Product Review uses compact attribution', () => {
   assert.match(badge, /supplierConnectionPresentation/);
   assert.match(badge, /export default memo\(SupplierConnectionBadge\)/);
-  assert.ok((hub.match(/<SupplierConnectionBadge/g) || []).length >= 3);
+  assert.ok((hub.match(/<SupplierConnectionBadge/g) || []).length >= 1);
+  assert.match(hub, /compactSupplierAttribution/);
   assert.match(activity, /<SupplierConnectionBadge/);
 });
 
@@ -60,12 +62,12 @@ test('suggestions, validation checklist, and gallery controls reuse existing dra
   assert.match(editor, /No additional gallery images\./);
 });
 
-test('bulk review, responsive cards, sticky desktop actions, and Activity filters are present', () => {
-  assert.match(hub, /Approving products\.\.\./);
-  assert.match(hub, /Bulk review request in progress/);
-  assert.match(hub, /grid gap-3 md:hidden/);
-  assert.match(hub, /hidden overflow-x-auto md:block/);
-  assert.match(hub, /sticky right-0/);
+test('individual review cards, explicit detail editing, and Activity filters are present', () => {
+  assert.doesNotMatch(hub, /Approving products\.\.\.|Bulk review request in progress/);
+  assert.match(hub, /grid gap-4 lg:grid-cols-2/);
+  assert.match(hub, /supplierReviewCanQuickApprove/);
+  assert.match(quickCard, /View Details/);
+  assert.match(editor, /Edit product data/);
   assert.match(activity, /\['all', 'success', 'failed', 'skipped', 'running'\]/);
   assert.match(activity, /aria-label="Filter synchronization history"/);
 });

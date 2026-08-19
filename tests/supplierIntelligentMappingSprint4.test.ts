@@ -160,12 +160,14 @@ test('Sprint 4 learned mapping IDs are stable and approval persists immutable ma
 
 test('Sprint 4 queue UX exposes suggestion acceptance, confidence, missing fields, and dynamic specifications', () => {
   const hub = readFileSync('src/components/SupplierHubFiveStars.tsx', 'utf8');
+  const quickCard = readFileSync('src/components/SupplierReviewQuickCard.tsx', 'utf8');
   const editor = readFileSync('src/components/SupplierReviewEditorModal.tsx', 'utf8');
   const sync = readFileSync('functions/src/scheduled/supplierSync.ts', 'utf8');
   assert.match(sync, /suggestSupplierCategory/);
   assert.match(sync, /suggestSupplierBrand/);
   assert.match(sync, /readyToPublish/);
-  assert.match(hub, /Validation Problems/);
+  assert.match(quickCard, /Review required/);
+  assert.match(hub, /supplierReviewCanQuickApprove/);
   assert.match(editor, /Suggested Category/);
   assert.match(editor, /category: item\.categoryMapping\?\.targetCategoryId/);
   assert.match(editor, /Suggested Brand/);

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Check, Eye, Star, ShoppingCart, Heart, Phone } from 'lucide-react';
+import { BadgeDollarSign, Check, Eye, Star, ShoppingCart, Heart, Phone, Truck } from 'lucide-react';
 import { Product } from '../types';
 import { PRODUCT_IMAGE_FALLBACK } from '../features/product-experience/productExperience';
 
@@ -31,6 +31,8 @@ function ProductCard({
     : product.stock <= 5
       ? `Only ${product.stock} left`
       : 'In stock';
+  const deliveryLabel = settings?.deliveryCharge === 0 ? 'Free delivery' : 'Delivery available';
+  const isCodEnabled = settings?.enableCOD !== false;
 
   useEffect(() => () => {
     if (addedTimerRef.current !== null) window.clearTimeout(addedTimerRef.current);
@@ -242,6 +244,11 @@ function ProductCard({
             <span aria-hidden="true" />
             {stockLabel}
           </span>
+        </div>
+
+        <div className="zy-product-card-trust" aria-label="Purchase options">
+          <span><Truck aria-hidden="true" />{deliveryLabel}</span>
+          {isCodEnabled && <span><BadgeDollarSign aria-hidden="true" />COD</span>}
         </div>
 
         {/* Actions button group */}

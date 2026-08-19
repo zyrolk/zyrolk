@@ -67,6 +67,7 @@ test('supplier cards expose only business controls and delay Auto Sync until Ini
 
 test('Product Review is the only normal approval workspace and uses business language', () => {
   const hub = projectFile('src/components/SupplierHubFiveStars.tsx');
+  const quickCard = projectFile('src/components/SupplierReviewQuickCard.tsx');
 
   assert.deepEqual(PRODUCT_REVIEW_FILTERS.map((item) => item.label), [
     'New Products',
@@ -77,19 +78,24 @@ test('Product Review is the only normal approval workspace and uses business lan
     'Approval History',
   ]);
   for (const label of [
-    'Images',
-    'Product',
-    'Brand & Category',
-    'Price & Stock',
-    'Description & Specifications',
-    'Supplier & Detection Time',
-    'Validation Problems',
-    'Edit',
+    'Supplier SKU',
+    'Selling price',
+    'Supplier cost',
+    'Profit',
+    'Margin',
+    'Stock',
+    'Category',
+    'Subcategory',
+    'Brand',
+    'Storefront',
+    'Supplier/source',
     'Approve',
     'Reject',
-  ]) assert.match(hub, new RegExp(label.replaceAll('&', '\\&')));
+    'View Details',
+  ]) assert.match(quickCard, new RegExp(label.replaceAll('&', '\\&')));
 
   assert.doesNotMatch(hub, /Bulk Delete/);
+  assert.doesNotMatch(hub, /Bulk Approve|Bulk Reject/);
   assert.doesNotMatch(hub, /Import Queue/);
   assert.doesNotMatch(hub, /Pending Changes/);
   assert.equal(supplierReviewStatusLabel({ queueState: 'processing' }), 'Preparing');

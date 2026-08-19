@@ -17,7 +17,6 @@ import {
   Search,
   Trash2
 } from 'lucide-react';
-import { isValidSupplierImageUrl } from '../services/connectors/a2z-website/productImages';
 import { collection, doc, onSnapshot } from 'firebase/firestore';
 import { onIdTokenChanged } from 'firebase/auth';
 import { auth, db, handleFirestoreError, OperationType } from '../firebase';
@@ -26,15 +25,15 @@ import { getSupplierApi, patchSupplierApi, postSupplierApi, requestSupplierApi }
 import { matchesSupplierSearch } from '../services/supplierSearch';
 import { normalizeSupplierSourceForUi } from '../services/supplierSourceUtils';
 import { A2Z_GLOBAL_SECRET_PROFILE, buildSupplierOnboardingSource, SupplierOnboardingType } from '../services/supplierSourceOnboarding';
-import { reportSupplierImageFailure } from '../services/supplierImageDiagnostics';
 import { reportClientIssue } from '../services/observability/clientDiagnostics';
 import SupplierReviewEditorModal from './SupplierReviewEditorModal';
 import SupplierReviewHistoryModal, { SupplierReviewAuditEvent } from './SupplierReviewHistoryModal';
+import SupplierReviewQuickCard from './SupplierReviewQuickCard';
 import SupplierOperationsDashboard from './supplier-operations/SupplierOperationsDashboard';
 import SupplierManagementDashboard from './supplier-management/SupplierManagementDashboard';
 import SupplierManualSyncDialog from './supplier-management/SupplierManualSyncDialog';
 import SupplierConnectionBadge from './supplier-ui/SupplierConnectionBadge';
-import { createSupplierReviewDraft, SupplierReviewDraft } from '../services/supplierReviewEditor';
+import { calculateSupplierProfit, createSupplierReviewDraft, SupplierReviewDraft } from '../services/supplierReviewEditor';
 import { normalizeSupplierCategory } from '../services/supplierCategoryMapping';
 import {
   sortSupplierOffers,
@@ -61,9 +60,16 @@ import {
   supplierConnectionPresentation,
   SupplierHubSection,
   supplierReviewDecisionReady,
+  supplierReviewCanQuickApprove,
   supplierReviewChangeLabel,
+  supplierReviewDisplayLabel,
+  supplierReviewIsConflict,
+  supplierReviewIsRemoval,
+  supplierReviewIsStale,
+  supplierReviewManagedImageUrl,
   supplierReviewApiState,
   supplierReviewStatusLabel,
+  supplierReviewTerminalItem,
   supplierBusinessErrorMessage,
   formatSupplierTimestamp,
   formatSupplierDuration,
@@ -75,36 +81,6 @@ interface SupplierHubFiveStarsProps {
 }
 
 const SUPPLIER_AUTO_SYNC_SCHEDULES = ['1 Hour', '3 Hours', '6 Hours', 'Daily'] as const;
-
-function SupplierImagePreview({ src, alt }: { src?: string; alt: string }) {
-  const [failed, setFailed] = useState(false);
-
-  useEffect(() => {
-    setFailed(false);
-  }, [src]);
-
-  if (!isValidSupplierImageUrl(src) || failed) {
-    return (
-      <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-100 text-center text-[8px] font-bold uppercase leading-tight text-slate-400 dark:bg-slate-800">
-        No image
-      </div>
-    );
-  }
-
-  return (
-    <img
-      src={src}
-      alt={alt}
-      className="h-10 w-10 rounded-lg border border-slate-200 object-cover dark:border-slate-800"
-      referrerPolicy="no-referrer"
-      loading="lazy"
-      onError={(event) => {
-        reportSupplierImageFailure(event.currentTarget);
-        setFailed(true);
-      }}
-    />
-  );
-}
 
 export interface ComparisonResult {
   matchFound: boolean;
@@ -143,6 +119,7 @@ export interface ReviewQueueItem {
   matchedProductId?: string | null; // ID of existing product if match found
   supplierName?: string;
   source?: 'Website' | 'WhatsApp' | 'Supplier Portal';
+  connector?: string;
   portalRequestId?: string;
   supplierId?: string;
   supplierSkuClaimId?: string;
@@ -186,6 +163,7 @@ export interface ReviewQueueItem {
     currentVersion?: string;
   };
   supplierOfferId?: string;
+  reconciliationAction?: string;
   decisionAction?: 'approved' | 'rejected' | 'deleted';
   decisionCompletedAt?: unknown;
   decisionCompletedBy?: unknown;
@@ -239,9 +217,6 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
   const [reviewFilter, setReviewFilter] = useState<ProductReviewFilter>('new_products');
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [reviewSearch, setReviewSearch] = useState<string>('');
-  const [selectedReviewIds, setSelectedReviewIds] = useState<string[]>([]);
-  const [bulkAction, setBulkAction] = useState<'approve' | 'reject' | null>(null);
-  const [bulkProgressTotal, setBulkProgressTotal] = useState(0);
 
   // 1. Supplier Sources & Connect states
   const [supplierSources, setSupplierSources] = useState<any[]>([]);
@@ -271,6 +246,56 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
   const [modalTestError, setModalTestError] = useState<string | null>(null);
   const [modalTestProductsCount, setModalTestProductsCount] = useState<number | null>(null);
   const testedSupplierConfigurationRef = useRef<string | null>(null);
+  const connectDialogRef = useRef<HTMLDivElement>(null);
+  const connectCloseButtonRef = useRef<HTMLButtonElement>(null);
+  const connectPreviousFocusRef = useRef<HTMLElement | null>(null);
+  const connectModalBusyRef = useRef(false);
+
+  const closeConnectModal = useCallback(() => {
+    setShowConnectModal(false);
+    setModalTestStatus('idle');
+    setModalTestError(null);
+    setModalTestProductsCount(null);
+    testedSupplierConfigurationRef.current = null;
+  }, []);
+
+  connectModalBusyRef.current = savingSupplier || modalTestStatus === 'testing';
+
+  useEffect(() => {
+    if (!showConnectModal) return;
+    connectPreviousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const focusTimer = window.setTimeout(() => connectCloseButtonRef.current?.focus(), 0);
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !connectModalBusyRef.current) {
+        event.preventDefault();
+        closeConnectModal();
+        return;
+      }
+      if (event.key !== 'Tab' || !connectDialogRef.current) return;
+      const focusable = Array.from<HTMLElement>(connectDialogRef.current.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
+      ));
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.clearTimeout(focusTimer);
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener('keydown', handleKeyDown);
+      connectPreviousFocusRef.current?.focus();
+    };
+  }, [closeConnectModal, showConnectModal]);
 
   // Supplier source definitions are deliberately projected by Functions. This
   // keeps legacy credential fields out of every browser response.
@@ -397,10 +422,6 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
     )),
     [reviewFilter, reviewQueue, reviewSearch],
   );
-  const selectedReviewItems = useMemo(
-    () => visibleReviewItems.filter((item) => item.status === 'Pending' && supplierReviewDecisionReady(item) && selectedReviewIds.includes(item.id)),
-    [selectedReviewIds, visibleReviewItems],
-  );
   const validCategoryIds = useMemo(() => categories.map((category) => String(category.id)), [categories]);
   const supplierCategoryOptions = useMemo(() => {
     const values = new Map<string, string>();
@@ -423,16 +444,20 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
     () => new Map(supplierSources.map((source) => [String(source.id), source])),
     [supplierSources],
   );
+  const compactSupplierAttribution = useCallback((item: ReviewQueueItem): string => {
+    const source = supplierSourceById.get(String(item.sourceId || item.supplierId || ''));
+    const supplierLabel = String(item.supplierName || source?.supplierName || source?.name || 'Supplier').trim();
+    const connectorValue = String(item.connector || source?.connectorType || source?.supplierType || item.source || 'Supplier source').trim();
+    const connectorLabel = connectorValue.toLowerCase().includes('a2z')
+      ? 'A2Z'
+      : connectorValue.replaceAll('_', ' ').replace(/\b\w/gu, (letter) => letter.toUpperCase());
+    return `${supplierLabel} · ${connectorLabel}`;
+  }, [supplierSourceById]);
   const sourceIsSyncing = useCallback((sourceId: string): boolean => Boolean(
     activeSyncJob
     && isSupplierSyncJobActive(activeSyncJob)
     && (activeSyncJob.sourceIds.includes(sourceId) || activeSyncJob.progress.currentSourceId === sourceId)
   ), [activeSyncJob]);
-
-  useEffect(() => {
-    const pendingIds = new Set(reviewQueue.filter((item) => item.status === 'Pending' && supplierReviewDecisionReady(item)).map((item) => item.id));
-    setSelectedReviewIds((current) => current.filter((id) => pendingIds.has(id)));
-  }, [reviewQueue]);
 
   // Supplier Settings Engine state
   const [editingSourceId, setEditingSourceId] = useState<string | null>(null);
@@ -459,7 +484,6 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
   const [supplierOfferActionId, setSupplierOfferActionId] = useState<string | null>(null);
   const [supplierOfferError, setSupplierOfferError] = useState<string | null>(null);
   const [rejectingReviewItem, setRejectingReviewItem] = useState<ReviewQueueItem | null>(null);
-  const [reviewDecisionAction, setReviewDecisionAction] = useState<'reject' | 'delete'>('reject');
   const [rejectionReasonDraft, setRejectionReasonDraft] = useState('');
   const [historyReviewItem, setHistoryReviewItem] = useState<ReviewQueueItem | null>(null);
   const [reviewAuditEvents, setReviewAuditEvents] = useState<SupplierReviewAuditEvent[]>([]);
@@ -499,10 +523,10 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
       reviewState?: 'active' | 'conflict' | 'history';
       pageCount?: number;
     } = {},
-  ): Promise<void> => {
+  ): Promise<boolean> => {
     const append = options.append === true;
     const after = options.after === undefined ? (append ? supplierReviewCursor : null) : options.after;
-    if (append && !after) return;
+    if (append && !after) return true;
     const requestedPageCount = append ? 1 : Math.max(1, options.pageCount || 1);
     const requestId = ++supplierQueueRequestIdRef.current;
     setSupplierReviewLoading(true);
@@ -520,7 +544,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
         if (!response.ok || result.success !== true || !Array.isArray(result.items)) {
           throw new Error(result.error || 'Supplier products could not be loaded.');
         }
-        if (requestId !== supplierQueueRequestIdRef.current) return;
+        if (requestId !== supplierQueueRequestIdRef.current) return false;
         items = mergeSupplierQueuePage(items, result.items as unknown as ReviewQueueItem[]);
         pagesLoaded += 1;
         nextCursor = result.nextCursor || null;
@@ -533,10 +557,12 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
         ? supplierReviewLoadedPagesRef.current + pagesLoaded
         : pagesLoaded;
       setSupplierQueueError(null);
+      return true;
     } catch (error) {
       if (requestId === supplierQueueRequestIdRef.current) {
         setSupplierQueueError(error instanceof Error ? error.message : 'Supplier products could not be loaded.');
       }
+      return false;
     } finally {
       if (requestId === supplierQueueRequestIdRef.current) {
         setSupplierReviewLoading(false);
@@ -544,8 +570,8 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
     }
   };
 
-  const refreshSupplierQueueViews = async (): Promise<void> => {
-    await loadSupplierQueueView({ pageCount: supplierReviewLoadedPagesRef.current });
+  const refreshSupplierQueueViews = async (): Promise<boolean> => {
+    return loadSupplierQueueView({ pageCount: supplierReviewLoadedPagesRef.current });
   };
 
   useEffect(() => {
@@ -807,7 +833,10 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
   }, [applyActiveSyncJob, postSupplierApi]);
 
   // --- CONNECT SUPPLIER HANDLERS ---
-  const buildNewSupplierSource = (connectionStatus = modalTestStatus === 'Connected' ? 'connected' : 'Not Synced') => {
+  const buildNewSupplierSource = (
+    connectionStatus = modalTestStatus === 'Connected' ? 'connected' : 'Not Synced',
+    lastError = modalTestError,
+  ) => {
     const code = newSupplierCode.trim() || generateSlug(newSupplierName);
     return buildSupplierOnboardingSource({
       id: code,
@@ -820,9 +849,13 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
       apiMethod,
       apiDataPath,
       connectionStatus,
-      lastError: modalTestError,
+      lastError,
     });
   };
+
+  const buildNewSupplierConfigurationFingerprint = () => JSON.stringify(
+    buildNewSupplierSource('Not Synced', null),
+  );
 
   const handleModalTestConnection = async () => {
     testedSupplierConfigurationRef.current = null;
@@ -845,12 +878,13 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
     setModalTestStatus('testing');
     setModalTestError(null);
     setModalTestProductsCount(null);
-    const testedConfiguration = JSON.stringify(buildNewSupplierSource('Not Synced'));
+    const source = buildNewSupplierSource('Not Synced', null);
+    const testedConfiguration = buildNewSupplierConfigurationFingerprint();
 
     try {
       const response = await postSupplierApi('/api/test-supplier', {
         id: newSupplierCode.trim() || generateSlug(newSupplierName),
-        source: buildNewSupplierSource('Not Synced'),
+        source,
       });
 
       const result = await response.json();
@@ -1131,11 +1165,17 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
       setEditingReviewItem(null);
       setSupplierOffers([]);
       setSupplierOfferError(null);
-      void refreshSupplierQueueViews();
-      setSuccessMsg(`Product "${draft.productName.trim()}" approved and published successfully.`);
-      setTimeout(() => setSuccessMsg(null), 3000);
+      setReviewQueue((current) => current.map((candidate) => candidate.id === item.id
+        ? supplierReviewTerminalItem(candidate, 'approved')
+        : candidate));
+      const refreshSucceeded = await refreshSupplierQueueViews();
+      setSuccessMsg(refreshSucceeded
+        ? `Approved: "${draft.productName.trim()}" is no longer actionable.`
+        : `Approved: "${draft.productName.trim()}". Queue refresh failed, so this decision remains locked locally; reload or open Approval History to confirm.`);
+      setTimeout(() => setSuccessMsg(null), refreshSucceeded ? 3000 : 7000);
     } catch (error: any) {
       console.error("Review approval error:", error);
+      void refreshSupplierQueueViews();
       setErrorMsg(`Failed to approve: ${error.message || 'Unknown error'}`);
       setTimeout(() => setErrorMsg(null), 4000);
     } finally {
@@ -1150,88 +1190,22 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
         rejectionReason: rejectionReason.trim(),
         expectedPendingRevision: item.supplierOfferPendingRevision,
       });
-      setProcessingChangeId(null);
       setRejectingReviewItem(null);
-      setReviewDecisionAction('reject');
       setRejectionReasonDraft('');
-      void refreshSupplierQueueViews();
-      setSuccessMsg(`Product "${item.productName}" rejected.`);
-      setTimeout(() => setSuccessMsg(null), 3000);
+      setReviewQueue((current) => current.map((candidate) => candidate.id === item.id
+        ? supplierReviewTerminalItem(candidate, 'rejected')
+        : candidate));
+      const refreshSucceeded = await refreshSupplierQueueViews();
+      setSuccessMsg(refreshSucceeded
+        ? `Rejected: "${item.productName}" is no longer actionable.`
+        : `Rejected: "${item.productName}". Queue refresh failed, so this decision remains locked locally; reload or open Approval History to confirm.`);
+      setTimeout(() => setSuccessMsg(null), refreshSucceeded ? 3000 : 7000);
     } catch (error: any) {
       console.error("Review rejection error:", error);
       setErrorMsg(`Failed to reject: ${error.message || 'Unknown error'}`);
       setTimeout(() => setErrorMsg(null), 4000);
+    } finally {
       setProcessingChangeId(null);
-    }
-  };
-
-  const toggleReviewSelection = (itemId: string) => {
-    setSelectedReviewIds((current) => current.includes(itemId)
-      ? current.filter((id) => id !== itemId)
-      : [...current, itemId]);
-  };
-
-  const toggleAllVisibleReviews = () => {
-    const visiblePendingIds = visibleReviewItems.filter((item) => item.status === 'Pending' && supplierReviewDecisionReady(item)).map((item) => item.id);
-    const allSelected = visiblePendingIds.length > 0 && visiblePendingIds.every((id) => selectedReviewIds.includes(id));
-    setSelectedReviewIds((current) => allSelected
-      ? current.filter((id) => !visiblePendingIds.includes(id))
-      : Array.from(new Set([...current, ...visiblePendingIds])));
-  };
-
-  const handleBulkApproveReviews = async () => {
-    if (selectedReviewItems.length === 0) return;
-    setBulkProgressTotal(selectedReviewItems.length);
-    setBulkAction('approve');
-    setErrorMsg(null);
-    try {
-      const approvals = selectedReviewItems.map((item) => ({
-        queueItemId: item.id,
-        draft: createSupplierReviewDraft(item),
-        expectedPendingRevision: item.supplierOfferPendingRevision,
-      }));
-      const response = await postSupplierApi('/api/supplier-review-queue/bulk-approve', { items: approvals });
-      const result = await response.json().catch(() => ({})) as { success?: boolean; error?: string };
-      if (!response.ok || result.success !== true) throw new Error(result.error || 'Bulk supplier approval could not be completed.');
-
-      setSelectedReviewIds([]);
-      void refreshSupplierQueueViews();
-      setSuccessMsg(`${approvals.length} products approved and published successfully.`);
-      setTimeout(() => setSuccessMsg(null), 3000);
-    } catch (error: any) {
-      setErrorMsg(`Bulk approve stopped: ${error.message || 'Unknown error'}`);
-      setTimeout(() => setErrorMsg(null), 5000);
-    } finally {
-      setBulkAction(null);
-      setBulkProgressTotal(0);
-    }
-  };
-
-  const handleBulkRejectReviews = async () => {
-    if (selectedReviewItems.length === 0) return;
-    setBulkProgressTotal(selectedReviewItems.length);
-    setBulkAction('reject');
-    setErrorMsg(null);
-    try {
-      const response = await postSupplierApi('/api/supplier-review-queue/bulk-reject', {
-        items: selectedReviewItems.map((item) => ({
-          queueItemId: item.id,
-          expectedPendingRevision: item.supplierOfferPendingRevision,
-        })),
-        rejectionReason: 'Bulk rejected by admin.',
-      });
-      const result = await response.json().catch(() => ({})) as { success?: boolean; error?: string };
-      if (!response.ok || result.success !== true) throw new Error(result.error || 'Bulk supplier rejection could not be completed.');
-      setSelectedReviewIds([]);
-      void refreshSupplierQueueViews();
-      setSuccessMsg(`${selectedReviewItems.length} products rejected with audit records.`);
-      setTimeout(() => setSuccessMsg(null), 3000);
-    } catch (error: any) {
-      setErrorMsg(`Bulk reject stopped: ${error.message || 'Unknown error'}`);
-      setTimeout(() => setErrorMsg(null), 5000);
-    } finally {
-      setBulkAction(null);
-      setBulkProgressTotal(0);
     }
   };
 
@@ -1334,28 +1308,6 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
     }
   };
 
-  const handleDismissReviewItem = async (item: ReviewQueueItem, deletionReason: string) => {
-    setProcessingChangeId(item.id);
-    try {
-      await decideSupplierReviewQueueItem(item.id, 'delete', {
-        deletionReason: deletionReason.trim(),
-        expectedPendingRevision: item.supplierOfferPendingRevision,
-      });
-      setRejectingReviewItem(null);
-      setReviewDecisionAction('reject');
-      setRejectionReasonDraft('');
-      void refreshSupplierQueueViews();
-      setSuccessMsg(`Product "${item.productName}" dismissed from the current review.`);
-      setTimeout(() => setSuccessMsg(null), 3000);
-    } catch (error: any) {
-      console.error('Review dismissal error:', error);
-      setErrorMsg(`Failed to dismiss: ${error.message || 'Unknown error'}`);
-      setTimeout(() => setErrorMsg(null), 4000);
-    } finally {
-      setProcessingChangeId(null);
-    }
-  };
-
   const handleToggleSupplierAutoSync = async (source: any) => {
     const currentSchedule = String(source.settings?.autoSync || source.syncSchedule || 'Off').trim();
     const enabled = currentSchedule.toLowerCase() !== 'off';
@@ -1424,7 +1376,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
   };
 
   const newSupplierConfigurationVerified = modalTestStatus === 'Connected'
-    && testedSupplierConfigurationRef.current === JSON.stringify(buildNewSupplierSource('Not Synced'));
+    && testedSupplierConfigurationRef.current === buildNewSupplierConfigurationFingerprint();
   const supplierHasCompletedInitialSync = (source: any): boolean => Boolean(
     source.lastSuccessfulSync
     || source.lastSuccess
@@ -1680,10 +1632,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                     type="button"
                     role="tab"
                     aria-selected={reviewFilter === filter.id}
-                    onClick={() => {
-                      setReviewFilter(filter.id);
-                      setSelectedReviewIds([]);
-                    }}
+                    onClick={() => setReviewFilter(filter.id)}
                     className={`min-h-10 shrink-0 rounded-xl px-3 text-[11px] font-black transition-colors ${reviewFilter === filter.id ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800'}`}
                   >
                     {filter.label}
@@ -1705,31 +1654,6 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                 </div>
               </div>
 
-              {selectedReviewItems.length > 0 && <div className="mb-4 flex flex-wrap items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-900/30">
-                <span className="mr-auto text-[11px] font-bold text-slate-500">
-                  {selectedReviewItems.length} selected
-                </span>
-                <button type="button" onClick={handleBulkApproveReviews} disabled={selectedReviewItems.length === 0 || bulkAction !== null} className="rounded-lg bg-emerald-600 px-3 py-2 text-[10px] font-black text-white disabled:cursor-not-allowed disabled:bg-slate-400">
-                  {bulkAction === 'approve' ? 'Approving...' : 'Bulk Approve'}
-                </button>
-                <button type="button" onClick={handleBulkRejectReviews} disabled={selectedReviewItems.length === 0 || bulkAction !== null} className="rounded-lg bg-amber-600 px-3 py-2 text-[10px] font-black text-white disabled:cursor-not-allowed disabled:bg-slate-400">
-                  {bulkAction === 'reject' ? 'Rejecting...' : 'Bulk Reject'}
-                </button>
-              </div>}
-
-              {bulkAction && (
-                <div className="mb-4 rounded-2xl border border-blue-500/20 bg-blue-500/10 p-4" role="status" aria-live="polite">
-                  <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-black text-blue-700 dark:text-blue-300">
-                    <span>{bulkAction === 'approve' ? 'Approving products...' : 'Rejecting products...'}</span>
-                    <span>{bulkProgressTotal} products</span>
-                  </div>
-                  <div className="mt-3 h-2 overflow-hidden rounded-full bg-blue-950/10" role="progressbar" aria-label="Bulk review request in progress" aria-valuetext={`Waiting for confirmation for ${bulkProgressTotal} products`}>
-                    <div className="h-full w-2/3 animate-pulse rounded-full bg-blue-600 motion-reduce:animate-none" />
-                  </div>
-                  <p className="mt-2 text-[10px] text-blue-600/80 dark:text-blue-300/80">Actions remain disabled until the server confirms the complete review request.</p>
-                </div>
-              )}
-
               {supplierQueueError && (
                 <p role="alert" className="mb-4 rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs font-semibold text-red-600">
                   {supplierBusinessErrorMessage(supplierQueueError, 'Supplier products could not be loaded.')}
@@ -1747,232 +1671,67 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                   </div>
                 </div>
               ) : (
-                <>
-                <div className="grid gap-3 md:hidden" aria-label="Products awaiting review">
+                <div className="grid gap-4 lg:grid-cols-2" aria-label="Products awaiting review">
+                  {/* Launch-ready quick review list: no bulk actions or raw internal identifiers. */}
                   {visibleReviewItems.map((item) => {
-                    const product = item.productPayload || {};
-                    const sellingPrice = Number(product.price ?? item.marketPrice);
-                    const safeSellingPrice = Number.isFinite(sellingPrice) ? sellingPrice : 0;
-                    const specifications = product.specifications && typeof product.specifications === 'object'
-                      ? Object.keys(product.specifications as Record<string, unknown>)
-                      : [];
-                    const reviewSourceId = String(item.sourceId || item.supplierId || '');
-                    const reviewSource = supplierSourceById.get(reviewSourceId);
+                    const draft = createSupplierReviewDraft(item);
+                    const profit = calculateSupplierProfit(draft.sellingPrice, draft.costPrice);
+                    const managedImageUrl = supplierReviewManagedImageUrl(item);
+                    const canQuickApprove = supplierReviewCanQuickApprove(item);
+                    const needsResolution = supplierReviewDecisionReady(item) && !canQuickApprove;
+                    const category = categories.find((candidate) => String(candidate.id) === draft.category);
+                    const categoryLabel = supplierReviewDisplayLabel(draft.category, categories);
+                    const activeSubcategories = (category?.subcategories || []).filter((subcategory) => subcategory.isActive !== false);
+                    const showSubcategory = activeSubcategories.length > 0 || Boolean(draft.subcategory);
+                    const subcategoryLabel = showSubcategory
+                      ? supplierReviewDisplayLabel(draft.subcategory, activeSubcategories)
+                      : undefined;
+                    const brandLabel = supplierReviewDisplayLabel(draft.brand, brands);
+                    const statusLabel = supplierReviewStatusLabel(item);
+                    const terminalState = statusLabel === 'Approved' || statusLabel === 'Rejected'
+                      ? statusLabel
+                      : undefined;
+                    const blockingProblems = [
+                      ...(item.productValidation?.errors || []).map((error) => error.message),
+                      ...(item.productValidation?.missingFields || []),
+                      ...(supplierReviewIsConflict(item) ? ['Conflict requires administrator resolution.'] : []),
+                      ...(supplierReviewIsRemoval(item) ? ['Supplier removal requires administrator resolution.'] : []),
+                      ...(supplierReviewIsStale(item) ? ['Review revision is stale or missing. Reload before deciding.'] : []),
+                      ...(!managedImageUrl ? ['Managed publishable image is not ready.'] : []),
+                    ].filter((value, index, values) => Boolean(value) && values.indexOf(value) === index);
                     return (
-                      <article key={item.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
-                        <div className="flex items-start gap-3 p-4">
-                          <SupplierImagePreview src={item.imageUrl} alt={item.productName} />
-                          <div className="min-w-0 flex-1">
-                            <div className="flex flex-wrap items-start justify-between gap-2">
-                              <div className="min-w-0">
-                                <h4 className="break-words text-sm font-black text-slate-900 dark:text-white">{item.productName}</h4>
-                                <p className="mt-1 font-mono text-[9px] text-slate-400">{item.supplierCode}</p>
-                              </div>
-                              <span className="rounded-lg bg-slate-100 px-2 py-1 text-[9px] font-black text-slate-600 dark:bg-slate-800 dark:text-slate-300">{supplierReviewStatusLabel(item)}</span>
-                            </div>
-                            <div className="mt-3 flex flex-wrap gap-2">
-                              <SupplierConnectionBadge source={reviewSource} isSyncing={sourceIsSyncing(reviewSourceId)} compact />
-                              <span className="rounded-full bg-blue-500/10 px-2 py-0.5 text-[9px] font-black text-blue-600">{supplierReviewChangeLabel(item.comparison)}</span>
-                            </div>
-                          </div>
-                        </div>
-                        <dl className="grid grid-cols-2 gap-3 border-y border-slate-100 bg-slate-50/70 p-4 text-[10px] dark:border-slate-800 dark:bg-slate-900/40">
-                          <div><dt className="text-slate-400">Price</dt><dd className="font-black text-blue-600">LKR {safeSellingPrice.toLocaleString()}</dd></div>
-                          <div><dt className="text-slate-400">Stock</dt><dd className="font-black">{item.stock}</dd></div>
-                          <div><dt className="text-slate-400">Brand</dt><dd className="font-bold">{String(product.brand || item.brandMapping?.mappedBrandId || 'Brand needed')}</dd></div>
-                          <div><dt className="text-slate-400">Category</dt><dd className="font-bold">{String(product.category || item.categoryMapping?.targetCategoryId || 'Category needed')}</dd></div>
-                          <div className="col-span-2"><dt className="text-slate-400">Description</dt><dd className="mt-1 line-clamp-2 text-slate-600 dark:text-slate-300">{String(product.shortDescription || product.description || 'Description needed')}</dd></div>
-                          <div><dt className="text-slate-400">Specifications</dt><dd className="font-bold">{specifications.length}</dd></div>
-                          <div><dt className="text-slate-400">Detected</dt><dd className="font-bold">{formatSupplierTimestamp(item.createdAt, 'Recently')}</dd></div>
-                        </dl>
-                        {!item.productValidation?.readyToPublish && <p className="mx-4 mt-3 rounded-xl bg-amber-500/10 p-2 text-[10px] font-bold text-amber-700 dark:text-amber-300">{(item.productValidation?.missingFields || ['Review required']).join(', ')}</p>}
-                        {supplierReviewDecisionReady(item) && (
-                           <div className="sticky bottom-0 z-10 mt-3 grid grid-cols-2 gap-2 border-t border-slate-100 bg-white/95 p-3 backdrop-blur dark:border-slate-800 dark:bg-slate-950/95 sm:grid-cols-4">
-                             <button type="button" onClick={() => openSupplierReviewEditor(item)} disabled={processingChangeId === item.id || bulkAction !== null} className="min-h-11 rounded-xl bg-emerald-600 text-[10px] font-black text-white disabled:opacity-50">{item.queueState === 'conflict' || item.status === 'CONFLICT' ? 'Review & Resolve' : 'Edit'}</button>
-                             <button type="button" onClick={() => void handleApproveReviewItem(item, createSupplierReviewDraft(item))} disabled={processingChangeId === item.id || bulkAction !== null || item.productValidation?.readyToPublish === false} className="min-h-11 rounded-xl bg-blue-600 text-[10px] font-black text-white disabled:opacity-50">Approve</button>
-                             <button type="button" onClick={() => { setRejectingReviewItem(item); setReviewDecisionAction('reject'); setRejectionReasonDraft(''); }} disabled={processingChangeId === item.id || bulkAction !== null} className="min-h-11 rounded-xl bg-red-600 text-[10px] font-black text-white disabled:opacity-50">Reject</button>
-                             {(reviewFilter === 'conflicts' || reviewFilter === 'needs_attention') && <button type="button" onClick={() => { setRejectingReviewItem(item); setReviewDecisionAction('delete'); setRejectionReasonDraft(''); }} disabled={processingChangeId === item.id || bulkAction !== null} className="min-h-11 rounded-xl border border-slate-300 text-[10px] font-black text-slate-600 disabled:opacity-50 dark:border-slate-700 dark:text-slate-300">Dismiss</button>}
-                           </div>
-                         )}
-                        {!supplierReviewDecisionReady(item) && ['Approved', 'Rejected'].includes(item.status) && <div className="p-3"><button type="button" onClick={() => openSupplierReviewHistory(item)} className="min-h-11 w-full rounded-xl border border-blue-500/20 bg-blue-500/10 px-4 text-[10px] font-black text-blue-700 dark:text-blue-300">View decision history</button></div>}
-                      </article>
+                      <SupplierReviewQuickCard
+                        key={item.id}
+                        productName={draft.productName}
+                        supplierItemCode={draft.supplierItemCode}
+                        managedImageUrl={managedImageUrl}
+                        statusLabel={statusLabel}
+                        changeLabel={supplierReviewChangeLabel(item.comparison)}
+                        sellingPrice={draft.sellingPrice}
+                        supplierCost={draft.costPrice}
+                        profit={profit.profit}
+                        marginPercent={profit.marginPercent}
+                        stock={draft.stock}
+                        brandLabel={brandLabel}
+                        categoryLabel={categoryLabel}
+                        subcategoryLabel={subcategoryLabel}
+                        storefrontVisible={draft.isActive}
+                        supplierAttribution={compactSupplierAttribution(item)}
+                        blockingProblems={blockingProblems}
+                        decisionReady={supplierReviewDecisionReady(item)}
+                        canQuickApprove={canQuickApprove}
+                        needsResolution={needsResolution}
+                        processing={processingChangeId === item.id}
+                        terminalState={terminalState}
+                        onApprove={() => void handleApproveReviewItem(item, draft)}
+                        onReject={() => { setRejectingReviewItem(item); setRejectionReasonDraft(''); }}
+                        onViewDetails={() => openSupplierReviewEditor(item)}
+                        onViewHistory={() => openSupplierReviewHistory(item)}
+                      />
                     );
                   })}
+                  {/* End launch-ready quick review list. */}
                 </div>
-                <div className="hidden overflow-x-auto md:block">
-                  <table className="w-full text-xs text-left border-collapse">
-                    <thead className="sticky top-0 z-10 bg-white dark:bg-[#0d1424]">
-                      <tr className="border-b border-slate-100 dark:border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
-                        <th className="py-3 px-2">
-                          <input
-                            type="checkbox"
-                            aria-label="Select all visible review items"
-                            checked={visibleReviewItems.some((item) => item.status === 'Pending' && supplierReviewDecisionReady(item)) && visibleReviewItems.filter((item) => item.status === 'Pending' && supplierReviewDecisionReady(item)).every((item) => selectedReviewIds.includes(item.id))}
-                            onChange={toggleAllVisibleReviews}
-                            className="h-4 w-4 accent-blue-600"
-                          />
-                        </th>
-                        <th className="py-3 px-3 w-16">Images</th>
-                        <th className="py-3 px-4">Product</th>
-                        <th className="py-3 px-4">Brand & Category</th>
-                        <th className="py-3 px-4">Price & Stock</th>
-                        <th className="py-3 px-4">Description & Specifications</th>
-                        <th className="py-3 px-4">Supplier & Detection Time</th>
-                        <th className="py-3 px-4">Validation Problems</th>
-                        <th className="py-3 px-4">Status</th>
-                        <th className="sticky right-0 bg-white py-3 px-4 text-right dark:bg-[#0d1424]">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {visibleReviewItems.map((item) => {
-                        const sellingPrice = Number(item.productPayload?.price ?? item.marketPrice);
-                        const safeSellingPrice = Number.isFinite(sellingPrice) ? sellingPrice : 0;
-                        const product = item.productPayload || {};
-                        const specifications = product.specifications && typeof product.specifications === 'object'
-                          ? Object.entries(product.specifications as Record<string, unknown>)
-                          : [];
-                        return (
-                        <tr key={item.id} className="border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50/50 dark:hover:bg-slate-900/30">
-                          <td className="py-3 px-2">
-                            <input
-                              type="checkbox"
-                              aria-label={`Select ${item.productName}`}
-                              checked={selectedReviewIds.includes(item.id)}
-                              disabled={item.status !== 'Pending' || !supplierReviewDecisionReady(item) || bulkAction !== null}
-                              onChange={() => toggleReviewSelection(item.id)}
-                              className="h-4 w-4 accent-blue-600 disabled:opacity-40"
-                            />
-                          </td>
-                          <td className="py-3 px-3">
-                            <SupplierImagePreview src={item.imageUrl} alt={item.productName} />
-                          </td>
-                          <td className="py-3 px-4 font-semibold">
-                            {item.productName}
-                            <span className="mt-1 block font-mono text-[9px] font-medium text-slate-400">{item.supplierCode}</span>
-                          </td>
-                          <td className="py-3 px-4 text-[10px]"><strong className="block text-slate-700 dark:text-slate-200">{String(product.brand || item.brandMapping?.mappedBrandId || 'Brand needed')}</strong><span className="mt-1 block text-slate-400">{String(product.category || item.categoryMapping?.targetCategoryId || 'Category needed')}</span></td>
-                          <td className="py-3 px-4 text-[10px]"><strong className="block text-blue-600">LKR {safeSellingPrice.toLocaleString()}</strong><span className="mt-1 block text-slate-400">{item.stock} in stock</span></td>
-                          <td className="max-w-64 py-3 px-4 text-[10px]"><p className="line-clamp-2 text-slate-600 dark:text-slate-300">{String(product.shortDescription || product.description || 'Description needed')}</p><p className="mt-1 font-bold text-slate-400">{specifications.length} specifications</p></td>
-                          <td className="py-3 px-4 text-[10px]"><strong className="block">{item.supplierName || item.sourceId || 'Supplier'}</strong><span className="mt-1 block text-slate-400">{formatSupplierTimestamp(item.createdAt, 'Recently')}</span><span className="mt-2 block"><SupplierConnectionBadge source={supplierSourceById.get(String(item.sourceId || item.supplierId || ''))} isSyncing={sourceIsSyncing(String(item.sourceId || item.supplierId || ''))} compact /></span></td>
-                          <td className="py-3 px-4">
-                            <p className={item.productValidation?.readyToPublish ? 'text-[10px] font-black text-emerald-600' : 'text-[10px] font-black text-amber-600'}>
-                              {item.productValidation?.readyToPublish ? 'No validation problems' : (item.productValidation?.missingFields || ['Review required']).join(', ')}
-                            </p>
-                          </td>
-                          <td className="py-3 px-4">
-                            {item.comparison ? <div className="mb-2 flex flex-col items-start gap-1.5">
-                                <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[10px] font-extrabold border ${
-                                  item.comparison.comparisonStatus === 'NEW_PRODUCT'
-                                    ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20'
-                                    : item.comparison.comparisonStatus === 'PRICE_CHANGED'
-                                    ? 'bg-amber-500/10 text-amber-500 border-amber-500/20'
-                                    : item.comparison.comparisonStatus === 'STOCK_CHANGED'
-                                    ? 'bg-orange-500/10 text-orange-500 border-orange-500/20'
-                                    : item.comparison.comparisonStatus === 'IMAGE_CHANGED'
-                                    ? 'bg-blue-500/10 text-blue-500 border-blue-500/20'
-                                    : item.comparison.comparisonStatus === 'DESCRIPTION_CHANGED'
-                                    ? 'bg-purple-500/10 text-purple-500 border-purple-500/20'
-                                    : item.comparison.comparisonStatus === 'SUPPLIER_OFFER_REMOVED'
-                                    ? 'bg-red-500/10 text-red-500 border-red-500/20'
-                                    : 'bg-slate-500/10 text-slate-500 border-slate-500/20'
-                                }`}>
-                                  <span className={`w-1.5 h-1.5 rounded-full ${
-                                    item.comparison.comparisonStatus === 'NEW_PRODUCT'
-                                      ? 'bg-emerald-500'
-                                      : item.comparison.comparisonStatus === 'PRICE_CHANGED'
-                                      ? 'bg-amber-500'
-                                      : item.comparison.comparisonStatus === 'STOCK_CHANGED'
-                                      ? 'bg-orange-500'
-                                      : item.comparison.comparisonStatus === 'IMAGE_CHANGED'
-                                      ? 'bg-blue-500'
-                                      : item.comparison.comparisonStatus === 'DESCRIPTION_CHANGED'
-                                      ? 'bg-purple-500'
-                                      : item.comparison.comparisonStatus === 'SUPPLIER_OFFER_REMOVED'
-                                      ? 'bg-red-500'
-                                      : 'bg-slate-500'
-                                  }`} />
-                                  {supplierReviewChangeLabel(item.comparison)}
-                                </span>
-                                
-                                {item.comparison.changedFields.length > 0 && (
-                                  <div className="flex flex-wrap gap-1 justify-end max-w-[160px]">
-                                    {item.comparison.changedFields.map((field) => (
-                                      <span 
-                                        key={field} 
-                                        className="text-[8px] px-1 py-0.5 bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 rounded font-semibold uppercase tracking-wider"
-                                      >
-                                        {field}
-                                      </span>
-                                    ))}
-                                  </div>
-                                )}
-                              </div> : (
-                              <span className="text-slate-400 font-bold text-[10px]">Preparing details</span>
-                            )}
-                            <span className={`px-2.5 py-1 rounded-md text-[11px] font-bold ${item.status === 'CONFLICT' ? 'bg-red-500/10 text-red-500' : 'bg-amber-500/10 text-amber-500'}`}>
-                              {supplierReviewStatusLabel(item)}
-                            </span>
-                            {item.status === 'CONFLICT' && item.approvalConflict?.changedFields?.length ? (
-                              <p className="mt-1 max-w-48 text-[9px] font-semibold text-red-500" title={item.approvalConflict.reason}>
-                                Changed: {item.approvalConflict.changedFields.join(', ')}
-                              </p>
-                            ) : null}
-                          </td>
-                          <td className="sticky right-0 bg-white py-3 px-4 text-right dark:bg-[#0d1424]">
-                            {supplierReviewDecisionReady(item) && (
-                              <div className="flex items-center justify-end gap-2">
-                                <button
-                                  onClick={() => openSupplierReviewEditor(item)}
-                                  disabled={processingChangeId === item.id || bulkAction !== null}
-                                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-700 text-white font-bold rounded-lg text-[10px] transition-colors flex items-center gap-1 cursor-pointer"
-                                >
-                                  <Check className="h-3 w-3" />
-                                  {item.queueState === 'conflict' || item.status === 'CONFLICT' ? 'Review & Resolve' : 'Edit'}
-                                </button>
-                                <button
-                                  onClick={() => void handleApproveReviewItem(item, createSupplierReviewDraft(item))}
-                                  disabled={processingChangeId === item.id || bulkAction !== null || item.productValidation?.readyToPublish === false}
-                                  className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-400 text-white font-bold rounded-lg text-[10px] transition-colors flex items-center gap-1"
-                                >
-                                  <Check className="h-3 w-3" /> Approve
-                                </button>
-                                <button
-                                   onClick={() => {
-                                     setRejectingReviewItem(item);
-                                     setReviewDecisionAction('reject');
-                                     setRejectionReasonDraft('');
-                                  }}
-                                  disabled={processingChangeId === item.id || bulkAction !== null}
-                                  className="px-3 py-1.5 bg-red-600 hover:bg-red-700 disabled:bg-slate-700 text-white font-bold rounded-lg text-[10px] transition-colors flex items-center gap-1 cursor-pointer"
-                                >
-                                   <X className="h-3 w-3" />
-                                   Reject
-                                 </button>
-                                 {(reviewFilter === 'conflicts' || reviewFilter === 'needs_attention') && <button
-                                   type="button"
-                                   onClick={() => {
-                                     setRejectingReviewItem(item);
-                                     setReviewDecisionAction('delete');
-                                     setRejectionReasonDraft('');
-                                   }}
-                                   disabled={processingChangeId === item.id || bulkAction !== null}
-                                   className="px-3 py-1.5 rounded-lg border border-slate-300 text-[10px] font-bold text-slate-600 disabled:opacity-50 dark:border-slate-700 dark:text-slate-300"
-                                 >
-                                   Dismiss
-                                 </button>}
-                               </div>
-                             )}
-                            {!supplierReviewDecisionReady(item) && ['Approved', 'Rejected'].includes(item.status) && (
-                              <button type="button" onClick={() => openSupplierReviewHistory(item)} className="min-h-9 rounded-lg border border-blue-500/20 bg-blue-500/10 px-3 text-[10px] font-black text-blue-700 dark:text-blue-300">View history</button>
-                            )}
-                          </td>
-                        </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-                </>
               )}
               {supplierReviewCursor && (
                 <div className="mt-4 flex justify-center">
@@ -2600,8 +2359,15 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
       )}
 
       {showConnectModal && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-[#111928] border border-slate-200/50 dark:border-slate-800 rounded-3xl max-w-xl w-full p-6 text-left shadow-2xl flex flex-col space-y-4">
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4" role="presentation">
+          <div
+            ref={connectDialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="connect-supplier-title"
+            aria-describedby="connect-supplier-description"
+            className="bg-white dark:bg-[#111928] border border-slate-200/50 dark:border-slate-800 rounded-3xl max-w-xl w-full p-6 text-left shadow-2xl flex flex-col space-y-4"
+          >
             
             {/* Header */}
             <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
@@ -2610,21 +2376,18 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                   <Plus className="h-5 w-5" />
                 </div>
                 <div>
-                  <h3 className="text-sm font-extrabold font-display text-slate-900 dark:text-white">Connect Supplier</h3>
-                  <p className="text-[10px] text-slate-400 font-medium">Configure and verify connections to external supplier catalogs</p>
+                  <h3 id="connect-supplier-title" className="text-sm font-extrabold font-display text-slate-900 dark:text-white">Connect Supplier</h3>
+                  <p id="connect-supplier-description" className="text-[10px] text-slate-400 font-medium">Configure and verify connections to external supplier catalogs</p>
                 </div>
               </div>
-              <button 
-                onClick={() => {
-                  setShowConnectModal(false);
-                  setModalTestStatus('idle');
-                  setModalTestError(null);
-                  setModalTestProductsCount(null);
-                  testedSupplierConfigurationRef.current = null;
-                }}
+              <button
+                ref={connectCloseButtonRef}
+                type="button"
+                onClick={closeConnectModal}
+                aria-label="Close Connect Supplier"
                 className="p-1.5 text-slate-400 hover:text-slate-900 dark:hover:text-white bg-slate-100 dark:bg-slate-800 rounded-full cursor-pointer transition-colors"
               >
-                <X className="h-4 w-4" />
+                <X className="h-4 w-4" aria-hidden="true" />
               </button>
             </div>
 
@@ -2664,8 +2427,9 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
               <div className="grid grid-cols-1 gap-4">
                 {/* Supplier Name */}
                 <div className="space-y-1">
-                  <label className="text-slate-400 font-bold block text-[10px] uppercase">Supplier Name</label>
+                  <label htmlFor="connect-supplier-name" className="text-slate-400 font-bold block text-[10px] uppercase">Supplier Name</label>
                   <input 
+                    id="connect-supplier-name"
                     type="text" 
                     required
                     placeholder="e.g., A2Z Traders"
@@ -2679,8 +2443,9 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-slate-400 font-bold block text-[10px] uppercase">Supplier Portal Account</label>
+                  <label htmlFor="connect-supplier-account" className="text-slate-400 font-bold block text-[10px] uppercase">Supplier Portal Account</label>
                   <select
+                    id="connect-supplier-account"
                     required
                     value={newSupplierAccountId}
                     onChange={(event) => {
@@ -2702,8 +2467,9 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
 
               {/* Supplier Type selection */}
               <div className="space-y-1">
-                <label className="text-slate-400 font-bold block text-[10px] uppercase">Supplier Type</label>
+                <label htmlFor="connect-supplier-type" className="text-slate-400 font-bold block text-[10px] uppercase">Supplier Type</label>
                 <select 
+                  id="connect-supplier-type"
                   value={newSupplierType}
                   onChange={(e) => {
                     setNewSupplierType(e.target.value as SupplierOnboardingType);
@@ -2727,10 +2493,11 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
               {(newSupplierType === 'website' || newSupplierType === 'a2z') && (
                 <div className="space-y-3.5 p-4 rounded-2xl bg-amber-500/5 border border-amber-500/10">
                   <div className="space-y-1">
-                    <label className="text-amber-600 dark:text-amber-500 font-black block text-[9px] uppercase tracking-wider">
+                    <label htmlFor="connect-supplier-base-url" className="text-amber-600 dark:text-amber-500 font-black block text-[9px] uppercase tracking-wider">
                       {newSupplierType === 'a2z' ? 'A2Z Base URL' : 'JSON Feed Base URL'}
                     </label>
                     <input 
+                      id="connect-supplier-base-url"
                       type="url" 
                       required
                       placeholder={newSupplierType === 'a2z' ? 'https://supplier.example.com' : 'https://supplier.example.com/catalog/'}
@@ -2741,8 +2508,9 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                   </div>
 
                   {newSupplierType === 'website' && <div className="space-y-1">
-                    <label className="text-amber-600 dark:text-amber-500 font-black block text-[9px] uppercase tracking-wider">Product Endpoint</label>
+                    <label htmlFor="connect-supplier-product-endpoint" className="text-amber-600 dark:text-amber-500 font-black block text-[9px] uppercase tracking-wider">Product Endpoint</label>
                     <input 
+                      id="connect-supplier-product-endpoint"
                       type="text" 
                       required
                       placeholder="/api/products"
@@ -2753,10 +2521,11 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                   </div>}
                   {newSupplierType === 'a2z' && (
                     <div className="space-y-1">
-                      <label className="text-amber-600 dark:text-amber-500 font-black block text-[9px] uppercase tracking-wider">
+                      <label htmlFor="connect-supplier-credential-profile" className="text-amber-600 dark:text-amber-500 font-black block text-[9px] uppercase tracking-wider">
                         Credential profile ID
                       </label>
                       <input
+                        id="connect-supplier-credential-profile"
                         type="text"
                         required
                         maxLength={160}
@@ -2782,8 +2551,9 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
               {newSupplierType === 'api' && (
                 <div className="space-y-3.5 p-4 rounded-2xl bg-blue-500/5 border border-blue-500/10">
                   <div className="space-y-1">
-                    <label className="text-blue-500 font-black block text-[9px] uppercase tracking-wider">REST Endpoint URL</label>
+                    <label htmlFor="connect-supplier-rest-url" className="text-blue-500 font-black block text-[9px] uppercase tracking-wider">REST Endpoint URL</label>
                     <input 
+                      id="connect-supplier-rest-url"
                       type="url" 
                       required
                       placeholder="https://api.distributor.com/v2/catalog"
@@ -2794,8 +2564,9 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
                   </div>
 
                   <div className="space-y-1">
-                    <label className="text-blue-500 font-black block text-[9px] uppercase tracking-wider">JSON Response Data Path</label>
+                    <label htmlFor="connect-supplier-data-path" className="text-blue-500 font-black block text-[9px] uppercase tracking-wider">JSON Response Data Path</label>
                     <input 
+                      id="connect-supplier-data-path"
                       type="text" 
                       required
                       placeholder="products"
@@ -2811,12 +2582,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
               <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex justify-between gap-2 items-center">
                 <button 
                   type="button"
-                  onClick={() => {
-                    setShowConnectModal(false);
-                    setModalTestStatus('idle');
-                    setModalTestError(null);
-                    setModalTestProductsCount(null);
-                  }}
+                  onClick={closeConnectModal}
                   className="px-4 py-2 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 dark:text-slate-400 font-bold rounded-xl text-xs transition-colors cursor-pointer border border-slate-200/50 dark:border-slate-800/60"
                 >
                   Cancel
@@ -2906,16 +2672,15 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
             onSubmit={(event) => {
               event.preventDefault();
               if (!rejectionReasonDraft.trim()) return;
-              if (reviewDecisionAction === 'delete') void handleDismissReviewItem(rejectingReviewItem, rejectionReasonDraft);
-              else void handleRejectReviewItem(rejectingReviewItem, rejectionReasonDraft);
+              void handleRejectReviewItem(rejectingReviewItem, rejectionReasonDraft);
             }}
           >
             <div>
-              <h3 id="supplier-rejection-title" className="text-sm font-extrabold text-slate-900 dark:text-white">{reviewDecisionAction === 'delete' ? 'Dismiss this review' : 'Reject supplier product'}</h3>
-              <p className="mt-1 text-xs text-slate-500">{reviewDecisionAction === 'delete' ? 'Dismissal preserves the immutable audit record and does not delete the product or supplier evidence. A later supplier observation may require review again.' : 'Give the supplier a clear reason they can act on.'}</p>
+              <h3 id="supplier-rejection-title" className="text-sm font-extrabold text-slate-900 dark:text-white">Reject supplier product</h3>
+              <p className="mt-1 text-xs text-slate-500">Give the supplier a clear reason they can act on.</p>
             </div>
             <label className="block text-xs font-bold text-slate-600 dark:text-slate-300">
-              {reviewDecisionAction === 'delete' ? 'Dismissal reason' : 'Rejection reason'}
+              Rejection reason
               <textarea
                 autoFocus
                 required
@@ -2926,8 +2691,8 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
               />
             </label>
             <div className="flex justify-end gap-2">
-              <button type="button" onClick={() => { setRejectingReviewItem(null); setReviewDecisionAction('reject'); setRejectionReasonDraft(''); }} className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-bold text-slate-600 dark:border-slate-700 dark:text-slate-300">Cancel</button>
-              <button type="submit" disabled={!rejectionReasonDraft.trim() || processingChangeId === rejectingReviewItem.id} className="rounded-xl bg-red-600 px-4 py-2 text-xs font-bold text-white disabled:opacity-50">{reviewDecisionAction === 'delete' ? 'Dismiss Review' : 'Reject Product'}</button>
+              <button type="button" onClick={() => { setRejectingReviewItem(null); setRejectionReasonDraft(''); }} className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-bold text-slate-600 dark:border-slate-700 dark:text-slate-300">Cancel</button>
+              <button type="submit" disabled={!rejectionReasonDraft.trim() || processingChangeId === rejectingReviewItem.id} className="rounded-xl bg-red-600 px-4 py-2 text-xs font-bold text-white disabled:opacity-50">Reject Product</button>
             </div>
           </form>
         </div>

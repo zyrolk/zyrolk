@@ -17,7 +17,7 @@ export const PRODUCT_REVIEW_FILTERS: ReadonlyArray<{ id: ProductReviewFilter; la
   { id: 'approved_history', label: 'Approval History' },
 ];
 
-interface ReviewPresentationItem {
+export interface ReviewPresentationItem {
   status?: unknown;
   queueState?: unknown;
   decisionAction?: unknown;
@@ -25,6 +25,26 @@ interface ReviewPresentationItem {
   comparison?: { comparisonStatus?: unknown } | null;
   productValidation?: { readyToPublish?: unknown; missingFields?: unknown[]; errors?: unknown[] } | null;
 }
+
+export interface SupplierReviewQuickApprovalItem extends ReviewPresentationItem {
+  comparisonStatus?: unknown;
+  reconciliationAction?: unknown;
+  approvalConflict?: unknown;
+  supplierOfferPendingRevision?: unknown;
+  managedMedia?: unknown;
+  productPayload?: {
+    specs?: unknown;
+    media?: unknown;
+    supplierMedia?: unknown;
+  } | null;
+}
+
+export interface SupplierReviewDisplayOption {
+  id?: unknown;
+  name?: unknown;
+}
+
+export type SupplierReviewTerminalAction = 'approved' | 'rejected';
 
 const normalized = (value: unknown): string => String(value || '').trim().toLowerCase();
 
@@ -103,6 +123,106 @@ export function supplierAdministratorLabel(
 export function supplierReviewDecisionReady(item: ReviewPresentationItem): boolean {
   const state = normalized(item.queueState);
   return state === 'review_pending' || state === 'conflict' || (!state && normalized(item.status) === 'pending');
+}
+
+export function supplierReviewIsConflict(item: SupplierReviewQuickApprovalItem): boolean {
+  return normalized(item.status) === 'conflict'
+    || normalized(item.queueState) === 'conflict'
+    || Boolean(item.approvalConflict);
+}
+
+export function supplierReviewIsRemoval(item: SupplierReviewQuickApprovalItem): boolean {
+  const comparisonStatus = normalized(item.comparison?.comparisonStatus || item.comparisonStatus);
+  const reconciliationAction = normalized(item.reconciliationAction);
+  return isRemovedChange(comparisonStatus)
+    || reconciliationAction === 'supplier_offer_unavailable';
+}
+
+/**
+ * Quick approval is deliberately limited to current, revision-bound queue
+ * observations. Legacy or terminal records remain available through the
+ * detailed review path, while the server still performs the authoritative
+ * revision comparison inside the approval transaction.
+ */
+export function supplierReviewIsStale(item: SupplierReviewQuickApprovalItem): boolean {
+  const revision = String(item.supplierOfferPendingRevision || '').trim();
+  return normalized(item.status) !== 'pending'
+    || normalized(item.queueState) !== 'review_pending'
+    || !/^[a-f0-9]{64}$/u.test(revision);
+}
+
+const managedMediaRecords = (item: SupplierReviewQuickApprovalItem): Array<Record<string, unknown>> => {
+  const payload = item.productPayload || {};
+  const candidates = [item.managedMedia, payload.supplierMedia, payload.media];
+  const selected = candidates.find((value) => Array.isArray(value) && value.length > 0);
+  return Array.isArray(selected)
+    ? selected.filter((value): value is Record<string, unknown> => Boolean(value) && typeof value === 'object' && !Array.isArray(value))
+    : [];
+};
+
+/** Returns only a managed Firebase Storage URL that approval can publish. */
+export function supplierReviewManagedImageUrl(item: SupplierReviewQuickApprovalItem): string {
+  const ordered = managedMediaRecords(item).sort((left, right) => {
+    const primaryDifference = Number(right.isPrimary === true) - Number(left.isPrimary === true);
+    if (primaryDifference !== 0) return primaryDifference;
+    return Number(left.sortOrder || 0) - Number(right.sortOrder || 0);
+  });
+  const url = String(ordered[0]?.firebaseStorageUrl || '').trim();
+  return /^https:\/\/\S+$/iu.test(url) ? url : '';
+}
+
+/** Uses the canonical approval payload field instead of the legacy UI alias. */
+export function supplierReviewSpecificationCount(item: SupplierReviewQuickApprovalItem): number {
+  const specs = item.productPayload?.specs;
+  return specs && typeof specs === 'object' && !Array.isArray(specs)
+    ? Object.keys(specs).length
+    : 0;
+}
+
+export function supplierReviewCanQuickApprove(item: SupplierReviewQuickApprovalItem): boolean {
+  const validation = item.productValidation;
+  return validation?.readyToPublish === true
+    && (validation.missingFields?.length || 0) === 0
+    && (validation.errors?.length || 0) === 0
+    && !supplierReviewIsConflict(item)
+    && !supplierReviewIsRemoval(item)
+    && !supplierReviewIsStale(item)
+    && Boolean(supplierReviewManagedImageUrl(item));
+}
+
+/**
+ * Resolves only a verified catalogue display name. The underlying identifier is
+ * deliberately never returned because Product Review quick cards are an
+ * operator-facing summary rather than a document-inspection surface.
+ */
+export function supplierReviewDisplayLabel(
+  identifier: unknown,
+  options: readonly SupplierReviewDisplayOption[],
+): string {
+  const normalizedIdentifier = String(identifier || '').trim();
+  if (!normalizedIdentifier) return 'Not available';
+  const matched = options.find((option) => String(option.id || '').trim() === normalizedIdentifier);
+  const label = String(matched?.name || '').trim();
+  if (label) return label;
+  return options.length === 0 ? 'Loading…' : 'Not available';
+}
+
+/**
+ * Immediately removes decision controls after a successful server decision.
+ * A subsequent queue refresh may remove the item from the active filter, but a
+ * failed refresh must never make the already-decided item actionable again.
+ */
+export function supplierReviewTerminalItem<T extends ReviewPresentationItem>(
+  item: T,
+  action: SupplierReviewTerminalAction,
+): T {
+  const approved = action === 'approved';
+  return {
+    ...item,
+    status: approved ? 'Approved' : 'Rejected',
+    queueState: action,
+    decisionAction: action,
+  };
 }
 
 export function supplierReviewStatusLabel(item: ReviewPresentationItem): string {
