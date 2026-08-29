@@ -62,6 +62,7 @@ export const DEFAULT_WEBSITE_SETTINGS: WebsiteSettings = {
   businessHours: { weekdays: '9:00 AM - 6:00 PM', saturday: '9:00 AM - 5:00 PM', sunday: 'Closed' },
   storeStatus: 'open',
   storeStatusMessage: '',
+  codPendingOrderTtlHours: 24,
   enableCOD: true,
   enableWishlist: true,
   enableReviews: true,

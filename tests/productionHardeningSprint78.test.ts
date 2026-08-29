@@ -141,7 +141,7 @@ test('customer workflows use safe diagnostics and resilient checkout networking'
 });
 
 test('price-change cart refresh removes unavailable products instead of preserving a false quantity', () => {
-  assert.match(app, /refreshed\.isActive === false \|\| refreshed\.stock <= 0\) return \[\]/);
+  assert.match(app, /!isProductExplicitlyActive\(refreshed\.isActive\) \|\| refreshed\.stock <= 0\) return \[\]/);
   assert.match(app, /quantity: Math\.min\(item\.quantity, refreshed\.stock\)/);
   assert.doesNotMatch(app, /Math\.max\(1, refreshed\.stock\)/);
 });

@@ -3,9 +3,9 @@ import {
   Menu, X, Search, Heart, ShoppingBag, User, 
   LayoutDashboard, LogIn, LogOut, ChevronDown,
   ArrowUpRight, Clock3, LoaderCircle, PackageSearch, Tag,
-  ShieldCheck, Grid3X3, MessageCircle, MapPin, Bell,
-  Ticket, Settings, Headphones, ReceiptText, Home, Sparkles, BarChart3,
-  Camera, Languages, LockKeyhole, Mic, RotateCcw, Truck
+  ShieldCheck, Grid3X3, MessageCircle, MapPin,
+  Settings, Headphones, ReceiptText, Home, BarChart3, Sparkles,
+  Banknote, LockKeyhole, Truck
 } from 'lucide-react';
 import { auth } from '../firebase';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
@@ -276,16 +276,14 @@ export default function Navbar({
   ];
 
   const accountItems = [
-    { label: 'My Account', icon: User, action: user ? () => navigateToPage('account') : () => { onOpenAuthModal(); setIsProfileOpen(false); }, pending: false },
-    { label: 'Orders', icon: ReceiptText, action: user ? () => navigateToPage('account-orders') : () => { onOpenAuthModal(); setIsProfileOpen(false); }, pending: false },
-    ...(isWishlistEnabled ? [{ label: 'Wishlist', icon: Heart, action: () => navigateToPage('wishlist'), pending: false }] : []),
-    { label: 'Recently Viewed', icon: Clock3, action: () => navigateToPage('recently-viewed'), pending: false },
-    { label: 'Compare Products', icon: BarChart3, action: () => navigateToPage('compare'), pending: false },
-    { label: 'Addresses', icon: MapPin, action: user ? () => navigateToPage('account-addresses') : () => { onOpenAuthModal(); setIsProfileOpen(false); }, pending: false },
-    { label: 'Notifications', icon: Bell, action: user ? () => navigateToPage('account-settings') : () => { onOpenAuthModal(); setIsProfileOpen(false); }, pending: false },
-    { label: 'Coupons', icon: Ticket, action: undefined, pending: true },
-    { label: 'Support', icon: Headphones, action: () => navigateToPage('contact'), pending: false },
-    { label: 'Settings', icon: Settings, action: user ? () => navigateToPage('account-settings') : () => { onOpenAuthModal(); setIsProfileOpen(false); }, pending: false }
+    { label: 'My Account', icon: User, action: user ? () => navigateToPage('account') : () => { onOpenAuthModal(); setIsProfileOpen(false); } },
+    { label: 'Orders', icon: ReceiptText, action: user ? () => navigateToPage('account-orders') : () => { onOpenAuthModal(); setIsProfileOpen(false); } },
+    ...(isWishlistEnabled ? [{ label: 'Wishlist', icon: Heart, action: () => navigateToPage('wishlist') }] : []),
+    { label: 'Recently Viewed', icon: Clock3, action: () => navigateToPage('recently-viewed') },
+    { label: 'Compare Products', icon: BarChart3, action: () => navigateToPage('compare') },
+    { label: 'Addresses', icon: MapPin, action: user ? () => navigateToPage('account-addresses') : () => { onOpenAuthModal(); setIsProfileOpen(false); } },
+    { label: 'Support', icon: Headphones, action: () => navigateToPage('contact') },
+    { label: 'Settings', icon: Settings, action: user ? () => navigateToPage('account-settings') : () => { onOpenAuthModal(); setIsProfileOpen(false); } }
   ];
 
   const renderSearchBox = (idPrefix: string) => {
@@ -311,7 +309,7 @@ export default function Navbar({
           }}
           onFocus={() => setIsSearchOpen(true)}
           onKeyDown={handleSearchKeyDown}
-          className="zy-input zy-market-search min-h-14 min-w-0 max-w-full w-full rounded-2xl pl-11 pr-[12.75rem] text-base text-slate-900 transition-all placeholder:text-slate-500 focus-visible:outline-none [&::-webkit-search-cancel-button]:appearance-none"
+          className="zy-input zy-market-search min-h-14 min-w-0 max-w-full w-full rounded-2xl pl-11 pr-[5.25rem] text-base text-slate-900 transition-all placeholder:text-slate-500 focus-visible:outline-none [&::-webkit-search-cancel-button]:appearance-none"
           role="combobox"
           aria-autocomplete="list"
           aria-expanded={isSearchOpen}
@@ -325,27 +323,6 @@ export default function Navbar({
               <X aria-hidden="true" />
             </button>
           )}
-          <button
-            type="button"
-            className="zy-search-tool"
-            aria-label="Voice search is unavailable in this launch version"
-            title="Voice search is unavailable in this launch version"
-            disabled
-          >
-            <Mic aria-hidden="true" />
-          </button>
-          <button
-            type="button"
-            className="zy-search-tool"
-            aria-label="Image search is not available yet"
-            title="Image search is coming soon"
-            disabled
-          >
-            <Camera aria-hidden="true" />
-          </button>
-          <button type="button" onClick={focusSearch} className="zy-search-ai" aria-label="Open product discovery search">
-            <Sparkles aria-hidden="true" /><span>Find</span>
-          </button>
           <button type="submit" className="zy-search-submit" aria-label="Submit product search">
             <Search aria-hidden="true" />
           </button>
@@ -503,14 +480,13 @@ export default function Navbar({
       <div className="zy-announcement-bar">
         <div className="zy-header-container">
           <div className="zy-announcement-benefits" aria-label="Store benefits">
+            <span><Banknote aria-hidden="true" />Cash on Delivery</span>
             <span><Truck aria-hidden="true" />Islandwide Delivery</span>
-            <span><RotateCcw aria-hidden="true" />Easy Returns</span>
-            <span><LockKeyhole aria-hidden="true" />Secure Payments</span>
+            <span><LockKeyhole aria-hidden="true" />Secure Checkout</span>
             <button type="button" onClick={focusSearch}><Search aria-hidden="true" />Product Search</button>
           </div>
           <div className="zy-announcement-contact">
             {settings?.contactPhone && <a href={`tel:${settings.contactPhone}`}>{settings.contactPhone}</a>}
-            <span aria-label="Available languages: English and Sinhala"><Languages aria-hidden="true" />EN / සිං</span>
           </div>
         </div>
       </div>
@@ -559,9 +535,6 @@ export default function Navbar({
                 <span className="zy-action-icon"><Heart aria-hidden="true" />{wishlistCount > 0 && <b>{wishlistCount}</b>}</span><span>Wishlist</span>
               </button>
             )}
-            <button type="button" className="zy-header-action zy-notification-action" onClick={user ? () => navigateToPage('account-settings') : onOpenAuthModal}>
-              <Bell aria-hidden="true" /><span>Notifications</span>
-            </button>
             <button type="button" className="zy-header-action zy-cart-action" onClick={onOpenCart} aria-label={`Cart with ${cartCount} items`}>
               <span className="zy-action-icon"><ShoppingBag aria-hidden="true" />{cartCount > 0 && <b>{cartCount}</b>}</span><span>Cart</span>
             </button>
@@ -593,10 +566,10 @@ export default function Navbar({
                       <div><small>{user ? 'Your marketplace account' : 'Welcome to Zyro.lk'}</small><strong>{user ? user.displayName || 'Zyro.lk Customer' : 'Guest shopper'}</strong><p>{user?.email || 'Sign in to manage your shopping'}</p></div>
                     </div>
                     <div className="zy-account-menu-body">
-                      {accountItems.map(({ label, icon: Icon, action, pending }) => (
-                        <button key={label} type="button" onClick={action} disabled={pending} className="zy-account-row" aria-disabled={pending || undefined}>
+                      {accountItems.map(({ label, icon: Icon, action }) => (
+                        <button key={label} type="button" onClick={action} className="zy-account-row">
                           <span className="zy-account-row-icon"><Icon aria-hidden="true" /></span><span>{label}</span>
-                          {pending ? <small>Coming soon</small> : <ArrowUpRight aria-hidden="true" />}
+                          <ArrowUpRight aria-hidden="true" />
                         </button>
                       ))}
                       {isAdminUser && (
@@ -638,7 +611,6 @@ export default function Navbar({
               <button key={link.id} type="button" onClick={link.action} className={`zy-navbar-link ${currentPage === link.id && !isAdminMode ? 'is-active' : ''}`}>{link.label}</button>
             ))}
           </nav>
-          <button type="button" className="zy-navigation-ai" onClick={focusSearch}><Sparkles aria-hidden="true" />Find products</button>
         </div>
       </div>
 
@@ -686,7 +658,6 @@ export default function Navbar({
             )}
             <div className="zy-mobile-menu-footer">
               {settings?.contactPhone && <a href={`tel:${settings.contactPhone}`}><Headphones aria-hidden="true" />{settings.contactPhone}</a>}
-              <span><Languages aria-hidden="true" />EN / සිං</span>
             </div>
           </motion.div>
         )}

@@ -9,9 +9,9 @@ const styles = readFileSync('src/styles/storefrontHero.css', 'utf8');
 
 test('premium hero communicates the marketplace without fabricated intelligence or commerce data', () => {
   assert.match(hero, /Sri Lankan Marketplace/);
-  assert.match(hero, /Shop Smarter\./);
-  assert.match(hero, /Discover Better\./);
-  assert.match(hero, /trusted Sri Lankan suppliers with fast catalogue search/);
+  assert.match(hero, /Shop Sri Lanka Online\./);
+  assert.match(hero, /Cash on Delivery available\./);
+  assert.match(hero, /pay with Cash on Delivery when your order arrives/);
   assert.doesNotMatch(hero, /AI-Powered Marketplace|AI-assisted search/);
   assert.doesNotMatch(hero, /\b(?:1,000,000|five-star reviews|number one marketplace|guaranteed savings)\b/iu);
 });
@@ -31,15 +31,17 @@ test('hero keeps CMS campaign configuration and never introduces mock catalogue 
   assert.match(hero, /activeSlide\.image/);
   assert.match(hero, /activeSlide\.ctaUrl/);
   assert.match(hero, /normalizeSlideSpeed\(settings\?\.autoSlideSpeed\)/);
-  assert.match(hero, /products\.filter\(product => product\.isActive !== false\)/);
+  assert.match(hero, /products\.filter\(product => isProductExplicitlyActive\(product\.isActive\)\)/);
   assert.match(hero, /\.filter\(category => category\.isActive !== false\)/);
   assert.doesNotMatch(hero, /mockProducts|sampleProducts|placeholderProducts/);
 });
 
-test('voice and image-search controls are honest and accessible', () => {
+test('voice and image-search controls stay hidden for launch while search remains accessible', () => {
   assert.doesNotMatch(hero, /SpeechRecognition|webkitSpeechRecognition/);
-  assert.match(hero, /disabled[\s\S]*aria-label="Voice search is unavailable in this launch version"/);
-  assert.match(hero, /disabled[\s\S]*aria-label="Image search is coming soon"/);
+  assert.doesNotMatch(hero, /Voice search is unavailable in this launch version/);
+  assert.doesNotMatch(hero, /Image search is coming soon/);
+  assert.doesNotMatch(hero, /<Mic\b/);
+  assert.doesNotMatch(hero, /<Camera\b/);
   assert.match(hero, /role="search"/);
   assert.match(hero, /aria-autocomplete="list"/);
   assert.match(hero, /aria-activedescendant/);
@@ -49,16 +51,15 @@ test('voice and image-search controls are honest and accessible', () => {
 
 test('hero trust and category surfaces use factual labels and live category actions', () => {
   for (const label of [
+    'Cash on Delivery',
     'Verified Suppliers',
     'Islandwide Delivery',
     'Secure Checkout',
-    'Easy Returns',
     'Customer Support',
-    'Relevant Recommendations',
   ]) {
     assert.match(hero, new RegExp(label));
   }
-  assert.doesNotMatch(hero, /24\/7 Support/);
+  assert.doesNotMatch(hero, /24\/7 Support|Relevant Recommendations|Easy Returns/);
   assert.match(hero, /popularCategories\.map/);
   assert.match(hero, /visualCategories\.map/);
 });

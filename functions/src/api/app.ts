@@ -149,7 +149,7 @@ export function createApiApp(): express.Express {
         adminDb.collection("products").limit(5000).get(),
         adminDb.collection("categories").limit(500).get(),
       ]);
-      const productUrls = productsSnapshot.docs.filter((product) => product.data().isActive !== false).map((product) => (
+      const productUrls = productsSnapshot.docs.filter((product) => product.data().isActive === true).map((product) => (
         `<url><loc>${xmlEscape(`https://zyro.lk/products/${encodeURIComponent(product.id)}`)}</loc><changefreq>daily</changefreq><priority>0.8</priority></url>`
       ));
       const categoryUrls = categoriesSnapshot.docs.filter((category) => category.data().isActive !== false).map((category) => (

@@ -1,5 +1,5 @@
 import * as express from "express";
-import { FieldValue, Timestamp } from "firebase-admin/firestore";
+import { FieldValue, Timestamp, type DocumentData, type UpdateData } from "firebase-admin/firestore";
 import { createCheckoutRateLimiter, getClientRateLimitKey, hashValue } from "../checkout/checkoutLogic";
 import { collectOrderStockQuantities, requireCurrentProductStock } from "../orders/orderStatusLogic";
 import {
@@ -326,7 +326,7 @@ export function registerPaymentRoutes(app: express.Express, dependencies: Paymen
           mappedStatus === "paid" ? "Payment verified by PayHere" : notification.statusMessage || `Payment ${mappedStatus}`,
           "payhere",
         );
-        const orderUpdate: Record<string, unknown> = {
+        const orderUpdate: UpdateData<DocumentData> = {
           paymentStatus: mappedStatus,
           paymentTimeline: appendPaymentTimeline(order.paymentTimeline, timelineEvent),
           paymentReference: notification.paymentId,

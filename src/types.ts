@@ -223,6 +223,8 @@ export interface WebsiteSettings {
   businessHours?: BusinessHoursSettings;
   storeStatus?: 'open' | 'closed';
   storeStatusMessage?: string;
+  /** Server-owned pending COD reservation TTL in hours. Defaults to 24 when absent or invalid. */
+  codPendingOrderTtlHours?: number;
 
   // Store Options
   enableCOD?: boolean;

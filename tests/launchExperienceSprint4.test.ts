@@ -83,7 +83,8 @@ test('launch search presentation does not expose blocked voice controls or unimp
   const navbar = source('src/components/Navbar.tsx');
   for (const presentation of [hero, navbar]) {
     assert.doesNotMatch(presentation, /SpeechRecognition|webkitSpeechRecognition/);
-    assert.match(presentation, /Voice search is unavailable in this launch version/);
+    assert.doesNotMatch(presentation, /Voice search is unavailable in this launch version/);
+    assert.doesNotMatch(presentation, /Image search is coming soon/);
   }
   assert.doesNotMatch(hero, /AI-Powered Marketplace|AI-assisted search|AI Shopping Assistant/);
   assert.doesNotMatch(navbar, /Ask Zyro AI|AI Shopping Assistant|AI-assisted product discovery/);

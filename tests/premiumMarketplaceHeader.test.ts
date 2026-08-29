@@ -8,24 +8,25 @@ const mobileNavigation = readFileSync('src/components/MobileBottomNav.tsx', 'utf
 const styles = readFileSync('src/styles/storefrontHeader.css', 'utf8');
 
 test('premium header presents marketplace assurance and search-first discovery', () => {
+  assert.match(navbar, /Cash on Delivery/);
   assert.match(navbar, /Islandwide Delivery/);
-  assert.match(navbar, /Easy Returns/);
-  assert.match(navbar, /Secure Payments/);
+  assert.match(navbar, /Secure Checkout/);
   assert.match(navbar, /Product Search/);
   assert.match(navbar, /Search products, brands and categories\.\.\./);
   assert.doesNotMatch(navbar, /handleVoiceSearch|SpeechRecognition|AI Shopping Assistant/);
-  assert.match(navbar, /Voice search is unavailable in this launch version/);
-  assert.match(navbar, /title="Voice search is unavailable in this launch version"[\s\S]*disabled/);
-  assert.match(navbar, /Open product discovery search/);
+  assert.doesNotMatch(navbar, /Voice search is unavailable in this launch version/);
+  assert.doesNotMatch(navbar, /Image search is coming soon/);
+  assert.doesNotMatch(navbar, /Open product discovery search/);
 });
 
 test('desktop and tablet navigation retain every requested customer destination', () => {
   for (const destination of ['Categories', 'Deals', 'New Arrivals', 'Best Sellers', 'Brands', "Today's Offers", 'Support']) {
     assert.match(navbar, new RegExp(destination.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')));
   }
-  for (const action of ['Orders', 'Wishlist', 'Notifications', 'Cart', 'Account']) {
+  for (const action of ['Orders', 'Wishlist', 'Cart', 'Account']) {
     assert.match(navbar, new RegExp(`>${action}<`));
   }
+  assert.doesNotMatch(navbar, />Notifications</);
 });
 
 test('mega menu projects live categories and configured media without mock catalogue data', () => {

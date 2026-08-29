@@ -26,7 +26,11 @@ import {
   SUPPLIER_PRODUCT_OFFERS_COLLECTION,
 } from "../suppliers/supplierOfferEngine";
 import { buildSupplierLifecycleFieldChange, buildSupplierProductComparison } from "../suppliers/supplierProductImport";
+import { extractSupplierMediaFromRecord } from "../suppliers/supplierMediaPipeline";
+import { resolveSupplierPortalSkuClaim } from "../suppliers/supplierPortalSkuClaims";
+import { buildSupplierQueueLifecycle } from "../../scheduled/supplierReviewQueue";
 import {
+  assertNoUnresolvedSupplierStockProposal,
   calculateSupplierSummary,
   normalizeProductFingerprint,
   normalizeSupplierSku,
@@ -282,6 +286,10 @@ const projectOrder = (
 
 const assertActive = (identity: SupplierIdentity): void => {
   if (identity.profileStatus !== "active") throw new ApiError("Supplier profile must be active before using this action", 403);
+};
+
+const assertProfileWritable = (identity: SupplierIdentity): void => {
+  if (identity.profileStatus === "disabled") throw new ApiError("Supplier profile is disabled", 403);
 };
 
 export async function assignOrderToSupplier(
@@ -615,6 +623,7 @@ export function registerSupplierPortalRoutes(app: express.Express, dependencies:
   }));
 
   app.put("/api/supplier-portal/profile", route(async (req, res, identity) => {
+    assertProfileWritable(identity);
     const profile = sanitizeSupplierProfile(req.body || {});
     const profileReference = dependencies.db.collection("supplier_profiles").doc(identity.uid);
     await dependencies.db.runTransaction(async (transaction) => {
@@ -756,6 +765,17 @@ export function registerSupplierPortalRoutes(app: express.Express, dependencies:
       }
     }
     const comparison = buildSupplierProductComparison(rawProduct, currentProduct);
+    const requestedImageUrls = [draft.imageUrl, ...draft.imageUrls.filter((url) => url !== draft.imageUrl)];
+    const existingManagedMedia = isProductChange
+      ? extractSupplierMediaFromRecord(currentCommercial.supplierMedia)
+      : [];
+    const reusableManagedMedia = existingManagedMedia.length === requestedImageUrls.length
+      && requestedImageUrls.every((url, index) => (
+        url === existingManagedMedia[index]?.firebaseStorageUrl
+        || url === existingManagedMedia[index]?.originalSupplierUrl
+      ))
+      ? existingManagedMedia
+      : [];
     const newProductOfferCandidate = buildSupplierProductOffer({
       sourceId: SUPPLIER_PORTAL_SOURCE_ID,
       supplierId: identity.uid,
@@ -780,6 +800,7 @@ export function registerSupplierPortalRoutes(app: express.Express, dependencies:
     const offerReference = dependencies.db.collection(SUPPLIER_PRODUCT_OFFERS_COLLECTION).doc(
       activeOfferId || newProductOfferCandidate.id,
     );
+    const skuClaimReference = dependencies.db.collection("supplier_sku_claims").doc(skuClaimId);
     const changeProductReference = isProductChange ? dependencies.db.collection("products").doc(productId) : null;
     const changeCommercialReference = isProductChange ? dependencies.db.collection(PRODUCT_PRIVATE_COLLECTION).doc(productId) : null;
     const changeSourceId = isProductChange ? String(currentCommercial.supplierSourceId || "").trim() : "";
@@ -789,7 +810,7 @@ export function registerSupplierPortalRoutes(app: express.Express, dependencies:
     await dependencies.db.runTransaction(async (transaction) => {
       const [freshRequest, skuClaim, productClaim, profileSnapshot, offerSnapshot, freshProduct, freshCommercial, freshSource] = await Promise.all([
         transaction.get(requestReference),
-        transaction.get(dependencies.db.collection("supplier_sku_claims").doc(skuClaimId)),
+        transaction.get(skuClaimReference),
         productClaimId ? transaction.get(dependencies.db.collection("supplier_product_claims").doc(productClaimId)) : Promise.resolve(null),
         transaction.get(dependencies.db.collection("supplier_profiles").doc(identity.uid)),
         transaction.get(offerReference),
@@ -800,7 +821,26 @@ export function registerSupplierPortalRoutes(app: express.Express, dependencies:
       if (!freshRequest.exists || freshRequest.data()?.supplierId !== identity.uid || freshRequest.data()?.status !== "draft") {
         throw new ApiError("Product request changed before submission; reload and try again", 409);
       }
-      if (skuClaim.exists && skuClaim.data()?.requestId !== requestId) throw new ApiError("Supplier SKU is already in use", 409);
+      const skuClaimData = skuClaim.exists ? skuClaim.data() || {} : null;
+      const claimedRequestId = String(skuClaimData?.requestId || "").trim();
+      let owningRequestEvidence: { id: string; data: Record<string, unknown> } | null = null;
+      const readableClaimedRequestId = Boolean(claimedRequestId) && claimedRequestId.length <= 160 && !claimedRequestId.includes("/");
+      if (isProductChange && skuClaimData && !String(skuClaimData.canonicalProductId || "").trim() && readableClaimedRequestId) {
+        const owningRequest = claimedRequestId === requestId
+          ? freshRequest
+          : await transaction.get(dependencies.db.collection("supplier_product_requests").doc(claimedRequestId));
+        owningRequestEvidence = owningRequest.exists
+          ? { id: owningRequest.id, data: owningRequest.data() || {} }
+          : null;
+      }
+      const skuClaimResolution = resolveSupplierPortalSkuClaim({
+        claim: skuClaimData,
+        requestId,
+        requestType: isProductChange ? "product_change" : "new_product",
+        supplierId: identity.uid,
+        canonicalProductId: isProductChange ? productId : undefined,
+        owningRequest: owningRequestEvidence,
+      });
       if (productClaim?.exists && productClaim.data()?.requestId !== requestId) throw new ApiError("A duplicate product request already exists", 409);
       const freshProductAttribution = {
         ...(freshProduct?.data() || {}),
@@ -820,6 +860,9 @@ export function registerSupplierPortalRoutes(app: express.Express, dependencies:
         || existingOffer.sourceId !== String(freshCommercial?.data()?.supplierSourceId || "")
         || existingOffer.supplierId !== String(freshCommercial?.data()?.supplierId || "")
       )) throw new ApiError("Product is not routed through this supplier's approved offer", 403);
+      if (isProductChange && normalizeSupplierSku(existingOffer?.sku) !== supplierSkuNormalized) {
+        throw new ApiError("The supplier SKU cannot be changed for an approved product", 409);
+      }
       const offerCandidate = isProductChange && existingOffer
         ? buildSupplierProductOffer({
           ...existingOffer,
@@ -829,9 +872,12 @@ export function registerSupplierPortalRoutes(app: express.Express, dependencies:
           availability: rawProduct.availability,
           reviewStatus: "review_pending",
           catalogPayload: requestData.productPayload,
+          // Draft observation must win for content/media. Spreading the prior
+          // approved snapshot after rawProduct previously retained stale
+          // mediaGallery URLs, so same-SKU image edits reused the old asset.
           supplierSnapshot: {
-            ...rawProduct,
             ...existingOffer.supplierSnapshot,
+            ...rawProduct,
             supplierId: existingOffer.supplierId,
             sourceId: existingOffer.sourceId,
             supplierProductId: existingOffer.supplierProductId,
@@ -866,13 +912,20 @@ export function registerSupplierPortalRoutes(app: express.Express, dependencies:
         observedAt,
       });
       const now = FieldValue.serverTimestamp();
-      transaction.set(dependencies.db.collection("supplier_sku_claims").doc(skuClaimId), { supplierId: identity.uid, requestId, supplierSkuNormalized, updatedAt: now });
+      transaction.set(skuClaimReference, {
+        supplierId: identity.uid,
+        requestId: skuClaimResolution.requestId,
+        supplierSkuNormalized,
+        ...(skuClaimResolution.canonicalProductId ? { canonicalProductId: skuClaimResolution.canonicalProductId } : {}),
+        updatedAt: now,
+      });
       if (productClaimId) transaction.set(dependencies.db.collection("supplier_product_claims").doc(productClaimId), { supplierId: identity.uid, requestId, fingerprint, updatedAt: now });
       transaction.update(requestReference, { status: "pending", submittedAt: now, updatedAt: now, rejectionReason: FieldValue.delete() });
       transaction.set(offerReference, offerWrite, { merge: true });
       const queueRecord = {
         id: queueId,
         portalRequestId: requestId,
+        portalRequestType: requestData.requestType,
         supplierId: observedOffer.supplierId,
         supplierAccountId: identity.uid,
         supplierCode: draft.supplierSku,
@@ -903,19 +956,29 @@ export function registerSupplierPortalRoutes(app: express.Express, dependencies:
         },
         matchedProductId: requestData.requestType === "product_change" ? productId : null,
         productPayload: requestData.productPayload,
+        managedMediaRequired: true,
+        mediaStatus: reusableManagedMedia.length > 0 ? "ready" : "queued",
+        ...(reusableManagedMedia.length > 0 ? { managedMedia: reusableManagedMedia } : {}),
         supplierSnapshot: {
-          ...rawProduct,
+          // Prefer the submitted draft observation for media/content. Identity
+          // fields below remain offer-owned.
           ...observedOffer.supplierSnapshot,
+          ...rawProduct,
           supplierId: observedOffer.supplierId,
           sourceId: observedOffer.sourceId,
           supplierProductId: observedOffer.supplierProductId,
           supplierSku: observedOffer.sku,
           canonicalProductId: queuedProductId,
+          ...(reusableManagedMedia.length > 0 ? { managedMedia: reusableManagedMedia } : {}),
         },
         productValidation: {
-          readyToPublish: true,
-          missingFields: [],
-          errors: [],
+          readyToPublish: reusableManagedMedia.length > 0,
+          missingFields: reusableManagedMedia.length > 0 ? [] : ["images"],
+          errors: reusableManagedMedia.length > 0 ? [] : [{
+            field: "images",
+            code: "managed_media_required",
+            message: "Managed product media is being prepared before administrator review.",
+          }],
           warnings: [],
         },
         approvalBaseline: buildSupplierProductApprovalBaseline(
@@ -923,10 +986,7 @@ export function registerSupplierPortalRoutes(app: express.Express, dependencies:
           baselineProductDocument?.data(),
         ),
         status: "Pending",
-        queueState: "review_pending",
-        retryCount: 0,
-        retryLimit: 5,
-        queueCreatedAt: now,
+        ...buildSupplierQueueLifecycle(observedAt),
         createdAt: now,
         updatedAt: now,
       };
@@ -937,15 +997,7 @@ export function registerSupplierPortalRoutes(app: express.Express, dependencies:
         action: "queued",
         previousState: null,
         newState: "queued",
-        reason: "Supplier product submission entered the approval workflow.",
-      });
-      createSupplierAuditEvent(dependencies.db, transaction, {
-        queueItemId: queueId,
-        queueItem: queueRecord,
-        action: "review_pending",
-        previousState: "queued",
-        newState: "review_pending",
-        reason: "Supplier product submission is awaiting administrator review.",
+        reason: "Supplier product submission is queued for managed-media preparation.",
       });
     });
     res.json({ success: true, status: "pending" });
@@ -993,6 +1045,10 @@ export function registerSupplierPortalRoutes(app: express.Express, dependencies:
       ) {
         throw new ApiError("Product is not routed through this supplier's approved offer", 403);
       }
+      // Prefer the raw offer field so a corrupt pending blob still fail-closes.
+      assertNoUnresolvedSupplierStockProposal(
+        offerSnapshot.data()?.pendingObservation ?? existingOffer.pendingObservation,
+      );
       const productPayload = { ...product, id: productId, supplierItemCode, stock: proposedStock, updatedAt: observedAt };
       const observedOffer = buildSupplierProductOffer({
         ...existingOffer,
@@ -1176,6 +1232,7 @@ export function registerSupplierPortalRoutes(app: express.Express, dependencies:
   });
 
   app.post("/api/supplier-portal/notifications/:notificationId/read", route(async (req, res, identity) => {
+    assertProfileWritable(identity);
     const notificationId = cleanId(req.params.notificationId, "notification ID");
     const reference = dependencies.db.collection("supplier_notifications").doc(notificationId);
     await dependencies.db.runTransaction(async (transaction) => {

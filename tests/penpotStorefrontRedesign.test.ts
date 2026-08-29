@@ -32,7 +32,7 @@ test('390px mobile product cards use a compact two-column grid without removing 
   assert.match(app, /zy-product-grid grid grid-cols-2/);
   assert.match(styles, /@media \(max-width: 767px\)[\s\S]*\.zy-penpot-storefront \.zy-product-grid[\s\S]*repeat\(2, minmax\(0, 1fr\)\)/);
   assert.match(productCard, /onAddToCart\(product\)/);
-  assert.match(productCard, /handleWhatsAppQuickBuy/);
+  assert.match(productCard, /zy-product-single-action/);
   assert.match(productCard, /onViewDetail\(product\)/);
   assert.match(productCard, /onToggleWishlist\(product\)/);
   assert.match(productCard, /zy-product-card-trust/);
@@ -48,6 +48,7 @@ test('mobile P1 cascade wins over legacy horizontal shelves and oversized cards'
   assert.match(styles, /\.zy-penpot-storefront \.zy-product-card \{[\s\S]*?height: 20\.25rem;[\s\S]*?grid-template-rows: 8\.75rem/);
   assert.match(styles, /\.zy-product-card-wishlist \{[\s\S]*?width: 2\.75rem;[\s\S]*?height: 2\.75rem;/);
   assert.match(styles, /\.zy-product-card-action-grid \{[\s\S]*?height: 2\.75rem;[\s\S]*?2\.75rem/);
+  assert.match(styles, /\.zy-product-single-action \{[\s\S]*?width: 100%/);
 });
 
 test('mobile categories, listing and filters follow the Penpot composition', () => {

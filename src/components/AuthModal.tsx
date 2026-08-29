@@ -9,7 +9,7 @@ import {
   updateProfile,
   sendPasswordResetEmail
 } from 'firebase/auth';
-import { doc, setDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { getAuthErrorMessage } from '../features/auth/authErrorMessage';
 import { reportClientIssue } from '../services/observability/clientDiagnostics';
 
@@ -133,13 +133,15 @@ export default function AuthModal({ isOpen, onClose, registrationEnabled = true 
       const result = await signInWithPopup(auth, provider);
       const user = result.user;
 
-      // Save user profile in Firestore
-      await setDoc(doc(db, "users", user.uid), {
+      // Create the initial customer role once. Existing roles are server-managed;
+      // omitting role on later Google sign-ins preserves supplier promotion.
+      const userReference = doc(db, "users", user.uid);
+      const existingProfile = await getDoc(userReference);
+      await setDoc(userReference, {
         uid: user.uid,
         email: user.email,
         displayName: user.displayName || user.email?.split('@')[0],
-        role: 'customer',
-        createdAt: new Date().toISOString()
+        ...(existingProfile.exists() ? {} : { role: 'customer', createdAt: new Date().toISOString() }),
       }, { merge: true });
 
       onClose();

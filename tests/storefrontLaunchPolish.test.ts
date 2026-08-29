@@ -92,11 +92,11 @@ test('Navbar V2 exposes approved account actions without inventing customer rout
   assert.match(navbar, /label: 'Orders'/);
   assert.match(navbar, /label: 'Wishlist'[^\n]*navigateToPage\('wishlist'\)/);
   assert.match(navbar, /label: 'Addresses'/);
-  assert.match(navbar, /label: 'Notifications'/);
-  assert.match(navbar, /label: 'Coupons'/);
   assert.match(navbar, /label: 'Support'[^\n]*navigateToPage\('contact'\)/);
   assert.match(navbar, /label: 'Settings'/);
-  assert.match(navbar, /Coming soon/);
+  assert.doesNotMatch(navbar, /label: 'Notifications'/);
+  assert.doesNotMatch(navbar, /label: 'Coupons'/);
+  assert.doesNotMatch(navbar, /Coming soon/);
   assert.match(navbar, /onClick=\{handleLogout\}/);
   assert.match(navbar, /> Logout/);
   assert.match(navbar, /onClick=\{onOpenCart\}/);

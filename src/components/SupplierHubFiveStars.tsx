@@ -1765,7 +1765,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
               </div>
             </div>
 
-            <SupplierManagementDashboard requestApi={requestSupplierApi} refreshKey={operationsRefreshKey} />
+            <SupplierManagementDashboard requestApi={requestSupplierApi} refreshKey={operationsRefreshKey} onAccountChanged={loadSources} />
 
             {supplierSources.length === 0 ? (
               <div className="p-12 text-center rounded-3xl border border-dashed border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/10 space-y-3">

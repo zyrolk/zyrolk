@@ -9,7 +9,7 @@ import {
 
 const product = (id: string, overrides: Partial<Product> = {}): Product => ({
   id, name: id, description: '', price: 100, imageUrl: `/${id}.jpg`, category: 'phones',
-  rating: 4, reviewsCount: 0, stock: 1, specs: {}, ...overrides,
+  rating: 4, reviewsCount: 0, isActive: true, stock: 1, specs: {}, ...overrides,
 });
 
 test('gallery deduplicates images, supplies fallback, and clamps indexes', () => {

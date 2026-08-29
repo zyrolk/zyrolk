@@ -312,11 +312,9 @@
   .zy-navbar-mobile-search { display: block; box-sizing: border-box; width: 100% !important; max-width: 100% !important; padding: 0 .65rem .65rem !important; }
   .zy-navbar-mobile-search form { position: relative !important; box-sizing: border-box; width: 100% !important; max-width: 100% !important; }
   .zy-navbar-mobile-search .zy-search-tools { right: .25rem !important; left: auto !important; display: flex !important; width: auto !important; }
-  .zy-navbar-mobile-search .zy-market-search { min-height: 50px; padding-right: 10.4rem; font-size: .82rem; }
-  .zy-navbar-mobile-search .zy-search-tool:disabled { display: none; }
+  .zy-navbar-mobile-search .zy-market-search { min-height: 50px; padding-right: 3.25rem; font-size: .82rem; }
   .zy-navbar-mobile-search .zy-search-tool,
   .zy-navbar-mobile-search .zy-search-submit { width: 38px; height: 38px; }
-  .zy-navbar-mobile-search .zy-search-ai { height: 38px; padding-inline: .5rem; }
   .zy-search-suggestions { position: fixed !important; top: 9.6rem !important; right: .5rem !important; left: .5rem !important; max-height: calc(100dvh - 11rem); }
   .zy-mobile-market-menu {
     display: block;

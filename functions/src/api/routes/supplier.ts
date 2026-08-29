@@ -15,7 +15,7 @@ import {
   loadSupplierOperationsSummary,
 } from "../suppliers/supplierOperations";
 import { SupplierRegistry } from "../suppliers/SupplierRegistry";
-import { adminDb } from "../firebase";
+import { adminAuth, adminDb } from "../firebase";
 import { appLogger } from "../logging";
 import { getSupplierSyncSchedulerStatus } from "../../scheduled/supplierSync";
 import { getSyncInvestigationPage, getRecentSyncInvestigations } from "../suppliers/supplierInvestigations";
@@ -58,6 +58,11 @@ import {
   resolveSupplierOperationalAlertSafely,
   transitionSupplierOperationalAlert,
 } from "../suppliers/supplierOperationalAlerts";
+import {
+  findSupplierAccount,
+  promoteSupplierAccount,
+  setSupplierAccountStatus,
+} from "../suppliers/supplierAccountAdministration";
 
 const readSourceIds = (value: unknown): string[] => {
   if (value === undefined) return [];
@@ -107,6 +112,13 @@ const readOperationalAlertId = (value: unknown): string => {
     throw new ApiError("The operational alert ID is invalid.", 400);
   }
   return value;
+};
+
+const readSupplierAccountId = (value: unknown): string => {
+  if (typeof value !== "string") throw new ApiError("A Firebase Auth user UID is required.", 400);
+  const uid = value.trim();
+  if (!uid || uid.length > 128 || uid.includes("/")) throw new ApiError("The Firebase Auth user UID is invalid.", 400);
+  return uid;
 };
 
 const readBoundedLimit = (value: unknown, fallback = 100, maximum = 200): number => {
@@ -289,6 +301,61 @@ export function registerSupplierRoutes(app: express.Express): void {
         logMessage: "Supplier account listing failed.",
         fallbackMessage: "Active supplier accounts could not be loaded.",
         context: { route: "/api/supplier-accounts" },
+      });
+    }
+  });
+
+  app.get("/api/supplier-accounts/lookup", requireSupplierHubAdmin, async (req, res) => {
+    try {
+      const account = await findSupplierAccount(adminAuth, adminDb, req.query.query);
+      res.status(200).json({ success: true, account });
+    } catch (error: unknown) {
+      sendSupplierFailure(res, error, {
+        logMessage: "Supplier account lookup failed.",
+        fallbackMessage: "The Firebase Auth user could not be found.",
+        context: { route: req.path },
+      });
+    }
+  });
+
+  app.post("/api/supplier-accounts/:uid/promote", requireSupplierHubAdmin, async (req, res) => {
+    try {
+      const uid = readSupplierAccountId(req.params.uid);
+      const result = await promoteSupplierAccount(adminAuth, adminDb, uid, reviewerFor(res));
+      res.status(200).json({ success: true, ...result });
+    } catch (error: unknown) {
+      sendSupplierFailure(res, error, {
+        logMessage: "Supplier account promotion failed.",
+        fallbackMessage: "The customer account could not be promoted.",
+        context: { route: req.path },
+      });
+    }
+  });
+
+  app.post("/api/supplier-accounts/:uid/activate", requireSupplierHubAdmin, async (req, res) => {
+    try {
+      const uid = readSupplierAccountId(req.params.uid);
+      const result = await setSupplierAccountStatus(adminAuth, adminDb, uid, "active", reviewerFor(res));
+      res.status(200).json({ success: true, ...result });
+    } catch (error: unknown) {
+      sendSupplierFailure(res, error, {
+        logMessage: "Supplier account activation failed.",
+        fallbackMessage: "The supplier account could not be activated.",
+        context: { route: req.path },
+      });
+    }
+  });
+
+  app.post("/api/supplier-accounts/:uid/disable", requireSupplierHubAdmin, async (req, res) => {
+    try {
+      const uid = readSupplierAccountId(req.params.uid);
+      const result = await setSupplierAccountStatus(adminAuth, adminDb, uid, "disabled", reviewerFor(res));
+      res.status(200).json({ success: true, ...result });
+    } catch (error: unknown) {
+      sendSupplierFailure(res, error, {
+        logMessage: "Supplier account disable failed.",
+        fallbackMessage: "The supplier account could not be disabled.",
+        context: { route: req.path },
       });
     }
   });

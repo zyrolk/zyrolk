@@ -88,7 +88,7 @@ test("SH-4A Admin UI uses authenticated API operations and contains no browser S
 
 test("SH-4A Firestore Rules keep product identity and audit mutations server-only", () => {
   const rules = readFileSync("firestore.rules", "utf8");
-  assert.match(rules, /match \/products\/\{productId\}[\s\S]*allow read: if true;[\s\S]*allow create, update, delete: if false;/u);
+  assert.match(rules, /match \/products\/\{productId\}[\s\S]*allow read: if isPublicProductData\(resource\.data\);[\s\S]*allow create, update, delete: if false;/u);
   assert.match(rules, /match \/product_private\/\{productId\}[\s\S]*allow read: if isAdmin\(\);[\s\S]*allow create, update, delete: if false;/u);
   assert.match(rules, /match \/zyro_sku_claims\/\{claimId\}[\s\S]*allow read: if false;[\s\S]*allow create, update, delete: if false;/u);
   assert.match(rules, /match \/admin_product_audit\/\{auditId\}[\s\S]*allow read: if isAdmin\(\);[\s\S]*allow create, update, delete: if false;/u);

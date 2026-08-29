@@ -3769,9 +3769,14 @@ textarea {
 .zy-product-card-stock.is-out > span { background: #ef4444; }
 
 .zy-product-card-actions,
-.zy-product-card-action-grid {
+.zy-product-card-action-grid,
+.zy-product-single-action {
   min-width: 0;
   height: 3rem;
+}
+
+.zy-product-single-action {
+  width: 100%;
 }
 
 .zy-product-card-action-grid {

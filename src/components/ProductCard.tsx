@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { BadgeDollarSign, Check, Eye, Star, ShoppingCart, Heart, Phone, Truck } from 'lucide-react';
+import { BadgeDollarSign, Check, Eye, Star, ShoppingCart, Heart, Truck } from 'lucide-react';
 import { Product } from '../types';
 import { PRODUCT_IMAGE_FALLBACK } from '../features/product-experience/productExperience';
 
@@ -60,41 +60,9 @@ function ProductCard({
     }).format(amount);
   };
 
-  const handleWhatsAppQuickBuy = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    const message = encodeURIComponent(
-      `Hello Zyro.lk, I am interested in ordering:\n` +
-      `- *${product.name}* (Qty: 1)\n` +
-      `Price: *${formatPrice(product.price)}*\n` +
-      `Category: ${product.category}\n\n` +
-      `Please confirm availability and guide me through delivery details.`
-    );
-    const waNumber = settings?.whatsappNumber 
-      ? settings.whatsappNumber.replace(/[^0-9]/g, "") 
-      : "";
-    if (!waNumber) {
-      alert("WhatsApp checkout is currently being configured by the store administrator. Please try again soon or contact support!");
-      return;
-    }
-    window.open(`https://wa.me/${waNumber}?text=${message}`, '_blank', 'noopener,noreferrer');
-  };
-
-  const handleWhatsAppEnquiry = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    const message = encodeURIComponent(
-      `Hello Zyro.lk, I am interested in this product but it is currently out of stock:\n` +
-      `- *${product.name}*\n` +
-      `Price: *${formatPrice(product.price)}*\n\n` +
-      `Can you please let me know when this will be back in stock or if there is an alternative available?`
-    );
-    const waNumber = settings?.whatsappNumber 
-      ? settings.whatsappNumber.replace(/[^0-9]/g, "") 
-      : "";
-    if (!waNumber) {
-      alert("WhatsApp support is currently being configured by the store administrator. Please try again soon!");
-      return;
-    }
-    window.open(`https://wa.me/${waNumber}?text=${message}`, '_blank', 'noopener,noreferrer');
+  const handleViewDetails = (event: React.MouseEvent) => {
+    event.stopPropagation();
+    onViewDetail(product);
   };
 
   return (
@@ -254,38 +222,23 @@ function ProductCard({
         {/* Actions button group */}
         <div className="zy-product-card-actions">
           {product.stock > 0 ? (
-            <div className="zy-product-card-action-grid">
-              {/* Add to Cart */}
-              <button
-                onClick={handleCardAddToCart}
-                className={`zy-button zy-button-primary zy-product-primary-action ${isAdded ? 'zy-product-action-success' : ''}`}
-                aria-label={`Add ${product.name} to cart`}
-                aria-live="polite"
-              >
-                {isAdded ? <Check className="h-4 w-4" aria-hidden="true" /> : <ShoppingCart className="h-4 w-4" aria-hidden="true" />}
-                <span>{isAdded ? 'Added' : 'Add to Cart'}</span>
-              </button>
-
-              {/* Quick WhatsApp Order */}
-              <button
-                onClick={handleWhatsAppQuickBuy}
-                className="zy-button zy-product-secondary-action"
-                title="Buy Now via WhatsApp"
-                aria-label={`Order ${product.name} through WhatsApp`}
-              >
-                <Phone className="h-4 w-4" aria-hidden="true" />
-                <span>Buy Now</span>
-              </button>
-            </div>
-          ) : (
-            /* WhatsApp Enquiry Button (out of stock) */
             <button
-              onClick={handleWhatsAppEnquiry}
-              className="zy-button zy-button-outline zy-product-enquiry-action"
-              aria-label={`Ask about availability for ${product.name} on WhatsApp`}
+              onClick={handleCardAddToCart}
+              className={`zy-button zy-button-primary zy-product-primary-action zy-product-single-action ${isAdded ? 'zy-product-action-success' : ''}`}
+              aria-label={`Add ${product.name} to cart`}
+              aria-live="polite"
             >
-              <Phone className="h-3.5 w-3.5" aria-hidden="true" />
-              <span>Enquire on WhatsApp</span>
+              {isAdded ? <Check className="h-4 w-4" aria-hidden="true" /> : <ShoppingCart className="h-4 w-4" aria-hidden="true" />}
+              <span>{isAdded ? 'Added' : 'Add to Cart'}</span>
+            </button>
+          ) : (
+            <button
+              onClick={handleViewDetails}
+              className="zy-button zy-button-outline zy-product-enquiry-action"
+              aria-label={`View details for ${product.name}`}
+            >
+              <Eye className="h-3.5 w-3.5" aria-hidden="true" />
+              <span>View details</span>
             </button>
           )}
         </div>

@@ -1,4 +1,5 @@
 import { Product } from '../../types';
+import { isProductExplicitlyActive } from '../../services/storefront/productAvailability';
 
 const PRODUCT_IMAGE_UNAVAILABLE_SVG = `
   <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1200" viewBox="0 0 1200 1200">
@@ -67,7 +68,7 @@ export const selectRelatedProducts = (product: Product, allProducts: readonly Pr
   const category = normalizedCategory(product);
   const brand = normalizedBrand(product);
   return allProducts
-    .filter((candidate) => candidate.id !== product.id && candidate.isActive !== false)
+    .filter((candidate) => candidate.id !== product.id && isProductExplicitlyActive(candidate.isActive))
     .map((candidate, sourceIndex) => {
       const sameCategory = normalizedCategory(candidate) === category;
       const sameBrand = Boolean(brand) && normalizedBrand(candidate) === brand;

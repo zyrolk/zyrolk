@@ -29,8 +29,8 @@ test('product card polish preserves all established customer actions', () => {
   assert.match(productCard, /onAddToCart\(product\)/);
   assert.match(productCard, /onToggleWishlist\(product\)/);
   assert.match(productCard, /onViewDetail\(product\)/);
-  assert.match(productCard, /handleWhatsAppQuickBuy/);
-  assert.match(productCard, /handleWhatsAppEnquiry/);
+  assert.match(productCard, /handleViewDetails/);
+  assert.doesNotMatch(productCard, /handleWhatsAppQuickBuy/);
   assert.match(productCard, /isImageLoaded/);
   assert.match(styles, /\.zy-product-card-image\.is-loading/);
   assert.match(styles, /\.zy-product-card\.is-added/);

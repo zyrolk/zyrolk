@@ -643,6 +643,10 @@
   background: var(--zy-pp-success);
 }
 
+.zy-penpot-storefront .zy-product-single-action {
+  width: 100%;
+}
+
 /* Catalogue, filters and categories */
 .zy-penpot-storefront .zy-storefront-page {
   color: var(--zy-pp-text);
@@ -1737,10 +1741,30 @@
     margin-top: auto;
   }
 
-  .zy-penpot-storefront .zy-product-card-action-grid {
+  .zy-penpot-storefront .zy-product-card-action-grid,
+  .zy-penpot-storefront .zy-product-single-action {
+    width: 100%;
     height: 2.75rem;
-    grid-template-columns: minmax(0, 1fr) 2.75rem;
-    gap: 0.4rem;
+  }
+
+  .zy-penpot-storefront .zy-product-card-action-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+
+  .zy-penpot-storefront .zy-product-single-action {
+    min-height: 2.75rem;
+    border-radius: 0.625rem;
+    padding-inline: 0.65rem;
+    font-size: 0.6875rem;
+  }
+
+  .zy-penpot-storefront .zy-product-single-action span {
+    font-size: 0.6875rem;
+  }
+
+  .zy-penpot-storefront .zy-product-single-action span::after {
+    content: none;
   }
 
   .zy-penpot-storefront :is(.zy-product-primary-action, .zy-product-secondary-action, .zy-product-enquiry-action) {
@@ -2348,5 +2372,257 @@
 @media (forced-colors: active) {
   .zy-penpot-storefront :is(.zy-product-card, .zy-surface, .zy-category-collection-card, .zy-mobile-dock) {
     border: 1px solid CanvasText;
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════
+   Premium polish — baloon.lk-inspired visual refinements
+   ══════════════════════════════════════════════════════════════ */
+
+/* ── 1. Hero: more impactful presence ── */
+
+.zy-penpot-storefront .zy-foundation-hero-wrap {
+  padding: 0;
+}
+
+.zy-penpot-storefront .zy-ai-hero-stage {
+  border-radius: 0;
+  border-left: 0;
+  border-right: 0;
+  box-shadow: 0 20px 60px -20px rgba(78, 53, 190, 0.45);
+}
+
+.zy-penpot-storefront .zy-ai-hero-primary {
+  min-height: 3.25rem;
+  padding-inline: 1.75rem;
+  font-size: 0.875rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.9) inset,
+    0 16px 36px -14px rgba(20, 23, 33, 0.52);
+}
+
+.zy-penpot-storefront .zy-ai-hero-secondary {
+  min-height: 3.25rem;
+  padding-inline: 1.75rem;
+  font-size: 0.875rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+/* ── 2. Category grid: gradient overlay cards ── */
+
+.zy-penpot-storefront .zy-foundation-category-dock {
+  padding: 1.5rem 1.25rem;
+}
+
+.zy-penpot-storefront .zy-foundation-category-image {
+  border: 0;
+  background: linear-gradient(145deg, #ede8ff, #ddd5ff);
+  box-shadow: 0 6px 18px -8px rgba(101, 71, 232, 0.2);
+}
+
+.zy-penpot-storefront .zy-foundation-category-tile strong {
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.zy-penpot-storefront .zy-foundation-category-tile:focus-visible .zy-foundation-category-image,
+.zy-penpot-storefront .zy-foundation-category-tile:hover .zy-foundation-category-image {
+  background: linear-gradient(145deg, #ddd5ff, #cdc1ff);
+  box-shadow: 0 10px 28px -10px rgba(101, 71, 232, 0.35);
+}
+
+/* Category collection cards (categories page) — gradient overlay */
+.zy-penpot-storefront .zy-category-collection-card {
+  position: relative;
+  overflow: hidden;
+  border: 0;
+  background: linear-gradient(160deg, #f3f0ff 0%, #ebe5ff 100%);
+  box-shadow: 0 4px 16px -6px rgba(101, 71, 232, 0.15);
+  transition: transform 220ms ease, box-shadow 220ms ease;
+}
+
+.zy-penpot-storefront .zy-category-collection-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 12px 32px -10px rgba(101, 71, 232, 0.3);
+}
+
+.zy-penpot-storefront .zy-category-collection-heading h2 {
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.zy-penpot-storefront .zy-category-collection-cta {
+  font-weight: 700;
+  font-size: 0.75rem;
+  letter-spacing: 0.02em;
+}
+
+/* ── 3. Product cards: premium feel ── */
+
+.zy-penpot-storefront .zy-product-card {
+  border: 0;
+  background: #fff;
+  box-shadow:
+    0 1px 3px rgba(20, 23, 33, 0.06),
+    0 8px 24px -8px rgba(20, 23, 33, 0.1);
+}
+
+.zy-penpot-storefront .zy-product-card-badges {
+  z-index: 5;
+}
+
+.zy-penpot-storefront .zy-product-card-badges .zy-badge.zy-product-discount {
+  padding: 0.35rem 0.6rem;
+  font-size: 0.6875rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  border-radius: 0 0 0.625rem 0;
+  box-shadow: 0 4px 14px -4px rgba(255, 107, 61, 0.55);
+}
+
+.zy-penpot-storefront .zy-product-card-price {
+  color: var(--zy-pp-primary);
+  font-size: 1.125rem;
+  font-weight: 800;
+}
+
+.zy-penpot-storefront .zy-product-card-original-price {
+  text-decoration: line-through;
+  color: var(--zy-pp-text-muted);
+  font-size: 0.75rem;
+}
+
+.zy-penpot-storefront .zy-product-primary-action {
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  box-shadow: 0 8px 20px -10px rgba(101, 71, 232, 0.5);
+}
+
+/* ── 4. Section headers: bolder with View All link ── */
+
+.zy-penpot-storefront :is(.zy-foundation-dock-header, .zy-storefront-product-shelf-header) {
+  align-items: center;
+}
+
+.zy-penpot-storefront :is(.zy-foundation-dock-header h2, .zy-storefront-product-shelf-header h2, .zy-launch-section-heading h2) {
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  color: var(--zy-pp-text);
+}
+
+.zy-penpot-storefront :is(.zy-foundation-text-link, .zy-storefront-product-shelf-action) {
+  font-size: 0.8125rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  gap: 0.25rem;
+}
+
+.zy-penpot-storefront :is(.zy-foundation-text-link, .zy-storefront-product-shelf-action):hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* ── 5. Bottom nav: highlighted cart button ── */
+
+.zy-penpot-storefront .zy-mobile-tab-cart {
+  position: relative;
+  color: #fff !important;
+  background: var(--zy-pp-primary);
+  border-radius: 0.875rem;
+  margin: 0.125rem;
+  box-shadow: 0 6px 18px -8px rgba(101, 71, 232, 0.6);
+  transition: transform 200ms ease, box-shadow 200ms ease;
+}
+
+.zy-penpot-storefront .zy-mobile-tab-cart:active {
+  transform: scale(0.95);
+}
+
+.zy-penpot-storefront .zy-mobile-tab-cart .absolute {
+  background: var(--zy-pp-accent) !important;
+}
+
+/* ── 6. Overall spacing & vertical rhythm ── */
+
+.zy-penpot-storefront .zy-foundation-home {
+  gap: 0;
+}
+
+.zy-penpot-storefront .zy-foundation-home > .zy-foundation-hero-wrap {
+  margin-bottom: 0;
+}
+
+.zy-penpot-storefront .zy-foundation-home > .zy-foundation-category-dock {
+  margin-top: 1.25rem;
+}
+
+.zy-penpot-storefront .zy-foundation-home > .zy-foundation-container {
+  margin-top: 1.5rem;
+}
+
+.zy-penpot-storefront .zy-foundation-shelf-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.zy-penpot-storefront .zy-storefront-product-shelf {
+  border: 0;
+  border-radius: 1rem;
+  box-shadow:
+    0 1px 3px rgba(20, 23, 33, 0.04),
+    0 8px 28px -12px rgba(20, 23, 33, 0.1);
+}
+
+@media (max-width: 767px) {
+  .zy-penpot-storefront .zy-foundation-hero-wrap {
+    padding: 0;
+  }
+
+  .zy-penpot-storefront .zy-ai-hero {
+    padding: 0;
+  }
+
+  .zy-penpot-storefront .zy-ai-hero-stage {
+    border-radius: 0;
+    border: 0;
+    border-bottom: 1px solid var(--zy-pp-border);
+  }
+
+  .zy-penpot-storefront .zy-product-card {
+    box-shadow:
+      0 1px 3px rgba(20, 23, 33, 0.06),
+      0 6px 16px -6px rgba(20, 23, 33, 0.1);
+  }
+
+  .zy-penpot-storefront .zy-product-card-badges .zy-badge.zy-product-discount {
+    top: 0;
+    left: 0;
+    border-radius: 1rem 0 0.5rem 0;
+  }
+
+  .zy-penpot-storefront .zy-product-card-price {
+    font-size: clamp(0.8125rem, 4vw, 1rem);
+  }
+
+  .zy-penpot-storefront .zy-mobile-tab-cart {
+    margin: 0.2rem;
+  }
+
+  .zy-penpot-storefront .zy-foundation-category-dock {
+    margin-top: 0.75rem;
+    padding: 1rem;
+  }
+
+  .zy-penpot-storefront .zy-foundation-home > .zy-foundation-container {
+    margin-top: 1rem;
+  }
+
+  .zy-penpot-storefront .zy-foundation-shelf-stack {
+    gap: 0.75rem;
   }
 }

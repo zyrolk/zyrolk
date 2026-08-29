@@ -7,6 +7,9 @@ import {
   MAX_SUPPLIER_GALLERY_IMAGES,
   SupplierManagedMediaAsset,
   SupplierMediaFailure,
+  SupplierMediaPipelineDependencies,
+  SupplierMediaRetryableError,
+  SupplierMediaValidationError,
   supplierMediaRetryDelayMs,
 } from "../api/suppliers/supplierMediaPipeline";
 import {
@@ -42,6 +45,7 @@ export interface SupplierQueueProcessResult {
 export interface SupplierQueueProcessingControl {
   currentTime?: () => number;
   verifyWorkerOwnership?: () => void | Promise<void>;
+  mediaDependencies?: Partial<SupplierMediaPipelineDependencies>;
 }
 
 export interface SupplierReviewQueueMetrics {
@@ -109,7 +113,11 @@ export interface SupplierQueueManagedMediaResult {
 export async function ensureSupplierReviewQueueManagedMedia(
   db: Firestore,
   queueItemId: string,
-  options: { imageUrls?: readonly string[]; maxImages?: number } = {},
+  options: {
+    imageUrls?: readonly string[];
+    maxImages?: number;
+    dependencies?: Partial<SupplierMediaPipelineDependencies>;
+  } = {},
 ): Promise<SupplierQueueManagedMediaResult> {
   const reference = db.collection("supplier_review_queue").doc(queueItemId);
   const snapshot = await reference.get();
@@ -137,15 +145,51 @@ export async function ensureSupplierReviewQueueManagedMedia(
   const sourceId = asString(queueItem.sourceId) || asString(supplierSnapshot.sourceId) || "unknown-source";
   const supplierId = asString(supplierSnapshot.supplierId) || sourceId;
   const productId = asString(productPayload.id) || asString(queueItemId);
-  const result = await acquireSupplierManagedMedia(db, {
-    queueItemId,
-    supplierId,
-    sourceId,
-    productId,
-    imageUrls,
-    maxImages: Math.min(options.maxImages || MAX_SUPPLIER_GALLERY_IMAGES, MAX_SUPPLIER_GALLERY_IMAGES),
-    retryCount: Number(queueItem.retryCount || 0),
-  });
+  let result;
+  try {
+    result = await acquireSupplierManagedMedia(db, {
+      queueItemId,
+      supplierId,
+      sourceId,
+      productId,
+      imageUrls,
+      maxImages: Math.min(options.maxImages || MAX_SUPPLIER_GALLERY_IMAGES, MAX_SUPPLIER_GALLERY_IMAGES),
+      retryCount: Number(queueItem.retryCount || 0),
+    }, options.dependencies);
+  } catch (error) {
+    if (error instanceof SupplierMediaRetryableError) {
+      const validation = asRecord(queueItem.productValidation);
+      const existingErrors = Array.isArray(validation.errors) ? validation.errors : [];
+      await reference.set({
+        managedMedia: existingAssets,
+        mediaFailures: error.failures,
+        mediaStatus: "failed",
+        mediaProcessedAt: new Date().toISOString(),
+        productValidation: {
+          ...validation,
+          readyToPublish: false,
+          missingFields: [...new Set([
+            ...(Array.isArray(validation.missingFields) ? validation.missingFields.map(String) : []),
+            "images",
+          ])],
+          errors: [
+            ...existingErrors.filter((entry) => asString(asRecord(entry).code) !== "managed_media_required"),
+            {
+              field: "images",
+              code: "managed_media_required",
+              message: "Managed product media processing failed and will be retried.",
+            },
+          ],
+        },
+        supplierSnapshot: {
+          ...supplierSnapshot,
+          managedMedia: existingAssets,
+          mediaFailures: error.failures,
+        },
+      }, { merge: true });
+    }
+    throw error;
+  }
   const managedPayload = applyManagedMediaToProductPayload(productPayload, result.assets);
   // Keep supplier URLs in the private review surface so administrators can
   // inspect the upstream source. Approval replaces them with managed URLs.
@@ -252,7 +296,7 @@ export function classifySupplierQueueFailure(error: unknown): SupplierQueueFailu
   const name = error instanceof Error ? error.name.toLowerCase() : "";
   const message = error instanceof Error ? error.message.toLowerCase() : String(error || "").toLowerCase();
   if (name.includes("supplierurlvalidation") || /blocked|allowlist|ssrf|security/.test(message)) return "security";
-  if (/validation|invalid supplier product|category is required|product payload/.test(message)) return "validation";
+  if (name.includes("suppliermediavalidation") || /validation|invalid supplier product|category is required|product payload/.test(message)) return "validation";
   if (/abort|timeout|econn|enotfound|dns|socket|network/.test(message)) return "network";
   if (/connector|supplier api|a2z|authentication/.test(message)) return "connector";
   if (/permission|forbidden|unauthorized|not found|unsupported/.test(message)) return "permanent";
@@ -517,8 +561,19 @@ export async function processSupplierReviewQueueItem(
     };
     heartbeatTimer = setInterval(sendHeartbeat, LEASE_HEARTBEAT_INTERVAL_MS);
     await control.verifyWorkerOwnership?.();
+    const requiresManagedMedia = processingRecord.managedMediaRequired === true;
+    let managedMediaResult: SupplierQueueManagedMediaResult | null = null;
     if (sourceImageUrls(processingRecord).length > 0 || extractSupplierMediaFromRecord(processingRecord.managedMedia).length > 0) {
-      await ensureSupplierReviewQueueManagedMedia(db, queueItemId);
+      managedMediaResult = await ensureSupplierReviewQueueManagedMedia(db, queueItemId, {
+        dependencies: control.mediaDependencies,
+      });
+    }
+    if (requiresManagedMedia && (
+      !managedMediaResult
+      || managedMediaResult.assets.length === 0
+      || managedMediaResult.failures.length > 0
+    )) {
+      throw new SupplierMediaValidationError("Supplier Portal managed media is incomplete and cannot enter administrator review.");
     }
     await control.verifyWorkerOwnership?.();
     sendHeartbeat();

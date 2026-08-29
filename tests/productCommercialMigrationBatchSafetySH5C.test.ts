@@ -248,6 +248,12 @@ test('SH-5C migration remains bounded against Firestore Emulator', {
     assert.equal(fixturesBefore.filter((document) => document.exists).length, 251);
     assert.ok(fixturesBefore.every((document) => containsCommercialProductFields(document.data() || {})));
 
+    const cleanupPrivateFixtures = db.batch();
+    for (const id of EMULATOR_FIXTURE_IDS) {
+      cleanupPrivateFixtures.delete(db.collection(PRODUCT_PRIVATE_COLLECTION).doc(id));
+    }
+    await cleanupPrivateFixtures.commit();
+
     const dryRun = await migrateProductCommercialData(db, {
       applyRequested: false,
       expectedProjectId: isolatedProjectId,

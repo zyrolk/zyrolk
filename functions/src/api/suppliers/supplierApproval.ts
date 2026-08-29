@@ -14,6 +14,10 @@ import {
   validateSupplierProductForApproval,
 } from "./supplierProductMapping";
 import {
+  resolveSupplierFullDescription,
+  SUPPLIER_APPROVAL_FULL_DESCRIPTION_MAX_LENGTH,
+} from "./supplierPortalLogic";
+import {
   buildSupplierProductApprovalBaseline,
   detectSupplierApprovalConflict,
   parseSupplierProductApprovalBaseline,
@@ -48,6 +52,7 @@ import {
   buildZyroSkuCandidates,
   reserveZyroSku,
 } from "./supplierProductIdentity";
+import { shouldReleaseSupplierPortalSkuClaim } from "./supplierPortalSkuClaims";
 
 // Every decision transaction appends an immutable supplier_approval_audit event
 // through the shared server-only audit trail helper.
@@ -200,7 +205,9 @@ export function parseSupplierApprovalDraft(value: unknown): SupplierApprovalDraf
   const draft = value as Record<string, unknown>;
   const productName = cleanText(draft.productName, "Product name", 300);
   const shortDescription = cleanOptionalText(draft.shortDescription, "Short description", 500);
-  const description = cleanOptionalText(draft.description, "Description", 20_000);
+  const description = draft.description === undefined
+    ? undefined
+    : cleanText(draft.description, "Full description", SUPPLIER_APPROVAL_FULL_DESCRIPTION_MAX_LENGTH, true);
   const model = cleanOptionalText(draft.model, "Model", 160);
   const barcode = cleanOptionalText(draft.barcode, "Barcode", 64);
   const productType = cleanOptionalText(draft.productType, "Product type", 160);
@@ -229,11 +236,11 @@ export function parseSupplierApprovalDraft(value: unknown): SupplierApprovalDraf
   }
 
   const sellingPrice = cleanNumber(draft.sellingPrice, "Selling price", { minimum: Number.EPSILON });
-  const comparePrice = cleanNumber(draft.comparePrice, "Compare price", { minimum: 0 });
+  let comparePrice = cleanNumber(draft.comparePrice, "Compare price", { minimum: 0 });
   const costPrice = draft.costPrice === undefined ? undefined : cleanNumber(draft.costPrice, "Cost price", { minimum: 0 });
   const marketPrice = draft.marketPrice === undefined ? undefined : cleanNumber(draft.marketPrice, "Market price", { minimum: 0 });
   if (comparePrice > 0 && comparePrice < sellingPrice) {
-    throw new ApiError("Compare price must be at least the selling price.", 400);
+    comparePrice = sellingPrice;
   }
 
   return {
@@ -368,7 +375,7 @@ const toPublicProductPayload = (queueItem: QueueItemRecord, draft: SupplierAppro
     ? Math.round(((normalizedComparePrice - price) / normalizedComparePrice) * 100)
     : 0;
   const specs = record(originalPayload.specs);
-  const isActive = draft?.isActive ?? originalPayload.isActive !== false;
+  const isActive = (draft?.isActive ?? originalPayload.isActive) === true;
 
   return {
     ...originalPayload,
@@ -379,7 +386,11 @@ const toPublicProductPayload = (queueItem: QueueItemRecord, draft: SupplierAppro
     supplierMedia: managedMedia,
     name: productName,
     shortDescription: draft?.shortDescription ?? originalPayload.shortDescription,
-    description: draft?.description ?? originalPayload.description,
+    description: resolveSupplierFullDescription(
+      draft?.description,
+      originalPayload.description,
+      SUPPLIER_APPROVAL_FULL_DESCRIPTION_MAX_LENGTH,
+    ),
     model: draft?.model ?? originalPayload.model,
     barcode: draft?.barcode ?? originalPayload.barcode,
     productType: draft?.productType ?? originalPayload.productType,
@@ -439,6 +450,10 @@ export async function decideSupplierQueueItem(
   const requestedPendingRevision = cleanPendingRevision(options.expectedPendingRevision);
   let effectiveDraft = options.draft;
   if (action === "approved") {
+    const preApprovalSnapshot = await db.collection("supplier_review_queue").doc(reviewQueueItemId).get();
+    const preApprovalQueueState = String(preApprovalSnapshot.data()?.queueState || "").toLowerCase();
+    const queueReadyForApproval = preApprovalQueueState === "review_pending" || preApprovalQueueState === "conflict";
+    if (queueReadyForApproval) {
     const requestedImages = options.draft
       ? normalizeImages(options.draft.primaryImageUrl, options.draft.galleryImageUrls)
       : undefined;
@@ -454,6 +469,7 @@ export async function decideSupplierQueueItem(
         primaryImageUrl: managedUrls[0],
         galleryImageUrls: managedUrls.slice(1),
       };
+    }
     }
   }
   const transactionResult = await db.runTransaction(async (transaction): Promise<{
@@ -1003,6 +1019,8 @@ export async function decideSupplierQueueItem(
     const portalRequestId = stringValue(queueItem.portalRequestId);
     const supplierAccountId = stringValue(queueItem.supplierAccountId) || stringValue(queueItem.supplierId);
     if (portalRequestId && supplierAccountId) {
+      const supplierSkuClaimId = stringValue(queueItem.supplierSkuClaimId);
+      const productFingerprintClaimId = stringValue(queueItem.productFingerprintClaimId);
       const requestStatus = action === "approved" ? "approved" : "rejected";
       const reason = action === "rejected" ? rejectionReason : action === "deleted" ? deletionReason : "";
       transaction.set(db.collection("supplier_product_requests").doc(portalRequestId), {
@@ -1021,10 +1039,18 @@ export async function decideSupplierQueueItem(
         isRead: false,
         createdAt: now,
       });
+      if (action === "approved" && supplierSkuClaimId && decidedProductId) {
+        transaction.set(db.collection("supplier_sku_claims").doc(supplierSkuClaimId), {
+          supplierId: supplierAccountId,
+          requestId: portalRequestId,
+          canonicalProductId: decidedProductId,
+          updatedAt: now,
+        }, { merge: true });
+      }
       if (action !== "approved") {
-        const supplierSkuClaimId = stringValue(queueItem.supplierSkuClaimId);
-        const productFingerprintClaimId = stringValue(queueItem.productFingerprintClaimId);
-        if (supplierSkuClaimId) transaction.delete(db.collection("supplier_sku_claims").doc(supplierSkuClaimId));
+        if (supplierSkuClaimId && shouldReleaseSupplierPortalSkuClaim(queueItem, action)) {
+          transaction.delete(db.collection("supplier_sku_claims").doc(supplierSkuClaimId));
+        }
         if (productFingerprintClaimId) transaction.delete(db.collection("supplier_product_claims").doc(productFingerprintClaimId));
       }
     }

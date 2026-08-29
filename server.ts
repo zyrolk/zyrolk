@@ -18,7 +18,6 @@ import {
 } from "./functions/src/api/routes/payments";
 import {
   CHECKOUT_ABUSE_COLLECTION,
-  COD_CONFIRMATION_WINDOW_MS,
   calculateCheckoutTotals as calculateTrustedCheckoutTotals,
   getCouponDocumentId,
   nextCheckoutAbuseCounter,
@@ -26,6 +25,7 @@ import {
   OFFLINE_CHECKOUT_NETWORK_LIMIT,
   OFFLINE_CHECKOUT_PHONE_LIMIT,
   resolveCouponDiscount,
+  resolveCodReservationExpiresAt,
 } from "./functions/src/api/checkout/checkoutLogic";
 import { appendPaymentTimeline, createPaymentTimelineEvent } from "./functions/src/api/payments/payhereLogic";
 import { registerSupplierRoutes } from "./functions/src/api/routes/supplier";
@@ -40,6 +40,7 @@ import {
   resolveOrderPrivateAttributionLines,
 } from "./functions/src/api/orders/orderPrivateAttribution";
 import { PRODUCT_PRIVATE_COLLECTION } from "./functions/src/api/products/productCommercialData";
+import { isProductExplicitlyActive } from "./functions/src/api/products/productAvailability";
 
 const app = express();
 const PORT = 3000;
@@ -180,7 +181,7 @@ app.get("/sitemap.xml", async (_req, res) => {
       adminDb.collection("categories").limit(500).get(),
     ]);
     const escapeXml = (value: string) => value.replace(/[<>&'\"]/g, (character) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", "'": "&apos;", '"': "&quot;" }[character] || character));
-    const productUrls = snapshot.docs.filter((product) => product.data().isActive !== false).map((product) => `<url><loc>${escapeXml(`https://zyro.lk/products/${encodeURIComponent(product.id)}`)}</loc><changefreq>daily</changefreq><priority>0.8</priority></url>`);
+    const productUrls = snapshot.docs.filter((product) => product.data().isActive === true).map((product) => `<url><loc>${escapeXml(`https://zyro.lk/products/${encodeURIComponent(product.id)}`)}</loc><changefreq>daily</changefreq><priority>0.8</priority></url>`);
     const categoryUrls = categoriesSnapshot.docs.filter((category) => category.data().isActive !== false).map((category) => `<url><loc>${escapeXml(`https://zyro.lk/categories/${encodeURIComponent(category.id)}`)}</loc><changefreq>weekly</changefreq><priority>0.7</priority></url>`);
     const staticPaths = ["", "products", "categories", "about-us", "contact", "faq", "privacy-policy", "terms-conditions", "return-policy", "warranty-policy"];
     const staticUrls = staticPaths.map((path, index) => `<url><loc>${escapeXml(`https://zyro.lk/${path}`)}</loc><changefreq>${index < 3 ? "daily" : "monthly"}</changefreq><priority>${index === 0 ? "1.0" : index < 3 ? "0.9" : "0.5"}</priority></url>`);
@@ -357,7 +358,7 @@ async function calculateTrustedCouponSubtotal(cartItems: CheckoutCartItem[]): Pr
   let subtotal = 0;
   for (const item of cartItems) {
     const snapshot = await adminDb.collection("products").doc(item.productId).get();
-    if (!snapshot.exists || snapshot.data()?.isActive === false) throw new CheckoutError("A cart item is no longer available", 409);
+    if (!snapshot.exists || !isProductExplicitlyActive(snapshot.data()?.isActive)) throw new CheckoutError("A cart item is no longer available", 409);
     const data = snapshot.data()!;
     const price = Number(data.price);
     const stock = Number(data.stock);
@@ -518,7 +519,7 @@ app.post("/api/checkout", async (req, res) => {
         }
 
         const pData = productSnap.data()!;
-        if (pData.isActive === false) {
+        if (!isProductExplicitlyActive(pData.isActive)) {
           throw new CheckoutError(`Product "${pData.name || item.productId}" is not available for purchase.`, 409);
         }
 
@@ -629,7 +630,7 @@ app.post("/api/checkout", async (req, res) => {
         } : {
           paymentStatus: "not_required",
           stockReservationStatus: "reserved",
-          stockReservationExpiresAt: new Date(Date.now() + COD_CONFIRMATION_WINDOW_MS),
+          stockReservationExpiresAt: resolveCodReservationExpiresAt(Date.now(), settings),
           stockRestorationApplied: false,
         }),
         createdAt: capturedAt

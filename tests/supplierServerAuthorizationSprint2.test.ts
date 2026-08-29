@@ -32,7 +32,8 @@ test('Sprint 2 accepts only a bounded, validated admin review draft', () => {
   });
   assert.throws(() => parseSupplierApprovalDraft({ ...draft, stock: 1.5 }), /Stock is invalid/);
   assert.throws(() => parseSupplierApprovalDraft({ ...draft, primaryImageUrl: 'javascript:alert(1)' }), /valid supplier product image/);
-  assert.throws(() => parseSupplierApprovalDraft({ ...draft, comparePrice: 100 }), /Compare price/);
+  // Selling-price increases may leave a stale compare price; clamp instead of rejecting.
+  assert.equal(parseSupplierApprovalDraft({ ...draft, comparePrice: 100 })?.comparePrice, 4500);
 });
 
 test('Sprint 2 rejects duplicate, path-like, and oversized bulk queue identifiers', () => {

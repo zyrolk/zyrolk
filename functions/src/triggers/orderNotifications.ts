@@ -1,5 +1,5 @@
 import { onDocumentWritten } from "firebase-functions/v2/firestore";
-import { FieldValue, Timestamp } from "firebase-admin/firestore";
+import { FieldValue, Timestamp, type DocumentData, type UpdateData } from "firebase-admin/firestore";
 import { adminDb } from "../api/firebase";
 import { appLogger } from "../api/logging";
 import {
@@ -160,7 +160,7 @@ export const trackOrderNotificationDelivery = onDocumentWritten("mail/{mailId}",
       && outbox.kind === "supplier_operational_alert"
       && outbox.status === "handed_off";
     if (!isLegacySupplierAlert && outbox.currentMailId !== event.params.mailId) return;
-    const update: Record<string, unknown> = {
+    const update: UpdateData<DocumentData> = {
       status: projection.status,
       attemptCount: attempt,
       updatedAt: FieldValue.serverTimestamp(),

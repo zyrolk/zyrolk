@@ -34,6 +34,7 @@ import {
   subscribeToStorefrontCategories,
   subscribeToStorefrontProductPage,
 } from './services/storefront/storefrontCatalog';
+import { isProductExplicitlyActive } from './services/storefront/productAvailability';
 import { buildStorefrontUrl, parseStorefrontRoute } from './services/navigation/storefrontRoutes';
 
 // Components
@@ -83,7 +84,7 @@ const selectFilteredStorefrontProducts = (
   priceRange: number,
   sortBy: string,
 ): Product[] => {
-  const activeProducts = sourceProducts.filter((product) => product.isActive !== false);
+  const activeProducts = sourceProducts.filter((product) => isProductExplicitlyActive(product.isActive));
   const matchingCustomerIds = new Set(
     searchCustomerProducts(projectCustomerProducts(activeProducts), searchQuery).map((product) => product.id),
   );
@@ -250,7 +251,7 @@ export default function App() {
       setIsResolvingRoutedProduct(false);
       return;
     }
-    const loadedProduct = products.find(candidate => candidate.id === routedProductId && candidate.isActive !== false);
+    const loadedProduct = products.find(candidate => candidate.id === routedProductId && isProductExplicitlyActive(candidate.isActive));
     if (loadedProduct) {
       resolvedRoutedProductRef.current = routedProductId;
       setCurrentPage('products');
@@ -264,7 +265,7 @@ export default function App() {
     let active = true;
     void loadStorefrontProductsByIds(db, [routedProductId]).then((matches) => {
       if (!active) return;
-      const product = matches.find(candidate => candidate.id === routedProductId && candidate.isActive !== false);
+      const product = matches.find(candidate => candidate.id === routedProductId && isProductExplicitlyActive(candidate.isActive));
       if (!product) {
         setSelectedProduct(null);
         setCurrentPage('not-found');
@@ -868,7 +869,7 @@ export default function App() {
     setCart((current) => current.flatMap((item) => {
       if (!productIds.includes(item.product.id)) return [item];
       const refreshed = refreshedById.get(item.product.id);
-      if (!refreshed || refreshed.isActive === false || refreshed.stock <= 0) return [];
+      if (!refreshed || !isProductExplicitlyActive(refreshed.isActive) || refreshed.stock <= 0) return [];
       return [{
         ...item,
         product: refreshed,
@@ -937,7 +938,7 @@ export default function App() {
   const storefrontProducts = products;
 
   const customerProducts = useMemo(
-    () => projectCustomerProducts(storefrontProducts.filter((product) => product.isActive !== false)),
+    () => projectCustomerProducts(storefrontProducts.filter((product) => isProductExplicitlyActive(product.isActive))),
     [storefrontProducts],
   );
 
@@ -985,7 +986,7 @@ export default function App() {
   }, [currentPage, filteredProducts.length, hasMoreProducts, loadMoreProducts, loading, priceRange, searchQuery, selectedCategory, sortBy]);
 
   const activeProducts = useMemo(
-    () => storefrontProducts.filter(product => product.isActive !== false),
+    () => storefrontProducts.filter(product => isProductExplicitlyActive(product.isActive)),
     [storefrontProducts]
   );
   const activeProductCount = catalogActiveCount ?? activeProducts.length;

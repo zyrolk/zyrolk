@@ -8,12 +8,18 @@ import { deleteApp as deleteAdminApp, initializeApp as initializeAdminApp } from
 import { getFirestore as getAdminFirestore } from "firebase-admin/firestore";
 import { connectAuthEmulator, createUserWithEmailAndPassword, getAuth, signOut } from "firebase/auth";
 import { collection, doc, getDoc, getDocs, query, setDoc, where } from "firebase/firestore";
-import { adminAuth, adminDb } from "../functions/src/api/firebase";
+import { adminAuth, adminDb, FieldValue } from "../functions/src/api/firebase";
 import { createAdminProduct } from "../functions/src/api/products/adminProductManagement";
 import { hashValue } from "../functions/src/api/checkout/checkoutLogic";
 import { createSupplierReviewDraft } from "../src/services/supplierReviewEditor";
 import { decideSupplierQueueItem, parseSupplierApprovalDraft } from "../functions/src/api/suppliers/supplierApproval";
 import { buildSupplierProductOffer } from "../functions/src/api/suppliers/supplierOfferEngine";
+import type { SupplierOutboundResponse } from "../functions/src/api/security/supplierOutboundRequest";
+import type {
+  SupplierManagedMediaAsset,
+  SupplierMediaPipelineDependencies,
+} from "../functions/src/api/suppliers/supplierMediaPipeline";
+import { processSupplierReviewQueueItem } from "../functions/src/scheduled/supplierReviewQueue";
 import {
   assertReviewOwnershipMigrationAuthorized,
   MAX_REVIEW_MIGRATION_OPERATION_UNITS_PER_BATCH,
@@ -29,19 +35,38 @@ const projectId = process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT;
 const canRun = Boolean(firestoreHost && authHost && functionsHost && projectId?.startsWith("demo-"));
 const prefix = "p1-production-blockers";
 
-const managedMedia = (identity: string) => [{
-  assetId: `${identity}-asset`, supplierId: identity, sourceId: "supplier-portal", productId: identity,
-  originalSupplierUrl: `https://supplier.example/${identity}.jpg`,
-  originalStoragePath: `${identity}/original.jpg`, originalStorageUrl: `https://storage.example/${identity}-original.jpg`,
-  firebaseStorageUrl: `https://storage.example/${identity}-large.webp`, contentHash: `${identity}-hash`,
-  width: 1200, height: 1200, mimeType: "image/jpeg", fileSize: 1_000,
-  uploadTimestamp: "2026-08-12T00:00:00.000Z", imageStatus: "ready", isPrimary: true, sortOrder: 0,
-  variants: {
-    thumbnail: { storagePath: `${identity}/thumb.webp`, storageUrl: `https://storage.example/${identity}-thumb.webp`, width: 200, height: 200, mimeType: "image/webp", fileSize: 100 },
-    medium: { storagePath: `${identity}/medium.webp`, storageUrl: `https://storage.example/${identity}-medium.webp`, width: 800, height: 800, mimeType: "image/webp", fileSize: 500 },
-    large: { storagePath: `${identity}/large.webp`, storageUrl: `https://storage.example/${identity}-large.webp`, width: 1200, height: 1200, mimeType: "image/webp", fileSize: 800 },
+const portalMediaBody = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAEUlEQVQImWPgEpHjEpFjgFAABk4A8YCCZIUAAAAASUVORK5CYII=",
+  "base64",
+);
+// Distinct valid PNG bytes (different pixels) so content-addressed hashing must diverge.
+const changedPortalMediaBody = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAD0lEQVQImWNgYPgPRmAKABf2A/38FIMyAAAAAElFTkSuQmCC",
+  "base64",
+);
+
+const portalMediaResponse = (body = portalMediaBody): SupplierOutboundResponse => ({
+  status: 200,
+  ok: true,
+  headers: new Headers({ "content-type": "image/png", "content-length": String(body.length) }),
+  text: async () => body.toString("utf8"),
+  arrayBuffer: async () => body.buffer.slice(
+    body.byteOffset,
+    body.byteOffset + body.byteLength,
+  ) as ArrayBuffer,
+  json: async <T>() => JSON.parse(body.toString("utf8")) as T,
+});
+
+const portalMediaDependencies = (): SupplierMediaPipelineDependencies => ({
+  fetchImage: async (url) => portalMediaResponse(url.includes("changed-product-image") ? changedPortalMediaBody : portalMediaBody),
+  findAsset: async (contentHash) => {
+    const snapshot = await adminDb.collection("supplier_media_assets").doc(contentHash).get();
+    return snapshot.exists ? snapshot.data() as SupplierManagedMediaAsset : null;
   },
-}];
+  saveFile: async (storagePath) => `https://firebasestorage.googleapis.com/v0/b/${projectId}.appspot.com/o/${encodeURIComponent(storagePath)}?alt=media`,
+  saveAsset: async (asset) => { await adminDb.collection("supplier_media_assets").doc(asset.assetId).set(asset); },
+  recordAudit: async (event) => { await adminDb.collection("supplier_media_audit").add(event); },
+});
 
 test("P1 production blockers fail closed at trusted and Rules boundaries", {
   skip: canRun ? undefined : "Firestore, Auth, and Functions Emulators are required.",
@@ -318,16 +343,47 @@ test("P1 production blockers fail closed at trusted and Rules boundaries", {
       const queueId = `portal-${requestId}`;
       let queue = (await adminDb.collection("supplier_review_queue").doc(queueId).get()).data()!;
       assert.equal(queue.comparison.comparisonStatus, "NEW_PRODUCT");
-      assert.equal(queue.productValidation.readyToPublish, true);
+      assert.equal(queue.queueState, "queued");
+      assert.equal(queue.mediaStatus, "queued");
+      assert.equal(queue.productValidation.readyToPublish, false);
+      assert.equal(Array.isArray(queue.managedMedia), false);
       const offerReference = adminDb.collection("supplier_product_offers").doc(String(queue.supplierOfferId));
       const pendingOffer = (await offerReference.get()).data()!;
       assert.equal(pendingOffer.reviewStatus, "review_pending");
       assert.equal(pendingOffer.pendingObservation.reviewQueueItemId, queueId);
       assert.equal((await adminDb.collection("products").doc(String(queue.productId)).get()).exists, false);
 
-      const media = managedMedia(`${prefix}-${suffix}`);
-      await adminDb.collection("supplier_review_queue").doc(queueId).set({ managedMedia: media, mediaStatus: "ready" }, { merge: true });
+      await assert.rejects(
+        decideSupplierQueueItem(adminDb, queueId, "approved", { uid: `${prefix}-admin`, email: "admin@example.test" }, {
+          expectedPendingRevision: queue.supplierOfferPendingRevision,
+        }),
+        /not ready for an admin decision/iu,
+      );
+      const processed = await processSupplierReviewQueueItem(
+        adminDb,
+        queueId,
+        `${prefix}-portal-media-worker-${suffix}`,
+        Date.now(),
+        { mediaDependencies: portalMediaDependencies() },
+      );
+      assert.deepEqual(processed, { queueItemId: queueId, outcome: "completed", state: "review_pending" });
       queue = (await adminDb.collection("supplier_review_queue").doc(queueId).get()).data()!;
+      const media = queue.managedMedia as Array<Record<string, unknown>>;
+      assert.equal(queue.queueState, "review_pending");
+      assert.equal(queue.mediaStatus, "ready");
+      assert.equal(queue.productValidation.readyToPublish, true);
+      assert.equal(media.length, 1);
+      assert.match(String(media[0].firebaseStorageUrl), /^https:\/\/firebasestorage\.googleapis\.com\//u);
+      assert.equal((await adminDb.collection("supplier_media_assets").doc(String(media[0].contentHash)).get()).exists, true);
+      const duplicateWorkerRun = await processSupplierReviewQueueItem(
+        adminDb,
+        queueId,
+        `${prefix}-portal-media-worker-retry-${suffix}`,
+        Date.now(),
+        { mediaDependencies: portalMediaDependencies() },
+      );
+      assert.equal(duplicateWorkerRun.outcome, "skipped");
+      assert.equal((await adminDb.collection("supplier_media_assets").where("contentHash", "==", media[0].contentHash).get()).size, 1);
       const sourceItem = {
         id: queueId, productName: String(queue.productName), supplierCode: String(queue.supplierCode), supplierName: String(queue.supplierName),
         costPrice: Number(queue.costPrice), marketPrice: Number(queue.marketPrice), stock: Number(queue.stock), imageUrl: String(queue.imageUrl),
@@ -355,7 +411,10 @@ test("P1 production blockers fail closed at trusted and Rules boundaries", {
       ]);
       assert.equal(product.data()?.isActive, true);
       assert.equal(product.data()?.stock, 6);
+      assert.equal(product.data()?.imageUrl, media[0].firebaseStorageUrl);
+      assert.equal(product.data()?.media?.[0]?.firebaseStorageUrl, media[0].firebaseStorageUrl);
       assert.equal(privateProduct.data()?.fulfilmentMode, "supplier");
+      assert.equal(privateProduct.data()?.supplierMedia?.[0]?.contentHash, media[0].contentHash);
       assert.equal(privateProduct.data()?.supplierOfferSelection?.activeOfferId, queue.supplierOfferId);
       assert.equal(effectiveOffer.data()?.reviewStatus, "approved");
       assert.equal(effectiveOffer.data()?.pendingObservation, null);
@@ -415,6 +474,191 @@ test("P1 production blockers fail closed at trusted and Rules boundaries", {
       assert.equal(afterRejectOffer.stock, beforeRejectOffer.stock);
       assert.equal(afterRejectOffer.pendingObservation, null);
       assert.equal((await adminDb.collection("products").doc(productId).get()).data()?.stock, 9);
+
+      const skuClaimReference = adminDb.collection("supplier_sku_claims").doc(String(queue.supplierSkuClaimId));
+      assert.equal((await skuClaimReference.get()).data()?.canonicalProductId, productId);
+      await skuClaimReference.update({ canonicalProductId: FieldValue.delete() });
+
+      const processAndApproveChange = async (changeRequestId: string) => {
+        const changeQueueId = `portal-${changeRequestId}`;
+        let changeQueue = (await adminDb.collection("supplier_review_queue").doc(changeQueueId).get()).data()!;
+        assert.equal(changeQueue.queueState, "queued");
+        const processedChange = await processSupplierReviewQueueItem(
+          adminDb,
+          changeQueueId,
+          `${prefix}-change-media-worker-${changeRequestId}`,
+          Date.now(),
+          { mediaDependencies: portalMediaDependencies() },
+        );
+        assert.equal(processedChange.state, "review_pending");
+        changeQueue = (await adminDb.collection("supplier_review_queue").doc(changeQueueId).get()).data()!;
+        const changeMedia = changeQueue.managedMedia as Array<Record<string, unknown>>;
+        const changeSourceItem = {
+          id: changeQueueId,
+          productName: String(changeQueue.productName),
+          supplierCode: String(changeQueue.supplierCode),
+          supplierName: String(changeQueue.supplierName),
+          costPrice: Number(changeQueue.costPrice),
+          marketPrice: Number(changeQueue.marketPrice),
+          stock: Number(changeQueue.stock),
+          imageUrl: String(changeQueue.imageUrl),
+          sourceId: String(changeQueue.sourceId),
+          supplierOfferId: String(changeQueue.supplierOfferId),
+          productPayload: changeQueue.productPayload,
+          supplierSnapshot: changeQueue.supplierSnapshot,
+          managedMedia: changeMedia,
+          mediaStatus: changeQueue.mediaStatus,
+          comparison: changeQueue.comparison,
+          productValidation: changeQueue.productValidation,
+        };
+        const changeDraft = createSupplierReviewDraft(changeSourceItem);
+        const decision = await decideSupplierQueueItem(
+          adminDb,
+          changeQueueId,
+          "approved",
+          { uid: `${prefix}-admin`, email: "admin@example.test" },
+          {
+            draft: parseSupplierApprovalDraft({
+              ...changeDraft,
+              primaryImageUrl: changeMedia[0].firebaseStorageUrl,
+              galleryImageUrls: changeMedia.slice(1).map((asset) => asset.firebaseStorageUrl),
+            }),
+            expectedPendingRevision: changeQueue.supplierOfferPendingRevision,
+          },
+        );
+        if (!decision.success) assert.fail("A legitimate same-product edit must not create an approval conflict.");
+        assert.equal(decision.productId, productId);
+        return { changeQueue, changeMedia };
+      };
+
+      const editRequestId = `${requestId}-full-edit`;
+      const editedDraft = {
+        ...draft,
+        price: 1_450,
+        description: "The approved supplier product now has a complete revised description.",
+        productType: "Updated portal item",
+      };
+      const savedEdit = await portalRequest("/supplier-portal/requests", {
+        requestId: editRequestId,
+        requestType: "product_change",
+        productId,
+        draft: editedDraft,
+      });
+      assert.equal(savedEdit.status, 200, await savedEdit.text());
+      const submittedLegacyEdit = await portalRequest(`/supplier-portal/requests/${editRequestId}/submit`, {});
+      assert.equal(submittedLegacyEdit.status, 200, await submittedLegacyEdit.text());
+      await processAndApproveChange(editRequestId);
+      const [editedProduct, editedPrivateProduct, ownedProducts] = await Promise.all([
+        adminDb.collection("products").doc(productId).get(),
+        adminDb.collection("product_private").doc(productId).get(),
+        adminDb.collection("product_private").where("supplierId", "==", supplierUid).get(),
+      ]);
+      assert.equal(editedProduct.data()?.price, 1_450);
+      assert.equal(editedProduct.data()?.description, editedDraft.description);
+      assert.equal(editedProduct.data()?.productType, editedDraft.productType);
+      assert.equal(editedPrivateProduct.data()?.supplierId, supplierUid);
+      assert.equal(ownedProducts.docs.filter((document) => document.id === productId).length, 1);
+      assert.equal((await skuClaimReference.get()).data()?.canonicalProductId, productId);
+
+      const imageEditRequestId = `${requestId}-image-edit`;
+      const imageEditDraft = {
+        ...editedDraft,
+        imageUrl: `https://supplier.example/${suffix}-changed-product-image.jpg`,
+      };
+      const savedImageEdit = await portalRequest("/supplier-portal/requests", {
+        requestId: imageEditRequestId,
+        requestType: "product_change",
+        productId,
+        draft: imageEditDraft,
+      });
+      assert.equal(savedImageEdit.status, 200, await savedImageEdit.text());
+      const submittedImageEdit = await portalRequest(`/supplier-portal/requests/${imageEditRequestId}/submit`, {});
+      assert.equal(submittedImageEdit.status, 200, await submittedImageEdit.text());
+      const imageQueueBeforeWorker = (await adminDb.collection("supplier_review_queue").doc(`portal-${imageEditRequestId}`).get()).data()!;
+      assert.equal(imageQueueBeforeWorker.mediaStatus, "queued");
+      const imageEdit = await processAndApproveChange(imageEditRequestId);
+      assert.notEqual(imageEdit.changeMedia[0].contentHash, media[0].contentHash);
+      assert.equal((await adminDb.collection("products").doc(productId).get()).data()?.imageUrl, imageEdit.changeMedia[0].firebaseStorageUrl);
+
+      const rejectedEditRequestId = `${requestId}-rejected-edit`;
+      const rejectedEditDraft = { ...imageEditDraft, price: 1_700, description: "This edit should be rejected." };
+      const savedRejectedEdit = await portalRequest("/supplier-portal/requests", {
+        requestId: rejectedEditRequestId,
+        requestType: "product_change",
+        productId,
+        draft: rejectedEditDraft,
+      });
+      assert.equal(savedRejectedEdit.status, 200, await savedRejectedEdit.text());
+      const submittedRejectedEdit = await portalRequest(`/supplier-portal/requests/${rejectedEditRequestId}/submit`, {});
+      assert.equal(submittedRejectedEdit.status, 200, await submittedRejectedEdit.text());
+      const rejectedEditQueueId = `portal-${rejectedEditRequestId}`;
+      await processSupplierReviewQueueItem(adminDb, rejectedEditQueueId, `${prefix}-rejected-edit-worker-${suffix}`, Date.now(), {
+        mediaDependencies: portalMediaDependencies(),
+      });
+      const rejectedEditQueue = (await adminDb.collection("supplier_review_queue").doc(rejectedEditQueueId).get()).data()!;
+      await decideSupplierQueueItem(adminDb, rejectedEditQueueId, "rejected", { uid: `${prefix}-admin`, email: "admin@example.test" }, {
+        rejectionReason: "Keep the currently approved catalogue data.",
+        expectedPendingRevision: rejectedEditQueue.supplierOfferPendingRevision,
+      });
+      assert.equal((await adminDb.collection("products").doc(productId).get()).data()?.price, 1_450);
+      assert.equal((await skuClaimReference.get()).data()?.canonicalProductId, productId);
+
+      const duplicateRequestId = `${requestId}-duplicate-new`;
+      const savedDuplicate = await portalRequest("/supplier-portal/requests", {
+        requestId: duplicateRequestId,
+        requestType: "new_product",
+        draft: { ...draft, name: "A different product attempting the claimed SKU" },
+      });
+      assert.equal(savedDuplicate.status, 200, await savedDuplicate.text());
+      const submittedDuplicate = await portalRequest(`/supplier-portal/requests/${duplicateRequestId}/submit`, {});
+      assert.equal(submittedDuplicate.status, 400, await submittedDuplicate.text());
+
+      const otherSupplierCredential = await createUserWithEmailAndPassword(
+        auth,
+        `${prefix}-portal-other-${suffix}@example.test`,
+        `Zyro-${randomUUID()}!`,
+      );
+      const otherSupplierUid = otherSupplierCredential.user.uid;
+      await Promise.all([
+        adminDb.collection("users").doc(otherSupplierUid).set({ role: "supplier", email: otherSupplierCredential.user.email }),
+        adminDb.collection("supplier_profiles").doc(otherSupplierUid).set({
+          supplierId: otherSupplierUid,
+          companyName: "Other P1 Portal Supplier",
+          profileStatus: "active",
+        }),
+      ]);
+      const otherSupplierToken = await otherSupplierCredential.user.getIdToken();
+      const otherSupplierRequest = (path: string, body: Record<string, unknown>) => fetch(
+        `http://${functionsHost}/${projectId}/us-central1/api/api${path}`,
+        { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${otherSupplierToken}` }, body: JSON.stringify(body) },
+      );
+      const crossSupplierRequestId = `${requestId}-cross-supplier`;
+      const savedCrossSupplier = await otherSupplierRequest("/supplier-portal/requests", {
+        requestId: crossSupplierRequestId,
+        requestType: "new_product",
+        draft: { ...draft, name: "Another supplier attempting the live supplier SKU" },
+      });
+      assert.equal(savedCrossSupplier.status, 200, await savedCrossSupplier.text());
+      const submittedCrossSupplier = await otherSupplierRequest(`/supplier-portal/requests/${crossSupplierRequestId}/submit`, {});
+      assert.equal(submittedCrossSupplier.status, 400, await submittedCrossSupplier.text());
+      const forgedChange = await otherSupplierRequest("/supplier-portal/requests", {
+        requestId: `${requestId}-forged-change`,
+        requestType: "product_change",
+        productId,
+        draft: imageEditDraft,
+      });
+      assert.equal(forgedChange.status, 403, await forgedChange.text());
+
+      const retryEditRequestId = `${requestId}-retry-edit`;
+      const savedRetryEdit = await portalRequest("/supplier-portal/requests", {
+        requestId: retryEditRequestId,
+        requestType: "product_change",
+        productId,
+        draft: { ...imageEditDraft, price: 1_500 },
+      });
+      assert.equal(savedRetryEdit.status, 200, await savedRetryEdit.text());
+      const submittedRetryEdit = await portalRequest(`/supplier-portal/requests/${retryEditRequestId}/submit`, {});
+      assert.equal(submittedRetryEdit.status, 200, await submittedRetryEdit.text());
     } finally {
       await signOut(auth).catch(() => undefined);
       await deleteApp(supplierApp);

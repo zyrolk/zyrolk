@@ -1,4 +1,5 @@
 import { Product } from '../../types';
+import { isProductExplicitlyActive } from '../../services/storefront/productAvailability';
 import { selectRelatedProducts } from '../product-experience/productExperience';
 
 export interface WishlistProductView {
@@ -33,7 +34,7 @@ export interface RecommendationSection {
 
 const cleanText = (value: unknown): string => typeof value === 'string' ? value.trim() : '';
 const normalized = (value: unknown): string => cleanText(value).toLocaleLowerCase('en');
-const activeProducts = (products: readonly Product[]): Product[] => products.filter(product => product.isActive !== false);
+const activeProducts = (products: readonly Product[]): Product[] => products.filter(product => isProductExplicitlyActive(product.isActive));
 const productBrand = (product: Product): string => normalized(product.specs?.Brand || product.specs?.brand);
 const productCategory = (product: Product): string => normalized(product.category);
 
@@ -53,7 +54,7 @@ export function reconcileWishlistProducts(savedProducts: readonly Product[], pro
       id: savedProduct.id,
       savedProduct,
       product,
-      isAvailable: Boolean(liveProduct && liveProduct.isActive !== false),
+      isAvailable: Boolean(liveProduct && isProductExplicitlyActive(liveProduct.isActive)),
       priceChange,
       priceDifference: Math.abs(priceDifference),
       priceChangePercent: savedPrice > 0 ? Math.abs((priceDifference / savedPrice) * 100) : 0,

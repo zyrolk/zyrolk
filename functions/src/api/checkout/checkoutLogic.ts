@@ -9,7 +9,12 @@ export const CHECKOUT_ABUSE_COLLECTION = "checkout_abuse_limits";
 export const OFFLINE_CHECKOUT_LIMIT_WINDOW_MS = 60 * 60 * 1000;
 export const OFFLINE_CHECKOUT_PHONE_LIMIT = 3;
 export const OFFLINE_CHECKOUT_NETWORK_LIMIT = 12;
-export const COD_CONFIRMATION_WINDOW_MS = 60 * 60 * 1000;
+export {
+  COD_CONFIRMATION_WINDOW_MS,
+  DEFAULT_COD_PENDING_ORDER_TTL_MS,
+  resolveCodPendingOrderTtlMs,
+  resolveCodReservationExpiresAt,
+} from "./codPendingOrderPolicy";
 
 const ALLOWED_PAYMENT_METHODS = new Set(["cod", "whatsapp_confirm", "payhere"]);
 

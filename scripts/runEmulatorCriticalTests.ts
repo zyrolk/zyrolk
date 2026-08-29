@@ -35,6 +35,7 @@ const testFiles = [
   "tests/supplierRemovedProductE2EEmulatorSH2Final.test.ts",
   "tests/supplierReviewIdentityConcurrencyEmulatorSH2Final.test.ts",
   "tests/supplierSecurityEmulatorSprint8.test.ts",
+  "tests/supplierAccountAdministrationE2EEmulator.test.ts",
   "tests/productionBlockersP1Emulator.test.ts",
 ] as const;
 

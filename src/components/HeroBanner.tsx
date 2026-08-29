@@ -11,22 +11,21 @@ import {
 import { AnimatePresence, motion, MotionConfig, useReducedMotion } from 'motion/react';
 import {
   ArrowRight,
-  Camera,
+  Banknote,
   Check,
   ChevronLeft,
   ChevronRight,
   Headphones,
   Layers3,
-  Mic,
   Search,
   ShieldCheck,
   ShoppingBag,
   Sparkles,
   Store,
   Truck,
-  Undo2,
 } from 'lucide-react';
 import { Category, Product, WebsiteSettings } from '../types';
+import { isProductExplicitlyActive } from '../services/storefront/productAvailability';
 import { normalizeSlideSpeed } from '../services/hero-slider/heroSlider';
 import { projectCustomerProducts } from '../services/product-search/customerProjection';
 import { searchCustomerProducts } from '../services/product-search/customerProductSearch';
@@ -45,7 +44,7 @@ interface HeroBannerProps {
   categories?: readonly Category[];
 }
 
-const MARKETPLACE_MESSAGE = 'Discover products from trusted Sri Lankan suppliers with fast catalogue search, relevant recommendations, secure shopping and islandwide delivery.';
+const MARKETPLACE_MESSAGE = 'Browse products from trusted Sri Lankan suppliers, add to cart, and pay with Cash on Delivery when your order arrives.';
 const LEGACY_MARKETPLACE_MESSAGE = 'Shop fashion, home, beauty, electronics, lifestyle, accessories and thousands of products in one trusted Sri Lankan marketplace.';
 const LEGACY_MARKETPLACE_HEADING = 'Everything you need. One trusted marketplace.';
 const PREMIUM_ELECTRONICS_PATTERN = /premium\s+electronics/giu;
@@ -129,7 +128,7 @@ export default function HeroBanner({
   const isSliderActive = settings?.enableSlider !== false;
 
   const liveProducts = useMemo(
-    () => products.filter(product => product.isActive !== false),
+    () => products.filter(product => isProductExplicitlyActive(product.isActive)),
     [products],
   );
   const customerProducts = useMemo(() => projectCustomerProducts(liveProducts), [liveProducts]);
@@ -305,7 +304,7 @@ export default function HeroBanner({
                     Sri Lankan Marketplace
                   </div>
 
-                  <h1>Shop Smarter.<span>Discover Better.</span></h1>
+                  <h1>Shop Sri Lanka Online.<span>Cash on Delivery available.</span></h1>
                   <p className="zy-hero-v2-subtitle zy-ai-hero-subtitle">{displaySubtitle}</p>
 
                   <div className="zy-ai-hero-search-shell" ref={searchShellRef}>
@@ -331,22 +330,6 @@ export default function HeroBanner({
                         aria-activedescendant={activeSuggestion >= 0 ? `homepage-hero-suggestion-${activeSuggestion}` : undefined}
                       />
                       <div className="zy-ai-hero-search-tools">
-                        <button
-                          type="button"
-                          disabled
-                          aria-label="Voice search is unavailable in this launch version"
-                          title="Voice search is unavailable in this launch version"
-                        >
-                          <Mic aria-hidden="true" />
-                        </button>
-                        <button
-                          type="button"
-                          disabled
-                          aria-label="Image search is coming soon"
-                          title="Image search is coming soon"
-                        >
-                          <Camera aria-hidden="true" />
-                        </button>
                         <button type="submit" className="zy-ai-hero-search-submit" aria-label="Search marketplace">
                           <Search aria-hidden="true" />
                         </button>
@@ -556,12 +539,11 @@ export default function HeroBanner({
         </div>
 
         <div className="zy-ai-hero-trust" aria-label="Shopping benefits">
-          <span><Check aria-hidden="true" /><strong>Verified Suppliers</strong></span>
+          <span><Banknote aria-hidden="true" /><strong>Cash on Delivery</strong></span>
           <span><Truck aria-hidden="true" /><strong>Islandwide Delivery</strong></span>
           <span><ShieldCheck aria-hidden="true" /><strong>Secure Checkout</strong></span>
-          <span><Undo2 aria-hidden="true" /><strong>Easy Returns</strong></span>
+          <span><Check aria-hidden="true" /><strong>Verified Suppliers</strong></span>
           <span><Headphones aria-hidden="true" /><strong>Customer Support</strong></span>
-          <span><Sparkles aria-hidden="true" /><strong>Relevant Recommendations</strong></span>
         </div>
       </section>
     </MotionConfig>

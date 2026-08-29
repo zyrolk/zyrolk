@@ -2,7 +2,6 @@ import * as express from "express";
 import {
   CHECKOUT_ABUSE_COLLECTION,
   CHECKOUT_IDEMPOTENCY_COLLECTION,
-  COD_CONFIRMATION_WINDOW_MS,
   calculateCheckoutTotals,
   CheckoutCartItem,
   CheckoutError,
@@ -18,6 +17,7 @@ import {
   OFFLINE_CHECKOUT_PHONE_LIMIT,
   resolveCouponDiscount,
   resolveCheckoutIdempotency,
+  resolveCodReservationExpiresAt,
   validateCheckoutCartItems,
   validateCheckoutDetails,
   validatePaymentMethod,
@@ -31,6 +31,7 @@ import {
   ORDER_PRIVATE_COLLECTION,
   resolveOrderPrivateAttributionLines,
 } from "../orders/orderPrivateAttribution";
+import { isProductExplicitlyActive } from "../products/productAvailability";
 import { PRODUCT_PRIVATE_COLLECTION } from "../products/productCommercialData";
 
 const enforceCheckoutRateLimit = createCheckoutRateLimiter();
@@ -72,7 +73,7 @@ async function calculateTrustedCouponSubtotal(cartItems: CheckoutCartItem[]): Pr
   let subtotal = 0;
   for (const item of cartItems) {
     const snapshot = await adminDb.collection("products").doc(item.productId).get();
-    if (!snapshot.exists || snapshot.data()?.isActive === false) throw new CheckoutError("A cart item is no longer available", 409);
+    if (!snapshot.exists || !isProductExplicitlyActive(snapshot.data()?.isActive)) throw new CheckoutError("A cart item is no longer available", 409);
     const data = snapshot.data()!;
     const price = Number(data.price);
     const stock = Number(data.stock);
@@ -228,7 +229,7 @@ export function registerCheckoutRoutes(app: express.Express): void {
           }
 
           const pData = productSnap.data()!;
-          if (pData.isActive === false) {
+          if (!isProductExplicitlyActive(pData.isActive)) {
             throw new CheckoutError(`Product "${pData.name || item.productId}" is not available for purchase.`, 409);
           }
 
@@ -345,7 +346,7 @@ export function registerCheckoutRoutes(app: express.Express): void {
           paymentMethod: validatedPaymentMethod,
           paymentStatus: "not_required",
           stockReservationStatus: "reserved",
-          stockReservationExpiresAt: new Date(Date.now() + COD_CONFIRMATION_WINDOW_MS),
+          stockReservationExpiresAt: resolveCodReservationExpiresAt(Date.now(), settings),
           stockRestorationApplied: false,
           createdAt: capturedAt
         };

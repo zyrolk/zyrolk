@@ -1,4 +1,5 @@
 import { Product } from '../../types';
+import { isProductExplicitlyActive } from '../../services/storefront/productAvailability';
 
 export const CUSTOMER_ORDER_STATUSES = [
   'pending', 'confirmed', 'processing', 'packed', 'shipped', 'delivered', 'cancelled',
@@ -243,7 +244,7 @@ export function resolveBuyAgainItems(
   const productById = new Map(products.map(product => [product.id, product]));
   return order.items.flatMap(item => {
     const product = productById.get(item.productId);
-    if (!product || product.isActive === false || product.stock <= 0) return [];
+    if (!product || !isProductExplicitlyActive(product.isActive) || product.stock <= 0) return [];
     return [{ product, quantity: Math.min(product.stock, Math.max(1, item.quantity)) }];
   });
 }

@@ -201,7 +201,7 @@ export const buildStorefrontSeo = ({
       '@type': 'Offer',
       priceCurrency: 'LKR',
       price: Number(product.price),
-      availability: product.isActive !== false && product.stock > 0
+      availability: product.isActive === true && product.stock > 0
         ? 'https://schema.org/InStock'
         : 'https://schema.org/OutOfStock',
       url: canonical,

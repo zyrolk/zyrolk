@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { BarChart3, Check, Heart, PackageCheck, Plus, Search, ShoppingCart, Sparkles, Trash2, X } from 'lucide-react';
 import { Product } from '../../types';
+import { isProductExplicitlyActive } from '../../services/storefront/productAvailability';
 import { PRODUCT_IMAGE_FALLBACK } from '../product-experience/productExperience';
 import { buildComparisonRows, resolveComparedProducts } from './personalization';
 import './personalization.css';
@@ -33,7 +34,7 @@ export default function CompareProducts({
   const suggestions = useMemo(() => {
     const query = searchQuery.trim().toLocaleLowerCase('en');
     const selected = new Set(compareIds);
-    return products.filter(product => product.isActive !== false && !selected.has(product.id) && (
+    return products.filter(product => isProductExplicitlyActive(product.isActive) && !selected.has(product.id) && (
       !query || `${product.name} ${product.category} ${product.specs?.Brand || product.specs?.brand || ''}`.toLocaleLowerCase('en').includes(query)
     )).sort((left, right) => Number(right.isFeatured) - Number(left.isFeatured) || right.reviewsCount - left.reviewsCount || left.name.localeCompare(right.name)).slice(0, 8);
   }, [compareIds, products, searchQuery]);

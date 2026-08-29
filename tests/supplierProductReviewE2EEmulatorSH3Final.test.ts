@@ -273,11 +273,17 @@ const approvalDraft = (
   overrides: Partial<SupplierReviewDraft> = {},
 ) => {
   const draft = createSupplierReviewDraft(reviewSourceItem(reviewId, data));
+  const managedAssets = Array.isArray(data.managedMedia)
+    ? data.managedMedia as Array<Record<string, unknown>>
+    : [];
+  const managedPrimaryUrl = String(managedAssets[0]?.firebaseStorageUrl || "").trim();
+  const supplierImageFallback = `https://supplier.example/${String(data.supplierSnapshot && (data.supplierSnapshot as Record<string, unknown>).supplierProductId || reviewId).replace(/-supplier-product$/u, "")}.jpg`;
   return parseSupplierApprovalDraft({
     ...draft,
     ...overrides,
-    primaryImageUrl: `https://supplier.example/${String(data.supplierSnapshot && (data.supplierSnapshot as Record<string, unknown>).supplierProductId || reviewId).replace(/-supplier-product$/u, "")}.jpg`,
-    galleryImageUrls: [],
+    description: String(overrides.description || draft.description || "").trim() || "Supplier approved description for emulator review.",
+    primaryImageUrl: managedPrimaryUrl || supplierImageFallback,
+    galleryImageUrls: managedAssets.slice(1).map((asset) => String(asset.firebaseStorageUrl || "").trim()).filter(Boolean),
   })!;
 };
 

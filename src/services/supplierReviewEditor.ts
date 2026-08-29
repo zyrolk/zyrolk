@@ -200,6 +200,46 @@ export function buildSupplierReviewFieldChanges(item: SupplierReviewSourceItem):
   ));
 }
 
+const SUPPLIER_FIELD_PRODUCT_PATHS: Record<string, readonly string[]> = {
+  title: ['name'],
+  longDescription: ['description'],
+  shortDescription: ['shortDescription'],
+  price: ['price', 'originalPrice'],
+  comparePrice: ['originalPrice'],
+  costPrice: ['costPrice'],
+  marketPrice: ['marketPrice'],
+  stock: ['stock'],
+  mediaGallery: ['imageUrl', 'imageUrls'],
+  productType: ['productType'],
+  model: ['model'],
+  tags: ['tags'],
+  keywords: ['keywords'],
+  slug: ['slug'],
+  metaDescription: ['metaDescription'],
+  specifications: ['specs'],
+  brand: ['brand'],
+  categoryHierarchy: ['category', 'subcategory'],
+  supplierCategory: ['category'],
+  supplierSubcategory: ['subcategory'],
+};
+
+const SUPPLIER_REVIEW_EDITABLE_PRODUCT_FIELDS = new Set([
+  'name', 'description', 'shortDescription', 'price', 'originalPrice', 'costPrice', 'marketPrice',
+  'stock', 'imageUrl', 'imageUrls', 'productType', 'model', 'tags', 'keywords', 'slug',
+  'metaDescription', 'specs', 'brand', 'category', 'subcategory',
+]);
+
+const resolveSupplierReviewEditedFields = (item: SupplierReviewSourceItem): string[] => {
+  if (item.comparison?.comparisonStatus === 'NEW_PRODUCT') return [];
+  const fields = new Set<string>();
+  for (const change of buildSupplierReviewFieldChanges(item)) {
+    for (const path of SUPPLIER_FIELD_PRODUCT_PATHS[change.field] || []) {
+      if (SUPPLIER_REVIEW_EDITABLE_PRODUCT_FIELDS.has(path)) fields.add(path);
+    }
+  }
+  return [...fields];
+};
+
 export function buildSupplierReviewMetadataSections(item: SupplierReviewSourceItem): SupplierReviewMetadataSection[] {
   const snapshot: Record<string, unknown> = item.supplierSnapshot || {};
   const payload: Record<string, unknown> = item.productPayload || {};
@@ -306,7 +346,7 @@ export function createSupplierReviewDraft(item: SupplierReviewSourceItem): Suppl
     supplierItemCode: String(payload?.supplierItemCode || item.supplierCode || '').trim(),
     productName: String(payload?.name || item.productName || ''),
     shortDescription: String(payload?.shortDescription || ''),
-    description: String(payload?.description || ''),
+    description: String(payload?.description || payload?.longDescription || ''),
     model: String(payload?.model || ''),
     barcode: String(payload?.barcode || ''),
     productType: String(payload?.productType || ''),
@@ -332,7 +372,7 @@ export function createSupplierReviewDraft(item: SupplierReviewSourceItem): Suppl
     primaryImageUrl,
     galleryImageUrls,
     fieldOwnership,
-    editedFields: [],
+    editedFields: resolveSupplierReviewEditedFields(item),
   };
 }
 
@@ -382,6 +422,7 @@ export function validateSupplierReviewDraft(
   const errors: SupplierReviewValidationErrors = {};
 
   if (!draft.productName.trim()) errors.productName = 'Product name is required.';
+  if (!draft.description.trim()) errors.description = 'Full description is required.';
   if ((draft.shortDescription || '').length > 500) errors.shortDescription = 'Short description must contain 500 characters or fewer.';
   if ((draft.description || '').length > 20_000) errors.description = 'Description must contain 20,000 characters or fewer.';
   if ((draft.model || '').length > 160) errors.model = 'Model must contain 160 characters or fewer.';

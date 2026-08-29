@@ -243,5 +243,11 @@ test('scheduled sync, admin recovery, and approval paths preserve the durable re
   assert.match(routes, /supplier-review-queue\/resume", requireSupplierHubAdmin/);
   assert.match(approval, /const terminalState = action === "approved" \? "approved"/);
   assert.doesNotMatch(approval, /transaction\.delete\(reviewReference\)/);
-  assert.match(portal, /queueState: "review_pending"/);
+  const portalSubmit = portal.slice(
+    portal.indexOf('app.post("/api/supplier-portal/requests/:requestId/submit"'),
+    portal.indexOf('app.post("/api/supplier-portal/products/:productId/stock-proposal"'),
+  );
+  assert.match(portalSubmit, /buildSupplierQueueLifecycle\(observedAt\)/);
+  assert.match(portalSubmit, /managedMediaRequired: true/);
+  assert.doesNotMatch(portalSubmit, /queueState: "review_pending"/);
 });

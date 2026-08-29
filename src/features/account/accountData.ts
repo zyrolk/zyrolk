@@ -1,4 +1,5 @@
 import { Product } from '../../types';
+import { isProductExplicitlyActive } from '../../services/storefront/productAvailability';
 
 export type AccountSection = 'overview' | 'orders' | 'order-details' | 'profile' | 'addresses' | 'security' | 'settings';
 
@@ -122,7 +123,7 @@ export function buildRecentlyViewedProducts(productIds: readonly string[], produ
   const productsById = new Map(products.map(product => [product.id, product]));
   return productIds
     .map(id => productsById.get(id))
-    .filter((product): product is Product => Boolean(product && product.isActive !== false))
+    .filter((product): product is Product => Boolean(product && isProductExplicitlyActive(product.isActive)))
     .slice(0, Math.max(0, limit));
 }
 

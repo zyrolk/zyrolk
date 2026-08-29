@@ -11,6 +11,7 @@ import {
 import { buildSupplierQueueDecisionPlan } from '../src/services/supplierQueueDecisionPlan';
 import {
   COD_CONFIRMATION_WINDOW_MS,
+  DEFAULT_COD_PENDING_ORDER_TTL_MS,
   nextCheckoutAbuseCounter,
   OFFLINE_CHECKOUT_PHONE_LIMIT,
 } from '../functions/src/api/checkout/checkoutLogic';
@@ -58,7 +59,7 @@ test('Firestore rules keep product reads compatible while all product writes use
   for (const field of ['costPrice', 'marketPrice', 'supplierItemCode', 'supplierPurchasePrice', 'supplierInternalNotes', 'supplierProfit']) {
     assert.match(rules, new RegExp(`['"]${field}['"]`));
   }
-  assert.match(rules, /match \/products\/\{productId\}[\s\S]*allow read: if true;[\s\S]*allow create, update, delete: if false/);
+  assert.match(rules, /match \/products\/\{productId\}[\s\S]*allow read: if isPublicProductData\(resource\.data\);[\s\S]*allow create, update, delete: if false/);
   assert.match(rules, /match \/product_private\/\{productId\}[\s\S]*allow read: if isAdmin\(\);[\s\S]*allow create, update, delete: if false/);
   assert.match(rules, /match \/admin_product_audit\/\{auditId\}[\s\S]*allow read: if isAdmin\(\);[\s\S]*allow create, update, delete: if false/);
   assert.match(rules, /match \/checkout_abuse_limits\/\{docId\}[\s\S]*allow read, write: if false/);
@@ -76,7 +77,8 @@ test('distributed COD limiter rejects repeated attempts and resets after its win
   );
   const reset = nextCheckoutAbuseCounter(counter, OFFLINE_CHECKOUT_PHONE_LIMIT, counter.expiresAt.getTime() + 1);
   assert.equal(reset.count, 1);
-  assert.ok(COD_CONFIRMATION_WINDOW_MS > 0);
+  assert.equal(DEFAULT_COD_PENDING_ORDER_TTL_MS, 24 * 60 * 60 * 1000);
+  assert.notEqual(COD_CONFIRMATION_WINDOW_MS, 60 * 60 * 1000);
 });
 
 test('offline reservations expire, restore stock, and commit only after admin confirmation', () => {
@@ -85,7 +87,7 @@ test('offline reservations expire, restore stock, and commit only after admin co
   const expiry = readFileSync('functions/src/scheduled/paymentReservations.ts', 'utf8');
   assert.match(checkout, /CHECKOUT_ABUSE_COLLECTION/);
   assert.match(checkout, /stockReservationStatus: "reserved"/);
-  assert.match(checkout, /COD_CONFIRMATION_WINDOW_MS/);
+  assert.match(checkout, /resolveCodReservationExpiresAt\(Date\.now\(\), settings\)/);
   assert.match(orders, /committingOfflineReservation/);
   assert.match(orders, /stockReservationStatus: "committed"/);
   assert.match(orders, /stockReservationStatus: "released"/);

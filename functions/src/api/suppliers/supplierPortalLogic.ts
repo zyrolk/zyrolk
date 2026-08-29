@@ -1,10 +1,66 @@
 import { ApiError } from "../errors";
 import { assertOrderCanProgressSupplierFulfilment } from "../orders/orderStatusLogic";
+import { parseSupplierOfferPendingObservation } from "./supplierOfferEngine";
+
+/** Customer-safe validation message for required supplier full descriptions. */
+export const SUPPLIER_FULL_DESCRIPTION_REQUIRED_MESSAGE = "Full description is required.";
+
+export const SUPPLIER_PORTAL_FULL_DESCRIPTION_MAX_LENGTH = 10_000;
+export const SUPPLIER_APPROVAL_FULL_DESCRIPTION_MAX_LENGTH = 20_000;
+
+export function resolveSupplierFullDescription(
+  primary: unknown,
+  fallback: unknown,
+  maximum: number,
+): string {
+  const raw = typeof primary === "string" && primary.normalize("NFKC").trim()
+    ? primary
+    : fallback;
+  const normalized = typeof raw === "string"
+    ? raw.normalize("NFKC").trim().replace(/\s+/gu, " ")
+    : "";
+  if (!normalized) throw new ApiError(SUPPLIER_FULL_DESCRIPTION_REQUIRED_MESSAGE, 422);
+  if (normalized.length > maximum) {
+    throw new ApiError(`Full description must contain ${maximum.toLocaleString()} characters or fewer.`, 422);
+  }
+  return normalized.slice(0, maximum);
+}
 
 export const SUPPLIER_REQUEST_STATUSES = ["draft", "pending", "approved", "rejected"] as const;
 export const SUPPLIER_FULFILMENT_STATUSES = ["pending", "processing", "packed", "shipped"] as const;
 /** Virtual source used only for authenticated Supplier Portal submissions. */
 export const SUPPLIER_PORTAL_SOURCE_ID = "supplier-portal";
+
+/** Stable conflict code when a second unresolved stock proposal is rejected. */
+export const SUPPLIER_STOCK_PROPOSAL_PENDING_CODE = "STOCK_PROPOSAL_PENDING";
+export const SUPPLIER_STOCK_PROPOSAL_PENDING_MESSAGE =
+  "A stock change is already pending review for this product.";
+
+/**
+ * Fail-closed guard for Supplier Portal stock proposals.
+ * Any non-null pendingObservation on the offer blocks a new stock proposal so
+ * the active queue/revision identity cannot be silently overwritten.
+ */
+export function assertNoUnresolvedSupplierStockProposal(pendingObservation: unknown): void {
+  if (pendingObservation == null) return;
+  if (typeof pendingObservation !== "object" || Array.isArray(pendingObservation)) return;
+
+  const pending = parseSupplierOfferPendingObservation(pendingObservation);
+  const reviewQueueItemId = pending?.reviewQueueItemId
+    || (typeof (pendingObservation as { reviewQueueItemId?: unknown }).reviewQueueItemId === "string"
+      ? String((pendingObservation as { reviewQueueItemId: string }).reviewQueueItemId).trim().slice(0, 180)
+      : null);
+  throw new ApiError(
+    SUPPLIER_STOCK_PROPOSAL_PENDING_MESSAGE,
+    409,
+    SUPPLIER_STOCK_PROPOSAL_PENDING_MESSAGE,
+    {
+      code: SUPPLIER_STOCK_PROPOSAL_PENDING_CODE,
+      reviewQueueItemId,
+      pendingRevision: pending?.revision || null,
+    },
+  );
+}
 
 export type SupplierRequestStatus = typeof SUPPLIER_REQUEST_STATUSES[number];
 export type SupplierFulfilmentStatus = typeof SUPPLIER_FULFILMENT_STATUSES[number];
@@ -171,7 +227,7 @@ export function sanitizeSupplierProductDraft(input: SupplierProductDraftInput): 
     productType: text(input.productType, 100),
     model: text(input.model, 100),
     barcode: text(input.barcode, 20),
-    description: text(input.description, 10_000),
+    description: text(input.description, SUPPLIER_PORTAL_FULL_DESCRIPTION_MAX_LENGTH),
     shortDescription: text(input.shortDescription, 500),
     price: numberValue(input.price),
     stock: Math.floor(numberValue(input.stock)),
@@ -198,6 +254,7 @@ export function validateSupplierProductForSubmission(
   const subcategory = subcategories.find((item) => item.id === draft.subcategory);
   if (!subcategory || subcategory.isActive === false) errors.push("Select an active subcategory belonging to the category.");
   if (!draft.productType) errors.push("Product type is required.");
+  if (!draft.description) errors.push(SUPPLIER_FULL_DESCRIPTION_REQUIRED_MESSAGE);
   if (!Number.isFinite(draft.price) || draft.price <= 0) errors.push("Proposed selling price must be greater than zero.");
   if (!Number.isInteger(draft.stock) || draft.stock < 0) errors.push("Stock must be a non-negative whole number.");
   if (!/^https?:\/\/[^\s]+$/iu.test(draft.imageUrl)) errors.push("A valid HTTP or HTTPS main image is required.");

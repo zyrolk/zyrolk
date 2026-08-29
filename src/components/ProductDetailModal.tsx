@@ -8,6 +8,7 @@ import {
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { auth } from '../firebase';
 import { Product, WebsiteSettings } from '../types';
+import { isProductExplicitlyActive } from '../services/storefront/productAvailability';
 import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
 import {
   PRODUCT_IMAGE_FALLBACK, buildProductGallery, clampGalleryIndex, getDialogEscapeAction, getFocusWrapIndex,
@@ -266,7 +267,7 @@ export default function ProductDetailModal({
   };
 
   const handleAddToCart = () => {
-    if (product.isActive === false || product.stock <= 0) return;
+    if (!isProductExplicitlyActive(product.isActive) || product.stock <= 0) return;
     onAddToCart(product, quantity);
     setAddedMessage(true);
     setAnnouncement(`${quantity} ${product.name} added to cart.`);
@@ -743,7 +744,7 @@ export default function ProductDetailModal({
                         type="button"
                         onClick={() => setQuantity(Math.max(1, quantity - 1))}
                         className="w-11 h-11 rounded-lg text-slate-800 hover:bg-slate-100 flex items-center justify-center font-black cursor-pointer transition-all active:scale-90 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20"
-                        disabled={product.isActive === false || product.stock <= 0 || quantity <= 1}
+                        disabled={!isProductExplicitlyActive(product.isActive) || product.stock <= 0 || quantity <= 1}
                         aria-label="Decrease quantity"
                       >
                         <Minus className="h-4 w-4" aria-hidden="true" />
@@ -763,7 +764,7 @@ export default function ProductDetailModal({
                         type="button"
                         onClick={() => setQuantity(Math.min(product.stock, quantity + 1))}
                         className="w-11 h-11 rounded-lg text-slate-800 hover:bg-slate-100 flex items-center justify-center font-black cursor-pointer transition-all active:scale-90 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20"
-                        disabled={product.isActive === false || product.stock <= 0 || quantity >= product.stock}
+                        disabled={!isProductExplicitlyActive(product.isActive) || product.stock <= 0 || quantity >= product.stock}
                         aria-label="Increase quantity"
                       >
                         <Plus className="h-4 w-4" aria-hidden="true" />
@@ -774,7 +775,7 @@ export default function ProductDetailModal({
                   {/* Action CTAs Cluster */}
                   <div className="zy-product-experience-actions space-y-4 pt-2">
                     
-                    {product.stock > 0 && product.isActive !== false ? (
+                    {product.stock > 0 && isProductExplicitlyActive(product.isActive) ? (
                       <>
                         {/* Buy Now remains the primary conversion action; cart behavior is unchanged. */}
                         <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1.15fr_0.85fr]">
@@ -1151,7 +1152,7 @@ export default function ProductDetailModal({
                 </span>
               </div>
 
-              {product.stock > 0 && product.isActive !== false ? (
+              {product.stock > 0 && isProductExplicitlyActive(product.isActive) ? (
                 <div className="grid grid-cols-[0.9fr_1.1fr] gap-2.5">
                   <button
                     type="button"
