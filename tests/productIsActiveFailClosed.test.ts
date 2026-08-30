@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { assertFails, assertSucceeds, initializeTestEnvironment } from '@firebase/rules-unit-testing';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc, getDocs, collection, query, orderBy, limit, setDoc } from 'firebase/firestore';
 import { isProductExplicitlyActive } from '../src/services/storefront/productAvailability';
 import { projectStorefrontProduct } from '../src/services/storefront/storefrontCatalog';
 import { isProductExplicitlyActive as isProductExplicitlyActiveServer } from '../functions/src/api/products/productAvailability';
@@ -85,7 +85,7 @@ test('E Firestore rules require explicit product isActive for public reads', () 
   const rules = read('firestore.rules');
   assert.match(rules, /function isPublicProductData\(data\)/);
   assert.match(rules, /data\.isActive == true/);
-  assert.match(rules, /allow read: if isPublicProductData\(resource\.data\)/);
+  assert.match(rules, /allow read: if isAdmin\(\) \|\| isPublicProductData\(resource\.data\)/);
   assert.match(rules, /match \/product_private\/\{productId\}[\s\S]*allow read: if isAdmin\(\)/);
   assert.match(rules, /match \/products\/\{productId\}[\s\S]*allow create, update, delete: if false/);
 });
@@ -123,9 +123,47 @@ test('E Firestore rules emulator: public reads fail closed unless isActive is ex
     await assertFails(getDoc(doc(customerDb, 'products', 'legacy-product')));
     await assertFails(getDoc(doc(customerDb, 'product_private', 'active-product')));
     await assertSucceeds(getDoc(doc(adminDb, 'product_private', 'active-product')));
+    await assertSucceeds(getDoc(doc(adminDb, 'products', 'inactive-product')));
+    await assertSucceeds(getDoc(doc(adminDb, 'products', 'legacy-product')));
   } finally {
     await environment.cleanup();
   }
+});
+
+test('G Firestore rules emulator: trusted Admin product list query matches Admin dashboard path', {
+  skip: canRunRulesEmulator ? undefined : 'Set FIRESTORE_EMULATOR_HOST and start the Firestore Emulator to run rules integration coverage.',
+}, async () => {
+  const environment = await initializeTestEnvironment({
+    projectId: 'zyro-admin-product-list',
+    firestore: { host: rulesHost, port: rulesPort, rules: read('firestore.rules') },
+  });
+  try {
+    await environment.withSecurityRulesDisabled(async (context) => {
+      const db = context.firestore();
+      await setDoc(doc(db, 'products', 'active-product'), { name: 'Active', price: 100, isActive: true });
+      await setDoc(doc(db, 'products', 'inactive-product'), { name: 'Inactive', price: 100, isActive: false });
+      await setDoc(doc(db, 'products', 'legacy-product'), { name: 'Legacy', price: 100 });
+    });
+
+    const customerDb = environment.authenticatedContext('customer-user').firestore();
+    const adminDb = environment.authenticatedContext('admin-user', { admin: true }).firestore();
+    const adminDashboardQuery = query(collection(adminDb, 'products'), orderBy('__name__'), limit(10));
+    const customerDashboardQuery = query(collection(customerDb, 'products'), orderBy('__name__'), limit(10));
+
+    const adminSnapshot = await assertSucceeds(getDocs(adminDashboardQuery));
+    assert.equal(adminSnapshot.size, 3);
+
+    await assertFails(getDocs(customerDashboardQuery));
+  } finally {
+    await environment.cleanup();
+  }
+});
+
+test('H Admin dashboard live product listener uses the products collection list query', () => {
+  const admin = read('src/components/AdminDashboard.tsx');
+  assert.match(admin, /reportAdminDataIssue\('products', 'Live product updates are temporarily unavailable.'/);
+  assert.match(admin, /onSnapshot\(query\([\s\S]*collection\(db, "products"\)/);
+  assert.match(admin, /orderBy\(documentId\(\)\)/);
 });
 
 test('F supplier publication requires explicit isActive true in approval payload resolution', () => {

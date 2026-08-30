@@ -59,7 +59,7 @@ test('Firestore rules keep product reads compatible while all product writes use
   for (const field of ['costPrice', 'marketPrice', 'supplierItemCode', 'supplierPurchasePrice', 'supplierInternalNotes', 'supplierProfit']) {
     assert.match(rules, new RegExp(`['"]${field}['"]`));
   }
-  assert.match(rules, /match \/products\/\{productId\}[\s\S]*allow read: if isPublicProductData\(resource\.data\);[\s\S]*allow create, update, delete: if false/);
+  assert.match(rules, /match \/products\/\{productId\}[\s\S]*allow read: if isAdmin\(\) \|\| isPublicProductData\(resource\.data\);[\s\S]*allow create, update, delete: if false/);
   assert.match(rules, /match \/product_private\/\{productId\}[\s\S]*allow read: if isAdmin\(\);[\s\S]*allow create, update, delete: if false/);
   assert.match(rules, /match \/admin_product_audit\/\{auditId\}[\s\S]*allow read: if isAdmin\(\);[\s\S]*allow create, update, delete: if false/);
   assert.match(rules, /match \/checkout_abuse_limits\/\{docId\}[\s\S]*allow read, write: if false/);

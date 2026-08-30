@@ -63,7 +63,7 @@ service cloud.firestore {
 
     // Products Rules
     match /products/{productId} {
-      allow read: if isPublicProductData(resource.data);
+      allow read: if isAdmin() || isPublicProductData(resource.data);
       // Product identity, SKU ownership and authoritative catalogue writes are
       // committed together by trusted Functions. Browser admins use that API.
       allow create, update, delete: if false;
