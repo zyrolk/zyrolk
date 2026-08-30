@@ -17,6 +17,8 @@ interface MobileBottomNavProps {
   wishlistCount: number;
   onOpenCart: () => void;
   onOpenAuthModal: () => void;
+  onMoreMenuOpenChange?: (open: boolean) => void;
+  isCartOpen?: boolean;
   user: any;
   isAdminUser: boolean;
   isAdminMode: boolean;
@@ -33,6 +35,8 @@ export default function MobileBottomNav({
   wishlistCount,
   onOpenCart,
   onOpenAuthModal,
+  onMoreMenuOpenChange,
+  isCartOpen = false,
   user,
   isAdminUser,
   isAdminMode,
@@ -79,6 +83,10 @@ export default function MobileBottomNav({
     };
   }, [isMoreMenuOpen]);
 
+  useEffect(() => {
+    onMoreMenuOpenChange?.(isMoreMenuOpen);
+  }, [isMoreMenuOpen, onMoreMenuOpenChange]);
+
   const handleLogout = async () => {
     await signOut(auth);
     setIsAdminMode(false);
@@ -102,6 +110,11 @@ export default function MobileBottomNav({
   const activeTabClass = "text-brand-blue scale-110";
   const inactiveTabClass = "text-slate-500 hover:text-slate-700";
   const isAccountPage = currentPage === 'account' || currentPage.startsWith('account-');
+  const isHomeActive = currentPage === 'home' && !isAdminMode && !isCartOpen;
+  const isCategoriesActive = currentPage === 'categories' && !isAdminMode && !isCartOpen;
+  const isWishlistActive = currentPage === 'wishlist' && !isAdminMode && !isCartOpen;
+  const isCartActive = isCartOpen && !isAccountPage;
+  const isAccountActive = isAccountPage && !isAdminMode;
 
   return (
     <>
@@ -113,14 +126,14 @@ export default function MobileBottomNav({
           <button
             onClick={() => handleTabClick('home')}
             className={`zy-mobile-tab flex min-h-12 flex-col items-center justify-center flex-1 transition-all relative py-1 cursor-pointer rounded-xl active:scale-95 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20 ${
-              currentPage === 'home' && !isAdminMode ? activeTabClass : inactiveTabClass
+              isHomeActive ? activeTabClass : inactiveTabClass
             }`}
             aria-label="Go to home"
-            aria-current={currentPage === 'home' && !isAdminMode ? 'page' : undefined}
+            aria-current={isHomeActive ? 'page' : undefined}
           >
             <Home className="h-5 w-5" />
             <span className="text-[9px] font-bold mt-1 tracking-tight">Home</span>
-            {currentPage === 'home' && !isAdminMode && (
+            {isHomeActive && (
               <span className="absolute bottom-0 w-1 h-1 bg-brand-blue rounded-full"></span>
             )}
           </button>
@@ -129,14 +142,14 @@ export default function MobileBottomNav({
           <button 
             onClick={() => handleTabClick('categories')}
             className={`zy-mobile-tab flex min-h-12 flex-col items-center justify-center flex-1 transition-all relative py-1 cursor-pointer rounded-xl active:scale-95 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20 ${
-              currentPage === 'categories' && !isAdminMode ? activeTabClass : inactiveTabClass
+              isCategoriesActive ? activeTabClass : inactiveTabClass
             }`}
             aria-label="Browse categories"
-            aria-current={currentPage === 'categories' && !isAdminMode ? 'page' : undefined}
+            aria-current={isCategoriesActive ? 'page' : undefined}
           >
             <Grid3X3 className="h-5 w-5" />
             <span className="text-[9px] font-bold mt-1 tracking-tight">Categories</span>
-            {currentPage === 'categories' && !isAdminMode && (
+            {isCategoriesActive && (
               <span className="absolute bottom-0 w-1 h-1 bg-brand-blue rounded-full"></span>
             )}
           </button>
@@ -145,10 +158,10 @@ export default function MobileBottomNav({
           <button 
             onClick={() => handleTabClick('wishlist')}
             className={`zy-mobile-tab flex min-h-12 flex-col items-center justify-center flex-1 transition-all relative py-1 cursor-pointer rounded-xl active:scale-95 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20 ${
-              currentPage === 'wishlist' && !isAdminMode ? activeTabClass : inactiveTabClass
+              isWishlistActive ? activeTabClass : inactiveTabClass
             }`}
             aria-label={`Open wishlist with ${wishlistCount} saved ${wishlistCount === 1 ? 'product' : 'products'}`}
-            aria-current={currentPage === 'wishlist' && !isAdminMode ? 'page' : undefined}
+            aria-current={isWishlistActive ? 'page' : undefined}
           >
             <div className="relative">
               <Heart className="h-5 w-5" />
@@ -159,7 +172,7 @@ export default function MobileBottomNav({
               )}
             </div>
             <span className="text-[9px] font-bold mt-1 tracking-tight">Wishlist</span>
-            {currentPage === 'wishlist' && !isAdminMode && (
+            {isWishlistActive && (
               <span className="absolute bottom-0 w-1 h-1 bg-brand-blue rounded-full"></span>
             )}
           </button>
@@ -170,8 +183,11 @@ export default function MobileBottomNav({
               setIsMoreMenuOpen(false);
               onOpenCart();
             }}
-            className="zy-mobile-tab zy-mobile-tab-cart flex min-h-12 flex-col items-center justify-center flex-1 transition-all relative py-1 cursor-pointer rounded-xl text-slate-500 hover:text-slate-700 active:scale-95 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20"
+            className={`zy-mobile-tab zy-mobile-tab-cart flex min-h-12 flex-col items-center justify-center flex-1 transition-all relative py-1 cursor-pointer rounded-xl active:scale-95 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20 ${
+              isCartActive ? activeTabClass : inactiveTabClass
+            }`}
             aria-label={`Open cart with ${cartCount} ${cartCount === 1 ? 'item' : 'items'}`}
+            aria-current={isCartActive ? 'page' : undefined}
           >
             <div className="relative">
               <ShoppingCart className="h-5 w-5" />
@@ -182,28 +198,34 @@ export default function MobileBottomNav({
               )}
             </div>
             <span className="text-[9px] font-bold mt-1 tracking-tight">Cart</span>
+            {isCartActive && (
+              <span className="absolute bottom-0 w-1 h-1 bg-brand-blue rounded-full"></span>
+            )}
           </button>
 
           {/* Tab 5: Account */}
           <button 
             onClick={() => {
+              if (isMoreMenuOpen) {
+                return;
+              }
               if (isAccountPage) {
-                setIsMoreMenuOpen(!isMoreMenuOpen);
+                setIsMoreMenuOpen(true);
               } else {
                 handleTabClick('account');
               }
             }}
             className={`zy-mobile-tab flex min-h-12 flex-col items-center justify-center flex-1 transition-all relative py-1 cursor-pointer rounded-xl active:scale-95 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20 ${
-              isMoreMenuOpen || isAccountPage ? activeTabClass : inactiveTabClass
+              isAccountActive || isMoreMenuOpen ? activeTabClass : inactiveTabClass
             }`}
-            aria-label={isMoreMenuOpen ? 'Close account menu' : isAccountPage ? 'Open account options' : 'Go to account'}
-            aria-current={isAccountPage && !isMoreMenuOpen ? 'page' : undefined}
+            aria-label={isAccountPage ? 'Account' : 'Go to account'}
+            aria-current={isAccountActive || isMoreMenuOpen ? 'page' : undefined}
             aria-expanded={isMoreMenuOpen}
             aria-controls="mobile-more-menu"
           >
-            {isMoreMenuOpen ? <X className="h-5 w-5" /> : <UserRound className="h-5 w-5" />}
+            <UserRound className="h-5 w-5" />
             <span className="text-[9px] font-bold mt-1 tracking-tight">Account</span>
-            {isAccountPage && !isMoreMenuOpen && (
+            {(isAccountActive || isMoreMenuOpen) && (
               <span className="absolute bottom-0 w-1 h-1 bg-brand-blue rounded-full"></span>
             )}
           </button>

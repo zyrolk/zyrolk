@@ -5,15 +5,28 @@ import { getBrowserStorage, readStoredJson, writeStoredJson } from '../services/
 interface FloatingWhatsAppProps {
   settings: WebsiteSettings | null;
   isAdminMode: boolean;
+  isOverlayOpen?: boolean;
 }
 
-export default function FloatingWhatsApp({ settings, isAdminMode }: FloatingWhatsAppProps) {
+export default function FloatingWhatsApp({ settings, isAdminMode, isOverlayOpen = false }: FloatingWhatsAppProps) {
   const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   
   const dragStart = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const buttonStart = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const hasMoved = useRef(false);
+
+  const FAB_SIZE = 64;
+  const EDGE_GUTTER = 16;
+  const mobileBottomClearance = () => FAB_SIZE + (window.innerWidth < 768 ? 112 : 24);
+  const clampPosition = (x: number, y: number) => {
+    const maxX = Math.max(EDGE_GUTTER, window.innerWidth - FAB_SIZE - EDGE_GUTTER);
+    const maxY = Math.max(EDGE_GUTTER, window.innerHeight - mobileBottomClearance());
+    const clampedX = Math.max(EDGE_GUTTER, Math.min(maxX, x));
+    const clampedY = Math.max(EDGE_GUTTER, Math.min(maxY, y));
+    const nearLeft = clampedX < window.innerWidth / 2;
+    return { x: nearLeft ? EDGE_GUTTER : maxX, y: clampedY };
+  };
 
   const whatsappNumber = settings?.whatsappNumber || "";
 
@@ -29,13 +42,9 @@ export default function FloatingWhatsApp({ settings, isAdminMode }: FloatingWhat
       ),
     );
     if (saved) {
-      const clampedX = Math.max(16, Math.min(window.innerWidth - 80, saved.x));
-      const clampedY = Math.max(16, Math.min(window.innerHeight - 160, saved.y));
-      setPosition({ x: clampedX, y: clampedY });
+      setPosition(clampPosition(saved.x, saved.y));
     } else {
-      const defaultX = window.innerWidth - 80;
-      const defaultY = window.innerHeight - 180;
-      setPosition({ x: defaultX, y: defaultY });
+      setPosition(clampPosition(window.innerWidth - 80, window.innerHeight - 180));
     }
   }, []);
 
@@ -43,11 +52,7 @@ export default function FloatingWhatsApp({ settings, isAdminMode }: FloatingWhat
   useEffect(() => {
     const handleResize = () => {
       if (!position) return;
-      const clampedX = Math.max(16, Math.min(window.innerWidth - 80, position.x));
-      const clampedY = Math.max(16, Math.min(window.innerHeight - 160, position.y));
-      const nearLeft = clampedX < window.innerWidth / 2;
-      const finalX = nearLeft ? 16 : window.innerWidth - 80;
-      setPosition({ x: finalX, y: clampedY });
+      setPosition(clampPosition(position.x, position.y));
     };
 
     window.addEventListener('resize', handleResize);
@@ -75,27 +80,14 @@ export default function FloatingWhatsApp({ settings, isAdminMode }: FloatingWhat
     const nextX = buttonStart.current.x + dx;
     const nextY = buttonStart.current.y + dy;
 
-    // Clamp inside viewport with some safe margins
-    const clampedX = Math.max(8, Math.min(window.innerWidth - 72, nextX));
-    const clampedY = Math.max(8, Math.min(window.innerHeight - 80, nextY));
-
-    setPosition({ x: clampedX, y: clampedY });
+    setPosition(clampPosition(nextX, nextY));
   };
 
   const handleEnd = () => {
     if (!isDragging || !position) return;
     setIsDragging(false);
 
-    // Snap to nearest edge (left or right)
-    const middle = window.innerWidth / 2;
-    const snapX = position.x < middle ? 16 : window.innerWidth - 80;
-
-    // Stay within safe bounds vertically (leaving space for bottom mobile navigation bar)
-    const minTop = 16;
-    const maxTop = window.innerHeight - 160; 
-    const snapY = Math.max(minTop, Math.min(maxTop, position.y));
-
-    const finalPos = { x: snapX, y: snapY };
+    const finalPos = clampPosition(position.x, position.y);
     setPosition(finalPos);
     writeStoredJson(getBrowserStorage('localStorage'), 'zyro_whatsapp_position', finalPos);
   };
@@ -160,11 +152,11 @@ export default function FloatingWhatsApp({ settings, isAdminMode }: FloatingWhat
   // Default tailwind fallback classes for initial load to avoid flash
   const fallbackClasses = position
     ? "fixed z-40"
-    : "fixed bottom-24 md:bottom-6 right-6 z-40";
+    : "fixed bottom-[calc(7.25rem+env(safe-area-inset-bottom))] md:bottom-6 right-4 z-40";
 
   const isNearLeft = position ? position.x < window.innerWidth / 2 : false;
 
-  if (!whatsappNumber || isAdminMode) return null;
+  if (!whatsappNumber || isAdminMode || isOverlayOpen) return null;
 
   return (
     <button

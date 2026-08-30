@@ -502,6 +502,9 @@ html {
   align-items: center;
   justify-content: center;
   border-radius: 0.65rem;
+}
+
+.zy-mobile-tab-cart[aria-current="page"] > div {
   background: #eff5ff;
   color: #1d4ed8;
 }

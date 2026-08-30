@@ -204,6 +204,7 @@ export default function App() {
   // Modal / Drawer Toggles
   const [isCartOpen, setIsCartOpen] = useState<boolean>(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
+  const [isMobileMoreMenuOpen, setIsMobileMoreMenuOpen] = useState<boolean>(false);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [hasOpenedCart, setHasOpenedCart] = useState<boolean>(false);
   const [hasOpenedAuth, setHasOpenedAuth] = useState<boolean>(false);
@@ -2160,7 +2161,11 @@ export default function App() {
       {/* --- FLOATING OVERLAYS & MODALS --- */}
 
       {/* Floating WhatsApp Chat Button */}
-      <FloatingWhatsApp settings={settings} isAdminMode={isAdminMode} />
+      <FloatingWhatsApp
+        settings={settings}
+        isAdminMode={isAdminMode}
+        isOverlayOpen={isMobileMoreMenuOpen || isCartOpen || isAuthModalOpen || Boolean(selectedProduct) || isFilterDrawerOpen}
+      />
 
       {wishlistFeedback && (
         <div className="fixed right-4 top-20 z-[75] max-w-[calc(100vw-2rem)] animate-fadeIn" role="status" aria-live="polite">
@@ -2185,6 +2190,8 @@ export default function App() {
           wishlistCount={wishlist.length}
           onOpenCart={() => setIsCartOpen(true)}
           onOpenAuthModal={() => setIsAuthModalOpen(true)}
+          onMoreMenuOpenChange={setIsMobileMoreMenuOpen}
+          isCartOpen={isCartOpen}
           user={user}
           isAdminUser={isAdminUser}
           isAdminMode={isAdminMode}

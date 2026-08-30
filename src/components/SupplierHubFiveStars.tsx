@@ -79,6 +79,7 @@ import {
 interface SupplierHubFiveStarsProps {
   isDarkMode?: boolean;
   initialSubTab?: SupplierHubSection;
+  onSubTabChange?: (tab: SupplierHubSection) => void;
   onNestedNavigationChange?: (state: { active: boolean; title: string; onBack: () => void } | null) => void;
 }
 
@@ -184,7 +185,7 @@ const mergeSupplierQueuePage = <T extends { id: string }>(current: T[], page: T[
   return Array.from(items.values());
 };
 
-function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', onNestedNavigationChange }: SupplierHubFiveStarsProps) {
+function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', onSubTabChange, onNestedNavigationChange }: SupplierHubFiveStarsProps) {
   // Product review workspace state
   const [reviewQueue, setReviewQueue] = useState<ReviewQueueItem[]>([]);
   const [supplierReviewCursor, setSupplierReviewCursor] = useState<string | null>(null);
@@ -478,9 +479,10 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
   
   const [savingSettingsSourceId, setSavingSettingsSourceId] = useState<string | null>(null);
 
-  useEffect(() => {
-    setActiveSubTab(initialSubTab);
-  }, [initialSubTab]);
+  const selectSubTab = useCallback((tab: SupplierHubSection) => {
+    setActiveSubTab(tab);
+    onSubTabChange?.(tab);
+  }, [onSubTabChange]);
 
   useEffect(() => {
     if (!onNestedNavigationChange || activeSubTab !== 'suppliers') {
@@ -1574,7 +1576,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
           return (
             <button
               key={tab.id}
-              onClick={() => setActiveSubTab(tab.id as SupplierHubSection)}
+              onClick={() => selectSubTab(tab.id as SupplierHubSection)}
               className={`px-4 py-2.5 rounded-xl font-bold text-xs transition-all flex items-center space-x-2 border cursor-pointer whitespace-nowrap ${
                 isSubActive 
                   ? 'bg-blue-600 text-white border-blue-600 shadow-md shadow-blue-500/10' 
@@ -1620,7 +1622,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
             <span className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-emerald-500/10 text-emerald-500"><UserCheck className="h-8 w-8" aria-hidden="true" /></span>
             <h3 className="mt-3 text-sm font-bold text-slate-900 dark:text-white">No supplier connected</h3>
             <p className="mt-1 text-xs text-slate-400">Connect a supplier and run the initial synchronization.</p>
-            <button type="button" onClick={() => { setActiveSubTab('suppliers'); setShowConnectModal(true); }} className="mt-4 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 text-xs font-extrabold text-white transition-colors hover:bg-emerald-700 sm:w-auto">
+            <button type="button" onClick={() => { selectSubTab('suppliers'); setShowConnectModal(true); }} className="mt-4 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 text-xs font-extrabold text-white transition-colors hover:bg-emerald-700 sm:w-auto">
               <Plus className="h-4 w-4" aria-hidden="true" /> Add Supplier
             </button>
           </div>
@@ -1904,7 +1906,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                           <span>{syncingSourceId === source.id ? 'Syncing...' : supplierHasCompletedInitialSync(source) ? 'Sync Now' : 'Run Initial Sync'}</span>
                         </button>
                         {supplierHasCompletedInitialSync(source) && reviewQueue.length > 0 && (
-                          <button type="button" onClick={() => setActiveSubTab('review')} className="px-3.5 py-1.5 bg-emerald-100 text-emerald-700 font-bold rounded-lg text-[10px]">
+                          <button type="button" onClick={() => selectSubTab('review')} className="px-3.5 py-1.5 bg-emerald-100 text-emerald-700 font-bold rounded-lg text-[10px]">
                             Go to Product Review
                           </button>
                         )}

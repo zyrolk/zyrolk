@@ -485,6 +485,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
   const [productCategoryFilter, setProductCategoryFilter] = useState("all");
   const [productStockFilter, setProductStockFilter] = useState("all");
   const [salesPeriod, setSalesPeriod] = useState<'7d' | '30d' | '1y'>('30d');
+  const [supplierHubEntry, setSupplierHubEntry] = useState(0);
 
   const navigateAdminTab = useCallback((tab: AdminTab) => {
     setActiveTab(tab);
@@ -492,6 +493,9 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
     setSelectedCustomerEmail(null);
     setSupplierHubNestedNav(null);
     setIsMobileMenuOpen(false);
+    if (tab === 'productReview' || tab === 'supplierHubFiveStars') {
+      setSupplierHubEntry((value) => value + 1);
+    }
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, []);
 
@@ -5142,9 +5146,12 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
           {(activeTab === 'supplierHubFiveStars' || activeTab === 'productReview') && (
             <Suspense fallback={<AdminLazyPanelFallback />}>
               <SupplierHubFiveStars
-                key={activeTab}
+                key={supplierHubEntry}
                 isDarkMode={isDarkMode}
                 initialSubTab={activeTab === 'productReview' ? 'review' : 'suppliers'}
+                onSubTabChange={(tab) => {
+                  setActiveTab(tab === 'review' ? 'productReview' : 'supplierHubFiveStars');
+                }}
                 onNestedNavigationChange={setSupplierHubNestedNav}
               />
             </Suspense>

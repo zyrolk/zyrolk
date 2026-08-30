@@ -2526,24 +2526,23 @@
   text-underline-offset: 3px;
 }
 
-/* ── 5. Bottom nav: highlighted cart button ── */
+/* ── 5. Bottom nav: cart is an action, not a permanently selected destination ── */
 
 .zy-penpot-storefront .zy-mobile-tab-cart {
   position: relative;
+  margin: 0.125rem;
+  border-radius: 0.875rem;
+  transition: transform 200ms ease, box-shadow 200ms ease, color 160ms ease, background 160ms ease;
+}
+
+.zy-penpot-storefront .zy-mobile-tab-cart[aria-current="page"] {
   color: #fff !important;
   background: var(--zy-pp-primary);
-  border-radius: 0.875rem;
-  margin: 0.125rem;
   box-shadow: 0 6px 18px -8px rgba(101, 71, 232, 0.6);
-  transition: transform 200ms ease, box-shadow 200ms ease;
 }
 
 .zy-penpot-storefront .zy-mobile-tab-cart:active {
   transform: scale(0.95);
-}
-
-.zy-penpot-storefront .zy-mobile-tab-cart .absolute {
-  background: var(--zy-pp-accent) !important;
 }
 
 /* ── 6. Overall spacing & vertical rhythm ── */
