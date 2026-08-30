@@ -6,7 +6,7 @@ test('Admin Dashboard owns no legacy Supplier Hub state, listeners, writes, or U
   const dashboard = readFileSync('src/components/AdminDashboard.tsx', 'utf8');
 
   assert.match(dashboard, /lazy\(\(\) => import\('\.\/SupplierHubFiveStars'\)\)/);
-  assert.match(dashboard, /<SupplierHubFiveStars isDarkMode=\{isDarkMode\} \/>/);
+  assert.match(dashboard, /<SupplierHubFiveStars[\s\S]*isDarkMode=\{isDarkMode\}/);
   assert.doesNotMatch(dashboard, /useState<[^>]*>\([^)]*\).*supplier|setSupplierReviewQueue|setSupplierPendingChanges|setSupplierSyncHistory/);
   assert.doesNotMatch(dashboard, /collection\(db, ["']supplierHub["']\)|collection\(db, ["']supplier_review_queue["']\)/);
   assert.doesNotMatch(dashboard, /Supplier Sync Portal|handleConnectSupplier|handleTriggerImport|showSyncHistoryModal/);

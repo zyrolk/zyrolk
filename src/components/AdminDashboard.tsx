@@ -6,7 +6,7 @@ import {
   Copy, Star, Bell, Moon, Sun, ChevronRight,
   Menu, Info, Filter, Clock, BarChart3, Archive, Package, FileText, Save,
   Facebook, Instagram, Youtube, Music, Sparkles, Flame, Award, UserCheck, Activity,
-  ArrowDownRight, AlertTriangle, ArrowRight, History, User, Home
+  ArrowDownRight, AlertTriangle, ArrowRight, ArrowLeft, History, User, Store
 } from 'lucide-react';
 import { 
   collection, documentId, getAggregateFromServer, getCountFromServer, getDocs, doc, updateDoc, deleteDoc, getDoc, limit,
@@ -354,23 +354,38 @@ Thank you for contacting us. One of our specialists will reach out to you via ph
   }
 ];
 
+type AdminTab = 'stats' | 'aiManager' | 'products' | 'categories' | 'orders' | 'customers' | 'pages' | 'settings' | 'supplierHubFiveStars' | 'productReview';
+
 interface AdminDashboardProps {
-  initialTab?: 'stats' | 'aiManager' | 'products' | 'categories' | 'orders' | 'customers' | 'pages' | 'settings' | 'supplierHubFiveStars';
+  initialTab?: AdminTab;
   initialCmsPageId?: string;
   onExitToStorefront?: () => void;
 }
 
-const ADMIN_TAB_LABELS: Record<AdminDashboardProps['initialTab'] & string, string> = {
+const ADMIN_TAB_LABELS: Record<AdminTab, string> = {
   stats: 'Dashboard',
   aiManager: 'AI Manager',
-  products: 'Inventory',
+  products: 'Products',
   categories: 'Categories',
   orders: 'Orders',
   customers: 'Customers',
   pages: 'Pages',
   settings: 'Settings',
   supplierHubFiveStars: 'Suppliers',
+  productReview: 'Product Review',
 };
+
+const ADMIN_SIDEBAR_NAV: Array<{ id: AdminTab; label: string; icon: typeof TrendingUp }> = [
+  { id: 'stats', label: 'Dashboard', icon: TrendingUp },
+  { id: 'products', label: 'Products', icon: ShoppingBag },
+  { id: 'categories', label: 'Categories', icon: Layers },
+  { id: 'orders', label: 'Orders', icon: Clock },
+  { id: 'customers', label: 'Customers', icon: Users },
+  { id: 'supplierHubFiveStars', label: 'Suppliers', icon: Award },
+  { id: 'productReview', label: 'Product Review', icon: ShieldCheck },
+  { id: 'pages', label: 'Pages', icon: FileText },
+  { id: 'settings', label: 'Settings', icon: Settings },
+];
 
 interface AdminOperationsSummary {
   generatedAt: string;
@@ -395,10 +410,11 @@ const formatOperationsTimestamp = (value: string | null): string => {
 };
 
 export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId = 'about-us', onExitToStorefront }: AdminDashboardProps = {}) {
-  const [activeTab, setActiveTab] = useState<'stats' | 'aiManager' | 'products' | 'categories' | 'orders' | 'customers' | 'pages' | 'settings' | 'supplierHubFiveStars'>(initialTab);
+  const [activeTab, setActiveTab] = useState<AdminTab>(initialTab);
   const [isDarkMode, setIsDarkMode] = useState<boolean>(true);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
   const [showNotifications, setShowNotifications] = useState<boolean>(false);
+  const [supplierHubNestedNav, setSupplierHubNestedNav] = useState<{ active: boolean; title: string; onBack: () => void } | null>(null);
   const mobileMenuButtonRef = useRef<HTMLButtonElement>(null);
   const mobileMenuCloseRef = useRef<HTMLButtonElement>(null);
 
@@ -469,6 +485,47 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
   const [productCategoryFilter, setProductCategoryFilter] = useState("all");
   const [productStockFilter, setProductStockFilter] = useState("all");
   const [salesPeriod, setSalesPeriod] = useState<'7d' | '30d' | '1y'>('30d');
+
+  const navigateAdminTab = useCallback((tab: AdminTab) => {
+    setActiveTab(tab);
+    setSelectedOrderId(null);
+    setSelectedCustomerEmail(null);
+    setSupplierHubNestedNav(null);
+    setIsMobileMenuOpen(false);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, []);
+
+  const isAdminDashboard = activeTab === 'stats';
+  const isAdminNestedView = Boolean(
+    (activeTab === 'orders' && selectedOrderId)
+    || (activeTab === 'customers' && selectedCustomerEmail)
+    || ((activeTab === 'supplierHubFiveStars' || activeTab === 'productReview') && supplierHubNestedNav?.active),
+  );
+
+  const adminMobileTitle = useMemo(() => {
+    if (activeTab === 'orders' && selectedOrderId) return 'Order Details';
+    if (activeTab === 'customers' && selectedCustomerEmail) return 'Customer Details';
+    if ((activeTab === 'supplierHubFiveStars' || activeTab === 'productReview') && supplierHubNestedNav?.active) {
+      return supplierHubNestedNav.title;
+    }
+    return ADMIN_TAB_LABELS[activeTab] || 'Dashboard';
+  }, [activeTab, selectedCustomerEmail, selectedOrderId, supplierHubNestedNav]);
+
+  const handleAdminMobileBack = useCallback(() => {
+    if (activeTab === 'orders' && selectedOrderId) {
+      setSelectedOrderId(null);
+      return;
+    }
+    if (activeTab === 'customers' && selectedCustomerEmail) {
+      setSelectedCustomerEmail(null);
+      return;
+    }
+    if ((activeTab === 'supplierHubFiveStars' || activeTab === 'productReview') && supplierHubNestedNav?.active) {
+      supplierHubNestedNav.onBack();
+      return;
+    }
+    navigateAdminTab('stats');
+  }, [activeTab, navigateAdminTab, selectedCustomerEmail, selectedOrderId, supplierHubNestedNav]);
 
   // Modal / Selection States
   const [selectedCustomerOrders, setSelectedCustomerOrders] = useState<any[] | null>(null);
@@ -2072,7 +2129,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
       {isMobileMenuOpen && <button type="button" onClick={() => setIsMobileMenuOpen(false)} className="fixed inset-0 z-30 bg-slate-950/60 md:hidden" aria-label="Close Admin navigation" />}
       
       {/* --- SIDEBAR PANEL (Always #0B1220 Dark) --- */}
-      <aside id="admin-navigation" aria-label="Admin navigation" className={`fixed md:sticky top-0 z-40 w-72 h-screen bg-[#0B1220] text-slate-300 border-r border-slate-800/60 p-6 flex flex-col justify-between transition-transform duration-300 ${isMobileMenuOpen ? 'visible translate-x-0' : 'invisible -translate-x-full md:visible md:translate-x-0'}`}>
+      <aside id="admin-navigation" aria-label="Admin navigation" className={`fixed md:sticky top-0 z-40 w-72 h-screen overflow-y-auto bg-[#0B1220] text-slate-300 border-r border-slate-800/60 p-6 flex flex-col justify-between transition-transform duration-300 ${isMobileMenuOpen ? 'visible translate-x-0' : 'invisible -translate-x-full md:visible md:translate-x-0'}`}>
         <div className="space-y-8">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-3">
@@ -2090,36 +2147,39 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
           </div>
 
           <nav className="space-y-1.5 pt-4">
-            {[
-              { id: 'stats', label: 'Dashboard', icon: TrendingUp },
-              { id: 'aiManager', label: 'AI Manager', icon: Sparkles },
-              { id: 'products', label: 'Products Catalog', icon: ShoppingBag },
-              { id: 'categories', label: 'Categories', icon: Layers },
-              { id: 'orders', label: 'Orders Feed', icon: Clock },
-              { id: 'customers', label: 'Customers', icon: Users },
-              { id: 'pages', label: 'Pages CMS', icon: FileText },
-              { id: 'settings', label: 'Store Settings', icon: Settings },
-              { id: 'supplierHubFiveStars', label: 'Supplier Hub', icon: Award }
-            ].map(tab => {
+            {ADMIN_SIDEBAR_NAV.map(tab => {
               const Icon = tab.icon;
               const active = activeTab === tab.id;
               return (
                 <button
                   type="button"
                   key={tab.id}
-                  onClick={() => { setActiveTab(tab.id as any); setIsMobileMenuOpen(false); }}
+                  onClick={() => navigateAdminTab(tab.id)}
                   aria-current={active ? 'page' : undefined}
-                  className={`w-full flex items-center space-x-3.5 px-4 py-3 rounded-xl font-medium text-xs transition-all cursor-pointer ${active ? 'bg-blue-600 text-white font-bold shadow-lg shadow-blue-500/25' : 'hover:bg-slate-800/55 hover:text-white text-slate-400'}`}
+                  className={`w-full flex items-center space-x-3.5 px-4 py-3 rounded-xl font-medium text-xs transition-all cursor-pointer ${active ? 'bg-blue-600 text-white font-bold shadow-lg shadow-blue-500/25 ring-1 ring-blue-400/30' : 'hover:bg-slate-800/55 hover:text-white text-slate-400'}`}
                 >
-                  <Icon className={`h-4.5 w-4.5 ${active ? 'text-white' : 'text-slate-400 group-hover:text-white'}`} aria-hidden="true" />
-                  <span>{tab.label}</span>
+                  <Icon className={`h-4.5 w-4.5 shrink-0 ${active ? 'text-white' : 'text-slate-400 group-hover:text-white'}`} aria-hidden="true" />
+                  <span className="truncate">{tab.label}</span>
                 </button>
               );
             })}
           </nav>
         </div>
 
-        <div className="border-t border-slate-800/80 pt-4 space-y-4">
+        <div className="border-t border-slate-800/80 pt-4 space-y-3">
+          {onExitToStorefront && (
+            <button
+              type="button"
+              onClick={() => {
+                setIsMobileMenuOpen(false);
+                onExitToStorefront();
+              }}
+              className="flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border border-slate-700/80 bg-slate-900/40 text-[11px] font-bold text-slate-200 transition-all hover:border-blue-500/40 hover:bg-slate-800 hover:text-white"
+            >
+              <Store className="h-3.5 w-3.5 text-blue-400" aria-hidden="true" />
+              <span>View Store</span>
+            </button>
+          )}
           <div className="flex items-center space-x-3">
             <div className="w-9 h-9 bg-slate-800 rounded-full flex items-center justify-center font-bold text-slate-200">
               ZA
@@ -2131,7 +2191,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
           </div>
           <button type="button" onClick={() => auth.signOut()} className="flex min-h-11 w-full items-center justify-center space-x-1.5 rounded-lg bg-slate-800 text-[11px] font-bold text-slate-400 transition-all hover:bg-slate-700 hover:text-white">
             <Power className="h-3.5 w-3.5 text-red-500" aria-hidden="true" />
-            <span>Sign Out Session</span>
+            <span>Sign Out</span>
           </button>
         </div>
       </aside>
@@ -2140,32 +2200,31 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
       <div className="flex-1 min-w-0 flex flex-col min-h-screen">
         
         {/* TOP COMPACT HEADER */}
-        <header className={`sticky top-0 z-30 flex items-center justify-between border-b px-3 py-2.5 backdrop-blur-md sm:px-6 sm:py-3 ${isDarkMode ? 'bg-[#080E1A]/85 border-slate-800/50' : 'bg-white/85 border-slate-200/50'}`}>
-          <div className="flex min-w-0 items-center gap-2 sm:gap-4">
-            <button ref={mobileMenuButtonRef} type="button" onClick={() => setIsMobileMenuOpen(true)} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-slate-400 hover:bg-slate-100 hover:text-slate-800 dark:hover:bg-slate-800 dark:hover:text-white md:hidden" aria-label="Open Admin navigation" aria-expanded={isMobileMenuOpen} aria-controls="admin-navigation">
-              <Menu className="h-5 w-5" aria-hidden="true" />
-            </button>
-            <div className="min-w-0 text-left md:hidden">
-              <p className="text-[10px] font-bold uppercase tracking-widest text-blue-500">Admin</p>
-              <p className="truncate text-sm font-extrabold text-slate-900 dark:text-white">{ADMIN_TAB_LABELS[activeTab] || 'Dashboard'}</p>
+        <header className={`sticky top-0 z-30 flex items-center justify-between gap-2 border-b px-3 py-2.5 backdrop-blur-md sm:px-6 sm:py-3 ${isDarkMode ? 'bg-[#080E1A]/85 border-slate-800/50' : 'bg-white/85 border-slate-200/50'}`}>
+          <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-4">
+            {isAdminDashboard ? (
+              <button ref={mobileMenuButtonRef} type="button" onClick={() => setIsMobileMenuOpen(true)} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-slate-400 hover:bg-slate-100 hover:text-slate-800 dark:hover:bg-slate-800 dark:hover:text-white md:hidden" aria-label="Open Admin navigation" aria-expanded={isMobileMenuOpen} aria-controls="admin-navigation">
+                <Menu className="h-5 w-5" aria-hidden="true" />
+              </button>
+            ) : (
+              <button type="button" onClick={handleAdminMobileBack} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-slate-500 hover:bg-slate-100 hover:text-slate-800 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white md:hidden" aria-label={isAdminNestedView ? 'Go back to previous Admin view' : 'Back to Dashboard'}>
+                <ArrowLeft className="h-5 w-5" aria-hidden="true" />
+              </button>
+            )}
+            <div className="min-w-0 flex-1 text-left md:hidden">
+              <p className="truncate text-sm font-extrabold text-slate-900 dark:text-white">{adminMobileTitle}</p>
             </div>
-            <div className="hidden md:flex items-center space-x-2 text-xs font-semibold text-slate-400">
+            <div className="hidden md:flex items-center space-x-2 text-xs font-semibold text-slate-400 min-w-0">
               <span>Overview</span>
-              <ChevronRight className="h-3 w-3" />
-              <span className={isDarkMode ? 'text-white' : 'text-slate-800'}>{ADMIN_TAB_LABELS[activeTab] || activeTab.toUpperCase()}</span>
+              <ChevronRight className="h-3 w-3 shrink-0" />
+              <span className={`truncate ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>{ADMIN_TAB_LABELS[activeTab] || activeTab.toUpperCase()}</span>
             </div>
           </div>
 
-          <div className="flex items-center space-x-2 sm:space-x-4">
-            {onExitToStorefront && (
-              <button
-                type="button"
-                onClick={onExitToStorefront}
-                className="inline-flex min-h-10 items-center gap-1.5 rounded-xl border border-slate-200 px-2.5 text-[11px] font-bold text-slate-600 transition hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800 sm:px-3"
-                aria-label="Return to storefront"
-              >
-                <Home className="h-3.5 w-3.5" aria-hidden="true" />
-                <span className="hidden sm:inline">Storefront</span>
+          <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
+            {!isAdminDashboard && (
+              <button ref={mobileMenuButtonRef} type="button" onClick={() => setIsMobileMenuOpen(true)} className="flex h-11 w-11 items-center justify-center rounded-xl text-slate-400 hover:bg-slate-100 hover:text-slate-800 dark:hover:bg-slate-800 dark:hover:text-white md:hidden" aria-label="Open Admin navigation" aria-expanded={isMobileMenuOpen} aria-controls="admin-navigation">
+                <Menu className="h-5 w-5" aria-hidden="true" />
               </button>
             )}
             {/* Theme Toggle */}
@@ -2208,7 +2267,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
               </AnimatePresence>
             </div>
 
-            <div className="flex items-center space-x-2">
+            <div className="hidden md:flex items-center space-x-2">
               <span className="w-2.5 h-2.5 bg-emerald-500 rounded-full animate-ping" />
               <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest hidden lg:inline">Live Mode</span>
             </div>
@@ -2391,19 +2450,16 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                   {[
                     { tab: 'supplierHubFiveStars' as const, label: 'Suppliers', icon: Award },
-                    { tab: 'supplierHubFiveStars' as const, label: 'Product Review', icon: ShieldCheck },
+                    { tab: 'productReview' as const, label: 'Product Review', icon: ShieldCheck },
                     { tab: 'orders' as const, label: 'Orders', icon: Clock },
-                    { tab: 'products' as const, label: 'Inventory', icon: Package },
+                    { tab: 'products' as const, label: 'Products', icon: Package },
                   ].map((action) => {
                     const Icon = action.icon;
                     return (
                       <button
                         key={action.label}
                         type="button"
-                        onClick={() => {
-                          setActiveTab(action.tab);
-                          window.scrollTo({ top: 0, behavior: 'smooth' });
-                        }}
+                        onClick={() => navigateAdminTab(action.tab)}
                         className={`min-h-11 rounded-xl border px-3 py-2 text-left text-[11px] font-bold transition hover:-translate-y-0.5 ${
                           isDarkMode
                             ? 'border-slate-800 bg-[#101827] text-slate-200 hover:border-blue-500/30'
@@ -3559,18 +3615,6 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                     {/* On mobile, if order is selected, we show this full-screen overlay/block */}
                     {selectedOrder ? (
                       <div className={`lg:col-span-7 xl:col-span-8 space-y-6 ${!selectedOrderId && 'hidden lg:block'}`}>
-                        
-                        {/* Mobile back navigation bar */}
-                        <div className="lg:hidden flex items-center mb-2">
-                          <button 
-                            onClick={() => setSelectedOrderId(null)}
-                            className="flex items-center space-x-1.5 px-3 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-300 text-xs font-bold rounded-xl cursor-pointer"
-                          >
-                            <ChevronRight className="h-4 w-4 rotate-180" />
-                            <span>Back to Orders List</span>
-                          </button>
-                        </div>
-
                         {/* Order Detail Main Card */}
                         <div className={`rounded-3xl border p-6 text-left space-y-6 ${isDarkMode ? 'bg-[#101827]/75 border-slate-800/60 shadow-xl' : 'bg-white border-slate-200/80 shadow-xs'}`}>
                           
@@ -4163,17 +4207,6 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                     {/* Right Column: Customer Details */}
                     {currentCust ? (
                       <div className={`lg:col-span-7 xl:col-span-8 space-y-6 ${!selectedCustomerEmail && 'hidden lg:block'}`}>
-                        {/* Mobile Back Button */}
-                        <div className="lg:hidden flex items-center mb-2">
-                          <button 
-                            onClick={() => setSelectedCustomerEmail(null)}
-                            className="flex items-center space-x-1.5 px-3 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-300 text-xs font-bold rounded-xl cursor-pointer"
-                          >
-                            <ChevronRight className="h-4 w-4 rotate-180" />
-                            <span>Back to Customer List</span>
-                          </button>
-                        </div>
-
                         {/* Customer Profile Detailed Card */}
                         <div className={`rounded-3xl border p-6 text-left space-y-6 ${isDarkMode ? 'bg-[#101827]/75 border-slate-800/60 shadow-xl' : 'bg-white border-slate-200/80 shadow-xs'}`}>
                           
@@ -5106,9 +5139,14 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
           )}
 
           {/* SUPPLIER HUB ⭐⭐⭐⭐⭐ */}
-          {activeTab === 'supplierHubFiveStars' && (
+          {(activeTab === 'supplierHubFiveStars' || activeTab === 'productReview') && (
             <Suspense fallback={<AdminLazyPanelFallback />}>
-              <SupplierHubFiveStars isDarkMode={isDarkMode} />
+              <SupplierHubFiveStars
+                key={activeTab}
+                isDarkMode={isDarkMode}
+                initialSubTab={activeTab === 'productReview' ? 'review' : 'suppliers'}
+                onNestedNavigationChange={setSupplierHubNestedNav}
+              />
             </Suspense>
           )}
 

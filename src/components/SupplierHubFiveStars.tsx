@@ -78,6 +78,8 @@ import {
 
 interface SupplierHubFiveStarsProps {
   isDarkMode?: boolean;
+  initialSubTab?: SupplierHubSection;
+  onNestedNavigationChange?: (state: { active: boolean; title: string; onBack: () => void } | null) => void;
 }
 
 const SUPPLIER_AUTO_SYNC_SCHEDULES = ['1 Hour', '3 Hours', '6 Hours', 'Daily'] as const;
@@ -182,7 +184,7 @@ const mergeSupplierQueuePage = <T extends { id: string }>(current: T[], page: T[
   return Array.from(items.values());
 };
 
-function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) {
+function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', onNestedNavigationChange }: SupplierHubFiveStarsProps) {
   // Product review workspace state
   const [reviewQueue, setReviewQueue] = useState<ReviewQueueItem[]>([]);
   const [supplierReviewCursor, setSupplierReviewCursor] = useState<string | null>(null);
@@ -212,7 +214,7 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
   }, []);
 
   // Supplier Hub navigation and interaction state
-  const [activeSubTab, setActiveSubTab] = useState<SupplierHubSection>('suppliers');
+  const [activeSubTab, setActiveSubTab] = useState<SupplierHubSection>(initialSubTab);
   const [canAccessAdvanced, setCanAccessAdvanced] = useState(false);
   const [reviewFilter, setReviewFilter] = useState<ProductReviewFilter>('new_products');
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
@@ -475,6 +477,26 @@ function SupplierHubFiveStars({ isDarkMode = true }: SupplierHubFiveStarsProps) 
   const [editProductLimit, setEditProductLimit] = useState<string>('All');
   
   const [savingSettingsSourceId, setSavingSettingsSourceId] = useState<string | null>(null);
+
+  useEffect(() => {
+    setActiveSubTab(initialSubTab);
+  }, [initialSubTab]);
+
+  useEffect(() => {
+    if (!onNestedNavigationChange || activeSubTab !== 'suppliers') {
+      onNestedNavigationChange?.(null);
+      return;
+    }
+    if (editingSourceId) {
+      onNestedNavigationChange({
+        active: true,
+        title: 'Supplier Details',
+        onBack: () => setEditingSourceId(null),
+      });
+      return;
+    }
+    onNestedNavigationChange(null);
+  }, [activeSubTab, editingSourceId, onNestedNavigationChange]);
 
   const [processingChangeId, setProcessingChangeId] = useState<string | null>(null);
   const [editingReviewItem, setEditingReviewItem] = useState<ReviewQueueItem | null>(null);

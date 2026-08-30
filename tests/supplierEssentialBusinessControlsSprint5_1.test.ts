@@ -99,8 +99,8 @@ test('raw security and transport errors are translated for business users', () =
   assert.match(operations, /reportClientIssue\('supplier-operations'/);
 });
 
-test('Admin sidebar uses the production Supplier Hub label without legacy stars', () => {
+test('Admin sidebar uses the production Suppliers label without legacy stars', () => {
   const dashboard = projectFile('src/components/AdminDashboard.tsx');
-  assert.match(dashboard, /id: 'supplierHubFiveStars', label: 'Supplier Hub'/);
+  assert.match(dashboard, /id: 'supplierHubFiveStars', label: 'Suppliers'/);
   assert.doesNotMatch(dashboard, /Supplier Hub ⭐/);
 });
