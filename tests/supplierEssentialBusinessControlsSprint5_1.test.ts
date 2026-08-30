@@ -12,7 +12,7 @@ test('Sprint 5.1 navigation restores Settings without exposing Advanced as a pri
     assert.match(navigation, new RegExp(`label: '${label}'`));
   }
   assert.doesNotMatch(navigation, /label: 'Advanced'/);
-  assert.match(hub, /Business Settings/);
+  assert.match(hub, /Supplier Sync Settings/);
   assert.match(hub, /canAccessAdvanced && <section[\s\S]*Advanced Settings/);
 });
 

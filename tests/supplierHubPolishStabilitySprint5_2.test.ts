@@ -35,12 +35,12 @@ test('administrator presentation never exposes a Firebase UID', () => {
 
 test('empty Supplier Hub views use business empty states while real App Check failures remain visible', () => {
   for (const copy of [
-    'No suppliers connected',
-    'Add your first supplier, test the connection and run the initial sync to begin importing products.',
-    'No supplier connected',
-    'Connect a supplier and run the initial synchronization.',
+    'No connected sources yet',
+    'Connect an external supplier integration when you are ready to sync an API or catalog feed.',
+    'No products pending review',
+    'Supplier product submissions and synced catalogue changes will appear here.',
     'No supplier activity yet.',
-    'Activity will appear after your first synchronization.',
+    'Supplier account, product review, and synchronization activity will appear here.',
     'Connect a supplier to configure category mapping.',
     'No supplier restrictions configured.',
   ]) {

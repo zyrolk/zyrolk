@@ -1434,17 +1434,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
         </div>
 
         {/* Dynamic header button based on active subtab */}
-        <div>
-          {activeSubTab === 'suppliers' ? (
-            <button
-              onClick={() => setShowConnectModal(true)}
-              className="w-full sm:w-auto px-5 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-xl text-xs transition-all shadow-lg shadow-emerald-500/20 flex items-center justify-center space-x-2 cursor-pointer"
-            >
-              <Plus className="h-4 w-4" />
-              <span>Add Supplier</span>
-            </button>
-          ) : null}
-        </div>
+        <div />
       </div>
 
       {/* Notifications and messages */}
@@ -1602,7 +1592,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
           <div className="w-full rounded-3xl border border-dashed border-slate-200 bg-slate-50/50 p-8 text-center dark:border-slate-800 dark:bg-slate-900/10 sm:p-12">
             <span className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-blue-500/10 text-blue-500"><Activity className="h-8 w-8" aria-hidden="true" /></span>
             <h3 className="mt-3 text-sm font-bold text-slate-900 dark:text-white">No supplier activity yet.</h3>
-            <p className="mt-1 text-xs text-slate-400">Activity will appear after your first synchronization.</p>
+            <p className="mt-1 text-xs text-slate-400">Supplier account, product review, and synchronization activity will appear here.</p>
           </div>
         )}
 
@@ -1616,19 +1606,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
           />
         )}
 
-        {/* Product Review is the only business approval workspace. */}
-        {activeSubTab === 'review' && supplierSourcesLoaded && supplierSources.length === 0 && (
-          <div className="w-full rounded-3xl border border-dashed border-slate-200 bg-slate-50/50 p-8 text-center dark:border-slate-800 dark:bg-slate-900/10 sm:p-12">
-            <span className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-emerald-500/10 text-emerald-500"><UserCheck className="h-8 w-8" aria-hidden="true" /></span>
-            <h3 className="mt-3 text-sm font-bold text-slate-900 dark:text-white">No supplier connected</h3>
-            <p className="mt-1 text-xs text-slate-400">Connect a supplier and run the initial synchronization.</p>
-            <button type="button" onClick={() => { selectSubTab('suppliers'); setShowConnectModal(true); }} className="mt-4 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 text-xs font-extrabold text-white transition-colors hover:bg-emerald-700 sm:w-auto">
-              <Plus className="h-4 w-4" aria-hidden="true" /> Add Supplier
-            </button>
-          </div>
-        )}
-
-        {activeSubTab === 'review' && (!supplierSourcesLoaded || supplierSources.length > 0) && (
+        {activeSubTab === 'review' && (
           <div className="space-y-8">
             <section aria-labelledby="product-review-filters-title" className="rounded-3xl border border-slate-200/70 bg-white p-4 dark:border-slate-800 dark:bg-slate-950">
               <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -1690,8 +1668,8 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                 <div className="p-12 text-center rounded-2xl border border-dashed border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/10 space-y-3">
                   <UserCheck className="h-10 w-10 text-slate-300 mx-auto" />
                   <div className="space-y-1">
-                    <p className="text-sm font-bold text-slate-900 dark:text-white">No supplier updates found.</p>
-                    <p className="text-xs text-slate-400">Check back later or update products to look for supplier changes.</p>
+                    <p className="text-sm font-bold text-slate-900 dark:text-white">No products pending review</p>
+                    <p className="text-xs text-slate-400">Supplier product submissions and synced catalogue changes will appear here.</p>
                   </div>
                 </div>
               ) : (
@@ -1776,31 +1754,38 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
 
         {/* Suppliers */}
         {activeSubTab === 'suppliers' && (
-          <div className="space-y-6">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="space-y-8">
+            <section aria-labelledby="supplier-accounts-title" className="space-y-4">
               <div>
-                <h3 className="text-sm font-extrabold text-slate-900 dark:text-white uppercase tracking-wider">Connected Suppliers</h3>
-                <p className="text-[11px] text-slate-400">Manage supplier connections and catalog update schedules.</p>
+                <h3 id="supplier-accounts-title" className="text-sm font-extrabold uppercase tracking-wider text-slate-900 dark:text-white">Supplier Accounts</h3>
+                <p className="mt-1 text-[11px] text-slate-400">Find an existing Zyro.lk account, promote it to supplier, and activate portal access.</p>
               </div>
-              <div className="flex items-center gap-3">
-                <span className="text-[10px] text-slate-400 font-mono bg-slate-100 dark:bg-slate-800/50 px-2.5 py-1 rounded-lg border border-slate-200/50 dark:border-slate-800">
-                  {supplierSources.length || 0} Supplier(s)
-                </span>
-              </div>
-            </div>
+              <SupplierManagementDashboard requestApi={requestSupplierApi} refreshKey={operationsRefreshKey} onAccountChanged={loadSources} />
+            </section>
 
-            <SupplierManagementDashboard requestApi={requestSupplierApi} refreshKey={operationsRefreshKey} onAccountChanged={loadSources} />
+            <section aria-labelledby="connected-sources-title" className="space-y-4 border-t border-slate-100 pt-6 dark:border-slate-800/80">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <h3 id="connected-sources-title" className="text-sm font-extrabold uppercase tracking-wider text-slate-900 dark:text-white">Connected Sources</h3>
+                  <p className="mt-1 text-[11px] text-slate-400">API and catalog integrations such as A2Z. These sources sync products automatically.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowConnectModal(true)}
+                  className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 text-xs font-extrabold text-slate-700 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 sm:w-auto"
+                >
+                  <Plus className="h-4 w-4" aria-hidden="true" />
+                  <span>Connect External Supplier</span>
+                </button>
+              </div>
 
             {supplierSources.length === 0 ? (
               <div className="p-12 text-center rounded-3xl border border-dashed border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/10 space-y-3">
-                <span className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-emerald-500/10 text-emerald-500"><Globe className="h-8 w-8" aria-hidden="true" /></span>
+                <span className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-500/10 text-slate-500"><Globe className="h-8 w-8" aria-hidden="true" /></span>
                 <div className="space-y-1">
-                  <p className="text-sm font-bold text-slate-900 dark:text-white">No suppliers connected</p>
-                  <p className="text-xs text-slate-400">Add your first supplier, test the connection and run the initial sync to begin importing products.</p>
+                  <p className="text-sm font-bold text-slate-900 dark:text-white">No connected sources yet</p>
+                  <p className="text-xs text-slate-400">Connect an external supplier integration when you are ready to sync an API or catalog feed.</p>
                 </div>
-                <button type="button" onClick={() => setShowConnectModal(true)} className="mx-auto mt-4 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 text-xs font-extrabold text-white transition-colors hover:bg-emerald-700 sm:w-auto">
-                  <Plus className="h-4 w-4" aria-hidden="true" /> Add Supplier
-                </button>
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -2077,6 +2062,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                 ))}
               </div>
             )}
+            </section>
           </div>
         )}
 
@@ -2086,7 +2072,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-slate-50 dark:bg-slate-900/20 p-5 rounded-3xl border border-slate-100 dark:border-slate-800/40">
               <div>
                 <h3 className="text-sm font-extrabold text-slate-900 dark:text-white uppercase tracking-wider">Settings</h3>
-                <p className="text-[11px] text-slate-400">Configure business defaults for supplier updates, pricing, catalogue preparation, and review.</p>
+                <p className="text-[11px] text-slate-400">Configure sync, pricing, and catalogue defaults for external supplier integrations.</p>
               </div>
               {supplierSettings && (supplierSettings.lastUpdated || supplierSettings.updatedBy) && (
                 <div className="text-left sm:text-right text-[10px] text-slate-400 font-mono">
@@ -2100,8 +2086,8 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
 
             <section aria-labelledby="supplier-business-settings-title" className="space-y-4">
               <div>
-                <h3 id="supplier-business-settings-title" className="text-sm font-black text-slate-900 dark:text-white">Business Settings</h3>
-                <p className="mt-1 text-[11px] text-slate-400">Defaults used by the existing synchronization and review workflow.</p>
+                <h3 id="supplier-business-settings-title" className="text-sm font-black text-slate-900 dark:text-white">Supplier Sync Settings</h3>
+                <p className="mt-1 text-[11px] text-slate-400">Integration and synchronization defaults for connected external sources. Manual Supplier Portal accounts are managed separately.</p>
               </div>
             <form onSubmit={handleSaveSupplierSettings} className="p-6 rounded-3xl border border-slate-200/50 dark:border-slate-800/60 bg-slate-50/50 dark:bg-[#101827]/30 text-xs space-y-6">
               
@@ -2390,7 +2376,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
             aria-modal="true"
             aria-labelledby="connect-supplier-title"
             aria-describedby="connect-supplier-description"
-            className="bg-white dark:bg-[#111928] border border-slate-200/50 dark:border-slate-800 rounded-3xl max-w-xl w-full p-6 text-left shadow-2xl flex flex-col space-y-4"
+            className="bg-white dark:bg-[#111928] border border-slate-200/50 dark:border-slate-800 rounded-3xl max-w-xl w-full max-h-[min(90dvh,calc(100dvh-2rem))] p-6 text-left shadow-2xl flex flex-col space-y-4 overflow-y-auto"
           >
             
             {/* Header */}
@@ -2400,15 +2386,15 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                   <Plus className="h-5 w-5" />
                 </div>
                 <div>
-                  <h3 id="connect-supplier-title" className="text-sm font-extrabold font-display text-slate-900 dark:text-white">Connect Supplier</h3>
-                  <p id="connect-supplier-description" className="text-[10px] text-slate-400 font-medium">Configure and verify connections to external supplier catalogs</p>
+                  <h3 id="connect-supplier-title" className="text-sm font-extrabold font-display text-slate-900 dark:text-white">Connect External Supplier</h3>
+                  <p id="connect-supplier-description" className="text-[10px] text-slate-400 font-medium">Connect an API or catalog integration such as A2Z. Manual Supplier Portal onboarding stays separate.</p>
                 </div>
               </div>
               <button
                 ref={connectCloseButtonRef}
                 type="button"
                 onClick={closeConnectModal}
-                aria-label="Close Connect Supplier"
+                aria-label="Close Connect External Supplier"
                 className="p-1.5 text-slate-400 hover:text-slate-900 dark:hover:text-white bg-slate-100 dark:bg-slate-800 rounded-full cursor-pointer transition-colors"
               >
                 <X className="h-4 w-4" aria-hidden="true" />

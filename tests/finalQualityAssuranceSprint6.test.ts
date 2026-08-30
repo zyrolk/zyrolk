@@ -41,7 +41,8 @@ test('Admin mobile navigation cannot remain keyboard-focusable while off screen'
   assert.match(admin, /aria-controls="admin-navigation"/);
   assert.match(admin, /aria-label="Open Admin navigation"/);
   assert.match(admin, /aria-label="Close Admin navigation"/);
-  assert.match(admin, /aria-label=\{isDarkMode \? 'Use light Admin theme'/);
+  assert.match(admin, /const isDarkMode = true;/);
+  assert.doesNotMatch(admin, /Use light Admin theme/);
   assert.match(admin, /aria-controls="admin-notifications"/);
   assert.match(admin, /id="admin-product-modal-title"/);
   assert.match(admin, /ref=\{productModalRef\}/);

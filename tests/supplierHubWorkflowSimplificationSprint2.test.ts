@@ -54,7 +54,7 @@ test('supplier cards use business health labels and retain existing actions', ()
   assert.equal(supplierHealthLabel({ lastError: 'timeout' }), 'Needs attention');
 
   const component = projectFile('src/components/SupplierHubFiveStars.tsx');
-  for (const control of ['Add Supplier', 'Edit', 'Test Connection', 'Run Initial Sync', 'Sync Now']) {
+  for (const control of ['Connect External Supplier', 'Edit', 'Test Connection', 'Run Initial Sync', 'Sync Now']) {
     assert.match(component, new RegExp(control));
   }
   assert.match(component, /handleSupplierPauseAction/);

@@ -185,7 +185,7 @@ test('supplier UI is role-isolated, API-backed, responsive and accessible', () =
   assert.match(supplierHub, /role="dialog"/);
   assert.match(supplierHub, /aria-modal="true"/);
   assert.match(supplierHub, /aria-labelledby="connect-supplier-title"/);
-  assert.match(supplierHub, /aria-label="Close Connect Supplier"/);
+  assert.match(supplierHub, /aria-label="Close Connect External Supplier"/);
   for (const id of [
     'connect-supplier-name', 'connect-supplier-account', 'connect-supplier-type',
     'connect-supplier-base-url', 'connect-supplier-product-endpoint',

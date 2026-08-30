@@ -3,7 +3,7 @@ import {
   TrendingUp, ShoppingBag, Users, Layers, Plus, Trash2, Edit3, Check, 
   X, RefreshCw, AlertCircle, DollarSign, ArrowUpRight, Upload,
   Settings, Search, Image, ShieldCheck, Power, Phone,
-  Copy, Star, Bell, Moon, Sun, ChevronRight,
+  Copy, Star, Bell, ChevronRight,
   Menu, Info, Filter, Clock, BarChart3, Archive, Package, FileText, Save,
   Facebook, Instagram, Youtube, Music, Sparkles, Flame, Award, UserCheck, Activity,
   ArrowDownRight, AlertTriangle, ArrowRight, ArrowLeft, History, User, Store
@@ -411,7 +411,7 @@ const formatOperationsTimestamp = (value: string | null): string => {
 
 export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId = 'about-us', onExitToStorefront }: AdminDashboardProps = {}) {
   const [activeTab, setActiveTab] = useState<AdminTab>(initialTab);
-  const [isDarkMode, setIsDarkMode] = useState<boolean>(true);
+  const isDarkMode = true;
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
   const [showNotifications, setShowNotifications] = useState<boolean>(false);
   const [supplierHubNestedNav, setSupplierHubNestedNav] = useState<{ active: boolean; title: string; onBack: () => void } | null>(null);
@@ -2231,11 +2231,6 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                 <Menu className="h-5 w-5" aria-hidden="true" />
               </button>
             )}
-            {/* Theme Toggle */}
-            <button type="button" onClick={() => setIsDarkMode(!isDarkMode)} className="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-100 text-slate-500 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700" aria-label={isDarkMode ? 'Use light Admin theme' : 'Use dark Admin theme'}>
-              {isDarkMode ? <Sun className="h-4 w-4" aria-hidden="true" /> : <Moon className="h-4 w-4" aria-hidden="true" />}
-            </button>
-
             {/* Notification bell */}
             <div className="relative">
               <button type="button" onClick={() => setShowNotifications(!showNotifications)} className="relative flex h-11 w-11 items-center justify-center rounded-xl bg-slate-100 text-slate-500 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700" aria-label={`Admin notifications${notificationsList.length ? `, ${notificationsList.length} active` : ''}`} aria-expanded={showNotifications} aria-controls="admin-notifications">

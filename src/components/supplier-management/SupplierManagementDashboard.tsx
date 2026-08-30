@@ -171,14 +171,7 @@ export default function SupplierManagementDashboard({ requestApi, refreshKey, on
         ))}
       </div>
       <div className="rounded-2xl border border-slate-200/70 bg-white p-4 shadow-xs dark:border-slate-800 dark:bg-slate-950 sm:p-5">
-        <div className="flex items-start gap-3">
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600 dark:bg-blue-950/40 dark:text-blue-300"><UserCheck className="h-4 w-4" aria-hidden="true" /></span>
-          <div>
-            <h5 className="text-sm font-black text-slate-900 dark:text-white">Supplier Portal accounts</h5>
-            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Find an existing Zyro.lk account, promote it, then explicitly approve access.</p>
-          </div>
-        </div>
-        <form onSubmit={findAccount} className="mt-4 flex flex-col gap-2 sm:flex-row">
+        <form onSubmit={findAccount} className="flex flex-col gap-2 sm:flex-row">
           <label className="sr-only" htmlFor="supplier-account-query">Firebase Auth email or UID</label>
           <input
             id="supplier-account-query"
@@ -194,6 +187,11 @@ export default function SupplierManagementDashboard({ requestApi, refreshKey, on
             <Search className={`h-4 w-4 ${accountBusy === 'lookup' ? 'animate-pulse' : ''}`} aria-hidden="true" /> {accountBusy === 'lookup' ? 'Finding account' : 'Find account'}
           </button>
         </form>
+        {!account && !accountError && !accountNotice && (
+          <p className="mt-4 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-500 dark:border-slate-800 dark:bg-slate-900/40 dark:text-slate-400">
+            No supplier accounts yet. Look up a Zyro.lk account by email or UID to get started.
+          </p>
+        )}
         {accountError && <p role="alert" className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300">{accountError}</p>}
         {accountNotice && <p role="status" className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-300">{accountNotice}</p>}
         {account && (

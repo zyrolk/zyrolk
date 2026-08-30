@@ -45,7 +45,7 @@ test('supplier cards expose only business controls and delay Auto Sync until Ini
   const connectionBadge = projectFile('src/components/supplier-ui/SupplierConnectionBadge.tsx');
 
   for (const label of [
-    'Connected Suppliers',
+    'Connected Sources',
     'Supplier Platform',
     'Active',
     'Paused',
@@ -121,7 +121,7 @@ test('Activity remains business-focused while diagnostics and controls stay in p
   assert.match(hub, /Brand restrictions/i);
   assert.match(hub, /Product Page Size/i);
   assert.match(hub, /Maximum Image Limit/);
-  assert.match(hub, /Business Settings/);
+  assert.match(hub, /Supplier Sync Settings/);
   assert.match(hub, /Advanced Settings/);
   assert.match(hub, /canAccessAdvanced && <section/);
 });
