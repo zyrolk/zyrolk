@@ -1144,26 +1144,28 @@ export default function App() {
       />
       {!isAdminMode && <a href="#storefront-content" className="zy-skip-link">Skip to main content</a>}
       
-      {/* Dynamic Header / Navbar */}
-      <Navbar 
-        currentPage={currentPage}
-        setCurrentPage={setCurrentPage}
-        cartCount={cart.reduce((acc, item) => acc + item.quantity, 0)}
-        wishlistCount={wishlist.length}
-        onOpenCart={() => setIsCartOpen(true)}
-        searchQuery={searchQuery}
-        setSearchQuery={setSearchQuery}
-        products={customerProducts}
-        categories={storefrontCategories}
-        isLoading={loading}
-        onSelectCategory={setSelectedCategory}
-        onSelectProduct={handleCustomerSearchSelection}
-        onOpenAuthModal={() => setIsAuthModalOpen(true)}
-        isAdminMode={isAdminMode}
-        setIsAdminMode={setIsAdminMode}
-        settings={settings}
-        isAdminUser={isAdminUser}
-      />
+      {/* Storefront header only — Admin uses its own compact shell */}
+      {!isAdminMode && (
+        <Navbar
+          currentPage={currentPage}
+          setCurrentPage={setCurrentPage}
+          cartCount={cart.reduce((acc, item) => acc + item.quantity, 0)}
+          wishlistCount={wishlist.length}
+          onOpenCart={() => setIsCartOpen(true)}
+          searchQuery={searchQuery}
+          setSearchQuery={setSearchQuery}
+          products={customerProducts}
+          categories={storefrontCategories}
+          isLoading={loading}
+          onSelectCategory={setSelectedCategory}
+          onSelectProduct={handleCustomerSearchSelection}
+          onOpenAuthModal={() => setIsAuthModalOpen(true)}
+          isAdminMode={isAdminMode}
+          setIsAdminMode={setIsAdminMode}
+          settings={settings}
+          isAdminUser={isAdminUser}
+        />
+      )}
 
       {/* --- PAGE COMPILING WRAPPER --- */}
       {isAdminMode ? (
@@ -1172,6 +1174,10 @@ export default function App() {
           <AdminDashboard
             initialTab={adminInitialTab}
             initialCmsPageId={adminInitialCmsPageId}
+            onExitToStorefront={() => {
+              setIsAdminMode(false);
+              setCurrentPage('home');
+            }}
           />
         </Suspense>
       ) : (

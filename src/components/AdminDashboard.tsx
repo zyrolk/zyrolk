@@ -6,7 +6,7 @@ import {
   Copy, Star, Bell, Moon, Sun, ChevronRight,
   Menu, Info, Filter, Clock, BarChart3, Archive, Package, FileText, Save,
   Facebook, Instagram, Youtube, Music, Sparkles, Flame, Award, UserCheck, Activity,
-  ArrowDownRight, AlertTriangle, ArrowRight, History, User
+  ArrowDownRight, AlertTriangle, ArrowRight, History, User, Home
 } from 'lucide-react';
 import { 
   collection, documentId, getAggregateFromServer, getCountFromServer, getDocs, doc, updateDoc, deleteDoc, getDoc, limit,
@@ -357,7 +357,20 @@ Thank you for contacting us. One of our specialists will reach out to you via ph
 interface AdminDashboardProps {
   initialTab?: 'stats' | 'aiManager' | 'products' | 'categories' | 'orders' | 'customers' | 'pages' | 'settings' | 'supplierHubFiveStars';
   initialCmsPageId?: string;
+  onExitToStorefront?: () => void;
 }
+
+const ADMIN_TAB_LABELS: Record<AdminDashboardProps['initialTab'] & string, string> = {
+  stats: 'Dashboard',
+  aiManager: 'AI Manager',
+  products: 'Inventory',
+  categories: 'Categories',
+  orders: 'Orders',
+  customers: 'Customers',
+  pages: 'Pages',
+  settings: 'Settings',
+  supplierHubFiveStars: 'Suppliers',
+};
 
 interface AdminOperationsSummary {
   generatedAt: string;
@@ -381,7 +394,7 @@ const formatOperationsTimestamp = (value: string | null): string => {
   return Number.isFinite(date.getTime()) ? date.toLocaleString() : 'No activity recorded';
 };
 
-export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId = 'about-us' }: AdminDashboardProps = {}) {
+export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId = 'about-us', onExitToStorefront }: AdminDashboardProps = {}) {
   const [activeTab, setActiveTab] = useState<'stats' | 'aiManager' | 'products' | 'categories' | 'orders' | 'customers' | 'pages' | 'settings' | 'supplierHubFiveStars'>(initialTab);
   const [isDarkMode, setIsDarkMode] = useState<boolean>(true);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
@@ -938,19 +951,24 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
     if (authorized) void loadOperationsSummary();
   }, [authorized]);
 
-  // Sync users & orders into customers
+  // Sync users & orders into customers (exclude admin/supplier operator accounts)
   useEffect(() => {
-    const buyerMap = new Map();
-    users.forEach(u => buyerMap.set(u.email, u));
-    orders.forEach(o => {
-      if (o.customerEmail && !buyerMap.has(o.customerEmail)) {
-        buyerMap.set(o.customerEmail, {
-          uid: o.customerUid,
-          email: o.customerEmail,
-          displayName: o.customerName,
-          phone: o.customerPhone,
+    const buyerMap = new Map<string, Record<string, unknown>>();
+    users.forEach((user) => {
+      const role = String(user.role || 'customer').toLowerCase();
+      const email = String(user.email || '').toLowerCase();
+      if (role === 'admin' || role === 'supplier' || email === PRODUCTION_ADMIN_EMAIL.toLowerCase()) return;
+      buyerMap.set(user.email, user);
+    });
+    orders.forEach((order) => {
+      if (order.customerEmail && !buyerMap.has(order.customerEmail)) {
+        buyerMap.set(order.customerEmail, {
+          uid: order.customerUid,
+          email: order.customerEmail,
+          displayName: order.customerName,
+          phone: order.customerPhone,
           role: 'customer',
-          createdAt: o.createdAt
+          createdAt: order.createdAt,
         });
       }
     });
@@ -1884,6 +1902,20 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
 
   const lowStockProducts = products.filter(p => p.stock <= 5);
   const pendingOrders = orders.filter(o => o.status === 'pending');
+  const publishedProductCount = adminSummaryCounts.products || products.length;
+  const businessCustomers = useMemo(
+    () => customers.filter((customer) => {
+      const role = String(customer.role || 'customer').toLowerCase();
+      const email = String(customer.email || '').toLowerCase();
+      return role !== 'admin' && role !== 'supplier' && email !== PRODUCTION_ADMIN_EMAIL.toLowerCase();
+    }),
+    [customers],
+  );
+  const nonCancelledOrders = useMemo(
+    () => orders.filter((order) => order.status !== 'cancelled'),
+    [orders],
+  );
+  const hasSalesActivity = nonCancelledOrders.length > 0 || (adminGrossSales ?? 0) > 0;
 
   const avgRating = products.length > 0
     ? (products.reduce((acc, p) => acc + (p.rating || 5), 0) / products.length).toFixed(1)
@@ -2108,19 +2140,34 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
       <div className="flex-1 min-w-0 flex flex-col min-h-screen">
         
         {/* TOP COMPACT HEADER */}
-        <header className={`sticky top-0 z-30 flex items-center justify-between border-b px-3 py-3 backdrop-blur-md sm:px-6 sm:py-4 ${isDarkMode ? 'bg-[#080E1A]/85 border-slate-800/50' : 'bg-white/85 border-slate-200/50'}`}>
-          <div className="flex items-center space-x-4">
-            <button ref={mobileMenuButtonRef} type="button" onClick={() => setIsMobileMenuOpen(true)} className="flex h-11 w-11 items-center justify-center rounded-xl text-slate-400 hover:bg-slate-100 hover:text-slate-800 dark:hover:bg-slate-800 dark:hover:text-white md:hidden" aria-label="Open Admin navigation" aria-expanded={isMobileMenuOpen} aria-controls="admin-navigation">
+        <header className={`sticky top-0 z-30 flex items-center justify-between border-b px-3 py-2.5 backdrop-blur-md sm:px-6 sm:py-3 ${isDarkMode ? 'bg-[#080E1A]/85 border-slate-800/50' : 'bg-white/85 border-slate-200/50'}`}>
+          <div className="flex min-w-0 items-center gap-2 sm:gap-4">
+            <button ref={mobileMenuButtonRef} type="button" onClick={() => setIsMobileMenuOpen(true)} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-slate-400 hover:bg-slate-100 hover:text-slate-800 dark:hover:bg-slate-800 dark:hover:text-white md:hidden" aria-label="Open Admin navigation" aria-expanded={isMobileMenuOpen} aria-controls="admin-navigation">
               <Menu className="h-5 w-5" aria-hidden="true" />
             </button>
-            <div className="hidden sm:flex items-center space-x-2 text-xs font-semibold text-slate-400">
+            <div className="min-w-0 text-left md:hidden">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-blue-500">Admin</p>
+              <p className="truncate text-sm font-extrabold text-slate-900 dark:text-white">{ADMIN_TAB_LABELS[activeTab] || 'Dashboard'}</p>
+            </div>
+            <div className="hidden md:flex items-center space-x-2 text-xs font-semibold text-slate-400">
               <span>Overview</span>
               <ChevronRight className="h-3 w-3" />
-              <span className={isDarkMode ? 'text-white' : 'text-slate-800'}>{activeTab.toUpperCase()}</span>
+              <span className={isDarkMode ? 'text-white' : 'text-slate-800'}>{ADMIN_TAB_LABELS[activeTab] || activeTab.toUpperCase()}</span>
             </div>
           </div>
 
-          <div className="flex items-center space-x-4">
+          <div className="flex items-center space-x-2 sm:space-x-4">
+            {onExitToStorefront && (
+              <button
+                type="button"
+                onClick={onExitToStorefront}
+                className="inline-flex min-h-10 items-center gap-1.5 rounded-xl border border-slate-200 px-2.5 text-[11px] font-bold text-slate-600 transition hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800 sm:px-3"
+                aria-label="Return to storefront"
+              >
+                <Home className="h-3.5 w-3.5" aria-hidden="true" />
+                <span className="hidden sm:inline">Storefront</span>
+              </button>
+            )}
             {/* Theme Toggle */}
             <button type="button" onClick={() => setIsDarkMode(!isDarkMode)} className="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-100 text-slate-500 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700" aria-label={isDarkMode ? 'Use light Admin theme' : 'Use dark Admin theme'}>
               {isDarkMode ? <Sun className="h-4 w-4" aria-hidden="true" /> : <Moon className="h-4 w-4" aria-hidden="true" />}
@@ -2169,7 +2216,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
         </header>
 
         {/* MAIN BODY COMPILING CONTAINER */}
-        <main className="flex-1 p-6 overflow-x-hidden space-y-8">
+        <main className="flex-1 overflow-x-hidden space-y-8 p-4 sm:p-6">
           {Object.keys(adminDataIssues).length > 0 && (
             <section className="flex flex-col gap-3 rounded-2xl border border-red-500/25 bg-red-500/10 p-4 text-sm text-red-700 dark:text-red-300 sm:flex-row sm:items-center sm:justify-between" role="alert" aria-labelledby="admin-data-issue-title">
               <div className="flex items-start gap-3">
@@ -2224,10 +2271,10 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                 const percent = prevCount === 0 ? (currentCount > 0 ? 100 : 0) : (diff / prevCount) * 100;
                 return { diff, percent, currentVal: currentCount, prevVal: prevCount };
               } else {
-                const currentCount = customers
+                const currentCount = businessCustomers
                   .filter(c => c.createdAt && new Date(c.createdAt) >= currentCutoff).length;
 
-                const prevCount = customers
+                const prevCount = businessCustomers
                   .filter(c => c.createdAt && new Date(c.createdAt) >= previousCutoff && new Date(c.createdAt) < currentCutoff).length;
 
                 const diff = currentCount - prevCount;
@@ -2285,7 +2332,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
               });
 
               // Customers
-              customers.slice(0, 5).forEach(c => {
+              businessCustomers.slice(0, 5).forEach(c => {
                 if (c.createdAt) {
                   events.push({
                     id: `cust-${c.uid || c.id}`,
@@ -2315,8 +2362,8 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                 {/* Header overview controls */}
                 <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                   <div className="text-left">
-                    <h2 className="text-2xl font-black tracking-tight text-slate-900 dark:text-white">Corporate Command Center</h2>
-                    <p className="text-xs text-slate-400">Premium visual intelligence and inventory logs metrics</p>
+                    <h2 className="text-2xl font-black tracking-tight text-slate-900 dark:text-white">Operations Dashboard</h2>
+                    <p className="text-xs text-slate-400">Live store operations and catalogue health</p>
                   </div>
 
                   {/* Stripe Segmented Controller */}
@@ -2339,6 +2386,35 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                       </button>
                     ))}
                   </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  {[
+                    { tab: 'supplierHubFiveStars' as const, label: 'Suppliers', icon: Award },
+                    { tab: 'supplierHubFiveStars' as const, label: 'Product Review', icon: ShieldCheck },
+                    { tab: 'orders' as const, label: 'Orders', icon: Clock },
+                    { tab: 'products' as const, label: 'Inventory', icon: Package },
+                  ].map((action) => {
+                    const Icon = action.icon;
+                    return (
+                      <button
+                        key={action.label}
+                        type="button"
+                        onClick={() => {
+                          setActiveTab(action.tab);
+                          window.scrollTo({ top: 0, behavior: 'smooth' });
+                        }}
+                        className={`min-h-11 rounded-xl border px-3 py-2 text-left text-[11px] font-bold transition hover:-translate-y-0.5 ${
+                          isDarkMode
+                            ? 'border-slate-800 bg-[#101827] text-slate-200 hover:border-blue-500/30'
+                            : 'border-slate-200 bg-white text-slate-700 hover:border-blue-200'
+                        }`}
+                      >
+                        <Icon className="mb-1 h-4 w-4 text-blue-500" aria-hidden="true" />
+                        {action.label}
+                      </button>
+                    );
+                  })}
                 </div>
 
                 <section className={`rounded-3xl border p-5 text-left ${
@@ -2446,7 +2522,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                     <div className="absolute top-0 right-0 w-32 h-32 bg-purple-500/5 rounded-full blur-2xl group-hover:bg-purple-500/10 transition-all duration-500" />
                     
                     <div className="flex items-center justify-between relative z-10">
-                      <span className="text-[11px] font-extrabold uppercase tracking-widest text-slate-400 dark:text-slate-500">Order Booking</span>
+                      <span className="text-[11px] font-extrabold uppercase tracking-widest text-slate-400 dark:text-slate-500">Orders</span>
                       <div className="w-10 h-10 rounded-xl bg-purple-500/10 text-purple-500 flex items-center justify-center font-black">
                         <ShoppingBag className="h-5 w-5" />
                       </div>
@@ -2477,7 +2553,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                     <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/5 rounded-full blur-2xl group-hover:bg-emerald-500/10 transition-all duration-500" />
                     
                     <div className="flex items-center justify-between relative z-10">
-                      <span className="text-[11px] font-extrabold uppercase tracking-widest text-slate-400 dark:text-slate-500">Shoppers Roster</span>
+                      <span className="text-[11px] font-extrabold uppercase tracking-widest text-slate-400 dark:text-slate-500">Customers</span>
                       <div className="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-500 flex items-center justify-center font-black">
                         <Users className="h-5 w-5" />
                       </div>
@@ -2485,7 +2561,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
 
                     <div className="mt-5 text-left relative z-10">
                       <p className="text-2xl md:text-3xl font-black tracking-tight text-slate-900 dark:text-white">
-                        <AnimatedCounter value={adminSummaryCounts.users || customers.length} />
+                        <AnimatedCounter value={businessCustomers.length} />
                       </p>
                       <div className="flex items-center space-x-1.5 mt-2.5">
                         <span className={`inline-flex items-center space-x-0.5 text-[10px] font-black px-2 py-0.5 rounded-full ${
@@ -2506,7 +2582,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                     <div className="absolute top-0 right-0 w-32 h-32 bg-red-500/5 rounded-full blur-2xl group-hover:bg-red-500/10 transition-all duration-500" />
                     
                     <div className="flex items-center justify-between relative z-10">
-                      <span className="text-[11px] font-extrabold uppercase tracking-widest text-slate-400 dark:text-slate-500">Inventory Index</span>
+                      <span className="text-[11px] font-extrabold uppercase tracking-widest text-slate-400 dark:text-slate-500">Inventory</span>
                       <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-black ${
                         lowStockProducts.length > 0 ? 'bg-red-500/10 text-red-500 animate-pulse' : 'bg-emerald-500/10 text-emerald-500'
                       }`}>
@@ -2516,20 +2592,15 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
 
                     <div className="mt-5 text-left relative z-10">
                       <p className="text-2xl md:text-3xl font-black tracking-tight text-slate-900 dark:text-white">
-                        <AnimatedCounter value={lowStockProducts.length} />
+                        <AnimatedCounter value={publishedProductCount} />
                       </p>
                       <div className="mt-2.5">
-                        {/* Dynamic Stock progress indicator bar */}
-                        <div className="w-full bg-slate-100 dark:bg-slate-800/80 rounded-full h-1.5 mt-2">
-                          <div 
-                            className={`h-1.5 rounded-full transition-all duration-500 ${
-                              lowStockProducts.length > 3 ? 'bg-red-500' : lowStockProducts.length > 0 ? 'bg-amber-500' : 'bg-emerald-500'
-                            }`}
-                            style={{ width: `${Math.min(100, Math.max(5, (lowStockProducts.length / (products.length || 1)) * 100))}%` }}
-                          />
-                        </div>
-                        <span className="text-[9px] text-slate-400 font-bold block mt-1 uppercase tracking-wider">
-                          {lowStockProducts.length > 0 ? `${lowStockProducts.length} devices need immediate restock` : 'all products fully stocked'}
+                        <span className="text-[10px] text-slate-400 font-medium block">
+                          {publishedProductCount === 0
+                            ? 'No products published yet'
+                            : lowStockProducts.length > 0
+                              ? `${lowStockProducts.length} items need attention`
+                              : 'All published items are healthy'}
                         </span>
                       </div>
                     </div>
@@ -2537,7 +2608,8 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
 
                 </div>
 
-                {/* Double Chart Grid (Sales Line and Revenue Bar Chart) */}
+                {hasSalesActivity ? (
+                <>
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
                   
                   {/* CHART 1: Area line chart for Sales Trends */}
@@ -2547,7 +2619,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                     <div className="flex items-center justify-between mb-6">
                       <div>
                         <span className="text-[10px] font-black text-blue-500 uppercase tracking-widest block">Core Trend Analysis</span>
-                        <h3 className="text-base font-extrabold text-slate-900 dark:text-white tracking-tight">Sales Expansion Timeline</h3>
+                        <h3 className="text-base font-extrabold text-slate-900 dark:text-white tracking-tight">Sales Trend</h3>
                       </div>
                       <div className="w-9 h-9 rounded-xl bg-blue-500/10 text-blue-500 flex items-center justify-center">
                         <TrendingUp className="h-5 w-5" />
@@ -2696,7 +2768,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                     <div className="flex items-center justify-between mb-6">
                       <div>
                         <span className="text-[10px] font-black text-blue-500 uppercase tracking-widest block">Performance Roster</span>
-                        <h3 className="text-base font-extrabold text-slate-900 dark:text-white tracking-tight font-sans">Best Selling Devices</h3>
+                        <h3 className="text-base font-extrabold text-slate-900 dark:text-white tracking-tight font-sans">Best Sellers</h3>
                       </div>
                       <div className="w-8 h-8 rounded-lg bg-blue-500/10 text-blue-500 flex items-center justify-center">
                         <Award className="h-4 w-4" />
@@ -2776,6 +2848,18 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                   </div>
 
                 </div>
+                </>
+                ) : (
+                  <div className={`rounded-3xl border p-8 text-center ${
+                    isDarkMode ? 'border-slate-800/60 bg-[#101827]/75' : 'border-slate-200/80 bg-white'
+                  }`}>
+                    <TrendingUp className="mx-auto mb-3 h-10 w-10 text-slate-300 dark:text-slate-600" aria-hidden="true" />
+                    <h3 className="text-sm font-extrabold text-slate-900 dark:text-white">No sales yet</h3>
+                    <p className="mx-auto mt-2 max-w-md text-xs text-slate-400">
+                      Sales trends, revenue breakdown, category mix, and best sellers will appear after the first confirmed orders.
+                    </p>
+                  </div>
+                )}
 
                 {/* Critical Inventory warnings + Unified Activity Feed section */}
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
@@ -2787,20 +2871,30 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                     <div>
                       <div className="flex items-center justify-between mb-5">
                         <div>
-                          <span className="text-[10px] font-black text-red-500 uppercase tracking-widest block">Critical Actions</span>
-                          <h3 className="text-base font-extrabold text-slate-900 dark:text-white tracking-tight">Stock Warning Deck</h3>
+                          <span className={`text-[10px] font-black uppercase tracking-widest block ${lowStockProducts.length > 0 ? 'text-red-500' : 'text-emerald-500'}`}>
+                            {lowStockProducts.length > 0 ? 'Inventory Alerts' : 'Inventory Status'}
+                          </span>
+                          <h3 className="text-base font-extrabold text-slate-900 dark:text-white tracking-tight">
+                            {lowStockProducts.length > 0 ? 'Stock Warnings' : 'Inventory Health'}
+                          </h3>
                         </div>
-                        <div className="w-8 h-8 rounded-lg bg-red-500/10 text-red-500 flex items-center justify-center">
-                          <AlertCircle className="h-4 w-4" />
+                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${lowStockProducts.length > 0 ? 'bg-red-500/10 text-red-500' : 'bg-emerald-500/10 text-emerald-500'}`}>
+                          {lowStockProducts.length > 0 ? <AlertCircle className="h-4 w-4" /> : <Check className="h-4 w-4" />}
                         </div>
                       </div>
 
                       <div className="space-y-3">
                         {lowStockProducts.length === 0 ? (
-                          <div className="p-8 text-center flex flex-col items-center justify-center space-y-3 border border-dashed border-slate-200 dark:border-slate-800/80 rounded-2xl bg-slate-50/50 dark:bg-slate-900/10">
-                            <Check className="h-10 w-10 text-emerald-500" />
-                            <h4 className="font-extrabold text-xs text-slate-800 dark:text-emerald-400">All Items Healthy</h4>
-                            <p className="text-[11px] text-slate-400">No item stock is currently below safety cutoff parameters.</p>
+                          <div className="p-6 text-center flex flex-col items-center justify-center space-y-2 border border-dashed border-slate-200 dark:border-slate-800/80 rounded-2xl bg-slate-50/50 dark:bg-slate-900/10">
+                            <Check className="h-8 w-8 text-emerald-500" />
+                            <h4 className="font-extrabold text-xs text-slate-800 dark:text-emerald-400">
+                              {publishedProductCount === 0 ? 'No published inventory yet' : 'All items healthy'}
+                            </h4>
+                            <p className="text-[11px] text-slate-400">
+                              {publishedProductCount === 0
+                                ? 'Published products will appear here when stock needs attention.'
+                                : 'No low-stock or out-of-stock alerts right now.'}
+                            </p>
                           </div>
                         ) : (
                           lowStockProducts.slice(0, 4).map((p, idx) => {
@@ -2866,15 +2960,21 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                     <div className="flex items-center justify-between mb-5">
                       <div>
                         <span className="text-[10px] font-black text-blue-500 uppercase tracking-widest block">Operational Logs</span>
-                        <h3 className="text-base font-extrabold text-slate-900 dark:text-white tracking-tight">Recent Live Activity Timeline</h3>
+                        <h3 className="text-base font-extrabold text-slate-900 dark:text-white tracking-tight">Recent Activity</h3>
                       </div>
                       <div className="w-8 h-8 rounded-lg bg-blue-500/10 text-blue-500 flex items-center justify-center">
                         <History className="h-4 w-4" />
                       </div>
                     </div>
 
-                    <div className="space-y-4 max-h-[340px] overflow-y-auto pr-1">
-                      {timelineEvents.map((evt, idx) => {
+                    <div className="space-y-4 md:max-h-[340px] md:overflow-y-auto md:pr-1">
+                      {timelineEvents.length === 0 ? (
+                        <div className="rounded-2xl border border-dashed border-slate-200 px-4 py-8 text-center dark:border-slate-800">
+                          <History className="mx-auto mb-2 h-8 w-8 text-slate-300 dark:text-slate-600" aria-hidden="true" />
+                          <p className="text-xs font-bold text-slate-600 dark:text-slate-300">No recent activity yet</p>
+                          <p className="mt-1 text-[11px] text-slate-400">Orders, reviews, registrations, and stock alerts will appear here.</p>
+                        </div>
+                      ) : timelineEvents.map((evt, idx) => {
                         // Decide icon and color scheme based on event type
                         const config = {
                           order: { icon: ShoppingBag, color: 'bg-blue-500/10 text-blue-500 border-blue-500/20' },
