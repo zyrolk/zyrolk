@@ -42,7 +42,7 @@ test('launch review decisions are individual and have no bulk controls', () => {
   assert.doesNotMatch(hub, /Bulk Approve/);
   assert.doesNotMatch(hub, /Bulk Reject/);
   assert.match(hub, /supplierReviewCanQuickApprove/);
-  assert.match(quickCard, /View Details/);
+  assert.match(quickCard, /Review Product/);
 });
 
 test('Business Settings project only existing synchronization, pricing, and catalogue contracts', () => {

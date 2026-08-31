@@ -66,7 +66,7 @@ test('individual review cards, explicit detail editing, and Activity filters are
   assert.doesNotMatch(hub, /Approving products\.\.\.|Bulk review request in progress/);
   assert.match(hub, /grid gap-4 lg:grid-cols-2/);
   assert.match(hub, /supplierReviewCanQuickApprove/);
-  assert.match(quickCard, /View Details/);
+  assert.match(quickCard, /Review Product/);
   assert.match(editor, /Edit product data/);
   assert.match(activity, /\['all', 'success', 'failed', 'skipped', 'running'\]/);
   assert.match(activity, /aria-label="Filter synchronization history"/);

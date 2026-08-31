@@ -46,6 +46,7 @@ const quickCardProps = (overrides: Partial<SupplierReviewQuickCardProps> = {}): 
   storefrontVisible: true,
   supplierAttribution: 'A2Z Traders · A2Z',
   blockingProblems: [],
+  isPreparing: false,
   decisionReady: true,
   canQuickApprove: true,
   needsResolution: false,
@@ -124,7 +125,7 @@ test('rendered quick review uses verified catalogue labels and never renders raw
 test('rendered quick actions follow ready, invalid, conflict, and removal gates', () => {
   assert.match(renderQuickCard(), /aria-label="Approve Rendered QA product"/u);
   assert.match(renderQuickCard(), /aria-label="Reject Rendered QA product"/u);
-  assert.match(renderQuickCard(), />View Details</u);
+  assert.match(renderQuickCard(), />Review Product</u);
 
   const invalid = supplierReviewCanQuickApprove({
     ...readyItem,
@@ -136,7 +137,7 @@ test('rendered quick actions follow ready, invalid, conflict, and removal gates'
     const markup = renderQuickCard({ canQuickApprove, needsResolution: true });
     assert.doesNotMatch(markup, /aria-label="Approve Rendered QA product"/u, `${name} product exposed Quick Approve`);
     assert.match(markup, /aria-label="Reject Rendered QA product"/u);
-    assert.match(markup, />Review &amp; Resolve</u);
+    assert.match(markup, />Review Product</u);
   }
 });
 
@@ -195,8 +196,7 @@ test('launch review UI exposes only individual quick decisions and compact busin
     'Supplier/source',
     'Approve',
     'Reject',
-    'View Details',
-    'Review & Resolve',
+    'Review Product',
   ]) assert.match(launchUi, new RegExp(label.replaceAll('/', '\\/')));
 
   assert.doesNotMatch(launchUi, />\{item\.(?:supplierId|sourceId|supplierOfferId|id)\}</u);

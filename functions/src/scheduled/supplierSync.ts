@@ -2399,9 +2399,12 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
         const initialTraversalPages = resumesTraversal ? Number(source.catalogSync?.pagesProcessed || 0) : 0;
         const initialResumeCount = resumesTraversal ? Number(source.catalogSync?.resumeCount || 0) : 0;
         const hasPersistentFilters = Boolean(source.settings?.categoriesFilter?.length || source.settings?.brandFilter);
+        // Limited / filtered / incremental runs must never reconcile removals for
+        // products that were intentionally left unscanned.
         const deletionReconciliationEligible = syncRequest.mode === "full"
           && !supplierSyncRequestHasFilters(syncRequest)
-          && !hasPersistentFilters;
+          && !hasPersistentFilters
+          && !Number(syncRequest.totalProductLimit);
         const incrementalRequest = syncRequest.mode === "incremental"
           ? resolveSupplierIncrementalCatalogRequest(connector.syncCapabilities!, source)
           : undefined;

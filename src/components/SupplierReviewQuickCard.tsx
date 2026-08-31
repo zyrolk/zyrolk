@@ -16,9 +16,13 @@ export interface SupplierReviewQuickCardProps {
   brandLabel: string;
   categoryLabel: string;
   subcategoryLabel?: string;
+  rawSupplierCategory?: string;
+  rawSupplierSubcategory?: string;
+  rawSupplierBrand?: string;
   storefrontVisible: boolean;
   supplierAttribution: string;
   blockingProblems: string[];
+  isPreparing: boolean;
   decisionReady: boolean;
   canQuickApprove: boolean;
   needsResolution: boolean;
@@ -74,9 +78,13 @@ export function SupplierReviewQuickCard({
   brandLabel,
   categoryLabel,
   subcategoryLabel,
+  rawSupplierCategory,
+  rawSupplierSubcategory,
+  rawSupplierBrand,
   storefrontVisible,
   supplierAttribution,
   blockingProblems,
+  isPreparing,
   decisionReady,
   canQuickApprove,
   needsResolution,
@@ -87,8 +95,25 @@ export function SupplierReviewQuickCard({
   onViewDetails,
   onViewHistory,
 }: SupplierReviewQuickCardProps) {
+  const openEditor = () => {
+    if (!decisionReady || terminalState || processing) return;
+    onViewDetails();
+  };
+
   return (
-    <article className="flex overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
+    <article
+      className={`flex overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950 ${decisionReady && !terminalState ? 'cursor-pointer focus-within:ring-2 focus-within:ring-emerald-500/40' : ''}`}
+      onClick={openEditor}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          openEditor();
+        }
+      }}
+      role={decisionReady && !terminalState ? 'button' : undefined}
+      tabIndex={decisionReady && !terminalState ? 0 : undefined}
+      aria-label={decisionReady && !terminalState ? `Review product ${productName}` : undefined}
+    >
       <div className="flex min-w-0 flex-1 flex-col">
         <div className="flex items-start gap-3 p-4">
           <ManagedSupplierImage src={managedImageUrl} alt={`Managed product image for ${productName}`} />
@@ -113,18 +138,38 @@ export function SupplierReviewQuickCard({
           <div><dt className="text-slate-400">Profit</dt><dd className={`font-black ${profit < 0 ? 'text-red-600' : 'text-emerald-600'}`}>LKR {profit.toLocaleString()}</dd></div>
           <div><dt className="text-slate-400">Margin</dt><dd className={`font-black ${marginPercent < 0 ? 'text-red-600' : 'text-slate-800 dark:text-slate-100'}`}>{marginPercent.toFixed(2)}%</dd></div>
           <div><dt className="text-slate-400">Stock</dt><dd className="font-black">{stock}</dd></div>
-          <div><dt className="text-slate-400">Brand</dt><dd className="font-bold">{brandLabel}</dd></div>
-          <div><dt className="text-slate-400">Category</dt><dd className="font-bold">{categoryLabel}</dd></div>
-          {subcategoryLabel && <div><dt className="text-slate-400">Subcategory</dt><dd className="font-bold">{subcategoryLabel}</dd></div>}
+          <div><dt className="text-slate-400">Zyro brand</dt><dd className="font-bold">{brandLabel}</dd></div>
+          <div><dt className="text-slate-400">Zyro category</dt><dd className="font-bold">{categoryLabel}</dd></div>
+          {subcategoryLabel && <div><dt className="text-slate-400">Zyro subcategory</dt><dd className="font-bold">{subcategoryLabel}</dd></div>}
           <div><dt className="text-slate-400">Storefront</dt><dd className="font-bold">{storefrontVisible ? 'Visible' : 'Hidden'}</dd></div>
         </dl>
+
+        {(rawSupplierBrand || rawSupplierCategory || rawSupplierSubcategory) && (
+          <div className="border-b border-slate-100 px-4 py-3 text-[10px] dark:border-slate-800">
+            <span className="font-black uppercase tracking-wide text-slate-400">Supplier raw metadata</span>
+            <dl className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
+              <div><dt className="text-slate-400">Supplier brand</dt><dd className="font-semibold text-slate-700 dark:text-slate-200">{rawSupplierBrand || 'Not supplied'}</dd></div>
+              <div><dt className="text-slate-400">Supplier category</dt><dd className="font-semibold text-slate-700 dark:text-slate-200">{rawSupplierCategory || 'Not supplied'}</dd></div>
+              <div><dt className="text-slate-400">Supplier subcategory</dt><dd className="font-semibold text-slate-700 dark:text-slate-200">{rawSupplierSubcategory || 'Not supplied'}</dd></div>
+            </dl>
+          </div>
+        )}
 
         <div className="px-4 pt-3 text-[10px] text-slate-500 dark:text-slate-400">
           <span className="font-black uppercase tracking-wide text-slate-400">Supplier/source</span>
           <p className="mt-1 font-semibold text-slate-700 dark:text-slate-200">{supplierAttribution}</p>
         </div>
 
-        {blockingProblems.length > 0 && (
+        {isPreparing && !terminalState && (
+          <div className="mx-4 mt-3 rounded-xl bg-blue-500/10 p-3 text-[10px] font-bold text-blue-700 dark:text-blue-300" role="status">
+            <p className="font-black">Media is processing</p>
+            <p className="mt-1 font-semibold leading-relaxed">
+              Approval stays disabled until managed images finish and this item reaches Ready for Review. This list refreshes automatically.
+            </p>
+          </div>
+        )}
+
+        {blockingProblems.length > 0 && !isPreparing && (
           <div className="mx-4 mt-3 rounded-xl bg-amber-500/10 p-3 text-[10px] font-bold text-amber-700 dark:text-amber-300" role="status">
             <p className="font-black">Review required</p>
             <ul className="mt-1 list-disc space-y-1 pl-4">{blockingProblems.map((problem) => <li key={problem}>{problem}</li>)}</ul>
@@ -132,19 +177,30 @@ export function SupplierReviewQuickCard({
         )}
 
         {decisionReady && !terminalState && (
-          <div className="mt-auto grid grid-cols-2 gap-2 border-t border-slate-100 bg-white/95 p-3 dark:border-slate-800 dark:bg-slate-950/95 sm:grid-cols-3">
+          <div
+            className="mt-auto grid grid-cols-2 gap-2 border-t border-slate-100 bg-white/95 p-3 dark:border-slate-800 dark:bg-slate-950/95 sm:grid-cols-3"
+            onClick={(event) => event.stopPropagation()}
+          >
             {canQuickApprove && (
               <button type="button" onClick={onApprove} disabled={processing} aria-label={`Approve ${productName}`} className="min-h-11 rounded-xl bg-blue-600 px-3 text-[10px] font-black text-white hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50">
                 {processing ? 'Approving…' : 'Approve'}
               </button>
             )}
             <button type="button" onClick={onReject} disabled={processing} aria-label={`Reject ${productName}`} className="min-h-11 rounded-xl bg-red-600 px-3 text-[10px] font-black text-white hover:bg-red-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 disabled:cursor-not-allowed disabled:opacity-50">Reject</button>
-            <button type="button" onClick={onViewDetails} disabled={processing} aria-label={`${needsResolution ? 'Review and resolve' : 'View details for'} ${productName}`} className={`min-h-11 rounded-xl px-3 text-[10px] font-black focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 disabled:cursor-not-allowed disabled:opacity-50 ${needsResolution ? 'col-span-2 border border-amber-500/30 bg-amber-500/10 text-amber-700 sm:col-span-1 dark:text-amber-300' : 'border border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'}`}>{needsResolution ? 'Review & Resolve' : 'View Details'}</button>
+            <button type="button" onClick={onViewDetails} disabled={processing} aria-label={`Review product ${productName}`} className={`min-h-11 rounded-xl px-3 text-[10px] font-black focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 disabled:cursor-not-allowed disabled:opacity-50 ${needsResolution ? 'col-span-2 border border-amber-500/30 bg-amber-500/10 text-amber-700 sm:col-span-1 dark:text-amber-300' : 'border border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'}`}>Review Product</button>
+          </div>
+        )}
+
+        {isPreparing && !terminalState && (
+          <div className="mt-auto border-t border-slate-100 p-3 dark:border-slate-800">
+            <button type="button" disabled className="min-h-11 w-full cursor-not-allowed rounded-xl border border-slate-200 bg-slate-50 px-4 text-[10px] font-black text-slate-400 dark:border-slate-800 dark:bg-slate-900/40" aria-disabled="true">
+              Review unavailable while media is processing
+            </button>
           </div>
         )}
 
         {terminalState && (
-          <div className="p-3">
+          <div className="p-3" onClick={(event) => event.stopPropagation()}>
             <p className="mb-2 text-center text-[10px] font-black text-emerald-700 dark:text-emerald-300" role="status">Decision recorded: {terminalState}</p>
             <button type="button" onClick={onViewHistory} className="min-h-11 w-full rounded-xl border border-blue-500/20 bg-blue-500/10 px-4 text-[10px] font-black text-blue-700 dark:text-blue-300">View decision history</button>
           </div>

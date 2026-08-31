@@ -239,6 +239,54 @@ export function supplierReviewStatusLabel(item: ReviewPresentationItem): string 
   return String(item.status || 'Preparing');
 }
 
+/** True while queue/media work is still in flight and approval must stay disabled. */
+export function supplierReviewIsPreparing(item: ReviewPresentationItem): boolean {
+  const state = normalized(item.queueState);
+  return state === 'queued' || state === 'leased' || state === 'processing';
+}
+
+export interface SupplierReviewRawMetadata {
+  supplierCategory: string;
+  supplierSubcategory: string;
+  supplierBrand: string;
+}
+
+/** Preserves raw supplier taxonomy/brand for operators without inventing Zyro mappings. */
+export function supplierReviewRawMetadata(item: {
+  supplierSnapshot?: Record<string, unknown> | null;
+  categoryMapping?: { supplierCategory?: unknown } | null;
+  brandMapping?: { supplierBrand?: unknown } | null;
+  productPayload?: { brand?: unknown; specs?: Record<string, unknown> } | null;
+}): SupplierReviewRawMetadata {
+  const snapshot = item.supplierSnapshot || {};
+  const hierarchy = Array.isArray(snapshot.categoryHierarchy)
+    ? snapshot.categoryHierarchy.map((value) => String(value || '').trim()).filter(Boolean)
+    : [];
+  const supplierCategory = String(
+    item.categoryMapping?.supplierCategory
+    || snapshot.supplierCategory
+    || hierarchy[0]
+    || '',
+  ).trim();
+  const supplierSubcategory = String(
+    snapshot.supplierSubcategory
+    || hierarchy[1]
+    || '',
+  ).trim();
+  const specs = item.productPayload?.specs && typeof item.productPayload.specs === 'object'
+    ? item.productPayload.specs
+    : {};
+  const supplierBrand = String(
+    item.brandMapping?.supplierBrand
+    || snapshot.brand
+    || item.productPayload?.brand
+    || specs.brand
+    || specs.Brand
+    || '',
+  ).trim();
+  return { supplierCategory, supplierSubcategory, supplierBrand };
+}
+
 export function hasSupplierHubAdvancedAccess(claims: Record<string, unknown>): boolean {
   const role = normalized(claims.role).replace('-', '_');
   return claims.superAdmin === true

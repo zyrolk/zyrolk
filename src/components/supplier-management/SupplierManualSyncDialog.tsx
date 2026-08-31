@@ -17,6 +17,8 @@ interface SupplierManualSyncDialogProps {
     supplierName?: string;
     syncCapabilities?: SupplierSyncCapabilities;
   };
+  /** First-ever sync for this source — require an explicit product count limit. */
+  isInitialSync?: boolean;
   busy: boolean;
   onClose(): void;
   onSubmit(request: SupplierManualSyncRequest): Promise<boolean>;
@@ -31,14 +33,20 @@ function CapabilityLabel({ value }: { value?: SupplierSyncFilterExecution }) {
   );
 }
 
-export default function SupplierManualSyncDialog({ source, busy, onClose, onSubmit }: SupplierManualSyncDialogProps) {
+export default function SupplierManualSyncDialog({
+  source,
+  isInitialSync = false,
+  busy,
+  onClose,
+  onSubmit,
+}: SupplierManualSyncDialogProps) {
   const capabilities = source.syncCapabilities || {};
   const supportsIncremental = capabilities.incremental?.supported === true;
   const [mode, setMode] = useState<SupplierSyncMode>('full');
   const [category, setCategory] = useState('');
   const [subcategory, setSubcategory] = useState('');
   const [search, setSearch] = useState('');
-  const [totalProductLimit, setTotalProductLimit] = useState('');
+  const [totalProductLimit, setTotalProductLimit] = useState(isInitialSync ? '5' : '');
   const [validationError, setValidationError] = useState<string | null>(null);
   const supplierName = String(source.supplierName || source.name || source.id);
   const supportsCategory = supplierSyncFilterIsSupported(capabilities.categoryFilter);
@@ -56,6 +64,9 @@ export default function SupplierManualSyncDialog({ source, busy, onClose, onSubm
     event.preventDefault();
     setValidationError(null);
     try {
+      if (isInitialSync && !String(totalProductLimit || '').trim()) {
+        throw new Error('Set a Product count limit for the first controlled sync (for example 5). Leave blank only after the first trial.');
+      }
       const request = buildSupplierManualSyncRequest({
         sourceId: source.id,
         mode,
@@ -78,10 +89,18 @@ export default function SupplierManualSyncDialog({ source, busy, onClose, onSubm
           <div>
             <div className="flex items-center gap-2 text-blue-600 dark:text-blue-400">
               <RefreshCw className="h-4 w-4" aria-hidden="true" />
-              <span className="text-[10px] font-black uppercase tracking-wider">Manual Sync</span>
+              <span className="text-[10px] font-black uppercase tracking-wider">
+                {isInitialSync ? 'Initial Sync' : 'Manual Sync'}
+              </span>
             </div>
-            <h3 id="manual-supplier-sync-title" className="mt-2 text-lg font-black text-slate-900 dark:text-white">Update {supplierName}</h3>
-            <p className="mt-1 text-xs text-slate-500">Choose which supplier products to check. Every detected change still goes to Product Review.</p>
+            <h3 id="manual-supplier-sync-title" className="mt-2 text-lg font-black text-slate-900 dark:text-white">
+              {isInitialSync ? `First sync for ${supplierName}` : `Update ${supplierName}`}
+            </h3>
+            <p className="mt-1 text-xs text-slate-500">
+              {isInitialSync
+                ? 'Choose a Product count limit for this controlled first sync. Catalog fetch page size is separate and does not stop the run.'
+                : 'Choose which supplier products to check. Every detected change still goes to Product Review.'}
+            </p>
           </div>
           <button type="button" onClick={onClose} disabled={busy} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-slate-500 hover:bg-slate-100 disabled:opacity-50 dark:hover:bg-slate-800" aria-label="Close manual sync options">
             <X className="h-5 w-5" aria-hidden="true" />
@@ -134,9 +153,28 @@ export default function SupplierManualSyncDialog({ source, busy, onClose, onSubm
         )}
 
         <label className="mt-6 block space-y-1.5">
-          <span className="block text-[10px] font-bold text-slate-600 dark:text-slate-300">Product count limit <span className="font-normal text-slate-400">(optional)</span></span>
-          <input type="number" inputMode="numeric" min="1" max="10000" step="1" value={totalProductLimit} onChange={(event) => setTotalProductLimit(event.target.value)} placeholder="All matching products" className="min-h-11 w-full rounded-xl border border-slate-200 bg-transparent px-3 text-xs dark:border-slate-700" />
-          <small className="block text-[10px] leading-relaxed text-slate-500">This limits the entire manual run. It does not change the supplier's saved page size.</small>
+          <span className="block text-[10px] font-bold text-slate-600 dark:text-slate-300">
+            Product count limit
+            {isInitialSync
+              ? <span className="font-normal text-amber-600"> (required for first sync)</span>
+              : <span className="font-normal text-slate-400"> (optional)</span>}
+          </span>
+          <input
+            type="number"
+            inputMode="numeric"
+            min="1"
+            max="10000"
+            step="1"
+            required={isInitialSync}
+            value={totalProductLimit}
+            onChange={(event) => setTotalProductLimit(event.target.value)}
+            placeholder={isInitialSync ? 'e.g. 5' : 'All matching products'}
+            className="min-h-11 w-full rounded-xl border border-slate-200 bg-transparent px-3 text-xs dark:border-slate-700"
+          />
+          <small className="block text-[10px] leading-relaxed text-slate-500">
+            Limits how many products this run may scan, normalize, offer, and queue. It is not the catalog fetch page size.
+            Limited runs never mark unscanned supplier products as removed.
+          </small>
         </label>
 
         {validationError && <p role="alert" className="mt-4 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300">{validationError}</p>}
@@ -145,7 +183,7 @@ export default function SupplierManualSyncDialog({ source, busy, onClose, onSubm
           <button type="button" onClick={onClose} disabled={busy} className="min-h-11 rounded-xl bg-slate-100 px-4 text-xs font-black text-slate-700 disabled:opacity-50 dark:bg-slate-800 dark:text-slate-200">Cancel</button>
           <button type="submit" disabled={busy} className="flex min-h-11 items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 text-xs font-black text-white disabled:cursor-not-allowed disabled:opacity-50">
             <RefreshCw className={`h-4 w-4 ${busy ? 'animate-spin' : ''}`} aria-hidden="true" />
-            {busy ? 'Starting…' : 'Start Sync'}
+            {busy ? 'Starting…' : isInitialSync ? 'Start Initial Sync' : 'Start Sync'}
           </button>
         </footer>
       </form>

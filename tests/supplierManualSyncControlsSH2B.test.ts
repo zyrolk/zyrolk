@@ -112,11 +112,14 @@ test('SH-2B Supplier Hub wiring uses the capability-driven dialog and explicit r
   const dialog = readFileSync('src/components/supplier-management/SupplierManualSyncDialog.tsx', 'utf8');
   const requestBuilder = readFileSync('src/services/supplierManualSync.ts', 'utf8');
 
-  assert.match(hub, /runManualSupplierSync\(\{ sourceIds: \[id\], mode: 'full' \}\)/);
+  assert.match(hub, /setManualSyncSource\(source\)/);
+  assert.doesNotMatch(hub, /runManualSupplierSync\(\{ sourceIds: \[id\], mode: 'full' \}\)/);
   assert.match(hub, /postSupplierApi\('\/api\/supplier-sync', \{ \.\.\.request \}\)/);
   assert.match(hub, /<SupplierManualSyncDialog/);
+  assert.match(hub, /isInitialSync=\{!supplierHasCompletedInitialSync\(manualSyncSource\)\}/);
   assert.match(dialog, /source\.syncCapabilities \|\| \{\}/);
   assert.match(dialog, /supportsIncremental \?/);
+  assert.match(dialog, /required for first sync/);
   assert.match(requestBuilder, /Applied by Zyro after retrieval/);
-  assert.match(dialog, /does not change the supplier's saved page size/);
+  assert.match(dialog, /is not the catalog fetch page size/);
 });

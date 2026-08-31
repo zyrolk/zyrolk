@@ -61,7 +61,8 @@ test('supplier cards expose only business controls and delay Auto Sync until Ini
   assert.match(connectionBadge, /supplierConnectionPresentation/);
   assert.equal(supplierConnectionPresentation({ connectionStatus: 'failed' }).label, 'Connection Problem');
   assert.match(hub, /disabled=\{savingSettingsSourceId !== null \|\| !supplierHasCompletedInitialSync\(source\)\}/);
-  assert.match(hub, /runManualSupplierSync\(\{ sourceIds: \[id\], mode: 'full' \}\)/);
+  assert.match(hub, /setManualSyncSource\(source\)/);
+  assert.doesNotMatch(hub, /runManualSupplierSync\(\{ sourceIds: \[id\], mode: 'full' \}\)/);
   assert.match(hub, /<SupplierManualSyncDialog/);
 });
 
@@ -84,14 +85,13 @@ test('Product Review is the only normal approval workspace and uses business lan
     'Profit',
     'Margin',
     'Stock',
-    'Category',
-    'Subcategory',
-    'Brand',
+    'Zyro category',
+    'Zyro brand',
     'Storefront',
     'Supplier/source',
     'Approve',
     'Reject',
-    'View Details',
+    'Review Product',
   ]) assert.match(quickCard, new RegExp(label.replaceAll('&', '\\&')));
 
   assert.doesNotMatch(hub, /Bulk Delete/);
@@ -119,7 +119,7 @@ test('Activity remains business-focused while diagnostics and controls stay in p
   assert.match(hub, /Default Profit Margin/);
   assert.match(hub, /Category restrictions/i);
   assert.match(hub, /Brand restrictions/i);
-  assert.match(hub, /Product Page Size/i);
+  assert.match(hub, /Catalog fetch page size/i);
   assert.match(hub, /Maximum Image Limit/);
   assert.match(hub, /Supplier Sync Settings/);
   assert.match(hub, /Advanced Settings/);

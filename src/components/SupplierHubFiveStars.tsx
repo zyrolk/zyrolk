@@ -64,9 +64,11 @@ import {
   supplierReviewChangeLabel,
   supplierReviewDisplayLabel,
   supplierReviewIsConflict,
+  supplierReviewIsPreparing,
   supplierReviewIsRemoval,
   supplierReviewIsStale,
   supplierReviewManagedImageUrl,
+  supplierReviewRawMetadata,
   supplierReviewApiState,
   supplierReviewStatusLabel,
   supplierReviewTerminalItem,
@@ -1079,11 +1081,9 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
       setErrorMsg('Supplier was not found.');
       return;
     }
-    if (supplierHasCompletedInitialSync(source)) {
-      setManualSyncSource(source);
-      return;
-    }
-    await runManualSupplierSync({ sourceIds: [id], mode: 'full' });
+    // Initial Sync and Sync Now both open the controlled dialog so page size
+    // and traversal product-count limit remain separate operator choices.
+    setManualSyncSource(source);
   };
 
   const handleOpenSettings = (source: any) => {
@@ -1682,6 +1682,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                     const draft = createSupplierReviewDraft(item);
                     const profit = calculateSupplierProfit(draft.sellingPrice, draft.costPrice);
                     const managedImageUrl = supplierReviewManagedImageUrl(item);
+                    const isPreparing = supplierReviewIsPreparing(item);
                     const canQuickApprove = supplierReviewCanQuickApprove(item);
                     const needsResolution = supplierReviewDecisionReady(item) && !canQuickApprove;
                     const category = categories.find((candidate) => String(candidate.id) === draft.category);
@@ -1692,6 +1693,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                       ? supplierReviewDisplayLabel(draft.subcategory, activeSubcategories)
                       : undefined;
                     const brandLabel = supplierReviewDisplayLabel(draft.brand, brands);
+                    const rawMetadata = supplierReviewRawMetadata(item);
                     const statusLabel = supplierReviewStatusLabel(item);
                     const terminalState = statusLabel === 'Approved' || statusLabel === 'Rejected'
                       ? statusLabel
@@ -1720,9 +1722,13 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                         brandLabel={brandLabel}
                         categoryLabel={categoryLabel}
                         subcategoryLabel={subcategoryLabel}
+                        rawSupplierCategory={rawMetadata.supplierCategory}
+                        rawSupplierSubcategory={rawMetadata.supplierSubcategory}
+                        rawSupplierBrand={rawMetadata.supplierBrand}
                         storefrontVisible={draft.isActive}
                         supplierAttribution={compactSupplierAttribution(item)}
                         blockingProblems={blockingProblems}
+                        isPreparing={isPreparing}
                         decisionReady={supplierReviewDecisionReady(item)}
                         canQuickApprove={canQuickApprove}
                         needsResolution={needsResolution}
@@ -2291,7 +2297,11 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                           <label className="space-y-1"><span className="block text-[10px] font-bold text-slate-400">Catalog path</span><input value={editEndpoint} onChange={(event) => setEditEndpoint(event.target.value)} className="w-full rounded-xl border border-slate-200 bg-transparent px-3 py-2 dark:border-slate-700" /></label>
                           <label className="space-y-1"><span className="block text-[10px] font-bold text-slate-400">Brand restrictions</span><input value={editBrandFilter} onChange={(event) => setEditBrandFilter(event.target.value)} placeholder="Comma-separated brands" className="w-full rounded-xl border border-slate-200 bg-transparent px-3 py-2 dark:border-slate-700" /></label>
                           <div className="space-y-2 md:col-span-2"><span className="block text-[10px] font-bold text-slate-400">Category restrictions</span><div className="flex max-h-32 flex-wrap gap-1.5 overflow-y-auto rounded-xl border border-slate-100 p-2 dark:border-slate-800">{categories.map((category) => { const value = category.name || category.id; const selected = editCategoriesFilter.includes(value); return <button key={category.id} type="button" onClick={() => setEditCategoriesFilter((current) => selected ? current.filter((item) => item !== value) : [...current, value])} className={`rounded-lg border px-2.5 py-1 text-[10px] font-bold ${selected ? 'border-blue-500 bg-blue-500/10 text-blue-500' : 'border-slate-200 text-slate-500 dark:border-slate-700'}`}>{value}</button>; })}</div></div>
-                          <div className="space-y-2 md:col-span-2"><span className="block text-[10px] font-bold text-slate-400">Product page size</span><div className="flex flex-wrap gap-1">{['5', '20', '50', '100', '250', 'All'].map((limit) => <button key={limit} type="button" onClick={() => setEditProductLimit(limit)} className={`rounded-lg px-3 py-1 text-[10px] font-bold ${editProductLimit === limit ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-500 dark:bg-slate-800'}`}>{limit}</button>)}</div></div>
+                          <div className="space-y-2 md:col-span-2">
+                            <span className="block text-[10px] font-bold text-slate-400">Catalog fetch page size</span>
+                            <p className="text-[10px] leading-relaxed text-slate-500">Controls how many products each connector page requests. It does not stop the sync after that many products — set Product count limit in Manual Sync for a controlled trial.</p>
+                            <div className="flex flex-wrap gap-1">{['5', '20', '50', '100', '250', 'All'].map((limit) => <button key={limit} type="button" onClick={() => setEditProductLimit(limit)} className={`rounded-lg px-3 py-1 text-[10px] font-bold ${editProductLimit === limit ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-500 dark:bg-slate-800'}`}>{limit}</button>)}</div>
+                          </div>
                           <div className="flex justify-end md:col-span-2"><button type="button" onClick={() => void handleSaveAdvancedSourceSettings(source.id)} disabled={savingSettingsSourceId !== null} className="rounded-xl bg-blue-600 px-4 py-2 text-[10px] font-black text-white disabled:opacity-50">Save Supplier Limits</button></div>
                         </div>
                       )}
@@ -2366,6 +2376,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
       {manualSyncSource && (
         <SupplierManualSyncDialog
           source={manualSyncSource}
+          isInitialSync={!supplierHasCompletedInitialSync(manualSyncSource)}
           busy={syncingSourceId === String(manualSyncSource.id)}
           onClose={() => setManualSyncSource(null)}
           onSubmit={runManualSupplierSync}

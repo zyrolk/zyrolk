@@ -32,7 +32,8 @@ test("visible supplier sync controls invoke the real queue synchronization pipel
   const source = readFileSync("src/components/SupplierHubFiveStars.tsx", "utf8");
   const scheduledSync = readFileSync("functions/src/scheduled/supplierSync.ts", "utf8");
   assert.equal(source.includes("Placeholder Action Only"), false);
-  assert.match(source, /await runManualSupplierSync\(\{ sourceIds: \[id\], mode: 'full' \}\)/);
+  assert.match(source, /setManualSyncSource\(source\)/);
+  assert.doesNotMatch(source, /runManualSupplierSync\(\{ sourceIds: \[id\], mode: 'full' \}\)/);
   assert.match(source, /<SupplierManualSyncDialog/);
   assert.match(source, /onClick=\{\(\) => handleTriggerSync\(source\.id\)\}/);
   assert.match(source, /postSupplierApi\('\/api\/supplier-sync'/);
@@ -146,7 +147,7 @@ test("Supplier Hub exposes only individual business approval actions while Funct
   assert.doesNotMatch(supplierHub, /Bulk Approve/);
   assert.doesNotMatch(supplierHub, /Bulk Reject/);
   assert.match(supplierHub, /supplierReviewCanQuickApprove/);
-  assert.match(quickCard, /View Details/);
+  assert.match(quickCard, /Review Product/);
   assert.doesNotMatch(supplierHub, /Bulk Delete/);
   assert.match(supplierHub, /postSupplierApi\('\/api\/supplier-sync'/);
   assert.doesNotMatch(supplierHub, /runLocalSupplierSync|commitSupplierSyncWrites|resolveSupplierCategory/);
