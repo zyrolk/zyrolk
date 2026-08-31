@@ -516,7 +516,35 @@ async function recordSupplierQueueFailure(
       return state;
     }
     const failure = buildSupplierQueueFailureUpdate(record, error, now, { recoveredLease });
-    transaction.set(reference, failure.data, { merge: true });
+    const validation = asRecord(record.productValidation);
+    const existingErrors = Array.isArray(validation.errors) ? validation.errors : [];
+    const mediaFailed = existingErrors.some((entry) => asString(asRecord(entry).code) === "managed_media_required")
+      || (error instanceof Error && error.name === "SupplierMediaRetryableError");
+    const mediaMessage = failure.state === "dead_letter"
+      ? "Managed product media processing failed permanently. An administrator can retry from Product Review."
+      : "Managed product media processing failed and will be retried.";
+    const nextValidation = mediaFailed
+      ? {
+        ...validation,
+        readyToPublish: false,
+        missingFields: [...new Set([
+          ...(Array.isArray(validation.missingFields) ? validation.missingFields.map(String) : []),
+          "images",
+        ])],
+        errors: [
+          ...existingErrors.filter((entry) => asString(asRecord(entry).code) !== "managed_media_required"),
+          {
+            field: "images",
+            code: "managed_media_required",
+            message: mediaMessage,
+          },
+        ],
+      }
+      : null;
+    transaction.set(reference, {
+      ...failure.data,
+      ...(nextValidation ? { productValidation: nextValidation } : {}),
+    }, { merge: true });
     createSupplierAuditEvent(db, transaction, {
       queueItemId,
       queueItem: { ...record, ...failure.data },
@@ -568,10 +596,11 @@ export async function processSupplierReviewQueueItem(
         dependencies: control.mediaDependencies,
       });
     }
+    // Fail closed only when no usable managed asset exists. Partial per-URL
+    // failures must not permanently block review when at least one image succeeded.
     if (requiresManagedMedia && (
       !managedMediaResult
       || managedMediaResult.assets.length === 0
-      || managedMediaResult.failures.length > 0
     )) {
       throw new SupplierMediaValidationError("Supplier Portal managed media is incomplete and cannot enter administrator review.");
     }

@@ -11,7 +11,10 @@ import {
   supplierReviewDisplayLabel,
   supplierReviewIsStale,
   supplierReviewManagedImageUrl,
+  supplierReviewOperatorProblems,
+  supplierReviewRawMetadata,
   supplierReviewSpecificationCount,
+  supplierReviewStorefrontLabel,
   supplierReviewTerminalItem,
 } from '../src/services/supplierHubPresentation';
 import { createSupplierReviewDraft } from '../src/services/supplierReviewEditor';
@@ -44,6 +47,7 @@ const quickCardProps = (overrides: Partial<SupplierReviewQuickCardProps> = {}): 
   categoryLabel: 'Electronics',
   subcategoryLabel: 'Accessories',
   storefrontVisible: true,
+  storefrontStatusLabel: 'Not published',
   supplierAttribution: 'A2Z Traders · A2Z',
   blockingProblems: [],
   isPreparing: false,
@@ -282,4 +286,71 @@ test('existing approval API, attribution authority, and audit history remain in 
   assert.match(approval, /decisionPendingRevision: queuePendingRevision \|\| null/u);
   assert.match(approval, /createSupplierAuditEvent/u);
   assert.match(quickCard, /View decision history/u);
+});
+
+test('unapproved review cards show Storefront Not published instead of Visible', () => {
+  assert.equal(supplierReviewStorefrontLabel({ status: 'Pending', queueState: 'review_pending' }, true), 'Not published');
+  assert.equal(supplierReviewStorefrontLabel({ status: 'Approved', decisionAction: 'approved' }, true), 'Visible');
+  assert.equal(supplierReviewStorefrontLabel({ status: 'Approved', decisionAction: 'approved' }, false), 'Hidden');
+  const markup = renderQuickCard({
+    storefrontVisible: true,
+    storefrontStatusLabel: supplierReviewStorefrontLabel({ status: 'Pending' }, true),
+  });
+  assert.match(markup, /Visible after approval/u);
+  assert.match(markup, />Not published</u);
+  assert.doesNotMatch(markup, /<dt class="text-slate-400">Storefront<\/dt><dd class="font-bold">Visible<\/dd>/u);
+});
+
+test('operator review reasons dedupe field codes and surface media retry actionability', () => {
+  const problems = supplierReviewOperatorProblems({
+    status: 'Pending',
+    queueState: 'retryable_failure',
+    supplierOfferPendingRevision: 'a'.repeat(64),
+    productValidation: {
+      readyToPublish: false,
+      missingFields: ['category', 'brand', 'images'],
+      errors: [
+        { field: 'category', code: 'invalid', message: 'Select an active product category.' },
+        { field: 'brand', code: 'invalid', message: 'Select an active registered brand.' },
+        { field: 'images', code: 'managed_media_required', message: 'Managed product media processing failed and will be retried.' },
+      ],
+    },
+  });
+  assert.deepEqual(problems, [
+    'Select an active product category.',
+    'Select an active registered brand.',
+    'Image processing failed — retrying automatically',
+  ]);
+
+  const deadLetter = supplierReviewOperatorProblems({
+    status: 'Pending',
+    queueState: 'dead_letter',
+    supplierOfferPendingRevision: 'a'.repeat(64),
+    productValidation: {
+      readyToPublish: false,
+      missingFields: ['images'],
+      errors: [{ field: 'images', code: 'managed_media_required', message: 'Managed product media processing failed and will be retried.' }],
+    },
+  });
+  assert.deepEqual(deadLetter, [
+    'Image processing failed permanently. Use Retry media to re-queue.',
+  ]);
+  assert.match(projectFile('src/components/SupplierHubFiveStars.tsx'), /\/api\/supplier-review-queue\/\$\{encodeURIComponent\(item\.id\)\}\/retry/u);
+  assert.match(projectFile('src/components/SupplierReviewQuickCard.tsx'), /Retry media/u);
+});
+
+test('raw supplier brand sentinel -1 is presented as not supplied while Uncategorized stays honest', () => {
+  const metadata = supplierReviewRawMetadata({
+    brandMapping: { supplierBrand: '-1' },
+    categoryMapping: { supplierCategory: 'Uncategorized' },
+    supplierSnapshot: { supplierSubcategory: '' },
+  });
+  assert.equal(metadata.supplierBrand, '');
+  assert.equal(metadata.supplierCategory, 'Uncategorized');
+  const markup = renderQuickCard({
+    rawSupplierBrand: metadata.supplierBrand,
+    rawSupplierCategory: metadata.supplierCategory,
+  });
+  assert.match(markup, /Supplier brand[\s\S]*Not supplied/u);
+  assert.match(markup, /Supplier category[\s\S]*Uncategorized/u);
 });

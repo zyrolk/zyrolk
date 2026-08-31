@@ -44,11 +44,17 @@ function firstSupplied(record: Record<string, unknown>, aliases: readonly string
   return undefined;
 }
 
+/** A2Z often stores unset brand/category FKs as -1 / 0 rather than null. */
+const isA2ZSentinelLabel = (value: string): boolean => (
+  /^(?:-1|0|null|undefined|n\/?a|none)$/iu.test(value.trim())
+);
+
 function optionalString(record: Record<string, unknown>, aliases: readonly string[]): string | undefined {
   const value = firstSupplied(record, aliases);
   if (value === undefined) return undefined;
   const normalized = String(value).trim();
-  return normalized || undefined;
+  if (!normalized || isA2ZSentinelLabel(normalized)) return undefined;
+  return normalized;
 }
 
 function optionalNumber(record: Record<string, unknown>, aliases: readonly string[]): number | undefined {

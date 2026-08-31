@@ -63,14 +63,14 @@ import {
   supplierReviewCanQuickApprove,
   supplierReviewChangeLabel,
   supplierReviewDisplayLabel,
-  supplierReviewIsConflict,
   supplierReviewIsPreparing,
-  supplierReviewIsRemoval,
-  supplierReviewIsStale,
   supplierReviewManagedImageUrl,
+  supplierReviewOperatorProblems,
   supplierReviewRawMetadata,
   supplierReviewApiState,
+  supplierReviewCanRetryMedia,
   supplierReviewStatusLabel,
+  supplierReviewStorefrontLabel,
   supplierReviewTerminalItem,
   supplierBusinessErrorMessage,
   formatSupplierTimestamp,
@@ -503,6 +503,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
   }, [activeSubTab, editingSourceId, onNestedNavigationChange]);
 
   const [processingChangeId, setProcessingChangeId] = useState<string | null>(null);
+  const [retryingMediaId, setRetryingMediaId] = useState<string | null>(null);
   const [editingReviewItem, setEditingReviewItem] = useState<ReviewQueueItem | null>(null);
   const [supplierOffers, setSupplierOffers] = useState<SupplierOfferView[]>([]);
   const [supplierOfferSelection, setSupplierOfferSelection] = useState<SupplierOfferSelectionView>({ activeOfferId: null, lockedOfferId: null, failoverEnabled: true });
@@ -772,6 +773,22 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
       throw new Error(result.error || 'Supplier review action could not be completed.');
     }
     return result;
+  };
+
+  const handleRetryDeadLetterMedia = async (item: ReviewQueueItem) => {
+    setRetryingMediaId(item.id);
+    try {
+      const response = await postSupplierApi(`/api/supplier-review-queue/${encodeURIComponent(item.id)}/retry`, {});
+      const result = await response.json().catch(() => ({})) as { success?: boolean; state?: string; error?: string };
+      if (!response.ok || result.success !== true || result.state !== 'queued') {
+        throw new Error(result.error || 'Media retry could not be queued.');
+      }
+      await loadSupplierQueueView({ append: false });
+    } catch (error) {
+      setSupplierQueueError(supplierBusinessErrorMessage(error, 'Media retry could not be queued.'));
+    } finally {
+      setRetryingMediaId(null);
+    }
   };
 
   const loadSupplierReviewAudit = async (item: ReviewQueueItem, after?: string, append = false): Promise<void> => {
@@ -1698,14 +1715,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                     const terminalState = statusLabel === 'Approved' || statusLabel === 'Rejected'
                       ? statusLabel
                       : undefined;
-                    const blockingProblems = [
-                      ...(item.productValidation?.errors || []).map((error) => error.message),
-                      ...(item.productValidation?.missingFields || []),
-                      ...(supplierReviewIsConflict(item) ? ['Conflict requires administrator resolution.'] : []),
-                      ...(supplierReviewIsRemoval(item) ? ['Supplier removal requires administrator resolution.'] : []),
-                      ...(supplierReviewIsStale(item) ? ['Review revision is stale or missing. Reload before deciding.'] : []),
-                      ...(!managedImageUrl ? ['Managed publishable image is not ready.'] : []),
-                    ].filter((value, index, values) => Boolean(value) && values.indexOf(value) === index);
+                    const blockingProblems = supplierReviewOperatorProblems(item);
                     return (
                       <SupplierReviewQuickCard
                         key={item.id}
@@ -1726,6 +1736,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                         rawSupplierSubcategory={rawMetadata.supplierSubcategory}
                         rawSupplierBrand={rawMetadata.supplierBrand}
                         storefrontVisible={draft.isActive}
+                        storefrontStatusLabel={supplierReviewStorefrontLabel(item, draft.isActive)}
                         supplierAttribution={compactSupplierAttribution(item)}
                         blockingProblems={blockingProblems}
                         isPreparing={isPreparing}
@@ -1733,11 +1744,14 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                         canQuickApprove={canQuickApprove}
                         needsResolution={needsResolution}
                         processing={processingChangeId === item.id}
+                        canRetryMedia={supplierReviewCanRetryMedia(item)}
+                        retryingMedia={retryingMediaId === item.id}
                         terminalState={terminalState}
                         onApprove={() => void handleApproveReviewItem(item, draft)}
                         onReject={() => { setRejectingReviewItem(item); setRejectionReasonDraft(''); }}
                         onViewDetails={() => openSupplierReviewEditor(item)}
                         onViewHistory={() => openSupplierReviewHistory(item)}
+                        onRetryMedia={() => void handleRetryDeadLetterMedia(item)}
                       />
                     );
                   })}

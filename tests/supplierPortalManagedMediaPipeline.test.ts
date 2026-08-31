@@ -223,8 +223,77 @@ test("Supplier Portal media failures persist diagnostics and cannot become revie
 
   const worker = readFileSync("functions/src/scheduled/supplierReviewQueue.ts", "utf8");
   const approval = readFileSync("functions/src/api/suppliers/supplierApproval.ts", "utf8");
-  assert.match(worker, /requiresManagedMedia[\s\S]*managedMediaResult\.assets\.length === 0[\s\S]*managedMediaResult\.failures\.length > 0/u);
+  assert.match(worker, /requiresManagedMedia[\s\S]*managedMediaResult\.assets\.length === 0/u);
+  assert.doesNotMatch(worker, /managedMediaResult\.failures\.length > 0/u);
   assert.match(approval, /reviewQueueState !== "review_pending"[\s\S]*not ready for an admin decision/u);
+});
+
+test("Partial media success proceeds when at least one managed image is acquired", async () => {
+  const goodUrl = "https://supplier.example/good.png";
+  const badUrl = "https://supplier.example/bad.png";
+  const { db, documents } = createFakeFirestore({
+    "supplier_review_queue/portal-partial": {
+      ...queueRecord("portal-partial", "partial-product", goodUrl),
+      supplierSnapshot: {
+        supplierId: "supplier-a",
+        sourceId: "supplier-portal",
+        mediaGallery: [badUrl, goodUrl],
+      },
+      productPayload: { id: "partial-product", imageUrl: goodUrl, imageUrls: [badUrl, goodUrl] },
+    },
+  });
+  const dependencies: SupplierMediaPipelineDependencies = {
+    fetchImage: async (url) => {
+      if (url.includes("bad.png")) throw new Error("Supplier image server returned HTTP 503.");
+      return response(200, pngBody);
+    },
+    findAsset: async (contentHash) => documents.get(`supplier_media_assets/${contentHash}`) as unknown as SupplierManagedMediaAsset | undefined || null,
+    saveFile: async (storagePath) => `https://firebasestorage.googleapis.com/v0/b/test/o/${encodeURIComponent(storagePath)}?alt=media`,
+    saveAsset: async (asset) => { documents.set(`supplier_media_assets/${asset.assetId}`, asset as unknown as StoredDocument); },
+    recordAudit: async () => undefined,
+  };
+
+  const processed = await processSupplierReviewQueueItem(
+    db as never,
+    "portal-partial",
+    "partial-media-worker",
+    Date.now(),
+    { mediaDependencies: dependencies },
+  );
+  assert.deepEqual(processed, { queueItemId: "portal-partial", outcome: "completed", state: "review_pending" });
+  const ready = documents.get("supplier_review_queue/portal-partial")!;
+  assert.equal(ready.queueState, "review_pending");
+  assert.equal((ready.managedMedia as SupplierManagedMediaAsset[]).length, 1);
+  assert.equal((ready.mediaFailures as Array<StoredDocument>).length, 1);
+});
+
+test("Retryable media failures escalate to dead-letter after the retry limit", () => {
+  const base = {
+    ...queueRecord("portal-retry-limit", "retry-product", "https://supplier.example/retry.png"),
+    retryCount: 4,
+    retryLimit: 5,
+  };
+  const next = buildSupplierQueueFailureUpdate(
+    base,
+    new SupplierMediaRetryableError([{
+      originalSupplierUrl: "https://supplier.example/retry.png",
+      reason: "Supplier image server returned HTTP 503.",
+      retryable: true,
+      failedAt: new Date().toISOString(),
+    }]),
+    Date.now(),
+  );
+  assert.equal(next.state, "dead_letter");
+  assert.equal(next.data.retryCount, 5);
+});
+
+test("Scheduled queue worker selects queued and retryable_failure by nextRetryAt", () => {
+  const worker = readFileSync("functions/src/scheduled/supplierReviewQueue.ts", "utf8");
+  const schedule = readFileSync("functions/src/scheduled/supplierQueueWorker.ts", "utf8");
+  assert.match(worker, /\["queued", "retryable_failure"\]\.map/u);
+  assert.match(worker, /\.where\("nextRetryAt", "<=", nowIso\)/u);
+  assert.match(schedule, /scheduledSupplierQueueWorker = onSchedule/u);
+  assert.match(schedule, /SUPPLIER_QUEUE_WORKER_SCHEDULE/u);
 });
 
 test("Portal submissions enqueue once and preserve already-managed product-change assets", () => {

@@ -251,6 +251,18 @@ export interface SupplierReviewRawMetadata {
   supplierBrand: string;
 }
 
+/** A2Z unset brand/category FKs often arrive as "-1" / "0". */
+const isSupplierSentinelLabel = (value: string): boolean => (
+  /^(?:-1|0|null|undefined|n\/?a|none)$/iu.test(value.trim())
+);
+
+const FIELD_REASON_MESSAGES: Record<string, string> = {
+  category: 'Select an active product category.',
+  brand: 'Select an active registered brand.',
+  images: 'Managed publishable image is not ready.',
+  subcategory: 'Select an active product subcategory.',
+};
+
 /** Preserves raw supplier taxonomy/brand for operators without inventing Zyro mappings. */
 export function supplierReviewRawMetadata(item: {
   supplierSnapshot?: Record<string, unknown> | null;
@@ -284,7 +296,90 @@ export function supplierReviewRawMetadata(item: {
     || specs.Brand
     || '',
   ).trim();
-  return { supplierCategory, supplierSubcategory, supplierBrand };
+  return {
+    supplierCategory: supplierCategory || '',
+    supplierSubcategory: supplierSubcategory || '',
+    // Show Not supplied rather than a fake brand for sentinel FK values.
+    supplierBrand: isSupplierSentinelLabel(supplierBrand) ? '' : supplierBrand,
+  };
+}
+
+/** One clear operator-facing reason per issue (dedupes field codes vs error messages). */
+export function supplierReviewOperatorProblems(item: ReviewPresentationItem & {
+  mediaFailures?: Array<{ reason?: string; retryable?: boolean }> | null;
+  managedMedia?: unknown;
+}): string[] {
+  const validation = item.productValidation || {};
+  const missingFields = Array.isArray(validation.missingFields)
+    ? validation.missingFields.map((field) => String(field || '').trim().toLowerCase()).filter(Boolean)
+    : [];
+  const errors = Array.isArray(validation.errors) ? validation.errors : [];
+  const reasons = new Map<string, string>();
+
+  const remember = (key: string, message: string) => {
+    const normalizedKey = key.trim().toLowerCase();
+    const text = message.trim();
+    if (!normalizedKey || !text) return;
+    if (!reasons.has(normalizedKey)) reasons.set(normalizedKey, text);
+  };
+
+  const mediaReasonForState = (fallback: string): string => {
+    const queueState = normalized(item.queueState);
+    if (queueState === 'dead_letter') {
+      return 'Image processing failed permanently. Use Retry media to re-queue.';
+    }
+    if (queueState === 'retryable_failure' || /will be retried/i.test(fallback)) {
+      return 'Image processing failed — retrying automatically';
+    }
+    return fallback || FIELD_REASON_MESSAGES.images;
+  };
+
+  for (const error of errors) {
+    const record = error && typeof error === 'object' ? error as { field?: unknown; code?: unknown; message?: unknown } : {};
+    const field = String(record.field || '').trim().toLowerCase();
+    const code = String(record.code || '').trim().toLowerCase();
+    const message = String(record.message || '').trim();
+    if (code === 'managed_media_required' || field === 'images') {
+      remember('images', mediaReasonForState(message));
+      continue;
+    }
+    if (field && FIELD_REASON_MESSAGES[field]) {
+      remember(field, FIELD_REASON_MESSAGES[field]);
+      continue;
+    }
+    if (message) remember(code || field || message.toLowerCase(), message);
+  }
+
+  for (const field of missingFields) {
+    remember(field, FIELD_REASON_MESSAGES[field] || `Complete required field: ${field}.`);
+  }
+
+  if (supplierReviewIsConflict(item)) remember('conflict', 'Conflict requires administrator resolution.');
+  if (supplierReviewIsRemoval(item)) remember('removal', 'Supplier removal requires administrator resolution.');
+  // Stale revision messaging only applies to decisionable review_pending items.
+  if (normalized(item.queueState) === 'review_pending' && supplierReviewIsStale(item)) {
+    remember('stale', 'Review revision is stale or missing. Reload before deciding.');
+  }
+
+  const hasManagedImage = Boolean(supplierReviewManagedImageUrl(item as SupplierReviewQuickApprovalItem));
+  if (!hasManagedImage && !reasons.has('images')) {
+    remember('images', mediaReasonForState(FIELD_REASON_MESSAGES.images));
+  }
+
+  return [...reasons.values()];
+}
+
+/** Storefront publication state for review cards — never imply live visibility before approval. */
+export function supplierReviewStorefrontLabel(item: ReviewPresentationItem, draftIsActive: boolean): string {
+  const status = normalized(item.status);
+  const decision = normalized(item.decisionAction);
+  const approved = status === 'approved' || decision === 'approved';
+  if (!approved) return 'Not published';
+  return draftIsActive ? 'Visible' : 'Hidden';
+}
+
+export function supplierReviewCanRetryMedia(item: ReviewPresentationItem): boolean {
+  return normalized(item.queueState) === 'dead_letter';
 }
 
 export function hasSupplierHubAdvancedAccess(claims: Record<string, unknown>): boolean {

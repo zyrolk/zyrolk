@@ -240,3 +240,40 @@ test("A2Z deployment cannot package the legacy bootstrap endpoint or stale Funct
     "npm --prefix \"$RESOURCE_DIR\" run build",
   ]);
 });
+
+test("A2Z canonical image URL uses ayp.lk storage path from pro_id", () => {
+  const parsed = FunctionsProductParser.parseJsonPayload({
+    pro_id: "3129",
+    pro_code: "P03129",
+    pro_name: "Wall Mounted Phone Holder",
+  });
+  assert.deepEqual(parsed.mediaGallery, ["https://ayp.lk/storage/products/a2z/3129.jpg"]);
+});
+
+test("A2Z brand sentinel -1 is omitted while Uncategorized category is preserved honestly", () => {
+  const parsed = FunctionsProductParser.parseJsonPayload({
+    pro_id: "6796",
+    pro_code: "P06796",
+    pro_name: "48 Pcs Cordless Screw Driver 4.2V",
+    brand: -1,
+    brand_name: "-1",
+    cat_name: "Uncategorized",
+    wholesale_price: 2500,
+    website_price: 3990,
+    bal: 12,
+  });
+  assert.equal(parsed.brand, undefined);
+  assert.equal(parsed.supplierCategory, "Uncategorized");
+  assert.equal(parsed.costPrice, 2500);
+  assert.equal(parsed.price, 3990);
+  assert.equal(parsed.inventoryLevel, 12);
+  assert.deepEqual(parsed.mediaGallery, ["https://ayp.lk/storage/products/a2z/6796.jpg"]);
+});
+
+test("Supplier media fetch defaults include browser User-Agent and origin Referer", () => {
+  const pipeline = readFileSync("functions/src/api/suppliers/supplierMediaPipeline.ts", "utf8");
+  assert.match(pipeline, /SUPPLIER_MEDIA_BROWSER_USER_AGENT/u);
+  assert.match(pipeline, /"user-agent": SUPPLIER_MEDIA_BROWSER_USER_AGENT/u);
+  assert.match(pipeline, /referer: `\$\{parsed\.origin\}\/`/u);
+  assert.match(pipeline, /retryableFailures\.length > 0 && orderedAssets\.length === 0/u);
+});

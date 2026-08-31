@@ -19,7 +19,10 @@ export interface SupplierReviewQuickCardProps {
   rawSupplierCategory?: string;
   rawSupplierSubcategory?: string;
   rawSupplierBrand?: string;
+  /** Draft preference chip: intended visibility after approval. */
   storefrontVisible: boolean;
+  /** Accurate publication state: Not published | Visible | Hidden */
+  storefrontStatusLabel: string;
   supplierAttribution: string;
   blockingProblems: string[];
   isPreparing: boolean;
@@ -27,11 +30,14 @@ export interface SupplierReviewQuickCardProps {
   canQuickApprove: boolean;
   needsResolution: boolean;
   processing: boolean;
+  canRetryMedia?: boolean;
+  retryingMedia?: boolean;
   terminalState?: 'Approved' | 'Rejected';
   onApprove: () => void;
   onReject: () => void;
   onViewDetails: () => void;
   onViewHistory: () => void;
+  onRetryMedia?: () => void;
 }
 
 function ManagedSupplierImage({ src, alt }: { src?: string; alt: string }) {
@@ -82,6 +88,7 @@ export function SupplierReviewQuickCard({
   rawSupplierSubcategory,
   rawSupplierBrand,
   storefrontVisible,
+  storefrontStatusLabel,
   supplierAttribution,
   blockingProblems,
   isPreparing,
@@ -89,11 +96,14 @@ export function SupplierReviewQuickCard({
   canQuickApprove,
   needsResolution,
   processing,
+  canRetryMedia = false,
+  retryingMedia = false,
   terminalState,
   onApprove,
   onReject,
   onViewDetails,
   onViewHistory,
+  onRetryMedia,
 }: SupplierReviewQuickCardProps) {
   const openEditor = () => {
     if (!decisionReady || terminalState || processing) return;
@@ -141,7 +151,7 @@ export function SupplierReviewQuickCard({
           <div><dt className="text-slate-400">Zyro brand</dt><dd className="font-bold">{brandLabel}</dd></div>
           <div><dt className="text-slate-400">Zyro category</dt><dd className="font-bold">{categoryLabel}</dd></div>
           {subcategoryLabel && <div><dt className="text-slate-400">Zyro subcategory</dt><dd className="font-bold">{subcategoryLabel}</dd></div>}
-          <div><dt className="text-slate-400">Storefront</dt><dd className="font-bold">{storefrontVisible ? 'Visible' : 'Hidden'}</dd></div>
+          <div><dt className="text-slate-400">Storefront</dt><dd className="font-bold">{storefrontStatusLabel}</dd></div>
         </dl>
 
         {(rawSupplierBrand || rawSupplierCategory || rawSupplierSubcategory) && (
@@ -173,6 +183,19 @@ export function SupplierReviewQuickCard({
           <div className="mx-4 mt-3 rounded-xl bg-amber-500/10 p-3 text-[10px] font-bold text-amber-700 dark:text-amber-300" role="status">
             <p className="font-black">Review required</p>
             <ul className="mt-1 list-disc space-y-1 pl-4">{blockingProblems.map((problem) => <li key={problem}>{problem}</li>)}</ul>
+            {canRetryMedia && onRetryMedia && (
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onRetryMedia();
+                }}
+                disabled={processing || retryingMedia}
+                className="mt-3 min-h-10 rounded-xl bg-amber-600 px-3 text-[10px] font-black text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {retryingMedia ? 'Retrying media…' : 'Retry media'}
+              </button>
+            )}
           </div>
         )}
 

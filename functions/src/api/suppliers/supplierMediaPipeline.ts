@@ -225,11 +225,19 @@ const configuredStorageBucket = (): string | undefined => {
   return `${projectId}.firebasestorage.app`;
 };
 
+const SUPPLIER_MEDIA_BROWSER_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
+
 const defaultFetchImage = async (url: string, sourceId: string): Promise<SupplierOutboundResponse> => {
   const parsed = new URL(validateSupplierMediaUrl(url));
+  // A2Z/AYP CDNs commonly require a browser UA and same-site referer; bare
+  // Accept-only fetches are frequently rejected or terminated mid-handshake.
   return fetchSupplierOutbound(parsed.toString(), {
     method: "GET",
-    headers: { accept: "image/avif,image/webp,image/png,image/jpeg,image/gif" },
+    headers: {
+      accept: "image/avif,image/webp,image/png,image/jpeg,image/gif,*/*;q=0.8",
+      "user-agent": SUPPLIER_MEDIA_BROWSER_USER_AGENT,
+      referer: `${parsed.origin}/`,
+    },
     signal: AbortSignal.timeout(20_000),
   }, {
     approvedHosts: [parsed.hostname],
@@ -519,9 +527,14 @@ export async function acquireSupplierManagedMedia(
     }
   }
 
+  const orderedAssets = orderSupplierManagedMedia(assets);
   const retryableFailures = failures.filter((failure) => failure.retryable);
-  if (retryableFailures.length > 0) throw new SupplierMediaRetryableError(retryableFailures);
-  return { assets: orderSupplierManagedMedia(assets), failures, duplicateCount };
+  // Partial success must proceed: one usable managed image is enough for review.
+  // Only fail closed for retry when every requested image failed retryably.
+  if (retryableFailures.length > 0 && orderedAssets.length === 0) {
+    throw new SupplierMediaRetryableError(retryableFailures);
+  }
+  return { assets: orderedAssets, failures, duplicateCount };
 }
 
 export function extractSupplierMediaFromRecord(value: unknown): SupplierManagedMediaAsset[] {
