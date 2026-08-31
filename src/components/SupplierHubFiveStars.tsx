@@ -24,7 +24,7 @@ import { Product } from '../types';
 import { getSupplierApi, patchSupplierApi, postSupplierApi, requestSupplierApi } from '../services/supplierHubApi';
 import { matchesSupplierSearch } from '../services/supplierSearch';
 import { normalizeSupplierSourceForUi } from '../services/supplierSourceUtils';
-import { A2Z_GLOBAL_SECRET_PROFILE, buildSupplierOnboardingSource, SupplierOnboardingType } from '../services/supplierSourceOnboarding';
+import { buildSupplierOnboardingSource, SupplierOnboardingType } from '../services/supplierSourceOnboarding';
 import { reportClientIssue } from '../services/observability/clientDiagnostics';
 import SupplierReviewEditorModal from './SupplierReviewEditorModal';
 import SupplierReviewHistoryModal, { SupplierReviewAuditEvent } from './SupplierReviewHistoryModal';
@@ -467,7 +467,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
   const [editSupplierName, setEditSupplierName] = useState<string>('');
   const [editWebsiteUrl, setEditWebsiteUrl] = useState<string>('');
   const [editEndpoint, setEditEndpoint] = useState<string>('');
-  const [editCredentialProfile, setEditCredentialProfile] = useState<string>(A2Z_GLOBAL_SECRET_PROFILE);
+  const [editCredentialProfile, setEditCredentialProfile] = useState<string>('');
   const [editSupplierAccountId, setEditSupplierAccountId] = useState<string>('');
   const [editSyncMode, setEditSyncMode] = useState<'manual' | 'auto'>('manual');
   const [editAutoSyncSchedule, setEditAutoSyncSchedule] = useState<string>('1 Hour');
@@ -1093,7 +1093,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
     setEditSupplierName(source.supplierName || source.name || '');
     setEditWebsiteUrl(source.websiteUrl || '');
     setEditEndpoint(source.endpoint || '');
-    setEditCredentialProfile(String(source.authentication?.secretRef || source.authentication?.credentialProfile || A2Z_GLOBAL_SECRET_PROFILE));
+    setEditCredentialProfile(String(source.authentication?.secretRef || source.authentication?.credentialProfile || ''));
     setEditSupplierAccountId(String(source.supplierAccountId || ''));
     // Initialize advanced source settings without changing the supplier workflow.
     const currentSettings = source.settings || {};
@@ -1113,6 +1113,9 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
       if (!currentSource) throw new Error('Supplier was not found.');
       if (!editSupplierName.trim()) throw new Error('Supplier name is required.');
       if (!editSupplierAccountId) throw new Error('Select an active Supplier Portal account.');
+      if (String(currentSource.connectorType || '').toLowerCase() === 'a2z' && !editCredentialProfile.trim()) {
+        throw new Error('A server-configured credential profile ID is required for A2Z sources.');
+      }
       let supplierUrl: URL;
       try {
         supplierUrl = new URL(editWebsiteUrl.trim());
@@ -1137,7 +1140,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
         ...(String(currentSource.connectorType || '').toLowerCase() === 'a2z' ? {
           authentication: {
             mode: 'secret_manager',
-            credentialProfile: editCredentialProfile.trim() || A2Z_GLOBAL_SECRET_PROFILE,
+            credentialProfile: editCredentialProfile.trim(),
           },
         } : {}),
       };
@@ -1983,7 +1986,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
 
                             <div className="space-y-1 sm:col-span-2">
                               <label className="block text-[10px] font-bold text-slate-400 dark:text-slate-500" htmlFor={`supplier-credential-profile-${source.id}`}>
-                                Credential profile ID
+                                Credential profile ID (required)
                               </label>
                               {String(source.connectorType || '').toLowerCase() === 'a2z' ? (
                                 <input
@@ -2533,7 +2536,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                   {newSupplierType === 'a2z' && (
                     <div className="space-y-1">
                       <label htmlFor="connect-supplier-credential-profile" className="text-amber-600 dark:text-amber-500 font-black block text-[9px] uppercase tracking-wider">
-                        Credential profile ID
+                        Credential profile ID (required)
                       </label>
                       <input
                         id="connect-supplier-credential-profile"

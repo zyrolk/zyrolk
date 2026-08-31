@@ -62,6 +62,13 @@ test('external connector wording clarifies fulfilment account and connect source
   assert.doesNotMatch(supplierHub, /Save Supplier'/);
 });
 
+test('A2Z credential profile UI does not default to the global profile', () => {
+  assert.doesNotMatch(supplierHub, /useState<string>\(A2Z_GLOBAL_SECRET_PROFILE\)/);
+  assert.match(supplierHub, /Credential profile ID \(required\)/);
+  assert.match(supplierHub, /newSupplierCredentialProfile\.trim\(\)/);
+  assert.doesNotMatch(supplierHub, /editCredentialProfile\.trim\(\) \|\| A2Z_GLOBAL_SECRET_PROFILE/);
+});
+
 test('supplier backend routes remain unchanged in this launch blocker fix', () => {
   assert.match(supplierDashboard, /\/api\/supplier-accounts\/lookup\?query=/);
   assert.match(supplierDashboard, /\/api\/supplier-operations\/summary/);

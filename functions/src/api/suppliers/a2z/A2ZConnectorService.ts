@@ -9,6 +9,12 @@ import {
 } from "./credentialForensics";
 import { fetchSupplierOutbound, SupplierOutboundPolicy, SupplierOutboundResponse } from "../../security/supplierOutboundRequest";
 import { SupplierCatalogPageRequest, SupplierCatalogPageResult } from "../types";
+import {
+  A2ZHttpError,
+  A2Z_TRANSIENT_HTTP_MAX_ATTEMPTS,
+  classifyA2ZHttpStatus,
+  transientRetryDelayMs,
+} from "./a2zHttpErrors";
 
 export interface A2ZSessionScope {
   supplierId: string;
@@ -66,6 +72,10 @@ export class A2ZConnectorService {
 
   private debugLog(...values: unknown[]): void {
     if (process.env.SUPPLIER_DEBUG_LOGS === "true") console.info(...values);
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   private logDiagnostic(authenticationStage: string, details: Record<string, unknown>): void {
@@ -373,13 +383,6 @@ export class A2ZConnectorService {
       productsUrlObject.searchParams.set("length", String(pageSize));
     }
     const productsUrl = productsUrlObject.toString();
-    let activeSession = this.reusableSession(credentials);
-    if (!activeSession) {
-      this.debugLog("[A2Z-Connector] Preserved session is missing or expired. Authenticating...");
-      await this.login(baseUrl, credentials, outboundPolicy);
-      activeSession = this.reusableSession(credentials);
-    }
-    if (!activeSession) throw new Error("A2Z authentication did not create a reusable scoped session.");
 
     this.debugLog(`[A2Z-Connector] Fetching catalog from target API: ${productsUrl}`);
 
@@ -408,32 +411,59 @@ export class A2ZConnectorService {
           responseBody: sanitizeA2ZResponseBody(responseBodyText),
         });
 
-        if (fetchResponse.status === 200) {
-          if (responseBodyText.trim().startsWith("<!DOCTYPE html")) {
-            this.debugLog("[A2Z-Connector] Received HTML response instead of JSON. Session is likely invalid.");
-            return false;
-          }
-          return true;
+        const httpError = classifyA2ZHttpStatus(
+          fetchResponse.status,
+          fetchResponse.headers.get("retry-after"),
+          this.now(),
+        );
+        if (httpError) throw httpError;
+
+        if (responseBodyText.trim().startsWith("<!DOCTYPE html")) {
+          this.debugLog("[A2Z-Connector] Received HTML response instead of JSON. Session is likely invalid.");
+          return false;
         }
-        return false;
+        return true;
       } catch (error: unknown) {
+        if (error instanceof A2ZHttpError) throw error;
+        if (error instanceof Error && error.name === "AbortError") {
+          throw new A2ZHttpError("A2Z catalogue request timed out.", 408, true);
+        }
         console.warn(`[A2Z-Connector] Fetch attempt failed: ${error instanceof Error ? error.message : "Unknown Error"}`);
         return false;
       }
     };
 
-    const attemptedCookie = activeSession.cookie;
-    let isSuccess = await executeFetch(attemptedCookie);
+    for (let transientAttempt = 1; transientAttempt <= A2Z_TRANSIENT_HTTP_MAX_ATTEMPTS; transientAttempt += 1) {
+      try {
+        let activeSession = this.reusableSession(credentials);
+        if (!activeSession) {
+          this.debugLog("[A2Z-Connector] Preserved session is missing or expired. Authenticating...");
+          await this.login(baseUrl, credentials, outboundPolicy);
+          activeSession = this.reusableSession(credentials);
+        }
+        if (!activeSession) throw new Error("A2Z authentication did not create a reusable scoped session.");
 
-    if (!isSuccess) {
-      this.debugLog("[A2Z-Connector] Session invalidated or fetch failed. Retrying login...");
-      if (this.session?.cookie === attemptedCookie) this.session = null;
-      const refreshedCookie = await this.login(baseUrl, credentials, outboundPolicy);
-      isSuccess = await executeFetch(refreshedCookie);
-    }
+        const attemptedCookie = activeSession.cookie;
+        let isSuccess = await executeFetch(attemptedCookie);
 
-    if (!isSuccess) {
-      throw new Error("Failed to retrieve products from A2Z. Service is either unavailable or session expired.");
+        if (!isSuccess) {
+          this.debugLog("[A2Z-Connector] Session invalidated or fetch failed. Retrying login...");
+          if (this.session?.cookie === attemptedCookie) this.session = null;
+          const refreshedCookie = await this.login(baseUrl, credentials, outboundPolicy);
+          isSuccess = await executeFetch(refreshedCookie);
+        }
+
+        if (!isSuccess) {
+          throw new Error("Failed to retrieve products from A2Z. Service is either unavailable or session expired.");
+        }
+        break;
+      } catch (error: unknown) {
+        if (error instanceof A2ZHttpError && error.retryable && transientAttempt < A2Z_TRANSIENT_HTTP_MAX_ATTEMPTS) {
+          await this.sleep(transientRetryDelayMs(error, transientAttempt));
+          continue;
+        }
+        throw error;
+      }
     }
 
     let responseBody: any;

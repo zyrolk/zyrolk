@@ -3,6 +3,7 @@ import { FieldPath, Firestore } from "firebase-admin/firestore";
 import { ApiError } from "../errors";
 import { SupplierRegistry } from "./SupplierRegistry";
 import { normalizeSupplierSourceConfig } from "./supplierSourceCompatibility";
+import { resolveSupplierAccountSyncGuard, shouldValidateExternalSourceSupplierAccount } from "./supplierSyncAccountGuard";
 import {
   SupplierCatalogFilterExecution,
   SupplierCatalogFilterRequest,
@@ -249,11 +250,22 @@ export async function validateSupplierSyncSources(
     );
   }
   const snapshots = await Promise.all(cleanIds.map((sourceId) => db.collection("supplierSources").doc(sourceId).get()));
-  return snapshots.map((snapshot, index) => {
+  const validated: ValidatedSupplierSyncSource[] = [];
+  for (const [index, snapshot] of snapshots.entries()) {
     const sourceId = cleanIds[index];
     if (!snapshot.exists) throw new ApiError(`Supplier source ${sourceId} was not found.`, 404);
     const source = normalizeSupplierSourceConfig(sourceId, snapshot.data() || {});
     if (!source.enabled) throw new ApiError(`Supplier source ${sourceId} is disabled or paused.`, 409);
+    if (shouldValidateExternalSourceSupplierAccount(sourceId)) {
+      const accountGuard = await resolveSupplierAccountSyncGuard(db, source.supplierAccountId);
+      if (!accountGuard.allowed) {
+        throw new ApiError(accountGuard.message, 409, accountGuard.message, {
+          sourceId,
+          profileStatus: accountGuard.status,
+          supplierAccountId: String(source.supplierAccountId || "").trim() || null,
+        });
+      }
+    }
     const capabilities = SupplierRegistry.getConnectorSyncCapabilities(source.connectorType);
     validateSupplierSyncRequestCapabilities(request, capabilities, sourceId);
     if (request.mode === "incremental") {
@@ -269,8 +281,9 @@ export async function validateSupplierSyncSources(
         });
       }
     }
-    return { id: sourceId, connectorType: source.connectorType, capabilities };
-  });
+    validated.push({ id: sourceId, connectorType: source.connectorType, capabilities });
+  }
+  return validated;
 }
 
 /** Compatibility path for protected clients that historically omitted sourceIds. */

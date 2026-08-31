@@ -28,6 +28,10 @@ import {
 } from "../api/suppliers/supplierOperationalAlerts";
 import { buildSupplierProductApprovalBaseline } from "../api/suppliers/supplierApprovalConcurrency";
 import { buildSupplierHealth, resolveSupplierPriority, SupplierPriorityCandidate } from "../api/suppliers/multiSupplier";
+import {
+  resolveSupplierAccountSyncGuard,
+  shouldValidateExternalSourceSupplierAccount,
+} from "../api/suppliers/supplierSyncAccountGuard";
 import { createSupplierSyncJob, SupplierSyncJobProgressInput } from "../api/suppliers/supplierSyncJobs";
 import {
   fingerprintSupplierSyncRequest,
@@ -2241,6 +2245,7 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
     const winnerByBarcode = new Map<string, SupplierSyncConflictWinner>();
     let dryRunComparisonCount = 0;
     let nonDrySourceCount = 0;
+    const supplierAccountGuardCache = new Map<string, Awaited<ReturnType<typeof resolveSupplierAccountSyncGuard>>>();
 
     for (const source of sources) {
       if (options.control?.shouldCancel()) {
@@ -2314,6 +2319,60 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
           });
         }
         continue;
+      }
+
+      if (shouldValidateExternalSourceSupplierAccount(source.id)) {
+        const accountId = String(source.supplierAccountId || "").trim();
+        let accountGuard = supplierAccountGuardCache.get(accountId);
+        if (!accountGuard) {
+          accountGuard = await resolveSupplierAccountSyncGuard(adminDb, accountId);
+          supplierAccountGuardCache.set(accountId, accountGuard);
+        }
+        if (!accountGuard.allowed) {
+          metrics.errors.push(`${supplierName}: [authorization] ${accountGuard.message}`);
+          metrics.sourceFailures += 1;
+          if (!dryRunMode) {
+            queuedWrites.push({
+              collection: "supplierSources",
+              id: source.id,
+              data: {
+                connectionStatus: "Failed",
+                lastError: accountGuard.message,
+                lastFailureClassification: "authorization",
+                lastFailedSyncAt: new Date().toISOString(),
+                nextScheduledSyncAt: getNextSupplierSourceSyncIso(supplierSourceAutoSyncSchedule(source), Date.now()),
+                currentlySyncing: false,
+                syncLeaseExpiresAt: FieldValue.delete(),
+                syncMetrics: {
+                  productsDiscovered: 0,
+                  productsImported: 0,
+                  productsRejected: 0,
+                  productsFailed: 1,
+                  retries: Number(source.syncMetrics?.retries || 0) + 1,
+                  queueDepth: 0,
+                  durationMs: Math.max(0, Date.now() - sourceStartedAt),
+                  updatedAt: new Date().toISOString(),
+                },
+                syncHealth: buildSupplierHealth(source.syncHealth || {}, "failure", Math.max(0, Date.now() - sourceStartedAt), new Date().toISOString()),
+              },
+            });
+            await recordSupplierOperationalAlertSafely({
+              category: "supplier_sync_failure",
+              severity: "critical",
+              supplierId: String(source.supplierId || source.id),
+              batchId,
+              technicalMetadata: {
+                sourceId: source.id,
+                supplierName,
+                failureClassification: "authorization",
+                profileStatus: accountGuard.status,
+                supplierAccountId: accountId || null,
+                reason: accountGuard.message,
+              },
+            });
+          }
+          continue;
+        }
       }
 
       try {
