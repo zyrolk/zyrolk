@@ -276,7 +276,7 @@ export default function HeroBanner({
     <MotionConfig reducedMotion="user">
       <section
         className="zy-hero-v2 zy-ai-hero"
-        data-zy-reveal
+        data-zy-reveal="immediate"
         aria-label="Zyro.lk Sri Lankan marketplace"
         onMouseEnter={() => setIsPlaying(false)}
         onMouseLeave={() => setIsPlaying(!shouldReduceMotion)}

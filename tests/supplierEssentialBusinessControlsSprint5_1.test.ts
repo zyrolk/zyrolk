@@ -20,7 +20,7 @@ test('supplier cards retain explicit initial sync and expose essential lifecycle
   const hub = projectFile('src/components/SupplierHubFiveStars.tsx');
   for (const control of [
     'Test Connection',
-    'Save Supplier',
+    'Connect Source',
     'Run Initial Sync',
     'Go to Product Review',
     'Auto Sync',

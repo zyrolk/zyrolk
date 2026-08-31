@@ -1937,7 +1937,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
 
                             <div className="space-y-1">
                               <label className="text-[10px] font-bold text-slate-400 dark:text-slate-500">
-                                Supplier Portal Account
+                                Fulfilment Supplier Account
                               </label>
                               <select
                                 required
@@ -1950,6 +1950,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                                   <option key={account.id} value={account.id}>{account.companyName || account.email || account.id}</option>
                                 ))}
                               </select>
+                              <span className="block text-[9px] text-slate-400">This is the active Supplier Portal account that receives fulfilment groups for products imported from this external source.</span>
                             </div>
                             
                             <div className="space-y-1 col-span-1 sm:col-span-2">
@@ -2053,7 +2054,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                             ) : (
                               <Save className="h-3.5 w-3.5" />
                             )}
-                            <span>{savingSettingsSourceId === source.id ? 'Saving...' : 'Save Supplier'}</span>
+                            <span>{savingSettingsSourceId === source.id ? 'Saving...' : 'Connect Source'}</span>
                           </button>
                         </div>
                       </motion.div>
@@ -2453,7 +2454,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                 </div>
 
                 <div className="space-y-1">
-                  <label htmlFor="connect-supplier-account" className="text-slate-400 font-bold block text-[10px] uppercase">Supplier Portal Account</label>
+                  <label htmlFor="connect-supplier-account" className="text-slate-400 font-bold block text-[10px] uppercase">Fulfilment Supplier Account</label>
                   <select
                     id="connect-supplier-account"
                     required
@@ -2470,7 +2471,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                       <option key={account.id} value={account.id}>{account.companyName || account.email || account.id}</option>
                     ))}
                   </select>
-                  <p className="text-[10px] text-slate-400">This verified account receives fulfilment groups for products from this source.</p>
+                  <p className="text-[10px] text-slate-400">This is the active Supplier Portal account that receives fulfilment groups for products imported from this external source.</p>
                 </div>
 
               </div>
@@ -2619,7 +2620,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                     ) : (
                       <Check className="h-3.5 w-3.5" />
                     )}
-                    <span>{savingSupplier ? 'Saving...' : 'Save Supplier'}</span>
+                    <span>{savingSupplier ? 'Saving...' : 'Connect Source'}</span>
                   </button>
                 </div>
               </div>

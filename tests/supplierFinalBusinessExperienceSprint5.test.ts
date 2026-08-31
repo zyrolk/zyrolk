@@ -32,7 +32,7 @@ test('new supplier save is explicit and never starts Initial Sync from the Sprin
 
   assert.match(hub, /startInitialSync: false/);
   assert.match(hub, /newSupplierConfigurationVerified/);
-  assert.match(hub, /Save Supplier/);
+  assert.match(hub, /Connect Source/);
   assert.match(hub, /Run Initial Sync/);
   assert.match(hub, /Go to Product Review/);
   assert.doesNotMatch(hub, /Save & Start Initial Sync/);

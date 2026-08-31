@@ -6,7 +6,9 @@ interface StorefrontMotionControllerProps {
 }
 
 const REVEAL_SELECTOR = '[data-zy-reveal]';
+const IMMEDIATE_REVEAL_SELECTOR = '[data-zy-reveal="immediate"]';
 const MAX_STAGGER_INDEX = 6;
+const REVEAL_FAILSAFE_MS = 1200;
 
 export default function StorefrontMotionController({
   rootRef,
@@ -20,12 +22,17 @@ export default function StorefrontMotionController({
     if (revealNodes.length === 0) return;
 
     const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if (prefersReducedMotion || typeof IntersectionObserver === 'undefined') {
-      revealNodes.forEach((node) => { node.dataset.zyRevealState = 'visible'; });
+    const immediateNodes = revealNodes.filter((node) => node.matches(IMMEDIATE_REVEAL_SELECTOR));
+    const observedNodes = revealNodes.filter((node) => !node.matches(IMMEDIATE_REVEAL_SELECTOR));
+
+    immediateNodes.forEach((node) => { node.dataset.zyRevealState = 'visible'; });
+
+    if (prefersReducedMotion || typeof IntersectionObserver === 'undefined' || observedNodes.length === 0) {
+      observedNodes.forEach((node) => { node.dataset.zyRevealState = 'visible'; });
       return;
     }
 
-    revealNodes.forEach((node, index) => {
+    observedNodes.forEach((node, index) => {
       node.dataset.zyRevealState = 'pending';
       node.style.setProperty('--zy-reveal-delay', `${Math.min(index % 7, MAX_STAGGER_INDEX) * 42}ms`);
     });
@@ -42,8 +49,18 @@ export default function StorefrontMotionController({
       threshold: 0.08,
     });
 
-    revealNodes.forEach((node) => observer.observe(node));
-    return () => observer.disconnect();
+    observedNodes.forEach((node) => observer.observe(node));
+
+    const failsafeTimer = window.setTimeout(() => {
+      observedNodes.forEach((node) => {
+        if (node.dataset.zyRevealState === 'pending') node.dataset.zyRevealState = 'visible';
+      });
+    }, REVEAL_FAILSAFE_MS);
+
+    return () => {
+      window.clearTimeout(failsafeTimer);
+      observer.disconnect();
+    };
   }, [motionKey, rootRef]);
 
   return null;

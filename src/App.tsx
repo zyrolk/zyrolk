@@ -179,6 +179,8 @@ export default function App() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [homepageReviews, setHomepageReviews] = useState<ProductionReview[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+  const [categoriesLoading, setCategoriesLoading] = useState<boolean>(true);
+  const [categoriesLoadError, setCategoriesLoadError] = useState<string | null>(null);
   const [hasMoreProducts, setHasMoreProducts] = useState<boolean>(false);
   const [loadingMoreProducts, setLoadingMoreProducts] = useState<boolean>(false);
   const [catalogFullyLoaded, setCatalogFullyLoaded] = useState<boolean>(false);
@@ -569,9 +571,16 @@ export default function App() {
     let unsubProds: (() => void) | null = null;
     let unsubCats: (() => void) | null = null;
     let unsubReviews: (() => void) | null = null;
+    let catalogFailsafeTimer: number | null = null;
 
     const initApp = async () => {
       if (!isMounted) return;
+
+      catalogFailsafeTimer = window.setTimeout(() => {
+        if (!isMounted) return;
+        setLoading(false);
+        setCategoriesLoading(false);
+      }, 8000);
       
       // Live listener on website settings
       const handleDataFailure = (area: string, error: unknown, blocksProducts = false) => {
@@ -579,6 +588,13 @@ export default function App() {
         reportClientIssue(`storefront-${area}-listener`, error, 'warning');
         setStorefrontDataError('Some live marketplace information could not be refreshed. You can retry without losing your cart.');
         if (blocksProducts) setLoading(false);
+      };
+
+      const handleCategoryFailure = (error: unknown) => {
+        if (!isMounted) return;
+        reportClientIssue('storefront-categories-listener', error, 'warning');
+        setCategoriesLoadError('Categories could not be refreshed right now.');
+        setCategoriesLoading(false);
       };
 
       const sUnsub = onSnapshot(doc(db, "settings", "website"), (snap) => {
@@ -649,7 +665,9 @@ export default function App() {
       const cUnsub = subscribeToStorefrontCategories(db, (catList) => {
         if (!isMounted) return;
         setCategories(getActiveCategories(sortCategoriesAlphabetically(catList)));
-      }, error => handleDataFailure('categories', error));
+        setCategoriesLoadError(null);
+        setCategoriesLoading(false);
+      }, handleCategoryFailure);
       if (!isMounted) {
         cUnsub();
       } else {
@@ -672,6 +690,7 @@ export default function App() {
 
     return () => {
       isMounted = false;
+      if (catalogFailsafeTimer !== null) window.clearTimeout(catalogFailsafeTimer);
       if (unsubSettings) unsubSettings();
       if (unsubProds) unsubProds();
       if (unsubCats) unsubCats();
@@ -1192,7 +1211,7 @@ export default function App() {
         >
           <StorefrontMotionController
             rootRef={storefrontContentRef}
-            motionKey={`${currentPage}:${loading}:${filteredProducts.length}:${activeProducts.length}`}
+            motionKey={currentPage}
           />
           {(isOffline || storefrontDataError) && (
             <aside className="zy-storefront-connection-state" role={storefrontDataError ? 'alert' : 'status'} aria-live="polite">
@@ -1238,6 +1257,8 @@ export default function App() {
               reviews={homepageReviews}
               wishlistProductIds={wishlistProductIds}
               loading={loading}
+              categoriesLoading={categoriesLoading}
+              categoriesError={categoriesLoadError}
               onExploreProducts={() => { setCurrentPage('products'); setSelectedCategory('all'); }}
               onBrowseCategories={() => setCurrentPage('categories')}
               onSelectCategory={(categoryId) => { setSelectedCategory(categoryId); setCurrentPage('products'); }}

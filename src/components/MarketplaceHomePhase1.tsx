@@ -26,6 +26,8 @@ interface MarketplaceHomePhase1Props {
   reviews: readonly HomepageReview[];
   wishlistProductIds: ReadonlySet<string>;
   loading: boolean;
+  categoriesLoading?: boolean;
+  categoriesError?: string | null;
   onExploreProducts: () => void;
   onBrowseCategories: () => void;
   onSelectCategory: (categoryId: string) => void;
@@ -50,6 +52,8 @@ export default function MarketplaceHomePhase1({
   reviews,
   wishlistProductIds,
   loading,
+  categoriesLoading = loading,
+  categoriesError = null,
   onExploreProducts,
   onBrowseCategories,
   onSelectCategory,
@@ -89,9 +93,16 @@ export default function MarketplaceHomePhase1({
           </button>
         </header>
 
-        {loading ? (
+        {categoriesLoading ? (
           <div className="zy-foundation-category-rail" aria-label="Loading categories" aria-busy="true">
             {PLACEHOLDER_TILES.map(index => <div key={index} className="zy-foundation-category-skeleton" aria-hidden="true"><span /><i /><small /></div>)}
+          </div>
+        ) : categoriesError ? (
+          <div className="zy-foundation-category-empty" role="alert">
+            <div className="zy-foundation-empty-note">
+              <span><Layers3 className="h-5 w-5" aria-hidden="true" /></span>
+              <div><strong>Categories could not be loaded</strong><p>{categoriesError}</p></div>
+            </div>
           </div>
         ) : hasCategories ? (
           <div className="zy-foundation-category-rail" role="list">
@@ -118,12 +129,9 @@ export default function MarketplaceHomePhase1({
           </div>
         ) : (
           <div className="zy-foundation-category-empty">
-            <div className="zy-foundation-category-rail" aria-hidden="true">
-              {PLACEHOLDER_TILES.map(index => <div key={index} className="zy-foundation-category-skeleton is-empty"><span /><i /><small /></div>)}
-            </div>
             <div className="zy-foundation-empty-note" role="status">
               <span><Layers3 className="h-5 w-5" aria-hidden="true" /></span>
-              <div><strong>Collections are ready for your catalog</strong><p>Active categories with published products will appear here automatically.</p></div>
+              <div><strong>Categories are being prepared</strong><p>Published collections will appear here automatically once they are available in the live catalog.</p></div>
             </div>
           </div>
         )}

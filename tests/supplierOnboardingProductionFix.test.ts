@@ -128,7 +128,7 @@ test('connection testing uses the exact source registry record while retaining t
   assert.match(hub, /source,/);
   assert.match(hub, /newSupplierConfigurationVerified/);
   assert.match(hub, /startInitialSync: false/);
-  assert.match(hub, /Save Supplier/);
+  assert.match(hub, /Connect Source/);
   assert.match(hub, /Run Initial Sync/);
   assert.doesNotMatch(hub, /Save & Start Initial Sync/);
 });

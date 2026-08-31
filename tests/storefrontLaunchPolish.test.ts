@@ -41,7 +41,7 @@ test('Phase 1 uses live category visuals and prop-driven live product shelves', 
   assert.match(phaseOneHome, /const hasCategories = categoryVisuals\.length > 0/);
   assert.match(phaseOneHome, /categoryVisuals\.map/);
   assert.match(phaseOneHome, /PLACEHOLDER_TILES/);
-  assert.match(phaseOneHome, /Active categories with published products will appear here automatically\./);
+  assert.match(phaseOneHome, /Categories are being prepared/);
   assert.match(phaseOneHome, /import StorefrontProductShelf from '\.\/StorefrontProductShelf'/);
   assert.match(phaseOneHome, /products=\{discountedProducts\}/);
   assert.match(phaseOneHome, /products=\{featuredProducts\}/);
