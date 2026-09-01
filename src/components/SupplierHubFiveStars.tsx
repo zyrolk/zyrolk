@@ -455,7 +455,9 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
     const connectorValue = String(item.connector || source?.connectorType || source?.supplierType || item.source || 'Supplier source').trim();
     const connectorLabel = connectorValue.toLowerCase().includes('a2z')
       ? 'A2Z'
-      : connectorValue.replaceAll('_', ' ').replace(/\b\w/gu, (letter) => letter.toUpperCase());
+      : connectorValue.toLowerCase().includes('dropex')
+        ? 'Dropex'
+        : connectorValue.replaceAll('_', ' ').replace(/\b\w/gu, (letter) => letter.toUpperCase());
     return `${supplierLabel} · ${connectorLabel}`;
   }, [supplierSourceById]);
   const sourceIsSyncing = useCallback((sourceId: string): boolean => Boolean(
@@ -912,6 +914,11 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
       setModalTestError("Website URL is required to test connection.");
       return;
     }
+    if (newSupplierType === 'dropex' && !newSupplierCredentialProfile.trim()) {
+      setModalTestStatus('Failed');
+      setModalTestError('A server-configured credential profile ID is required to test Dropex.');
+      return;
+    }
     if (newSupplierType === 'api' && !apiEndpoint.trim()) {
       setModalTestStatus('Failed');
       setModalTestError("REST endpoint URL is required to test connection.");
@@ -1006,7 +1013,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
       setTimeout(() => setErrorMsg(null), 5000);
       return;
     }
-    if (newSupplierType === 'a2z' && !newSupplierCredentialProfile.trim()) {
+    if ((newSupplierType === 'a2z' || newSupplierType === 'dropex') && !newSupplierCredentialProfile.trim()) {
       setModalTestStatus('Failed');
       setModalTestError('A server-configured credential profile ID is required to test this supplier.');
       return;
@@ -1133,14 +1140,20 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
       if (String(currentSource.connectorType || '').toLowerCase() === 'a2z' && !editCredentialProfile.trim()) {
         throw new Error('A server-configured credential profile ID is required for A2Z sources.');
       }
-      let supplierUrl: URL;
-      try {
-        supplierUrl = new URL(editWebsiteUrl.trim());
-      } catch {
-        throw new Error('Enter a valid supplier website URL.');
+      if (String(currentSource.connectorType || '').toLowerCase() === 'dropex' && !editCredentialProfile.trim()) {
+        throw new Error('A server-configured credential profile ID is required for Dropex sources.');
       }
-      if (!['http:', 'https:'].includes(supplierUrl.protocol)) {
-        throw new Error('Supplier website URL must use HTTP or HTTPS.');
+      const connectorType = String(currentSource.connectorType || '').toLowerCase();
+      if (connectorType !== 'dropex') {
+        let supplierUrl: URL;
+        try {
+          supplierUrl = new URL(editWebsiteUrl.trim());
+        } catch {
+          throw new Error('Enter a valid supplier website URL.');
+        }
+        if (!['http:', 'https:'].includes(supplierUrl.protocol)) {
+          throw new Error('Supplier website URL must use HTTP or HTTPS.');
+        }
       }
 
       const syncSchedule = editSyncMode === 'auto' ? editAutoSyncSchedule : 'Off';
@@ -1154,7 +1167,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
           ...(currentSource.settings || {}),
           autoSync: syncSchedule,
         },
-        ...(String(currentSource.connectorType || '').toLowerCase() === 'a2z' ? {
+        ...(String(currentSource.connectorType || '').toLowerCase() === 'a2z' || String(currentSource.connectorType || '').toLowerCase() === 'dropex' ? {
           authentication: {
             mode: 'secret_manager',
             credentialProfile: editCredentialProfile.trim(),
@@ -2008,7 +2021,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                               <label className="block text-[10px] font-bold text-slate-400 dark:text-slate-500" htmlFor={`supplier-credential-profile-${source.id}`}>
                                 Credential profile ID (required)
                               </label>
-                              {String(source.connectorType || '').toLowerCase() === 'a2z' ? (
+                              {['a2z', 'dropex'].includes(String(source.connectorType || '').toLowerCase()) ? (
                                 <input
                                   id={`supplier-credential-profile-${source.id}`}
                                   type="text"
@@ -2523,14 +2536,16 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                   className="w-full px-3 py-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-850 rounded-xl focus:outline-hidden focus:border-emerald-500 transition-colors text-xs dark:text-white font-bold cursor-pointer"
                 >
                   <option value="a2z">A2Z (Firebase Secret Manager)</option>
+                  <option value="dropex">Dropex (Firebase Secret Manager)</option>
                   <option value="website">Generic HTTP JSON Feed</option>
                   <option value="api">REST / JSON Endpoint</option>
                 </select>
               </div>
 
               {/* Dynamic Type Specific Fields */}
-              {(newSupplierType === 'website' || newSupplierType === 'a2z') && (
+              {(newSupplierType === 'website' || newSupplierType === 'a2z' || newSupplierType === 'dropex') && (
                 <div className="space-y-3.5 p-4 rounded-2xl bg-amber-500/5 border border-amber-500/10">
+                  {(newSupplierType === 'website' || newSupplierType === 'a2z') && (
                   <div className="space-y-1">
                     <label htmlFor="connect-supplier-base-url" className="text-amber-600 dark:text-amber-500 font-black block text-[9px] uppercase tracking-wider">
                       {newSupplierType === 'a2z' ? 'A2Z Base URL' : 'JSON Feed Base URL'}
@@ -2545,6 +2560,26 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                       className="w-full px-3 py-2.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl focus:outline-hidden focus:border-amber-500 transition-colors text-xs dark:text-white"
                     />
                   </div>
+                  )}
+
+                  {newSupplierType === 'dropex' && (
+                    <div className="space-y-1">
+                      <label htmlFor="connect-supplier-dropex-portal-url" className="text-amber-600 dark:text-amber-500 font-black block text-[9px] uppercase tracking-wider">
+                        Dropex Portal URL (optional)
+                      </label>
+                      <input
+                        id="connect-supplier-dropex-portal-url"
+                        type="url"
+                        placeholder="https://manager.dropex.lk"
+                        value={newSupplierUrl}
+                        onChange={(e) => setNewSupplierUrl(e.target.value)}
+                        className="w-full px-3 py-2.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl focus:outline-hidden focus:border-amber-500 transition-colors text-xs dark:text-white"
+                      />
+                      <p className="text-[10px] font-semibold leading-relaxed text-amber-700/80 dark:text-amber-400/80">
+                        Catalog sync uses Dropex Dreamworld APIs. This reference URL is optional and is not used for login.
+                      </p>
+                    </div>
+                  )}
 
                   {newSupplierType === 'website' && <div className="space-y-1">
                     <label htmlFor="connect-supplier-product-endpoint" className="text-amber-600 dark:text-amber-500 font-black block text-[9px] uppercase tracking-wider">Product Endpoint</label>
@@ -2558,7 +2593,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                       className="w-full px-3 py-2.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl focus:outline-hidden focus:border-amber-500 transition-colors text-xs dark:text-white font-mono"
                     />
                   </div>}
-                  {newSupplierType === 'a2z' && (
+                  {(newSupplierType === 'a2z' || newSupplierType === 'dropex') && (
                     <div className="space-y-1">
                       <label htmlFor="connect-supplier-credential-profile" className="text-amber-600 dark:text-amber-500 font-black block text-[9px] uppercase tracking-wider">
                         Credential profile ID (required)
@@ -2569,7 +2604,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                         required
                         maxLength={160}
                         pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,159}"
-                        placeholder="supplier-profile-id"
+                        placeholder={newSupplierType === 'dropex' ? 'dropex-production' : 'supplier-profile-id'}
                         value={newSupplierCredentialProfile}
                         onChange={(event) => {
                           setNewSupplierCredentialProfile(event.target.value);
@@ -2577,9 +2612,9 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                           testedSupplierConfigurationRef.current = null;
                         }}
                         className="w-full px-3 py-2.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl focus:outline-hidden focus:border-amber-500 transition-colors text-xs dark:text-white font-mono"
-                        aria-describedby="a2z-credential-profile-help"
+                        aria-describedby="supplier-credential-profile-help"
                       />
-                      <p id="a2z-credential-profile-help" className="text-[10px] font-semibold leading-relaxed text-amber-700/80 dark:text-amber-400/80">
+                      <p id="supplier-credential-profile-help" className="text-[10px] font-semibold leading-relaxed text-amber-700/80 dark:text-amber-400/80">
                         Enter only the server-configured profile ID. Credentials remain in Firebase Secret Manager and are never sent by this form.
                       </p>
                     </div>

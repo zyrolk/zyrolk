@@ -50,10 +50,12 @@ test("A2Z secrets are bound to both HTTPS and scheduled Functions", () => {
 
   assert.match(secrets, /defineSecret\("A2Z_USERNAME"\)/);
   assert.match(secrets, /defineSecret\("A2Z_PASSWORD"\)/);
+  assert.match(secrets, /defineSecret\("DROPEX_USERNAME"\)/);
+  assert.match(secrets, /defineSecret\("DROPEX_PASSWORD"\)/);
   assert.match(apiEntry, /secrets:\s*API_SECRETS/);
-  assert.match(secrets, /API_SECRETS\s*=\s*\[\.\.\.A2Z_SECRETS\]/);
+  assert.match(secrets, /API_SECRETS\s*=\s*\[\.\.\.A2Z_SECRETS,\s*\.\.\.DROPEX_SECRETS\]/);
   assert.doesNotMatch(secrets, /PAYHERE_MERCHANT_SECRET/);
-  assert.match(scheduledSyncWorker, /secrets:\s*A2Z_SECRETS/);
+  assert.match(scheduledSyncWorker, /secrets:\s*API_SECRETS/);
 });
 
 test("supplier test and fetch routes share the connector registry", () => {

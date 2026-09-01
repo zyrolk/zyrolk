@@ -2,6 +2,8 @@ import { adminDb } from "../firebase";
 import { buildSupplierTargetUrl, getApprovedSupplierHosts, validateSupplierRequestTarget } from "../security/supplierUrlProtection";
 import { SupplierOutboundPolicy } from "../security/supplierOutboundRequest";
 import { A2ZSupplierConnector, DEFAULT_A2Z_CREDENTIAL_REFERENCE } from "./a2z/A2ZSupplierConnector";
+import { DropexSupplierConnector } from "./dropex/DropexSupplierConnector";
+import { DROPEX_APPROVED_API_HOSTS } from "./dropex/constants";
 import { HttpSupplierConnector } from "./HttpSupplierConnector";
 import { normalizeSupplierSourceConfig } from "./supplierSourceCompatibility";
 import {
@@ -189,3 +191,18 @@ SupplierRegistry.registerConnectorFactory("a2z", (targetUrl, source, approvedHos
     || DEFAULT_A2Z_CREDENTIAL_REFERENCE,
   outboundPolicy: { approvedHosts, connector: "a2z", sourceId: source.id } satisfies SupplierOutboundPolicy,
 }), SERVER_FILTERED_FULL_CATALOG_CAPABILITIES);
+SupplierRegistry.registerConnectorFactory("dropex", (targetUrl, source, approvedHosts) => {
+  const dropexApprovedHosts = [...new Set([...approvedHosts, ...DROPEX_APPROVED_API_HOSTS])];
+  return new DropexSupplierConnector(targetUrl, {
+    id: source.id,
+    supplierId: source.supplierId,
+    sourceId: source.id,
+    name: source.name,
+    connectorType: source.connectorType,
+    enabled: source.enabled,
+    priority: source.priority,
+    capabilities: source.capabilities,
+    credentialReference: source.authentication.secretRef || source.authentication.credentialProfile,
+    outboundPolicy: { approvedHosts: dropexApprovedHosts, connector: "dropex", sourceId: source.id } satisfies SupplierOutboundPolicy,
+  });
+}, SERVER_FILTERED_FULL_CATALOG_CAPABILITIES);

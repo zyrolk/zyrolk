@@ -1,6 +1,7 @@
-export type SupplierOnboardingType = 'a2z' | 'website' | 'api';
+export type SupplierOnboardingType = 'a2z' | 'dropex' | 'website' | 'api';
 
 export const A2Z_GLOBAL_SECRET_PROFILE = 'a2z-global';
+export const DROPEX_RECOMMENDED_SECRET_PROFILE = 'dropex-production';
 
 export interface SupplierOnboardingInput {
   id: string;
@@ -25,10 +26,16 @@ export interface SupplierOnboardingInput {
 export function buildSupplierOnboardingSource(input: SupplierOnboardingInput): Record<string, unknown> {
   const connectorType = input.supplierType === 'a2z'
     ? 'a2z'
-    : input.supplierType === 'api'
-      ? 'rest'
-      : 'http';
-  const websiteUrl = (input.supplierType === 'api' ? input.endpoint : input.websiteUrl || '').trim();
+    : input.supplierType === 'dropex'
+      ? 'dropex'
+      : input.supplierType === 'api'
+        ? 'rest'
+        : 'http';
+  const websiteUrl = (input.supplierType === 'api'
+    ? input.endpoint
+    : input.supplierType === 'dropex'
+      ? (input.websiteUrl || 'https://manager.dropex.lk')
+      : input.websiteUrl || '').trim();
   const endpoint = input.supplierType === 'website' ? (input.endpoint || '').trim() : '';
   const config: Record<string, string> = {};
   const setConfig = (field: string, value: string | undefined): void => {
@@ -42,7 +49,7 @@ export function buildSupplierOnboardingSource(input: SupplierOnboardingInput): R
     setConfig('apiMethod', input.apiMethod || 'GET');
     setConfig('apiDataPath', input.apiDataPath);
   } else {
-    setConfig('targetUrl', input.websiteUrl);
+    setConfig('targetUrl', websiteUrl);
   }
 
   return {
@@ -51,7 +58,7 @@ export function buildSupplierOnboardingSource(input: SupplierOnboardingInput): R
     supplierName: input.supplierName.trim(),
     ...(input.supplierAccountId?.trim() ? { supplierAccountId: input.supplierAccountId.trim() } : {}),
     name: input.supplierName.trim(),
-    supplierType: 'website',
+    supplierType: connectorType === 'dropex' ? 'dropex' : 'website',
     connectorType,
     websiteUrl,
     endpoint,
@@ -72,7 +79,7 @@ export function buildSupplierOnboardingSource(input: SupplierOnboardingInput): R
       dryRunMode: false,
     },
     capabilities: ['catalog.fetch', 'connection.test'],
-    authentication: connectorType === 'a2z'
+    authentication: connectorType === 'a2z' || connectorType === 'dropex'
       ? {
         mode: 'secret_manager',
         ...(input.credentialProfile?.trim() ? { credentialProfile: input.credentialProfile.trim() } : {}),

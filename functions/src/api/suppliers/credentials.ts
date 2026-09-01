@@ -1,9 +1,19 @@
-import { getA2ZSecretValues } from "../../config/secrets";
+import { getA2ZSecretValues, getDropexSecretValues } from "../../config/secrets";
 import {
   resolveA2ZCredentialProfile,
 } from "./a2zCredentialProfiles";
+import {
+  resolveDropexCredentialProfile,
+} from "./dropexCredentialProfiles";
 
 export interface A2ZCredentialResolutionRequest {
+  credentialReference: string;
+  targetUrl: string;
+  supplierId?: string;
+  sourceId?: string;
+}
+
+export interface DropexCredentialResolutionRequest {
   credentialReference: string;
   targetUrl: string;
   supplierId?: string;
@@ -27,6 +37,29 @@ export async function getA2ZCredentials(
   if (process.env.SUPPLIER_DEBUG_LOGS === "true") {
     console.info("[A2Z-Connector]", JSON.stringify({
       event: "a2z_credentials_resolved",
+      authenticationStage: "credential-selection",
+      credentialSource: "secret-manager-profile",
+      profileId: resolved.profileId,
+      supplierId: String(request.supplierId || "").slice(0, 160),
+      sourceId: String(request.sourceId || "").slice(0, 160),
+    }));
+  }
+
+  return { username: resolved.username, password: resolved.password };
+}
+
+export async function getDropexCredentials(
+  request: DropexCredentialResolutionRequest,
+): Promise<{ username: string; password: string }> {
+  const resolved = resolveDropexCredentialProfile(
+    getDropexSecretValues(),
+    request.credentialReference,
+    request.targetUrl,
+  );
+
+  if (process.env.SUPPLIER_DEBUG_LOGS === "true") {
+    console.info("[Dropex-Connector]", JSON.stringify({
+      event: "dropex_credentials_resolved",
       authenticationStage: "credential-selection",
       credentialSource: "secret-manager-profile",
       profileId: resolved.profileId,

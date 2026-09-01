@@ -9,12 +9,17 @@ import {
   isA2ZGlobalCredentialReference,
   normalizeA2ZCredentialReference,
 } from "./a2zCredentialProfiles";
-import { getA2ZCredentials } from "./credentials";
+import {
+  DropexCredentialProfileError,
+  normalizeDropexCredentialReference,
+} from "./dropexCredentialProfiles";
+import { getA2ZCredentials, getDropexCredentials } from "./credentials";
+import { DROPEX_CREDENTIAL_VALIDATION_TARGET } from "./dropex/DropexConnectorService";
 import { buildSupplierTargetUrl } from "../security/supplierUrlProtection";
 
 const MAX_ID_LENGTH = 160;
 const MAX_TEXT_LENGTH = 2_000;
-const SOURCE_TYPES = new Set(["a2z", "api", "csv", "http", "rest", "shopify", "website", "whatsapp", "woocommerce", "xml"]);
+const SOURCE_TYPES = new Set(["a2z", "dropex", "api", "csv", "http", "rest", "shopify", "website", "whatsapp", "woocommerce", "xml"]);
 const AUTO_SYNC_VALUES = new Map([
   ["off", "Off"],
   ["15 minutes", "15 Minutes"],
@@ -56,6 +61,15 @@ export function projectSupplierSourceForAdmin(value: Record<string, unknown>, so
         : { mode: "secret_manager" };
     } catch {
       // Do not expose malformed or arbitrary legacy reference strings to the browser.
+      projectedAuthentication = { mode: "secret_manager" };
+    }
+  } else if (normalized.connectorType === "dropex") {
+    const storedReference = storedAuthentication.secretRef || storedAuthentication.credentialProfile;
+    try {
+      projectedAuthentication = storedReference
+        ? { mode: "secret_manager", credentialProfile: normalizeDropexCredentialReference(storedReference) }
+        : { mode: "secret_manager" };
+    } catch {
       projectedAuthentication = { mode: "secret_manager" };
     }
   }
@@ -242,6 +256,25 @@ const validateA2ZAuthenticationReference = (
       : { mode: "secret_manager", credentialProfile: normalizedReference };
 };
 
+const validateDropexAuthenticationReference = (
+  authentication: Record<string, string>,
+): Record<string, string> => {
+  if (authentication.mode !== "secret_manager") {
+    throw new ApiError("Dropex supplier authentication must use a server-managed credential profile.", 400);
+  }
+  const reference = authentication.secretRef || authentication.credentialProfile;
+  let normalizedReference: string;
+  try {
+    normalizedReference = normalizeDropexCredentialReference(reference);
+  } catch (error) {
+    if (error instanceof DropexCredentialProfileError) throw new ApiError(error.message, 400);
+    throw error;
+  }
+  return authentication.secretRef
+    ? { mode: "secret_manager", secretRef: normalizedReference }
+    : { mode: "secret_manager", credentialProfile: normalizedReference };
+};
+
 export interface SanitizedSupplierSource {
   supplierAccountId: string;
   supplierName: string;
@@ -311,6 +344,10 @@ export function sanitizeSupplierSource(
     const targetUrl = buildSupplierTargetUrl(websiteUrl, endpoint);
     if (new URL(targetUrl).protocol !== "https:") throw new ApiError("A2Z supplier URLs must use HTTPS.", 400);
   }
+  if (connectorType === "dropex" && websiteUrl) {
+    const targetUrl = buildSupplierTargetUrl(websiteUrl, endpoint);
+    if (new URL(targetUrl).protocol !== "https:") throw new ApiError("Dropex supplier URLs must use HTTPS.", 400);
+  }
   return {
     supplierAccountId,
     supplierName,
@@ -328,7 +365,9 @@ export function sanitizeSupplierSource(
     capabilities: cleanStringList(source.capabilities, "Supplier capabilities", 30, 80),
     authentication: connectorType === "a2z"
       ? validateA2ZAuthenticationReference(authentication, allowLegacyGlobalA2ZProfile)
-      : authentication,
+      : connectorType === "dropex"
+        ? validateDropexAuthenticationReference(authentication)
+        : authentication,
     config: cleanConfig(source.config),
     settings: cleanSettings(source.settings),
   };
@@ -381,6 +420,14 @@ export async function saveSupplierSource(
       await getA2ZCredentials({
         credentialReference: source.authentication.secretRef || source.authentication.credentialProfile,
         targetUrl: buildSupplierTargetUrl(source.websiteUrl, source.endpoint),
+        supplierId: String(existing.data()?.supplierId || sourceId),
+        sourceId,
+      });
+    }
+    if (source.connectorType === "dropex") {
+      await getDropexCredentials({
+        credentialReference: source.authentication.secretRef || source.authentication.credentialProfile,
+        targetUrl: DROPEX_CREDENTIAL_VALIDATION_TARGET,
         supplierId: String(existing.data()?.supplierId || sourceId),
         sourceId,
       });

@@ -23,7 +23,7 @@ const inferConnectorType = (value: unknown, source: { id: string; name: string; 
   const requested = text(value).toLowerCase();
   if (requested && requested !== "website") return requested;
   const identity = `${source.id} ${source.name} ${source.websiteUrl}`.toLowerCase();
-  return identity.includes("a2z") ? "a2z" : "http";
+  return identity.includes("a2z") ? "a2z" : identity.includes("dropex") ? "dropex" : "http";
 };
 
 const normalizeCapabilities = (value: unknown): string[] => {

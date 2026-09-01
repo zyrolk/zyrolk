@@ -16,7 +16,7 @@ import {
   SupplierSyncJobProgressInput,
   waitSupplierSyncJob,
 } from "../api/suppliers/supplierSyncJobs";
-import { A2Z_SECRETS } from "../config/secrets";
+import { API_SECRETS } from "../config/secrets";
 import { runSupplierSync } from "./supplierSync";
 import { recordSupplierOperationalAlertSafely } from "../api/suppliers/supplierOperationalAlerts";
 import { recordSupplierSyncOutcomeMetric } from "../api/suppliers/supplierCloudMonitoring";
@@ -229,7 +229,7 @@ export const supplierSyncJobCreated = onDocumentCreated({
   retry: true,
   timeoutSeconds: 540,
   memory: "1GiB",
-  secrets: A2Z_SECRETS,
+  secrets: API_SECRETS,
 }, async (event) => {
   const jobId = event.params.jobId;
   await processSupplierSyncJob(jobId);
@@ -240,7 +240,7 @@ export const scheduledSupplierSyncJobDispatcher = onSchedule({
   timeZone: "Asia/Colombo",
   timeoutSeconds: 540,
   memory: "1GiB",
-  secrets: A2Z_SECRETS,
+  secrets: API_SECRETS,
 }, async () => {
   try {
     await dispatchDueSupplierSyncJobs();
