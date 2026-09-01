@@ -105,19 +105,6 @@ const overlapScore = (evidence: string, candidate: string): number => {
   return candidateWords.filter((word) => evidenceWords.has(word)).length / candidateWords.length;
 };
 
-const bestSubcategory = (category: StoreCategoryMappingCandidate, evidence: string): { id: string; score: number } => {
-  let result = { id: "", score: 0 };
-  for (const subcategory of category.subcategories || []) {
-    if (subcategory.isActive === false) continue;
-    const normalizedName = normalizeSupplierMappingValue(subcategory.name);
-    const normalizedId = normalizeSupplierMappingValue(subcategory.id);
-    const exact = [normalizedName, normalizedId].some((value) => value && evidence.includes(value));
-    const score = exact ? 1 : Math.max(overlapScore(evidence, normalizedName), overlapScore(evidence, normalizedId));
-    if (score > result.score) result = { id: subcategory.id, score };
-  }
-  return result.score >= 0.7 ? result : { id: "", score: result.score };
-};
-
 export function suggestSupplierCategory(input: {
   sourceId: string;
   supplierCategories: readonly string[];
@@ -159,11 +146,21 @@ export function suggestSupplierCategory(input: {
     };
   }
 
+  const matchesInactiveCategory = Boolean(normalizedCategory) && input.categories.some((category) => (
+    category.isActive === false
+    && [category.id, category.name].some((value) => normalizeSupplierMappingValue(value) === normalizedCategory)
+  ));
+  if (matchesInactiveCategory) {
+    return {
+      supplierCategory, normalizedCategory, targetCategoryId: "", targetSubcategoryId: "", confidence: 0,
+      mappingType: "unmapped", mappingSource: "none", autoSelected: false, requiresManualSelection: true,
+    };
+  }
+
   for (const category of categories) {
     if (supplierCategory && (supplierCategory === category.id || supplierCategory === category.name)) {
-      const subcategory = bestSubcategory(category, evidence);
       return {
-        supplierCategory, normalizedCategory, targetCategoryId: category.id, targetSubcategoryId: subcategory.id,
+        supplierCategory, normalizedCategory, targetCategoryId: category.id, targetSubcategoryId: "",
         confidence: 100, mappingType: "exact", mappingSource: "catalog", autoSelected: true, requiresManualSelection: false,
       };
     }
@@ -171,21 +168,18 @@ export function suggestSupplierCategory(input: {
 
   for (const category of categories) {
     if ([category.id, category.name].some((value) => normalizeSupplierMappingValue(value) === normalizedCategory && normalizedCategory)) {
-      const subcategory = bestSubcategory(category, evidence);
       return {
-        supplierCategory, normalizedCategory, targetCategoryId: category.id, targetSubcategoryId: subcategory.id,
+        supplierCategory, normalizedCategory, targetCategoryId: category.id, targetSubcategoryId: "",
         confidence: 98, mappingType: "normalized", mappingSource: "catalog", autoSelected: true, requiresManualSelection: false,
       };
     }
   }
 
-  let best: { category: StoreCategoryMappingCandidate; score: number; subcategoryId: string } | null = null;
+  let best: { category: StoreCategoryMappingCandidate; score: number } | null = null;
   for (const category of categories) {
     const categorySignals = [category.id, category.name, ...(category.keywords || [])];
     const categoryScore = Math.max(...categorySignals.map((signal) => overlapScore(evidence, signal)), 0);
-    const subcategory = bestSubcategory(category, evidence);
-    const score = Math.max(categoryScore, subcategory.score * 0.95);
-    if (!best || score > best.score) best = { category, score, subcategoryId: subcategory.id };
+    if (!best || categoryScore > best.score) best = { category, score: categoryScore };
   }
   if (best && best.score >= 0.4) {
     const suggestionConfidence = Math.min(94, Math.max(70, Math.round(70 + best.score * 24)));
@@ -193,7 +187,7 @@ export function suggestSupplierCategory(input: {
       supplierCategory,
       normalizedCategory,
       targetCategoryId: best.category.id,
-      targetSubcategoryId: best.subcategoryId,
+      targetSubcategoryId: "",
       confidence: suggestionConfidence,
       mappingType: "keyword",
       mappingSource: "catalog",

@@ -30,6 +30,8 @@ export interface SupplierProductOffer {
   price: number;
   cost: number;
   stock: number;
+  /** False only when the supplier did not provide an inventory quantity. Legacy offers default to true. */
+  stockKnown: boolean;
   availability: SupplierOfferAvailability;
   priority: number;
   health: Record<string, unknown>;
@@ -60,6 +62,7 @@ export interface SupplierOfferEffectiveSnapshot {
   price: number;
   cost: number;
   stock: number;
+  stockKnown: boolean;
   availability: SupplierOfferAvailability;
   health: Record<string, unknown>;
   lastSyncAt: string;
@@ -137,7 +140,7 @@ const stableValue = (value: unknown): unknown => {
 
 const effectiveSnapshot = (offer: Pick<SupplierProductOffer,
   "supplierId" | "sourceId" | "supplierProductId" | "sku" | "skuNormalized" | "barcode" | "barcodeNormalized"
-  | "price" | "cost" | "stock" | "availability" | "health" | "lastSyncAt" | "catalogPayload" | "supplierSnapshot"
+  | "price" | "cost" | "stock" | "stockKnown" | "availability" | "health" | "lastSyncAt" | "catalogPayload" | "supplierSnapshot"
 >): SupplierOfferEffectiveSnapshot => ({
   supplierId: offer.supplierId,
   sourceId: offer.sourceId,
@@ -149,6 +152,7 @@ const effectiveSnapshot = (offer: Pick<SupplierProductOffer,
   price: offer.price,
   cost: offer.cost,
   stock: offer.stock,
+  stockKnown: offer.stockKnown,
   availability: offer.availability,
   health: asRecord(offer.health),
   lastSyncAt: offer.lastSyncAt,
@@ -185,7 +189,8 @@ const parseEffectiveSnapshot = (value: unknown): SupplierOfferEffectiveSnapshot 
     price: money(candidate.price),
     cost: money(candidate.cost),
     stock: stock(candidate.stock),
-    availability: supplierOfferAvailability(candidate.availability, candidate.stock),
+    stockKnown: candidate.stockKnown !== false,
+    availability: supplierOfferAvailability(candidate.availability, candidate.stock, candidate.stockKnown !== false),
     health: asRecord(candidate.health),
     lastSyncAt: text(candidate.lastSyncAt, 80),
     catalogPayload: asRecord(candidate.catalogPayload),
@@ -291,10 +296,21 @@ export function promoteSupplierOfferPendingObservation(
 ): SupplierProductOffer {
   const pending = offer.pendingObservation;
   if (!pending || pending.revision !== revision) throw new Error("The supplier offer observation changed after it was reviewed.");
+  const preserveApprovedInventory = offer.reviewStatus === "approved"
+    && Boolean(text(asRecord(offer.health).inventoryObservedAt, 80));
   return {
     ...offer,
     schemaVersion: SUPPLIER_OFFER_SCHEMA_VERSION,
     ...pending.effective,
+    ...(preserveApprovedInventory ? {
+      stock: offer.stock,
+      stockKnown: offer.stockKnown,
+      availability: offer.availability,
+      health: {
+        ...pending.effective.health,
+        ...offer.health,
+      },
+    } : {}),
     reviewStatus: "approved",
     stateVersion: offer.stateVersion + 1,
     pendingObservation: null,
@@ -314,9 +330,10 @@ export function buildSupplierOfferId(sourceIdValue: unknown, supplierProductIdVa
   return `offer-${createHash("sha256").update(`${sourceId}|${productIdentity}`).digest("hex").slice(0, 40)}`;
 }
 
-export function supplierOfferAvailability(value: unknown, stockValue: unknown): SupplierOfferAvailability {
+export function supplierOfferAvailability(value: unknown, stockValue: unknown, stockKnown = true): SupplierOfferAvailability {
   const normalized = normalizeSupplierOfferIdentity(value).replace(/[\s-]+/gu, "_");
   if (["unavailable", "discontinued", "deleted", "inactive"].includes(normalized)) return "unavailable";
+  if (!stockKnown) return "unknown";
   if (["out_of_stock", "outofstock", "sold_out"].includes(normalized)) return "out_of_stock";
   if (["in_stock", "instock", "available", "active"].includes(normalized)) return stock(stockValue) > 0 ? "in_stock" : "out_of_stock";
   return stock(stockValue) > 0 ? "in_stock" : "out_of_stock";
@@ -332,6 +349,7 @@ export interface BuildSupplierProductOfferInput {
   price?: unknown;
   cost?: unknown;
   stock?: unknown;
+  stockKnown?: unknown;
   availability?: unknown;
   priority?: unknown;
   health?: unknown;
@@ -370,7 +388,16 @@ export function buildSupplierProductOffer(input: BuildSupplierProductOfferInput)
     price: money(input.price),
     cost: money(input.cost),
     stock: stock(input.stock),
-    availability: supplierOfferAvailability(input.availability, input.stock),
+    stockKnown: input.stockKnown === undefined
+      ? input.stock !== undefined && input.stock !== null && String(input.stock).trim() !== ""
+      : input.stockKnown !== false,
+    availability: supplierOfferAvailability(
+      input.availability,
+      input.stock,
+      input.stockKnown === undefined
+        ? input.stock !== undefined && input.stock !== null && String(input.stock).trim() !== ""
+        : input.stockKnown !== false,
+    ),
     priority: existing.priority === undefined ? normalizeSupplierOfferPriority(input.priority) : normalizeSupplierOfferPriority(existing.priority),
     health: asRecord(input.health),
     lastSyncAt: text(input.lastSyncAt, 80),
@@ -401,10 +428,11 @@ export function parseSupplierOfferSelection(value: unknown): SupplierOfferSelect
   };
 }
 
-export const isSupplierOfferAvailableForCommerce = (offer: Pick<SupplierProductOffer, "enabled" | "availability" | "stock" | "health">): boolean => {
+export const isSupplierOfferAvailableForCommerce = (offer: Pick<SupplierProductOffer, "enabled" | "availability" | "stock" | "stockKnown" | "health">): boolean => {
   const availability = normalizeSupplierOfferIdentity(offer.health.availability);
   const sourceAvailability = normalizeSupplierOfferIdentity(offer.health.sourceAvailability);
   return offer.enabled
+    && offer.stockKnown !== false
     && offer.availability === "in_stock"
     && offer.stock > 0
     && availability !== "unavailable"
@@ -506,6 +534,7 @@ export function projectSupplierOfferForAdmin(value: unknown): SupplierProductOff
     price: offer.price,
     cost: offer.cost,
     stock: offer.stock,
+    stockKnown: offer.stockKnown,
     availability: offer.availability,
     priority: offer.priority,
     health: offer.health,
@@ -541,6 +570,7 @@ const activeSupplierPrivateProjection = (offer: SupplierProductOffer | null, exi
     activeOfferId: offer.id,
     lastOfferSelectionAt: offer.lastSyncAt,
     inventoryLevel: offer.stock,
+    supplierStockAvailable: offer.stockKnown,
     price: offer.price,
     availability: offer.availability,
     supplierFailoverDeactivated: false,
@@ -580,7 +610,8 @@ const offerEligibilitySnapshot = (value: unknown): Record<string, unknown> => {
     enabled: offer.enabled !== false,
     reviewStatus: text(offer.reviewStatus, 30),
     stock: stock(offer.stock),
-    availability: supplierOfferAvailability(offer.availability, offer.stock),
+    stockKnown: offer.stockKnown !== false,
+    availability: supplierOfferAvailability(offer.availability, offer.stock, offer.stockKnown !== false),
     healthAvailability: normalizeSupplierOfferIdentity(asRecord(offer.health).availability),
     sourceAvailability: normalizeSupplierOfferIdentity(asRecord(offer.health).sourceAvailability),
   };
@@ -595,6 +626,239 @@ export interface SupplierOfferFailoverResult {
   changed: boolean;
   previousOfferId: string | null;
   activeOfferId: string | null;
+}
+
+export type SupplierInventoryAutomationAction =
+  | "STOCK_UPDATED"
+  | "STOCK_BECAME_OUT_OF_STOCK"
+  | "STOCK_RESTORED"
+  | "SUPPLIER_PRODUCT_REMOVED";
+
+export interface ApprovedSupplierInventoryObservationInput {
+  offerId: string;
+  productId: string;
+  stock: number;
+  observedAt: string;
+  traversalId?: string;
+  batchId?: string;
+  reason?: string;
+  removed?: boolean;
+  expectedStateVersion?: number;
+  suppressReviewQueueItemId?: string;
+}
+
+export interface ApprovedSupplierInventoryObservationResult {
+  applied: boolean;
+  action: SupplierInventoryAutomationAction | null;
+  offer: SupplierProductOffer | null;
+  activeOfferId: string | null;
+  publicStock: number | null;
+  publicAvailability: SupplierOfferAvailability | null;
+}
+
+const supplierInventoryAutomationAction = (
+  previousStock: number,
+  nextStock: number,
+  removed: boolean,
+): SupplierInventoryAutomationAction => {
+  if (removed) return "SUPPLIER_PRODUCT_REMOVED";
+  if (previousStock > 0 && nextStock === 0) return "STOCK_BECAME_OUT_OF_STOCK";
+  if (previousStock === 0 && nextStock > 0) return "STOCK_RESTORED";
+  return "STOCK_UPDATED";
+};
+
+/**
+ * Applies a known supplier inventory observation to an already-approved offer.
+ * Offer state, authoritative selection, public stock, private attribution, and
+ * audit evidence commit together. Content and pricing remain review-gated unless
+ * the existing failover policy selects a different approved commerce offer.
+ */
+export async function applyApprovedSupplierInventoryObservation(
+  db: Firestore,
+  input: ApprovedSupplierInventoryObservationInput,
+): Promise<ApprovedSupplierInventoryObservationResult> {
+  const offerId = cleanDocumentId(input.offerId, "Supplier offer ID");
+  const productId = cleanDocumentId(input.productId, "Product ID");
+  const observedStock = stock(input.stock);
+  const observedAt = text(input.observedAt, 80);
+  if (!observedAt) throw new Error("A supplier inventory observation requires an observed timestamp.");
+
+  return db.runTransaction(async (transaction) => {
+    const offerReference = db.collection(SUPPLIER_PRODUCT_OFFERS_COLLECTION).doc(offerId);
+    const productReference = db.collection("products").doc(productId);
+    const privateReference = db.collection(PRODUCT_PRIVATE_COLLECTION).doc(productId);
+    const offersQuery = db.collection(SUPPLIER_PRODUCT_OFFERS_COLLECTION).where("productId", "==", productId).limit(100);
+    const reviewReference = input.suppressReviewQueueItemId
+      ? db.collection("supplier_review_queue").doc(cleanDocumentId(input.suppressReviewQueueItemId, "Product Review ID"))
+      : null;
+    const [offerSnapshot, productSnapshot, privateSnapshot, offersSnapshot, reviewSnapshot] = await Promise.all([
+      transaction.get(offerReference),
+      transaction.get(productReference),
+      transaction.get(privateReference),
+      transaction.get(offersQuery),
+      reviewReference ? transaction.get(reviewReference) : Promise.resolve(null),
+    ]);
+    const currentOffer = offerSnapshot.exists
+      ? projectSupplierOfferForAdmin({ id: offerSnapshot.id, ...offerSnapshot.data() })
+      : null;
+    if (!currentOffer || currentOffer.productId !== productId || currentOffer.reviewStatus !== "approved" || !productSnapshot.exists) {
+      return {
+        applied: false,
+        action: null,
+        offer: currentOffer,
+        activeOfferId: null,
+        publicStock: null,
+        publicAvailability: null,
+      };
+    }
+    if (input.expectedStateVersion !== undefined && currentOffer.stateVersion !== input.expectedStateVersion) {
+      throw new Error("Supplier offer state changed before its inventory observation could be applied.");
+    }
+
+    const offersBefore = offersSnapshot.docs
+      .map((document) => projectSupplierOfferForAdmin({ id: document.id, ...document.data() }))
+      .filter((offer): offer is SupplierProductOffer => Boolean(offer));
+    const currentProduct = productSnapshot.data() || {};
+    const currentPrivate = privateSnapshot.data() || {};
+    const availability: SupplierOfferAvailability = input.removed
+      ? "unavailable"
+      : observedStock > 0 ? "in_stock" : "out_of_stock";
+    const alreadyAppliedRemoval = input.removed === true
+      && currentOffer.stock === 0
+      && currentOffer.availability === "unavailable"
+      && String(asRecord(currentOffer.supplierSnapshot).reconciliationAction || "") === "supplier_offer_unavailable";
+    const alreadyAppliedStock = input.removed !== true
+      && currentOffer.stock === observedStock
+      && currentOffer.availability === availability;
+    if (alreadyAppliedRemoval || alreadyAppliedStock) {
+      return {
+        applied: false,
+        action: null,
+        offer: currentOffer,
+        activeOfferId: parseSupplierOfferSelection(currentPrivate.supplierOfferSelection).activeOfferId || null,
+        publicStock: Number(currentProduct.stock ?? 0),
+        publicAvailability: (currentProduct.availability || null) as SupplierOfferAvailability | null,
+      };
+    }
+
+    const selection = parseSupplierOfferSelection(currentPrivate.supplierOfferSelection);
+    const previousAuthority = resolveActiveSupplierOffer(offersBefore, selection);
+    const existingProvidedFields = Array.isArray(currentOffer.supplierSnapshot.providedFields)
+      ? currentOffer.supplierSnapshot.providedFields.filter((field): field is string => typeof field === "string")
+      : [];
+    const effectiveOffer: SupplierProductOffer = {
+      ...currentOffer,
+      stock: observedStock,
+      stockKnown: true,
+      availability,
+      health: {
+        ...currentOffer.health,
+        stockKnown: true,
+        inventoryObservedAt: observedAt,
+        ...(input.removed ? { availability: "unavailable" } : {}),
+      },
+      lastSyncAt: observedAt,
+      supplierSnapshot: {
+        ...currentOffer.supplierSnapshot,
+        inventoryLevel: observedStock,
+        stock: observedStock,
+        providedFields: [...new Set([...existingProvidedFields, "stock", "inventoryLevel"])],
+        ...(input.removed ? { reconciliationAction: "supplier_offer_unavailable" } : {}),
+      },
+      stateVersion: currentOffer.stateVersion + 1,
+      updatedAt: observedAt,
+    };
+    const offersAfter = offersBefore.map((offer) => offer.id === offerId ? effectiveOffer : offer);
+    if (!offersAfter.some((offer) => offer.id === offerId)) offersAfter.push(effectiveOffer);
+    const nextAuthority = resolveActiveSupplierOffer(offersAfter, selection);
+    const authorityChanged = previousAuthority?.id !== nextAuthority?.id;
+    const projectsObservedOffer = nextAuthority?.id === offerId;
+    const previousSupplierStock = asRecord(currentPrivate.supplierMetadata).inventoryLevel
+      ?? previousAuthority?.stock
+      ?? currentProduct.stock;
+    let publicProjection: Record<string, unknown> = {};
+    if (nextAuthority && (authorityChanged || projectsObservedOffer)) {
+      publicProjection = authorityChanged && isSupplierOfferAvailableForCommerce(nextAuthority)
+        ? buildSupplierOfferPublicProjection(nextAuthority, currentProduct, previousSupplierStock)
+        : {
+          stock: reconcileSupplierApprovalStock(previousSupplierStock, currentProduct.stock, nextAuthority.stock, true),
+          availability: nextAuthority.availability === "unavailable"
+            ? "unavailable"
+            : nextAuthority.stock > 0 ? "in_stock" : "out_of_stock",
+        };
+    }
+    const nextSelection: SupplierOfferSelection = {
+      ...selection,
+      activeOfferId: nextAuthority?.id || selection.activeOfferId,
+      updatedAt: FieldValue.serverTimestamp(),
+      updatedBy: "system:supplier-inventory",
+    };
+    const action = supplierInventoryAutomationAction(currentOffer.stock, observedStock, input.removed === true);
+
+    transaction.set(offerReference, {
+      ...effectiveOffer,
+      ...(input.traversalId ? {
+        supplierCatalogTraversalId: input.traversalId,
+        supplierCatalogSeenAt: observedAt,
+      } : {}),
+    }, { merge: true });
+    if (Object.keys(publicProjection).length > 0) {
+      transaction.set(productReference, {
+        ...publicProjection,
+        updatedAt: FieldValue.serverTimestamp(),
+      }, { merge: true });
+      transaction.set(privateReference, {
+        ...activeSupplierPrivateProjection(nextAuthority, currentPrivate),
+        supplierOfferSelection: nextSelection,
+        updatedAt: FieldValue.serverTimestamp(),
+      }, { merge: true });
+    }
+    if (reviewReference && reviewSnapshot?.exists) {
+      transaction.set(reviewReference, {
+        status: "Suppressed",
+        queueState: "suppressed",
+        systemDecision: action,
+        systemDecisionReason: input.reason || "Supplier inventory automation superseded Product Review.",
+        updatedAt: observedAt,
+      }, { merge: true });
+    }
+    const auditReference = db.collection("supplier_operations_audit").doc();
+    transaction.create(auditReference, {
+      id: auditReference.id,
+      eventId: auditReference.id,
+      module: "supplier_automation",
+      action,
+      productId,
+      supplierId: effectiveOffer.supplierId,
+      sourceId: effectiveOffer.sourceId,
+      offerId,
+      previousOfferId: previousAuthority?.id || null,
+      activeOfferId: nextAuthority?.id || null,
+      batchId: text(input.batchId, 180) || null,
+      reason: text(input.reason, 1_000) || null,
+      before: {
+        offerStock: currentOffer.stock,
+        offerAvailability: currentOffer.availability,
+        publicStock: currentProduct.stock ?? null,
+        publicAvailability: currentProduct.availability ?? null,
+      },
+      after: {
+        offerStock: observedStock,
+        offerAvailability: availability,
+        publicStock: publicProjection.stock ?? currentProduct.stock ?? null,
+        publicAvailability: publicProjection.availability ?? currentProduct.availability ?? null,
+      },
+      timestamp: FieldValue.serverTimestamp(),
+    });
+    return {
+      applied: true,
+      action,
+      offer: effectiveOffer,
+      activeOfferId: nextAuthority?.id || null,
+      publicStock: Number(publicProjection.stock ?? currentProduct.stock),
+      publicAvailability: (publicProjection.availability || currentProduct.availability || null) as SupplierOfferAvailability | null,
+    };
+  });
 }
 
 /**

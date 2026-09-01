@@ -45,6 +45,7 @@ import {
   supplierSyncRequestHasFilters,
 } from "../api/suppliers/supplierSyncRequest";
 import {
+  applyApprovedSupplierInventoryObservation,
   buildSupplierOfferId,
   buildSupplierOfferObservationWrite,
   buildSupplierOfferPendingObservation,
@@ -1054,6 +1055,38 @@ export function buildSupplierReactivationComparison(
   };
 }
 
+const AUTOMATED_STOCK_FIELDS = new Set(["stock", "availability"]);
+
+/** Removes only the stock/availability fields owned by P1 automation; every content and pricing field stays review-gated. */
+export function removeAutomatedStockChangesFromSupplierComparison(
+  comparison: SupplierProductComparison,
+): SupplierProductComparison | null {
+  const fieldChanges = comparison.fieldChanges.filter((change) => !AUTOMATED_STOCK_FIELDS.has(change.field));
+  if (fieldChanges.length === 0) return null;
+  const groups = new Set(fieldChanges.map((change) => change.syncGroup));
+  const status: SupplierProductComparisonStatus = groups.has("pricing")
+    ? "PRICE_CHANGED"
+    : groups.has("inventory")
+      ? "STOCK_CHANGED"
+      : groups.has("media")
+        ? "IMAGE_CHANGED"
+        : "DESCRIPTION_CHANGED";
+  return {
+    status,
+    changedFields: [...new Set(fieldChanges.map((change) => change.label))],
+    fieldChanges,
+  };
+}
+
+export function shouldDeferNewSupplierProductForZeroStock(
+  product: Pick<RawA2ZProduct, "inventoryLevel" | "providedFields">,
+  publishedProductExists: boolean,
+): boolean {
+  return !publishedProductExists
+    && supplierStockWasProvided(product)
+    && Number(product.inventoryLevel) === 0;
+}
+
 function buildSupplierConflictRecord(
   source: SupplierSource,
   product: RawA2ZProduct,
@@ -1414,6 +1447,43 @@ interface SupplierSyncWrite {
   offerStateExpectation?: SupplierOfferStateExpectation;
 }
 
+function buildSupplierAutomationAuditWrite(input: {
+  action: "NEW_PRODUCT_DEFERRED_ZERO_STOCK" | "CATEGORY_AUTO_MATCHED";
+  source: SupplierSource;
+  offer: SupplierProductOffer;
+  productId: string;
+  batchId: string;
+  observedAt: string;
+  reason: string;
+  before?: Record<string, unknown>;
+  after?: Record<string, unknown>;
+  atomicGroup?: string;
+}): SupplierSyncWrite {
+  const reference = adminDb.collection("supplier_operations_audit").doc();
+  return {
+    collection: "supplier_operations_audit",
+    id: reference.id,
+    create: true,
+    ...(input.atomicGroup ? { atomicGroup: input.atomicGroup } : {}),
+    data: {
+      id: reference.id,
+      eventId: reference.id,
+      module: "supplier_automation",
+      action: input.action,
+      productId: input.productId,
+      supplierId: input.offer.supplierId,
+      sourceId: input.source.id,
+      offerId: input.offer.id,
+      batchId: input.batchId,
+      reason: input.reason,
+      before: input.before || {},
+      after: input.after || {},
+      timestamp: FieldValue.serverTimestamp(),
+      observedAt: input.observedAt,
+    },
+  };
+}
+
 async function commitQueuedItems(items: SupplierSyncWrite[]): Promise<void> {
   let batch = adminDb.batch();
   let operationCount = 0;
@@ -1724,6 +1794,21 @@ async function queueMissingSupplierOffersForReview(
         const activePreApprovalReview = !productSnapshot?.exists ? activeReviewByOfferId.get(offer.id) : undefined;
         const atomicGroup = activePreApprovalReview?.id || queueItemId;
         const detectedAt = new Date().toISOString();
+        if (productSnapshot?.exists && offer.reviewStatus === "approved") {
+          const automatedRemoval = await applyApprovedSupplierInventoryObservation(adminDb, {
+            offerId: offer.id,
+            productId: offer.productId!,
+            stock: 0,
+            observedAt: detectedAt,
+            traversalId: traversal.traversalId,
+            batchId,
+            reason: "Approved supplier offer was absent from a verified complete catalog traversal.",
+            removed: true,
+            expectedStateVersion: offer.stateVersion,
+            ...(activeRemovalReview ? { suppressReviewQueueItemId: activeRemovalReview.id } : {}),
+          });
+          if (automatedRemoval.applied) continue;
+        }
         const removalObservedOffer = buildSupplierProductOffer({
           sourceId: offer.sourceId,
           supplierId: offer.supplierId,
@@ -2606,7 +2691,8 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
         const activeReviewQueueDocs = queueCandidates.review.filter((queueDoc) => {
           const state = String(queueDoc.data().queueState || "").toLowerCase();
           const status = String(queueDoc.data().status || "").toLowerCase();
-          return !["approved", "rejected"].includes(state) && !["approved", "rejected"].includes(status);
+          return !["approved", "rejected", "suppressed"].includes(state)
+            && !["approved", "rejected", "suppressed"].includes(status);
         });
         activeReviewQueueDocs.forEach((queueDoc) => {
           const data = queueDoc.data();
@@ -2770,7 +2856,8 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
               settings.defaultProfitMargin,
             ).sellingPrice,
             cost: product.wholesalePrice,
-            stock: product.inventoryLevel,
+            stock: supplierStockWasProvided(product) ? product.inventoryLevel : undefined,
+            stockKnown: supplierStockWasProvided(product),
             availability: product.availability,
             priority: supplierPriority(source),
             health: { ...(source.syncHealth || {}), availability: "available", observedAt: createdAt },
@@ -2787,6 +2874,64 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
             const reason = conflict?.reason || "duplicate_supplier_product" as const;
             const record = buildSupplierConflictRecord(source, product, winner, reason, batchId);
             queuedWrites.push({ collection: "supplier_product_conflicts", id: record.id, data: record.data });
+          }
+          if (shouldDeferNewSupplierProductForZeroStock(product, Boolean(match))) {
+            const wasAlreadyDeferred = ownOffer?.reviewStatus === "suppressed"
+              && ownOffer.stockKnown !== false
+              && ownOffer.stock === 0;
+            const deferredOffer: SupplierProductOffer = {
+              ...initialOffer,
+              stock: 0,
+              stockKnown: true,
+              availability: "out_of_stock",
+              reviewStatus: "suppressed",
+              pendingObservation: null,
+              stateVersion: ownOffer ? ownOffer.stateVersion + 1 : 0,
+              updatedAt: createdAt,
+            };
+            queuedWrites.push({
+              collection: SUPPLIER_PRODUCT_OFFERS_COLLECTION,
+              id: deferredOffer.id,
+              data: {
+                ...deferredOffer,
+                supplierCatalogTraversalId: traversalCheckpoint.traversalId,
+                supplierCatalogSeenAt: createdAt,
+              },
+              atomicGroup: queueItemId,
+              offerStateExpectation: supplierOfferStateExpectation(ownOffer || {}),
+            });
+            if (activeReviewQueueDoc) {
+              queuedWrites.push({
+                collection: "supplier_review_queue",
+                id: activeReviewQueueDoc.id,
+                atomicGroup: queueItemId,
+                data: {
+                  status: "Suppressed",
+                  queueState: "suppressed",
+                  systemDecision: "NEW_PRODUCT_DEFERRED_ZERO_STOCK",
+                  systemDecisionReason: "New supplier product deferred because explicit supplier stock is zero.",
+                  updatedAt: createdAt,
+                },
+              });
+            }
+            if (!wasAlreadyDeferred || activeReviewQueueDoc) {
+              queuedWrites.push(buildSupplierAutomationAuditWrite({
+                action: "NEW_PRODUCT_DEFERRED_ZERO_STOCK",
+                source,
+                offer: deferredOffer,
+                productId: targetProductId,
+                batchId,
+                observedAt: createdAt,
+                reason: "New product deferred because supplier stock is explicitly zero.",
+                after: { offerStock: 0, offerAvailability: "out_of_stock", reviewQueued: false },
+                atomicGroup: queueItemId,
+              }));
+            }
+            seenSupplierProducts.set(supplierProductKey, currentWinner);
+            winnerBySku.set(normalizedSupplierCode, currentWinner);
+            if (normalizedBarcode) winnerByBarcode.set(normalizedBarcode, currentWinner);
+            metrics.productsSkipped += 1;
+            continue;
           }
           if (duplicateFromSameSource) {
             const stagedDuplicate = stageSupplierOfferObservation({
@@ -2853,40 +2998,109 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
             ownOffer?.availability,
             initialOffer.availability,
           );
-          const reactivatingSupplierOffer = reactivation.reactivating;
+          let inventoryAutomated = false;
+          let effectiveOwnOffer = ownOffer;
+          let effectiveMatch = match;
+          let reviewCandidate: SupplierProductComparison | null = reactivation.comparison;
+          const hasAutomatableStockChange = reactivation.comparison.fieldChanges.some((change) => (
+            AUTOMATED_STOCK_FIELDS.has(change.field)
+          ));
+          if (
+            ownOffer?.reviewStatus === "approved"
+            && ownOffer.productId
+            && match
+            && supplierStockWasProvided(product)
+            && hasAutomatableStockChange
+          ) {
+            const latestWithoutStock = removeAutomatedStockChangesFromSupplierComparison(reactivation.comparison);
+            const existingWithoutStock = activeReviewQueueData
+              ? removeAutomatedStockChangesFromSupplierComparison(accumulateSupplierProductComparison(
+                activeReviewQueueData.comparison || {
+                  comparisonStatus: activeReviewQueueData.comparisonStatus,
+                  changedFields: [],
+                  fieldChanges: [],
+                },
+                { status: "UNCHANGED", changedFields: [], fieldChanges: [] },
+              ))
+              : null;
+            const automation = await applyApprovedSupplierInventoryObservation(adminDb, {
+              offerId: ownOffer.id,
+              productId: ownOffer.productId,
+              stock: product.inventoryLevel,
+              observedAt: createdAt,
+              traversalId: traversalCheckpoint.traversalId,
+              batchId,
+              reason: "Known supplier inventory changed during catalog synchronization.",
+              expectedStateVersion: ownOffer.stateVersion,
+              ...(!latestWithoutStock && !existingWithoutStock && activeReviewQueueDoc
+                ? { suppressReviewQueueItemId: activeReviewQueueDoc.id }
+                : {}),
+            });
+            if (automation.applied && automation.offer) {
+              inventoryAutomated = true;
+              effectiveOwnOffer = automation.offer;
+              effectiveMatch = {
+                ...match,
+                ...(automation.publicStock !== null ? { stock: automation.publicStock } : {}),
+                ...(automation.publicAvailability ? { availability: automation.publicAvailability } : {}),
+              };
+              reviewCandidate = latestWithoutStock;
+              const offerIndex = existingOffers.findIndex((offer) => offer.id === automation.offer?.id);
+              if (offerIndex >= 0) existingOffers[offerIndex] = automation.offer;
+            }
+          }
           const selectedComparison = selectSupplierComparisonForReview(
-            reactivation.comparison,
+            reviewCandidate || { status: "UNCHANGED", changedFields: [], fieldChanges: [] },
             sourceSettings,
-            ownOffer?.reviewStatus,
+            effectiveOwnOffer?.reviewStatus,
             hasActiveReviewQueueItem,
           );
           if (!selectedComparison) {
-            if (ownOffer) queuedWrites.push({
+            if (!activeReviewQueueData) {
+              if (effectiveOwnOffer && !inventoryAutomated) queuedWrites.push({
+                collection: SUPPLIER_PRODUCT_OFFERS_COLLECTION,
+                id: effectiveOwnOffer.id,
+                data: {
+                  supplierCatalogTraversalId: traversalCheckpoint.traversalId,
+                  supplierCatalogSeenAt: createdAt,
+                  lastSyncAt: createdAt,
+                },
+              });
+              if (inventoryAutomated) metrics.productsUpdated += 1;
+              else metrics.productsSkipped += 1;
+              continue;
+            }
+          }
+          const canonicalSelectedComparison: SupplierProductComparison | null = selectedComparison ? {
+            ...selectedComparison,
+            fieldChanges: selectedComparison.fieldChanges || [],
+          } : null;
+          const comparison = activeReviewQueueData
+            ? (inventoryAutomated ? removeAutomatedStockChangesFromSupplierComparison : (value: SupplierProductComparison) => value)(
+              accumulateSupplierProductComparison(
+                activeReviewQueueData.comparison || {
+                  comparisonStatus: activeReviewQueueData.comparisonStatus,
+                  changedFields: [],
+                  fieldChanges: [],
+                },
+                canonicalSelectedComparison || { status: "UNCHANGED", changedFields: [], fieldChanges: [] },
+              ),
+            )
+            : canonicalSelectedComparison;
+          if (!comparison) {
+            if (effectiveOwnOffer && !inventoryAutomated) queuedWrites.push({
               collection: SUPPLIER_PRODUCT_OFFERS_COLLECTION,
-              id: ownOffer.id,
+              id: effectiveOwnOffer.id,
               data: {
                 supplierCatalogTraversalId: traversalCheckpoint.traversalId,
                 supplierCatalogSeenAt: createdAt,
                 lastSyncAt: createdAt,
               },
             });
-            metrics.productsSkipped += 1;
+            if (inventoryAutomated) metrics.productsUpdated += 1;
+            else metrics.productsSkipped += 1;
             continue;
           }
-          const canonicalSelectedComparison: SupplierProductComparison = {
-            ...selectedComparison,
-            fieldChanges: selectedComparison.fieldChanges || [],
-          };
-          const comparison = activeReviewQueueData
-            ? accumulateSupplierProductComparison(
-              activeReviewQueueData.comparison || {
-                comparisonStatus: activeReviewQueueData.comparisonStatus,
-                changedFields: [],
-                fieldChanges: [],
-              },
-              canonicalSelectedComparison,
-            )
-            : canonicalSelectedComparison;
           const supplierBrand = String(product.brand || product.specifications?.brand || product.specifications?.Brand || "").trim();
           const supplierKeywords = product.keywords || String(product.specifications?.keywords || product.specifications?.Keywords || "")
             .split(/[,|]/gu)
@@ -2908,9 +3122,17 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
             brands: storeBrands,
             mappings: storedMappings.brandMappings,
           });
-          const productPayloadBase = match && activeReviewQueueData
-            ? { ...match, ...asRecord(activeReviewQueueData.productPayload), id: match.id } as ExistingProduct
-            : match;
+          const productPayloadBase = effectiveMatch && activeReviewQueueData
+            ? {
+              ...effectiveMatch,
+              ...asRecord(activeReviewQueueData.productPayload),
+              id: effectiveMatch.id,
+              stock: effectiveMatch.stock,
+              ...(asRecord(effectiveMatch).availability !== undefined
+                ? { availability: asRecord(effectiveMatch).availability }
+                : {}),
+            } as ExistingProduct
+            : effectiveMatch;
           const productPayload = buildProductPayload(
             product,
             productPayloadBase,
@@ -2921,7 +3143,7 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
             settings,
             source,
             targetProductId,
-            reactivatingSupplierOffer,
+            !inventoryAutomated && reactivation.reactivating,
           );
           const productValidationErrors = validateSupplierProductForApproval(productPayload, storeCategories, storeBrands);
           const productImportWarnings = buildSupplierImportWarnings(product, productPayload);
@@ -2953,6 +3175,7 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
             price: productPayload.price,
             cost: supplierCostWasProvided(product) ? product.wholesalePrice : undefined,
             stock: supplierStockWasProvided(product) ? product.inventoryLevel : undefined,
+            stockKnown: supplierStockWasProvided(product),
             availability: product.availability,
             priority: supplierPriority(source),
             health: { ...(source.syncHealth || {}), availability: "available", observedAt: createdAt },
@@ -2960,11 +3183,11 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
             reviewStatus: "review_pending",
             catalogPayload: productPayload,
             supplierSnapshot,
-            existing: ownOffer,
+            existing: effectiveOwnOffer,
             timestamp: createdAt,
           });
           const stagedOffer = stageSupplierOfferObservation({
-            existing: ownOffer || null,
+            existing: effectiveOwnOffer || null,
             observed: supplierOffer,
             queueItemId,
             traversalId: traversalCheckpoint.traversalId,
@@ -3003,13 +3226,13 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
             imageUrl: product.mediaGallery?.[0],
             comparisonStatus: comparison.status,
             comparison: {
-              matchFound: !!match,
-              matchedProductId: match?.id || ownOffer?.productId || duplicateOffer?.productId || skuWinner?.productId || barcodeWinner?.productId || null,
+              matchFound: !!effectiveMatch,
+              matchedProductId: effectiveMatch?.id || effectiveOwnOffer?.productId || duplicateOffer?.productId || skuWinner?.productId || barcodeWinner?.productId || null,
               comparisonStatus: comparison.status,
               changedFields: comparison.changedFields,
               fieldChanges: comparison.fieldChanges || [],
             },
-            ...(reactivatingSupplierOffer ? { reconciliationAction: "supplier_offer_reactivated" } : {}),
+            ...(!inventoryAutomated && reactivation.reactivating ? { reconciliationAction: "supplier_offer_reactivated" } : {}),
             productPayload,
             managedMedia: Array.isArray(productPayload.supplierMedia) ? productPayload.supplierMedia : [],
             supplierSnapshot,
@@ -3021,10 +3244,10 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
               errors: productValidationErrors,
               warnings: productImportWarnings,
             },
-            matchedProductId: match?.id || ownOffer?.productId || duplicateOffer?.productId || skuWinner?.productId || barcodeWinner?.productId || null,
+            matchedProductId: effectiveMatch?.id || effectiveOwnOffer?.productId || duplicateOffer?.productId || skuWinner?.productId || barcodeWinner?.productId || null,
             approvalBaseline: activeReviewQueueData?.approvalBaseline || buildSupplierProductApprovalBaseline(
               String(productPayload.id),
-              match ? { ...match } : undefined,
+              effectiveMatch ? { ...effectiveMatch } : undefined,
               queueCreatedAt,
             ),
             createdAt: queueCreatedAt,
@@ -3104,6 +3327,30 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
               data: queueData,
               atomicGroup: queueItemId,
             });
+            const previousCategoryMapping = asRecord(activeReviewQueueData?.categoryMapping);
+            if (
+              categoryMapping.autoSelected
+              && categoryMapping.targetCategoryId
+              && previousCategoryMapping.targetCategoryId !== categoryMapping.targetCategoryId
+            ) {
+              queuedWrites.push(buildSupplierAutomationAuditWrite({
+                action: "CATEGORY_AUTO_MATCHED",
+                source,
+                offer: supplierOffer,
+                productId: targetProductId,
+                batchId,
+                observedAt: createdAt,
+                reason: `Supplier category "${categoryMapping.supplierCategory}" matched active Zyro category "${categoryMapping.targetCategoryId}".`,
+                before: { supplierCategory: categoryMapping.supplierCategory },
+                after: {
+                  categoryId: categoryMapping.targetCategoryId,
+                  subcategoryId: categoryMapping.targetSubcategoryId || null,
+                  mappingType: categoryMapping.mappingType,
+                  mappingSource: categoryMapping.mappingSource,
+                },
+                atomicGroup: queueItemId,
+              }));
+            }
             if (queueLifecycle.requeueForMedia) {
               const auditReference = adminDb.collection("supplier_approval_audit").doc();
               queuedWrites.push({

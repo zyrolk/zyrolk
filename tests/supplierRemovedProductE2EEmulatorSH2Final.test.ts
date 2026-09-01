@@ -14,17 +14,14 @@ import type {
 // stateful Functions modules in one CommonJS cache so the connector registered
 // by this test is the same SupplierRegistry instance used by runSupplierSync.
 const requireFunctions = createRequire(import.meta.url);
-const { adminDb } = requireFunctions("../functions/src/api/firebase.ts") as typeof import("../functions/src/api/firebase");
-const { decideSupplierQueueItem } = requireFunctions("../functions/src/api/suppliers/supplierApproval.ts") as typeof import("../functions/src/api/suppliers/supplierApproval");
+const { adminDb, FieldValue } = requireFunctions("../functions/src/api/firebase.ts") as typeof import("../functions/src/api/firebase");
 const {
   buildSupplierProductOffer,
-  reconcileSupplierProductOfferFailover,
 } = requireFunctions("../functions/src/api/suppliers/supplierOfferEngine.ts") as typeof import("../functions/src/api/suppliers/supplierOfferEngine");
 const { SupplierRegistry } = requireFunctions("../functions/src/api/suppliers/SupplierRegistry.ts") as typeof import("../functions/src/api/suppliers/SupplierRegistry");
 const { ProductParser } = requireFunctions("../functions/src/api/suppliers/a2z/ProductParser.ts") as typeof import("../functions/src/api/suppliers/a2z/ProductParser");
 const { mergeSupplierProductMetadata } = requireFunctions("../functions/src/api/suppliers/supplierProductImport.ts") as typeof import("../functions/src/api/suppliers/supplierProductImport");
 const { SERVER_FILTERED_FULL_CATALOG_CAPABILITIES } = requireFunctions("../functions/src/api/suppliers/supplierSyncCapabilities.ts") as typeof import("../functions/src/api/suppliers/supplierSyncCapabilities");
-const { processSupplierReviewQueueItem } = requireFunctions("../functions/src/scheduled/supplierReviewQueue.ts") as typeof import("../functions/src/scheduled/supplierReviewQueue");
 const { runSupplierSync } = requireFunctions("../functions/src/scheduled/supplierSync.ts") as typeof import("../functions/src/scheduled/supplierSync");
 
 const canRun = Boolean(process.env.FIRESTORE_EMULATOR_HOST);
@@ -291,19 +288,48 @@ const seedApprovedFixture = async (identity: string): Promise<ApprovedFixture> =
   return fixture;
 };
 
-const runFullSync = (
+const GLOBAL_SUPPLIER_SYNC_LOCK_ID = "scheduled_supplier_sync";
+
+const clearOrphanedGlobalSupplierSyncLock = async (): Promise<void> => {
+  const lockRef = adminDb.collection("supplier_sync_locks").doc(GLOBAL_SUPPLIER_SYNC_LOCK_ID);
+  const lock = await lockRef.get();
+  if (lock.data()?.status !== "running") return;
+  await lockRef.set({
+    status: "idle",
+    activeSyncCount: 0,
+    lockedUntil: FieldValue.delete(),
+  }, { merge: true });
+};
+
+const releaseGlobalSupplierSyncLockIfOwned = async (batchId: string): Promise<void> => {
+  const lockRef = adminDb.collection("supplier_sync_locks").doc(GLOBAL_SUPPLIER_SYNC_LOCK_ID);
+  const lock = await lockRef.get();
+  if (lock.data()?.owner !== batchId || lock.data()?.status !== "running") return;
+  await lockRef.set({
+    status: "idle",
+    activeSyncCount: 0,
+    finishedAt: new Date().toISOString(),
+    lockedUntil: FieldValue.delete(),
+  }, { merge: true });
+};
+
+const runFullSync = async (
   sourceIds: string[],
   batchId: string,
   syncRequest: Record<string, unknown> = { mode: "full", pageSize: 2 },
   control?: { reportProgress(): Promise<void>; shouldCancel(): boolean },
-) => runSupplierSync({
-  trigger: "manual",
-  sourceIds,
-  batchId,
-  syncRequest: syncRequest as never,
-  maxRuntimeMs: 60_000,
-  ...(control ? { control } : {}),
-});
+) => {
+  const result = await runSupplierSync({
+    trigger: "manual",
+    sourceIds,
+    batchId,
+    syncRequest: syncRequest as never,
+    maxRuntimeMs: 60_000,
+    ...(control ? { control } : {}),
+  });
+  await releaseGlobalSupplierSyncLockIfOwned(batchId);
+  return result;
+};
 
 const removalReviews = async (offerId: string) => {
   const snapshot = await adminDb.collection("supplier_review_queue")
@@ -321,52 +347,34 @@ const publicProduct = async (productId: string) => (await adminDb.collection("pr
 const supplierOffer = async (offerId: string) => (await adminDb.collection("supplier_product_offers").doc(offerId).get()).data()!;
 const sourceRecord = async (sourceId: string) => (await adminDb.collection("supplierSources").doc(sourceId).get()).data()!;
 
-const assertApprovedBoundary = async (fixture: ApprovedFixture): Promise<void> => {
+const assertAutomatedUnavailable = async (fixture: ApprovedFixture): Promise<void> => {
   const offer = await supplierOffer(fixture.offerId);
   const product = await publicProduct(fixture.productId);
   assert.equal(offer.reviewStatus, "approved");
-  assert.equal(offer.stock, 10);
-  assert.equal(offer.availability, "in_stock");
-  assert.equal(offer.pendingObservation.kind, "catalog_removal");
-  assert.equal(offer.pendingObservation.effective.stock, 0);
-  assert.equal(offer.pendingObservation.effective.availability, "unavailable");
-  assert.equal(product.stock, 10);
-  assert.equal(product.availability, "in_stock");
+  assert.equal(offer.stock, 0);
+  assert.equal(offer.availability, "unavailable");
+  assert.equal(offer.pendingObservation, null);
+  assert.equal(product.stock, 0);
+  assert.equal(product.availability, "unavailable");
   assert.equal(product.isActive, true);
+  assert.equal(product.active, true);
   assert.equal(product.visible, true);
 };
 
-const addManagedReviewMedia = async (fixture: ApprovedFixture, queueItemId: string): Promise<void> => {
-  await adminDb.collection("supplier_review_queue").doc(queueItemId).set({
-    managedMedia: managedMedia(fixture),
-  }, { merge: true });
-};
+const supplierOperationsAudit = async (offerId: string, action: string) => adminDb
+  .collection("supplier_operations_audit")
+  .where("offerId", "==", offerId)
+  .where("action", "==", action)
+  .get();
 
-const prepareRemovalReviewForDecision = async (
-  fixture: ApprovedFixture,
-  queueItemId: string,
-): Promise<void> => {
-  await addManagedReviewMedia(fixture, queueItemId);
-  const processed = await processSupplierReviewQueueItem(
-    adminDb,
-    queueItemId,
-    `sh2-removal-worker-${fixture.sourceId}`,
-    Date.now(),
-  );
-  assert.deepEqual(processed, {
-    queueItemId,
-    outcome: "completed",
-    state: "review_pending",
-  });
-};
-
-test("SH-2 removed-product detection uses the real sync orchestration and remains approval-gated", {
+test("SH-2 removed-product detection uses the real sync orchestration and automates approved-offer availability", {
   skip: canRun ? undefined : "Firestore Emulator is required.",
   timeout: 240_000,
 }, async (t) => {
   assert.match(process.env.FIRESTORE_EMULATOR_HOST || "", /^(127\.0\.0\.1|localhost):\d+$/u);
+  await clearOrphanedGlobalSupplierSyncLock();
 
-  await t.test("present, absent, and repeated-absence traversals preserve one pending removal", async () => {
+  await t.test("present, absent, and repeated-absence traversals preserve the product without review noise", async () => {
     const fixture = await seedApprovedFixture("removal-lifecycle");
     configureConnector(fixture.sourceId, () => completePage([fixture.supplierProduct]));
     const present = await runFullSync([fixture.sourceId], "removal-present");
@@ -384,87 +392,58 @@ test("SH-2 removed-product detection uses the real sync orchestration and remain
     const absent = await runFullSync([fixture.sourceId], "removal-absent-1");
     assert.equal(absent.status, "Success");
     const absentSource = await sourceRecord(fixture.sourceId);
-    const firstReviews = await activeRemovalReviews(fixture.offerId);
     assert.equal(absentSource.catalogSync.status, "completed");
     assert.equal(absentSource.catalogSync.terminationReason, "catalog_complete");
-    assert.equal(firstReviews.length, 1);
-    assert.equal(firstReviews[0].data().supplierSnapshot.missingFromTraversalId, absentSource.catalogSync.traversalId);
-    await assertApprovedBoundary(fixture);
-    assert.equal((await reconcileSupplierProductOfferFailover(adminDb, fixture.productId, "pending removal validation")).changed, false);
-    assert.deepEqual(await publicProduct(fixture.productId), fixture.product);
+    assert.equal((await activeRemovalReviews(fixture.offerId)).length, 0);
+    await assertAutomatedUnavailable(fixture);
+    assert.ok(!(await supplierOperationsAudit(fixture.offerId, "SUPPLIER_PRODUCT_REMOVED")).empty);
 
-    const firstReviewId = firstReviews[0].id;
     const firstTraversalId = absentSource.catalogSync.traversalId;
     const repeated = await runFullSync([fixture.sourceId], "removal-absent-2");
     assert.equal(repeated.status, "Success");
     const repeatedSource = await sourceRecord(fixture.sourceId);
     const repeatedReviews = await activeRemovalReviews(fixture.offerId);
-    assert.equal(repeatedReviews.length, 1);
-    assert.equal(repeatedReviews[0].id, firstReviewId);
+    assert.equal(repeatedReviews.length, 0);
     assert.notEqual(repeatedSource.catalogSync.traversalId, firstTraversalId);
-    assert.equal(repeatedReviews[0].data().supplierSnapshot.missingFromTraversalId, repeatedSource.catalogSync.traversalId);
-    assert.equal((await supplierOffer(fixture.offerId)).pendingObservation.traversalId, repeatedSource.catalogSync.traversalId);
-    await assertApprovedBoundary(fixture);
+    assert.equal((await supplierOffer(fixture.offerId)).supplierCatalogTraversalId, firstTraversalId);
+    assert.equal((await supplierOperationsAudit(fixture.offerId, "SUPPLIER_PRODUCT_REMOVED")).size, 1);
+    await assertAutomatedUnavailable(fixture);
   });
 
-  await t.test("rejection preserves approved state and a later present traversal remains safe", async () => {
+  await t.test("a later present traversal restores approved stock without Product Review", async () => {
     const fixture = await seedApprovedFixture("removal-reject");
     configureConnector(fixture.sourceId, () => completePage([]));
     await runFullSync([fixture.sourceId], "removal-reject-absent");
-    const [review] = await activeRemovalReviews(fixture.offerId);
-    assert.ok(review);
-    await prepareRemovalReviewForDecision(fixture, review.id);
-    const revision = (await supplierOffer(fixture.offerId)).pendingObservation.revision;
-    const result = await decideSupplierQueueItem(adminDb, review.id, "rejected", {
-      uid: "emulator-admin",
-      email: "admin@example.test",
-    }, {
-      rejectionReason: "Supplier removal rejected during SH-2 validation.",
-      expectedPendingRevision: revision,
-    });
-    assert.equal(result.success, true);
-    const rejectedOffer = await supplierOffer(fixture.offerId);
-    assert.equal(rejectedOffer.reviewStatus, "approved");
-    assert.equal(rejectedOffer.stock, 10);
-    assert.equal(rejectedOffer.availability, "in_stock");
-    assert.equal(rejectedOffer.pendingObservation, null);
-    assert.deepEqual(await publicProduct(fixture.productId), fixture.product);
-    assert.equal((await adminDb.collection("supplier_review_queue").doc(review.id).get()).data()?.queueState, "rejected");
-
-    const audit = await adminDb.collection("supplier_approval_audit").where("queueItemId", "==", review.id).get();
-    assert.ok(audit.docs.some((document) => document.data().action === "reject"));
+    await assertAutomatedUnavailable(fixture);
+    assert.equal((await activeRemovalReviews(fixture.offerId)).length, 0);
     configureConnector(fixture.sourceId, () => completePage([fixture.supplierProduct]));
     await runFullSync([fixture.sourceId], "removal-reject-present");
-    assert.equal((await supplierOffer(fixture.offerId)).pendingObservation, null);
+    const restoredOffer = await supplierOffer(fixture.offerId);
+    const restoredProduct = await publicProduct(fixture.productId);
+    assert.equal(restoredOffer.stock, 10);
+    assert.equal(restoredOffer.availability, "in_stock");
+    assert.equal(restoredOffer.pendingObservation, null);
+    assert.equal(restoredProduct.stock, 10);
+    assert.equal(restoredProduct.availability, "in_stock");
+    assert.equal(restoredProduct.isActive, true);
+    assert.equal(restoredProduct.visible, true);
     assert.equal((await activeRemovalReviews(fixture.offerId)).length, 0);
+    assert.ok(!(await supplierOperationsAudit(fixture.offerId, "STOCK_RESTORED")).empty);
   });
 
-  await t.test("approval promotes the exact pending removal through the existing decision transaction", async () => {
+  await t.test("confirmed removal retains the catalogue document and records operations audit", async () => {
     const fixture = await seedApprovedFixture("removal-approve");
     configureConnector(fixture.sourceId, () => completePage([]));
     await runFullSync([fixture.sourceId], "removal-approve-absent");
-    const [review] = await activeRemovalReviews(fixture.offerId);
-    assert.ok(review);
-    await prepareRemovalReviewForDecision(fixture, review.id);
-    const revision = (await supplierOffer(fixture.offerId)).pendingObservation.revision;
-    const result = await decideSupplierQueueItem(adminDb, review.id, "approved", {
-      uid: "emulator-admin",
-      email: "admin@example.test",
-    }, { expectedPendingRevision: revision });
-    assert.equal(result.success, true);
-    const approvedOffer = await supplierOffer(fixture.offerId);
-    const approvedProduct = await publicProduct(fixture.productId);
-    const approvedReview = (await adminDb.collection("supplier_review_queue").doc(review.id).get()).data()!;
-    assert.equal(approvedOffer.stock, 0);
-    assert.equal(approvedOffer.availability, "unavailable");
-    assert.equal(approvedOffer.pendingObservation, null);
-    assert.equal(approvedReview.queueState, "approved");
-    assert.equal(approvedProduct.stock, 0);
-    assert.equal(approvedProduct.isActive, false);
-    assert.equal(approvedProduct.visible, false);
-    const audit = await adminDb.collection("supplier_approval_audit").where("queueItemId", "==", review.id).get();
-    assert.ok(audit.docs.some((document) => document.data().action === "approve"));
+    await assertAutomatedUnavailable(fixture);
     assert.equal((await activeRemovalReviews(fixture.offerId)).length, 0);
+    const retainedProduct = await adminDb.collection("products").doc(fixture.productId).get();
+    assert.equal(retainedProduct.exists, true);
+    assert.equal(retainedProduct.data()?.name, fixture.product.name);
+    assert.equal(retainedProduct.data()?.description, fixture.product.description);
+    assert.equal(retainedProduct.data()?.price, fixture.product.price);
+    assert.equal(retainedProduct.data()?.category, fixture.product.category);
+    assert.ok(!(await supplierOperationsAudit(fixture.offerId, "SUPPLIER_PRODUCT_REMOVED")).empty);
   });
 
   for (const filter of [
@@ -555,8 +534,8 @@ test("SH-2 removed-product detection uses the real sync orchestration and remain
     assert.equal(completedSource.catalogSync.status, "completed");
     assert.equal(completedSource.catalogSync.traversalId, traversalId);
     assert.equal(completedSource.catalogSync.resumeCount, 1);
-    assert.equal((await activeRemovalReviews(fixture.offerId)).length, 1);
-    await assertApprovedBoundary(fixture);
+    assert.equal((await activeRemovalReviews(fixture.offerId)).length, 0);
+    await assertAutomatedUnavailable(fixture);
   });
 
   await t.test("complete traversal removal is isolated per supplier source", async () => {
@@ -571,9 +550,9 @@ test("SH-2 removed-product detection uses the real sync orchestration and remain
       { mode: "full", pageSize: 2 },
     );
     assert.equal(result.status, "Success");
-    assert.equal((await activeRemovalReviews(sourceA.offerId)).length, 1);
+    assert.equal((await activeRemovalReviews(sourceA.offerId)).length, 0);
     assert.equal((await activeRemovalReviews(sourceB.offerId)).length, 0);
-    await assertApprovedBoundary(sourceA);
+    await assertAutomatedUnavailable(sourceA);
     const offerB = await supplierOffer(sourceB.offerId);
     const sourceBRecord = await sourceRecord(sourceB.sourceId);
     assert.equal(offerB.pendingObservation, null);

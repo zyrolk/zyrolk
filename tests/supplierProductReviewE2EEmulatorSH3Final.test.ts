@@ -101,6 +101,19 @@ const supplierProduct = (
   ...overrides,
 });
 
+const assertApprovedCommerceFieldsUnchanged = (
+  actual: Record<string, unknown>,
+  baseline: Record<string, unknown>,
+): void => {
+  assert.equal(actual.name, baseline.name);
+  assert.equal(actual.description, baseline.description);
+  assert.equal(actual.price, baseline.price);
+  assert.equal(actual.category, baseline.category);
+  assert.equal(actual.subcategory, baseline.subcategory);
+  assert.equal(actual.brand, baseline.brand);
+  assert.deepEqual(actual.specs, baseline.specs);
+};
+
 const completePage = (products: RawA2ZProduct[]): SupplierCatalogPageResult => ({
   products,
   targetUrl: TARGET_URL,
@@ -490,9 +503,15 @@ test("SH-3 new and updated products use the real review worker and approval tran
     const changedFields = new Set((comparisonA.fieldChanges as Array<Record<string, unknown>>).map((change) => String(change.field)));
     assert.ok(changedFields.has("longDescription"));
     assert.ok(changedFields.has("price") || changedFields.has("costPrice"));
-    assert.ok(changedFields.has("stock"));
+    assert.ok(!changedFields.has("stock"), "approved-product stock is automated and omitted from Product Review comparisons");
     assert.ok(changedFields.has("specifications"));
-    assert.deepEqual((await adminDb.collection("products").doc(productId).get()).data(), approvedBefore);
+    const productAfterObservationA = (await adminDb.collection("products").doc(productId).get()).data()!;
+    assertApprovedCommerceFieldsUnchanged(productAfterObservationA, approvedBefore);
+    assert.equal(productAfterObservationA.stock, 7);
+    assert.equal(productAfterObservationA.availability, "in_stock");
+    const automatedOffer = (await adminDb.collection("supplier_product_offers").doc(String(reviewA.data().supplierOfferId)).get()).data()!;
+    assert.equal(automatedOffer.stock, 7);
+    assert.equal(automatedOffer.availability, "in_stock");
 
     const observationB = supplierProduct(identity, {
       longDescription: "Supplier proposed description B.",
@@ -526,7 +545,9 @@ test("SH-3 new and updated products use the real review worker and approval tran
       expectedPendingRevision: revisionA,
     }), /changed after it was opened|observation changed/i);
     assert.equal((await auditActions(reviewB.id)).filter((action) => action === "approve").length, approvalsBefore);
-    assert.deepEqual((await adminDb.collection("products").doc(productId).get()).data(), approvedBefore);
+    const productAfterObservationB = (await adminDb.collection("products").doc(productId).get()).data()!;
+    assertApprovedCommerceFieldsUnchanged(productAfterObservationB, approvedBefore);
+    assert.equal(productAfterObservationB.stock, 5);
 
     const rejected = await decideSupplierQueueItem(adminDb, reviewB.id, "rejected", {
       uid: "sh3-admin",
@@ -536,7 +557,9 @@ test("SH-3 new and updated products use the real review worker and approval tran
       expectedPendingRevision: revisionB,
     });
     assert.equal(rejected.success, true);
-    assert.deepEqual((await adminDb.collection("products").doc(productId).get()).data(), approvedBefore);
+    const productAfterRejection = (await adminDb.collection("products").doc(productId).get()).data()!;
+    assertApprovedCommerceFieldsUnchanged(productAfterRejection, approvedBefore);
+    assert.equal(productAfterRejection.stock, 5);
     const rejectedOffer = (await adminDb.collection("supplier_product_offers").doc(String(reviewB.data().supplierOfferId)).get()).data()!;
     assert.equal(rejectedOffer.reviewStatus, "approved");
     assert.equal(rejectedOffer.pendingObservation, null);
