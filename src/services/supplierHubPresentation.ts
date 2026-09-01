@@ -261,6 +261,8 @@ const FIELD_REASON_MESSAGES: Record<string, string> = {
   brand: 'Select an active registered brand.',
   images: 'Managed publishable image is not ready.',
   subcategory: 'Select an active product subcategory.',
+  costprice: 'Supplier cost was not provided. Enter a valid supplier cost before approval.',
+  stock: 'Supplier inventory was not provided.',
 };
 
 /** Preserves raw supplier taxonomy/brand for operators without inventing Zyro mappings. */

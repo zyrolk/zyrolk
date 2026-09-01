@@ -73,6 +73,12 @@ function readProductDetail(item: Record<string, unknown>): Record<string, unknow
   return optionalRecord(item.productDetail) || item;
 }
 
+function isDropexFieldAbsent(value: unknown): boolean {
+  return value === undefined
+    || value === null
+    || (typeof value === "string" && !value.trim());
+}
+
 function readWholesalePrice(item: Record<string, unknown>, detail: Record<string, unknown>): number {
   return optionalNumber(item.reSellingPrice)
     ?? optionalNumber(item.resellingPrice)
@@ -85,6 +91,37 @@ function readWholesalePrice(item: Record<string, unknown>, detail: Record<string
     ?? optionalNumber(detail.buyingPrice)
     ?? optionalNumber(detail.price)
     ?? 0;
+}
+
+function wholesalePriceWasProvided(item: Record<string, unknown>, detail: Record<string, unknown>): boolean {
+  return ![
+    item.reSellingPrice,
+    item.resellingPrice,
+    item.reSellerPrice,
+    item.buyingPrice,
+    item.price,
+    detail.reSellingPrice,
+    detail.resellingPrice,
+    detail.reSellerPrice,
+    detail.buyingPrice,
+    detail.price,
+  ].every(isDropexFieldAbsent);
+}
+
+function inventoryLevelWasProvided(item: Record<string, unknown>, detail: Record<string, unknown>): boolean {
+  return ![
+    detail.onHandInventory,
+    item.onHandInventory,
+    item.stock,
+  ].every(isDropexFieldAbsent);
+}
+
+function retailPriceWasProvided(item: Record<string, unknown>, detail: Record<string, unknown>): boolean {
+  return ![
+    detail.sellingPrice,
+    item.sellingPrice,
+    item.marketPrice,
+  ].every(isDropexFieldAbsent);
 }
 
 function readCategoryLabels(
@@ -156,6 +193,9 @@ export class ProductParser {
     const openInventory = optionalNumber(detail.openInventory) ?? optionalNumber(item.openInventory);
     const dedicatedInventory = optionalNumber(detail.dedicatedInventory) ?? optionalNumber(item.dedicatedInventory);
     const maxOrderCount = optionalNumber(detail.maxOrderCount) ?? optionalNumber(item.maxOrderCount);
+    const costProvided = wholesalePriceWasProvided(item, detail);
+    const stockProvided = inventoryLevelWasProvided(item, detail);
+    const retailProvided = retailPriceWasProvided(item, detail);
 
     const extraAttributes: Record<string, unknown> = {};
     if (openInventory !== undefined) extraAttributes.openInventory = openInventory;
@@ -177,10 +217,10 @@ export class ProductParser {
       providedFields: [
         "sku",
         "title",
-        "longDescription",
-        "wholesalePrice",
-        "recommendedRetailPrice",
-        "inventoryLevel",
+        ...(optionalString(longDescription) ? ["longDescription"] as const : []),
+        ...(costProvided ? ["costPrice", "wholesalePrice"] as const : []),
+        ...(retailProvided ? ["comparePrice", "recommendedRetailPrice"] as const : []),
+        ...(stockProvided ? ["stock", "inventoryLevel"] as const : []),
         ...(mediaGallery.length > 0 ? ["mediaGallery"] as const : []),
         ...(supplierProductId ? ["supplierProductId"] as const : []),
         ...(brand ? ["brand"] as const : []),

@@ -1,5 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { isValidSupplierImageUrl } from '../services/connectors/a2z-website/productImages';
+import {
+  formatSupplierCostLabel,
+  formatSupplierMarginLabel,
+  formatSupplierProfitLabel,
+  formatSupplierStockLabel,
+} from '../services/supplierCommerceSemantics';
 import { reportSupplierImageFailure } from '../services/supplierImageDiagnostics';
 
 export interface SupplierReviewQuickCardProps {
@@ -10,9 +16,12 @@ export interface SupplierReviewQuickCardProps {
   changeLabel: string;
   sellingPrice: number;
   supplierCost: number;
-  profit: number;
-  marginPercent: number;
+  supplierCostAvailable: boolean;
+  profit: number | null;
+  marginPercent: number | null;
+  profitAvailable: boolean;
   stock: number;
+  supplierStockAvailable: boolean;
   brandLabel: string;
   categoryLabel: string;
   subcategoryLabel?: string;
@@ -78,9 +87,12 @@ export function SupplierReviewQuickCard({
   changeLabel,
   sellingPrice,
   supplierCost,
+  supplierCostAvailable,
   profit,
   marginPercent,
+  profitAvailable,
   stock,
+  supplierStockAvailable,
   brandLabel,
   categoryLabel,
   subcategoryLabel,
@@ -144,10 +156,10 @@ export function SupplierReviewQuickCard({
 
         <dl className="grid grid-cols-2 gap-x-4 gap-y-3 border-y border-slate-100 bg-slate-50/70 p-4 text-[10px] dark:border-slate-800 dark:bg-slate-900/40 sm:grid-cols-3">
           <div><dt className="text-slate-400">Selling price</dt><dd className="font-black text-blue-600">LKR {sellingPrice.toLocaleString()}</dd></div>
-          <div><dt className="text-slate-400">Supplier cost</dt><dd className="font-black">LKR {supplierCost.toLocaleString()}</dd></div>
-          <div><dt className="text-slate-400">Profit</dt><dd className={`font-black ${profit < 0 ? 'text-red-600' : 'text-emerald-600'}`}>LKR {profit.toLocaleString()}</dd></div>
-          <div><dt className="text-slate-400">Margin</dt><dd className={`font-black ${marginPercent < 0 ? 'text-red-600' : 'text-slate-800 dark:text-slate-100'}`}>{marginPercent.toFixed(2)}%</dd></div>
-          <div><dt className="text-slate-400">Stock</dt><dd className="font-black">{stock}</dd></div>
+          <div><dt className="text-slate-400">Supplier cost</dt><dd className="font-black">{formatSupplierCostLabel(supplierCost, supplierCostAvailable)}</dd></div>
+          <div><dt className="text-slate-400">Profit</dt><dd className={`font-black ${profitAvailable && profit !== null && profit < 0 ? 'text-red-600' : profitAvailable ? 'text-emerald-600' : 'text-slate-500'}`}>{formatSupplierProfitLabel(profit, profitAvailable)}</dd></div>
+          <div><dt className="text-slate-400">Margin</dt><dd className={`font-black ${profitAvailable && marginPercent !== null && marginPercent < 0 ? 'text-red-600' : profitAvailable ? 'text-slate-800 dark:text-slate-100' : 'text-slate-500'}`}>{formatSupplierMarginLabel(marginPercent, profitAvailable)}</dd></div>
+          <div><dt className="text-slate-400">Stock</dt><dd className="font-black">{formatSupplierStockLabel(stock, supplierStockAvailable)}</dd></div>
           <div><dt className="text-slate-400">Zyro brand</dt><dd className="font-bold">{brandLabel}</dd></div>
           <div><dt className="text-slate-400">Zyro category</dt><dd className="font-bold">{categoryLabel}</dd></div>
           {subcategoryLabel && <div><dt className="text-slate-400">Zyro subcategory</dt><dd className="font-bold">{subcategoryLabel}</dd></div>}

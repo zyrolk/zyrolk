@@ -1710,7 +1710,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                   {/* Launch-ready quick review list: no bulk actions or raw internal identifiers. */}
                   {visibleReviewItems.map((item) => {
                     const draft = createSupplierReviewDraft(item);
-                    const profit = calculateSupplierProfit(draft.sellingPrice, draft.costPrice);
+                    const profit = calculateSupplierProfit(draft.sellingPrice, draft.costPrice, draft.supplierCostAvailable);
                     const managedImageUrl = supplierReviewManagedImageUrl(item);
                     const isPreparing = supplierReviewIsPreparing(item);
                     const canQuickApprove = supplierReviewCanQuickApprove(item);
@@ -1739,9 +1739,12 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                         changeLabel={supplierReviewChangeLabel(item.comparison)}
                         sellingPrice={draft.sellingPrice}
                         supplierCost={draft.costPrice}
+                        supplierCostAvailable={draft.supplierCostAvailable}
                         profit={profit.profit}
                         marginPercent={profit.marginPercent}
+                        profitAvailable={profit.available}
                         stock={draft.stock}
+                        supplierStockAvailable={draft.supplierStockAvailable}
                         brandLabel={brandLabel}
                         categoryLabel={categoryLabel}
                         subcategoryLabel={subcategoryLabel}

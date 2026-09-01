@@ -292,8 +292,20 @@ export function validateSupplierProductForApproval(
   if (!/^https?:\/\/\S+$/iu.test(imageUrl)) add("imageUrl", "invalid", "A valid product image is required.");
   const price = Number(product.price);
   if (!Number.isFinite(price) || price <= 0) add("price", "invalid", "Selling price must be greater than zero.");
+  if (!String(product.description || "").trim()) add("description", "required", "Full description is required.");
+  const metadata = asRecord(product.supplierMetadata);
+  if (metadata.supplierCostAvailable === false) {
+    const cost = Number(product.costPrice);
+    if (!Number.isFinite(cost) || cost < 0) {
+      add("costPrice", "missing_cost", "Supplier cost was not provided. Enter a valid supplier cost before approval.");
+    }
+  }
   const stock = Number(product.stock);
-  if (!Number.isInteger(stock) || stock < 0) add("stock", "invalid", "Stock must be a non-negative whole number.");
+  if (metadata.supplierStockAvailable === false) {
+    add("stock", "missing_stock", "Supplier inventory was not provided.");
+  } else if (!Number.isInteger(stock) || stock < 0) {
+    add("stock", "invalid", "Stock must be a non-negative whole number.");
+  }
   if (![product.isActive, product.active, product.visible].some((value) => typeof value === "boolean")) {
     add("visibility", "required", "Product visibility must be selected.");
   }

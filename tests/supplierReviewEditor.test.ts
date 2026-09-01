@@ -81,6 +81,8 @@ test('supplier review draft projects editable product values with safe defaults'
       isBestSeller: 'admin', imageUrl: 'admin', imageUrls: 'admin',
     },
     editedFields: [],
+    supplierCostAvailable: true,
+    supplierStockAvailable: true,
   });
 });
 
@@ -88,10 +90,17 @@ test('supplier profit and margin update from selling price', () => {
   assert.deepEqual(calculateSupplierProfit(2000, 1250), {
     profit: 750,
     marginPercent: 37.5,
+    available: true,
   });
   assert.deepEqual(calculateSupplierProfit(0, 1250), {
     profit: -1250,
     marginPercent: 0,
+    available: true,
+  });
+  assert.deepEqual(calculateSupplierProfit(1000, 0, false), {
+    profit: null,
+    marginPercent: null,
+    available: false,
   });
 });
 

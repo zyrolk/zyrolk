@@ -21,6 +21,10 @@ import {
   SupplierProductComparison,
   SupplierProductComparisonStatus,
 } from "../api/suppliers/supplierProductImport";
+import {
+  supplierCostWasProvided,
+  supplierStockWasProvided,
+} from "../api/suppliers/supplierCommerceSemantics";
 import { buildSupplierAuditEvent } from "../api/suppliers/supplierAuditTrail";
 import {
   recordSupplierOperationalAlertSafely,
@@ -898,9 +902,11 @@ function buildProductPayload(
   reactivateSupplierProduct = false,
 ): Record<string, unknown> {
   const docId = match?.id || targetProductId || generateSlug(product.title) || product.sku;
-  const wholesale = product.wholesalePrice || 0;
+  const costProvided = supplierCostWasProvided(product);
+  const stockProvided = supplierStockWasProvided(product);
+  const wholesale = costProvided ? product.wholesalePrice : undefined;
   const pricing = calculateSupplierInitialPricing(
-    wholesale,
+    costProvided ? product.wholesalePrice : undefined,
     product.recommendedRetailPrice,
     settings.defaultMarkup,
     settings.defaultProfitMargin,
@@ -938,7 +944,9 @@ function buildProductPayload(
     price: priceUpdateEnabled ? price : (match?.price || price),
     originalPrice: priceUpdateEnabled ? originalPrice : (match?.originalPrice || match?.price || originalPrice),
     discount: priceUpdateEnabled ? pricing.discountPercent : (match?.discount || 0),
-    stock: stockUpdateEnabled ? product.inventoryLevel : (match?.stock || 0),
+    stock: stockUpdateEnabled
+      ? (stockProvided ? product.inventoryLevel : undefined)
+      : (match?.stock),
     imageUrl,
     imageUrls: effectiveImageUrls,
     category: isNewProduct && categorySuggestion.autoSelected ? categorySuggestion.targetCategoryId : (match?.category || ""),
@@ -970,7 +978,9 @@ function buildProductPayload(
     ...(acceptsField("minimumOrderQuantity") && product.minimumOrderQuantity !== undefined
       ? { supplierMoq: product.minimumOrderQuantity }
       : match?.supplierMoq !== undefined ? { supplierMoq: match.supplierMoq } : {}),
-    costPrice: priceUpdateEnabled ? wholesale : (match?.costPrice || 0),
+    costPrice: priceUpdateEnabled
+      ? (costProvided ? wholesale : undefined)
+      : match?.costPrice,
     marketPrice: priceUpdateEnabled ? (product.recommendedRetailPrice || 0) : (match?.marketPrice || 0),
     rating: match?.rating ?? 0,
     reviewsCount: match?.reviewsCount ?? 0,
@@ -2916,9 +2926,9 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
             barcode: product.barcode || "",
             productName: product.title,
             description: product.longDescription || "",
-            wholesalePrice: product.wholesalePrice,
+            wholesalePrice: supplierCostWasProvided(product) ? product.wholesalePrice : undefined,
             recommendedRetailPrice: product.recommendedRetailPrice,
-            stock: product.inventoryLevel,
+            stock: supplierStockWasProvided(product) ? product.inventoryLevel : undefined,
             imageUrls: [...(product.mediaGallery || [])],
             categoryHierarchy: [...(product.categoryHierarchy || [])],
             specifications: { ...(product.specifications || {}) },
@@ -2932,8 +2942,8 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
             barcode: product.barcode,
             productId: targetProductId,
             price: productPayload.price,
-            cost: product.wholesalePrice,
-            stock: product.inventoryLevel,
+            cost: supplierCostWasProvided(product) ? product.wholesalePrice : undefined,
+            stock: supplierStockWasProvided(product) ? product.inventoryLevel : undefined,
             availability: product.availability,
             priority: supplierPriority(source),
             health: { ...(source.syncHealth || {}), availability: "available", observedAt: createdAt },
@@ -2977,9 +2987,9 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
             productId: targetProductId,
             batchId,
             productName: product.title,
-            costPrice: product.wholesalePrice,
+            costPrice: productPayload.costPrice,
             marketPrice: product.recommendedRetailPrice,
-            stock: product.inventoryLevel,
+            stock: productPayload.stock,
             barcode: product.barcode || "",
             imageUrl: product.mediaGallery?.[0],
             comparisonStatus: comparison.status,

@@ -117,7 +117,8 @@ test('Sprint 4 source-specific brand mapping overrides registry inference', () =
 test('Sprint 4 approval validation enforces category-specific templates and all publication fields', () => {
   const valid = {
     name: 'Galaxy Phone', imageUrl: 'https://supplier.example/phone.jpg', category: 'phones', subcategory: 'smartphones',
-    brand: 'samsung', price: 120_000, stock: 4, visible: true, specs: { ram: '8 GB', Storage: '128 GB' },
+    brand: 'samsung', price: 120_000, stock: 4, visible: true, description: 'Full phone description.',
+    specs: { ram: '8 GB', Storage: '128 GB' },
   };
   assert.deepEqual(validateSupplierProductForApproval(valid, categories, brands), []);
 
@@ -125,7 +126,7 @@ test('Sprint 4 approval validation enforces category-specific templates and all 
     name: '', imageUrl: '', category: 'phones', subcategory: 'sports-shoes', brand: 'unknown', price: 0, stock: -1, specs: { RAM: '' },
   }, categories, brands);
   assert.deepEqual(new Set(errors.map((error) => error.field)), new Set([
-    'name', 'imageUrl', 'price', 'stock', 'visibility', 'subcategory', 'specs.RAM', 'specs.Storage', 'brand',
+    'name', 'imageUrl', 'price', 'description', 'stock', 'visibility', 'subcategory', 'specs.RAM', 'specs.Storage', 'brand',
   ]));
 
   const shoesErrors = validateSupplierProductForApproval({ ...valid, category: 'shoes', subcategory: 'sports-shoes', brand: 'nike', specs: { Size: '42' } }, categories, brands);

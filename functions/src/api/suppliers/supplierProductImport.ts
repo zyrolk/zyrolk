@@ -11,6 +11,10 @@ import {
   SupplierFieldSyncGroup,
 } from "./supplierFieldManifest";
 import { requiresUnsupportedVariantSelection } from "./supplierProductMapping";
+import {
+  buildSupplierCommerceAvailability,
+  supplierCostWasProvided,
+} from "./supplierCommerceSemantics";
 
 export interface SupplierImportValidationWarning {
   field: string;
@@ -374,6 +378,9 @@ export function mergeSupplierProductMetadata(
       : [...providedFields].filter((field) => acceptSupplierValues.has(field));
   const mergedProvidedFields = [...new Set([...existingProvidedFields, ...acceptedProvidedFields])];
   if (mergedProvidedFields.length > 0) merged.providedFields = mergedProvidedFields;
+  const availability = buildSupplierCommerceAvailability(product);
+  merged.supplierCostAvailable = availability.supplierCostAvailable;
+  merged.supplierStockAvailable = availability.supplierStockAvailable;
   return merged;
 }
 
@@ -406,6 +413,9 @@ export function buildSupplierImportWarnings(
   }
   if (!Number.isFinite(Number(productPayload.price)) || Number(productPayload.price) <= 0) {
     add("price", "missing_price", "A valid selling price is not available.");
+  }
+  if (!supplierCostWasProvided(product)) {
+    add("costPrice", "missing_cost", "The supplier did not provide a wholesale cost.");
   }
   if (!providedFields.has("stock")) {
     add("stock", "missing_stock", "The supplier did not provide an inventory quantity.");

@@ -107,7 +107,10 @@ export function calculateSupplierInitialPricing(
   markupPercent: unknown,
   profitMarginPercent: unknown,
 ): SupplierInitialPricing {
-  const cost = Math.max(0, Number(costPrice) || 0);
+  const costProvided = costPrice !== undefined
+    && costPrice !== null
+    && !(typeof costPrice === "string" && !String(costPrice).trim());
+  const cost = costProvided ? Math.max(0, Number(costPrice) || 0) : Number.NaN;
   const recommended = Math.max(0, Number(recommendedRetailPrice) || 0);
   const markup = markupPercent === undefined || markupPercent === null || markupPercent === ''
     ? 10
@@ -115,7 +118,7 @@ export function calculateSupplierInitialPricing(
   const margin = profitMarginPercent === undefined || profitMarginPercent === null || profitMarginPercent === ''
     ? 15
     : Math.max(0, Number(profitMarginPercent) || 0);
-  const calculated = Math.round(cost * (1 + (markup + margin) / 100));
+  const calculated = Number.isFinite(cost) ? Math.round(cost * (1 + (markup + margin) / 100)) : 0;
   const sellingPrice = calculated > 0 ? calculated : Math.round(recommended);
   const comparePrice = Math.max(sellingPrice, Math.round(recommended));
   const discountPercent = comparePrice > sellingPrice

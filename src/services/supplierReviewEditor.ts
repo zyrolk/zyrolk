@@ -1,6 +1,7 @@
 import { Product } from '../types';
 import { isValidSupplierImageUrl, normalizeSupplierProductImages } from './connectors/a2z-website/productImages';
 import { parseSupplierProductFieldOwnership, SupplierProductFieldOwner } from './products/supplierFieldOwnership';
+import { hasExplicitSupplierCommerceMetadata, readSupplierCommerceAvailability } from './supplierCommerceSemantics';
 
 export interface SupplierReviewSourceItem {
   id: string;
@@ -112,6 +113,8 @@ export interface SupplierReviewDraft {
   galleryImageUrls: string[];
   fieldOwnership: Record<string, SupplierProductFieldOwner>;
   editedFields: string[];
+  supplierCostAvailable: boolean;
+  supplierStockAvailable: boolean;
 }
 
 export const SUPPLIER_REVIEW_EDITABLE_FIELDS = [
@@ -125,8 +128,9 @@ export type SupplierReviewEditableField = typeof SUPPLIER_REVIEW_EDITABLE_FIELDS
 const ADMIN_ONLY_REVIEW_FIELDS = new Set<SupplierReviewEditableField>(['keyFeatures', 'whatsIncluded', 'isNew', 'isFeatured', 'isBestSeller']);
 
 export interface SupplierProfitMetrics {
-  profit: number;
-  marginPercent: number;
+  profit: number | null;
+  marginPercent: number | null;
+  available: boolean;
 }
 
 export interface SupplierReviewValidationErrors {
@@ -274,12 +278,12 @@ export function buildSupplierReviewMetadataSections(item: SupplierReviewSourceIt
       ['Short Description', field('shortDescription')], ['Full Description', field('description', 'longDescription')],
       ['Manufacturer', field('manufacturer')], ['Model', field('model')], ['Product Type', field('productType')],
       ['Collection', field('collection')], ['Tags', field('tags')], ['Keywords', field('keywords')],
-    ], true),
+    ], false),
     section('pricing', 'Pricing', [
       ['Price', field('price')], ['Compare Price', field('comparePrice', 'recommendedRetailPrice', 'marketPrice')],
       ['Cost Price', field('costPrice', 'wholesalePrice')], ['Currency', field('currency')],
       ['Tax', field('tax')], ['Discount', field('discount')],
-    ], true),
+    ], false),
     section('inventory', 'Inventory', [
       ['Stock', field('inventoryLevel', 'stock')], ['Availability', field('availability')],
       ['Lead Time', field('leadTime')], ['Minimum Order Quantity', field('minimumOrderQuantity')],
@@ -324,8 +328,37 @@ export function buildSupplierReviewMetadataSections(item: SupplierReviewSourceIt
   ];
 }
 
+const optionalFiniteNumber = (value: unknown): number | undefined => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+};
+
 export function createSupplierReviewDraft(item: SupplierReviewSourceItem): SupplierReviewDraft {
   const payload = item.productPayload;
+  const snapshot = item.supplierSnapshot || {};
+  const metadata = (payload?.supplierMetadata && typeof payload.supplierMetadata === 'object'
+    ? payload.supplierMetadata
+    : snapshot) as Record<string, unknown>;
+  const editedFields = resolveSupplierReviewEditedFields(item);
+  const costEditedByAdmin = editedFields.includes('costPrice');
+  const stockEditedByAdmin = editedFields.includes('stock');
+  const resolvedCost = optionalFiniteNumber(payload?.costPrice ?? item.costPrice ?? snapshot.wholesalePrice);
+  const resolvedStock = optionalFiniteNumber(payload?.stock ?? item.stock ?? snapshot.stock);
+  const metadataRecord = metadata as Record<string, unknown>;
+  const availability = readSupplierCommerceAvailability({
+    supplierMetadata: metadata,
+    supplierSnapshot: snapshot,
+    providedFields: Array.isArray(metadata.providedFields) ? metadata.providedFields as string[] : undefined,
+  });
+  let supplierCostAvailable = availability.supplierCostAvailable || costEditedByAdmin;
+  let supplierStockAvailable = availability.supplierStockAvailable || stockEditedByAdmin;
+  if (!hasExplicitSupplierCommerceMetadata(
+    metadataRecord,
+    Array.isArray(metadata.providedFields) ? metadata.providedFields as string[] : undefined,
+  )) {
+    if (!costEditedByAdmin && Number.isFinite(resolvedCost)) supplierCostAvailable = true;
+    if (!stockEditedByAdmin && Number.isFinite(resolvedStock)) supplierStockAvailable = true;
+  }
   const specs = payload?.specs || {};
   const primaryImageUrl = String(payload?.imageUrl || item.imageUrl || '').trim();
   const galleryImageUrls = [...new Set(
@@ -358,9 +391,11 @@ export function createSupplierReviewDraft(item: SupplierReviewSourceItem): Suppl
     keywords: textList(payload?.keywords),
     sellingPrice: finiteNumber(payload?.price, finiteNumber(item.marketPrice)),
     comparePrice: finiteNumber(payload?.originalPrice, finiteNumber(item.marketPrice)),
-    costPrice: finiteNumber(payload?.costPrice, finiteNumber(item.costPrice)),
+    costPrice: supplierCostAvailable ? finiteNumber(resolvedCost, 0) : finiteNumber(resolvedCost, Number.NaN),
     marketPrice: finiteNumber(payload?.marketPrice, finiteNumber(item.marketPrice)),
-    stock: Math.max(0, Math.floor(finiteNumber(payload?.stock, finiteNumber(item.stock)))),
+    stock: supplierStockAvailable
+      ? Math.max(0, Math.floor(finiteNumber(resolvedStock, 0)))
+      : Math.max(0, Math.floor(finiteNumber(resolvedStock, Number.NaN))),
     category: String(payload?.category || (item.categoryMapping?.autoSelected ? item.categoryMapping.targetCategoryId : '') || ''),
     subcategory: String(payload?.subcategory || (item.categoryMapping?.autoSelected ? item.categoryMapping.targetSubcategoryId : '') || ''),
     brand: String(payload?.brand || (item.brandMapping?.autoSelected ? item.brandMapping.mappedBrandId : '') || specs.brand || specs.Brand || ''),
@@ -372,7 +407,9 @@ export function createSupplierReviewDraft(item: SupplierReviewSourceItem): Suppl
     primaryImageUrl,
     galleryImageUrls,
     fieldOwnership,
-    editedFields: resolveSupplierReviewEditedFields(item),
+    editedFields,
+    supplierCostAvailable,
+    supplierStockAvailable,
   };
 }
 
@@ -381,12 +418,19 @@ export function updateSupplierReviewDraftField(
   field: SupplierReviewEditableField,
   patch: Partial<SupplierReviewDraft>,
 ): SupplierReviewDraft {
-  return {
+  const next = {
     ...draft,
     ...patch,
     fieldOwnership: { ...draft.fieldOwnership, [field]: 'admin' },
     editedFields: [...new Set([...draft.editedFields, field])],
   };
+  if (field === 'costPrice') {
+    next.supplierCostAvailable = true;
+  }
+  if (field === 'stock') {
+    next.supplierStockAvailable = true;
+  }
+  return next as SupplierReviewDraft;
 }
 
 export function setSupplierReviewDraftFieldOwner(
@@ -397,7 +441,14 @@ export function setSupplierReviewDraftFieldOwner(
   return { ...draft, fieldOwnership: { ...draft.fieldOwnership, [field]: owner } };
 }
 
-export function calculateSupplierProfit(sellingPrice: number, wholesalePrice: number): SupplierProfitMetrics {
+export function calculateSupplierProfit(
+  sellingPrice: number,
+  wholesalePrice: number,
+  costAvailable = true,
+): SupplierProfitMetrics {
+  if (!costAvailable) {
+    return { profit: null, marginPercent: null, available: false };
+  }
   const selling = finiteNumber(sellingPrice);
   const wholesale = finiteNumber(wholesalePrice);
   const profit = selling - wholesale;
@@ -405,6 +456,7 @@ export function calculateSupplierProfit(sellingPrice: number, wholesalePrice: nu
   return {
     profit,
     marginPercent: selling > 0 ? (profit / selling) * 100 : 0,
+    available: true,
   };
 }
 
@@ -436,9 +488,21 @@ export function validateSupplierReviewDraft(
   if (!Number.isFinite(draft.sellingPrice) || draft.sellingPrice <= 0) errors.sellingPrice = 'Selling price must be greater than zero.';
   if (!Number.isFinite(draft.comparePrice) || draft.comparePrice < 0) errors.comparePrice = 'Compare price cannot be negative.';
   if (draft.comparePrice > 0 && draft.comparePrice < draft.sellingPrice) errors.comparePrice = 'Compare price must be at least the selling price.';
-  if (!Number.isFinite(draft.costPrice) || draft.costPrice < 0) errors.costPrice = 'Cost price cannot be negative.';
+  if (!draft.supplierCostAvailable) {
+    if (!Number.isFinite(draft.costPrice) || draft.costPrice < 0) {
+      errors.costPrice = 'Supplier cost was not provided. Enter a valid supplier cost before approval.';
+    }
+  } else if (!Number.isFinite(draft.costPrice) || draft.costPrice < 0) {
+    errors.costPrice = 'Cost price cannot be negative.';
+  }
   if (!Number.isFinite(draft.marketPrice) || draft.marketPrice < 0) errors.marketPrice = 'Market price cannot be negative.';
-  if (!Number.isInteger(draft.stock) || draft.stock < 0) errors.stock = 'Stock must be a whole number of zero or more.';
+  if (!draft.supplierStockAvailable) {
+    if (!Number.isInteger(draft.stock) || draft.stock < 0) {
+      errors.stock = 'Supplier inventory was not provided.';
+    }
+  } else if (!Number.isInteger(draft.stock) || draft.stock < 0) {
+    errors.stock = 'Stock must be a whole number of zero or more.';
+  }
   if (!isHttpsSupplierImageUrl(draft.primaryImageUrl)) {
     errors.primaryImageUrl = 'A valid supplier product image using HTTPS is required before publishing.';
   }

@@ -13,6 +13,7 @@ import {
 
 const validProduct = {
   name: 'Product', imageUrl: 'https://cdn.example.com/product.jpg', price: 1000, stock: 5,
+  description: 'Full product description for approval.',
   isActive: true, category: 'electronics', subcategory: 'phones', brand: 'brand-1', specs: {},
 };
 const categories = [{ id: 'electronics', name: 'Electronics', subcategories: [{ id: 'phones', name: 'Phones' }] }];

@@ -82,8 +82,9 @@ test('product review editor prioritizes storefront fields and collapses supplier
   const editor = projectFile('src/components/SupplierReviewEditorModal.tsx');
   assert.match(editor, /<details open className="order-10[\s\S]*?aria-labelledby="supplier-product-images-title"/);
   assert.match(editor, /<details open className="order-20[^\"]*"[\s\S]*?>Product, pricing & catalogue</);
-  assert.match(editor, /<details open className="order-30[\s\S]*?aria-labelledby="supplier-review-content-title"/);
-  assert.match(editor, /<details open className="order-40[\s\S]*?>Category specifications</);
+  assert.match(editor, /<details className="order-30[\s\S]*?aria-labelledby="supplier-review-content-title"/);
+  assert.match(editor, /<details className="order-40[\s\S]*?>Specifications</);
+  assert.match(editor, /Full description/);
   assert.match(editor, /Supplier information/);
   assert.match(editor, /Supplier metadata/);
   assert.match(editor, /Advanced field protection/);

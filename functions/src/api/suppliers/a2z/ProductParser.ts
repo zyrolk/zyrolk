@@ -237,6 +237,40 @@ export function extractA2ZProductImages(rawObj: Record<string, any>, baseUrl: st
   return [...new Set(images)];
 }
 
+function costWasProvided(rawObj: Record<string, unknown>): boolean {
+  const inherited = Array.isArray(rawObj.providedFields) ? rawObj.providedFields as string[] : [];
+  if (inherited.length > 0) {
+    return inherited.includes("costPrice") || inherited.includes("wholesalePrice");
+  }
+  return optionalNumber(rawObj, FIELD_ALIASES.costPrice) !== undefined;
+}
+
+function stockWasProvided(rawObj: Record<string, unknown>): boolean {
+  const inherited = Array.isArray(rawObj.providedFields) ? rawObj.providedFields as string[] : [];
+  if (inherited.length > 0) {
+    return inherited.includes("stock") || inherited.includes("inventoryLevel");
+  }
+  return optionalNumber(rawObj, FIELD_ALIASES.stock) !== undefined;
+}
+
+function finalizeCommerceProvidedFields(
+  rawObj: Record<string, unknown>,
+  providedFields: string[],
+): string[] {
+  const fields = new Set(providedFields);
+  const costProvided = costWasProvided(rawObj);
+  const stockProvided = stockWasProvided(rawObj);
+  for (const field of ["costPrice", "wholesalePrice"]) {
+    if (costProvided) fields.add(field);
+    else fields.delete(field);
+  }
+  for (const field of ["stock", "inventoryLevel"]) {
+    if (stockProvided) fields.add(field);
+    else fields.delete(field);
+  }
+  return [...fields];
+}
+
 export class ProductParser {
   public static parseJsonPayload(rawPayload: string | Record<string, any>, baseUrl = "https://a2zdropshipping.lk"): RawA2ZProduct {
     let rawObj: Record<string, any>;
@@ -305,7 +339,10 @@ export class ProductParser {
     const keywords = stringList(firstSupplied(rawObj, FIELD_ALIASES.keywords));
     const features = stringList(firstSupplied(rawObj, FIELD_ALIASES.features));
     const extraAttributes = collectExtraAttributes(rawObj);
-    const providedFields = canonicalProvidedFields(rawObj);
+    const providedFields = finalizeCommerceProvidedFields(
+      rawObj,
+      canonicalProvidedFields(rawObj),
+    );
     if (mediaGallery.length > 0 && !providedFields.includes("mediaGallery")) providedFields.push("mediaGallery");
     if (extraAttributes && !providedFields.includes("extraAttributes")) providedFields.push("extraAttributes");
 

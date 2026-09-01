@@ -20,6 +20,12 @@ import {
   supplierOfferIsLocked,
 } from '../services/supplierOffers';
 import { formatSupplierTimestamp, supplierReviewSpecificationCount } from '../services/supplierHubPresentation';
+import {
+  formatSupplierCostLabel,
+  formatSupplierMarginLabel,
+  formatSupplierProfitLabel,
+  formatSupplierStockLabel,
+} from '../services/supplierCommerceSemantics';
 
 interface SupplierReviewEditorModalProps {
   item: SupplierReviewSourceItem;
@@ -46,7 +52,9 @@ interface SupplierReviewEditorModalProps {
   onSelectOffer: (offerId: string, options: { locked: boolean; failoverEnabled: boolean }) => Promise<void>;
 }
 
-const money = (value: number): string => `LKR ${value.toLocaleString('en-LK', { maximumFractionDigits: 2 })}`;
+const money = (value: number | null | undefined): string => (
+  Number.isFinite(value) ? `LKR ${value.toLocaleString('en-LK', { maximumFractionDigits: 2 })}` : 'Not supplied'
+);
 const MAX_MANAGED_MEDIA_IMAGES = 20;
 const OWNERSHIP_LABELS: Record<SupplierReviewEditableField, string> = {
   name: 'Product name', shortDescription: 'Short description', description: 'Description', model: 'Model',
@@ -113,8 +121,8 @@ export default function SupplierReviewEditorModal({
   );
   const missingFields = useMemo(() => Object.keys(validationErrors), [validationErrors]);
   const profit = useMemo(
-    () => calculateSupplierProfit(draft.sellingPrice, draft.costPrice),
-    [draft.costPrice, draft.sellingPrice],
+    () => calculateSupplierProfit(draft.sellingPrice, draft.costPrice, draft.supplierCostAvailable),
+    [draft.costPrice, draft.sellingPrice, draft.supplierCostAvailable],
   );
   const metadataSections = useMemo(() => buildSupplierReviewMetadataSections(item), [item]);
   const fieldChanges = useMemo(() => buildSupplierReviewFieldChanges(item), [item]);
@@ -325,7 +333,7 @@ export default function SupplierReviewEditorModal({
           <div className="mt-3 grid gap-3 sm:grid-cols-3">
             <div><span className="block text-[9px] font-black uppercase tracking-wider text-slate-400">Supplier</span><strong>{item.supplierName || 'Unknown Supplier'}</strong></div>
             <div><span className="block text-[9px] font-black uppercase tracking-wider text-slate-400">Supplier SKU</span><strong className="font-mono">{item.supplierCode}</strong></div>
-            <div><span className="block text-[9px] font-black uppercase tracking-wider text-slate-400">Wholesale Price</span><strong>{money(item.costPrice)}</strong></div>
+            <div><span className="block text-[9px] font-black uppercase tracking-wider text-slate-400">Wholesale Price</span><strong>{formatSupplierCostLabel(draft.costPrice, draft.supplierCostAvailable)}</strong></div>
           </div>
           </details>
 
@@ -465,6 +473,9 @@ export default function SupplierReviewEditorModal({
 
             <label className="space-y-1.5 text-xs">
               <span className="font-bold text-slate-600 dark:text-slate-300">Cost Price <span className="font-normal text-slate-400">(Admin only)</span></span>
+              {!draft.supplierCostAvailable && (
+                <p className="text-[10px] font-semibold text-amber-700 dark:text-amber-300">Supplier cost not supplied. Enter a valid cost before approval.</p>
+              )}
               <input type="number" min="0" step="0.01" value={Number.isFinite(draft.costPrice) ? draft.costPrice : ''} onChange={(event) => setNumber('costPrice', event.target.value)} aria-invalid={Boolean(errorFor('costPrice'))} className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 dark:border-slate-700 dark:bg-slate-900" />
               {errorFor('costPrice') && <span className="text-[10px] font-semibold text-red-500">{errorFor('costPrice')}</span>}
             </label>
@@ -477,6 +488,12 @@ export default function SupplierReviewEditorModal({
 
             <label className="space-y-1.5 text-xs">
               <span className="font-bold text-slate-600 dark:text-slate-300">Stock</span>
+              {!draft.supplierStockAvailable && (
+                <p className="text-[10px] font-semibold text-amber-700 dark:text-amber-300">Supplier inventory not supplied.</p>
+              )}
+              {draft.supplierStockAvailable && draft.stock <= 0 && (
+                <p className="text-[10px] font-semibold text-amber-700 dark:text-amber-300">0 / Out of stock</p>
+              )}
               <input type="number" min="0" step="1" value={Number.isFinite(draft.stock) ? draft.stock : ''} onChange={(event) => setNumber('stock', event.target.value)} aria-invalid={Boolean(errorFor('stock'))} className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 dark:border-slate-700 dark:bg-slate-900" />
               {errorFor('stock') && <span className="text-[10px] font-semibold text-red-500">{errorFor('stock')}</span>}
             </label>
@@ -508,7 +525,13 @@ export default function SupplierReviewEditorModal({
               {errorFor('brand') && <span className="text-[10px] font-semibold text-red-500">{errorFor('brand')}</span>}
             </label>
 
-            <label className="flex min-h-11 items-center justify-between rounded-xl border border-slate-200 px-3 text-xs dark:border-slate-700">
+            <label className="space-y-1.5 text-xs sm:col-span-2">
+              <span className="font-bold text-slate-600 dark:text-slate-300">Full description</span>
+              <textarea rows={5} value={draft.description} onChange={(event) => editDraft('description', { description: event.target.value })} aria-invalid={Boolean(errorFor('description'))} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900" />
+              {errorFor('description') && <span className="text-[10px] font-semibold text-red-500">{errorFor('description')}</span>}
+            </label>
+
+            <label className="flex min-h-11 items-center justify-between rounded-xl border border-slate-200 px-3 text-xs dark:border-slate-700 sm:col-span-2">
               <span className="font-bold text-slate-600 dark:text-slate-300">Storefront status</span>
               <span className="flex items-center gap-2"><input type="checkbox" checked={draft.isActive} onChange={(event) => editDraft('isActive', { isActive: event.target.checked })} />{draft.isActive ? 'Active' : 'Inactive'}</span>
             </label>
@@ -576,7 +599,7 @@ export default function SupplierReviewEditorModal({
           </section>
           </details>
 
-          <details open className="order-30 rounded-2xl border border-slate-200 p-4 dark:border-slate-800">
+          <details className="order-30 rounded-2xl border border-slate-200 p-4 dark:border-slate-800">
             <summary className="cursor-pointer text-xs font-black uppercase tracking-wider text-slate-700 outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-slate-200">Content, SEO & merchandising</summary>
           <section className="mt-4 space-y-4" aria-labelledby="supplier-review-content-title">
             <div>
@@ -585,7 +608,7 @@ export default function SupplierReviewEditorModal({
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
               <label className="space-y-1.5 text-xs sm:col-span-2"><span className="font-bold text-slate-600 dark:text-slate-300">Short description</span><textarea rows={2} value={draft.shortDescription} onChange={(event) => editDraft('shortDescription', { shortDescription: event.target.value })} aria-invalid={Boolean(errorFor('shortDescription'))} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900" />{errorFor('shortDescription') && <span className="text-[10px] font-semibold text-red-500">{errorFor('shortDescription')}</span>}</label>
-              <label className="space-y-1.5 text-xs sm:col-span-2"><span className="font-bold text-slate-600 dark:text-slate-300">Full description</span><textarea rows={5} value={draft.description} onChange={(event) => editDraft('description', { description: event.target.value })} aria-invalid={Boolean(errorFor('description'))} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900" />{errorFor('description') && <span className="text-[10px] font-semibold text-red-500">{errorFor('description')}</span>}</label>
+              <label className="space-y-1.5 text-xs sm:col-span-2 text-slate-400"><span className="font-bold text-slate-600 dark:text-slate-300">Full description</span><p className="text-[10px]">Edit the full description in the essential product section above.</p></label>
               <label className="space-y-1.5 text-xs"><span className="font-bold text-slate-600 dark:text-slate-300">Model</span><input value={draft.model} onChange={(event) => editDraft('model', { model: event.target.value })} aria-invalid={Boolean(errorFor('model'))} className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 dark:border-slate-700 dark:bg-slate-900" /></label>
               <label className="space-y-1.5 text-xs"><span className="font-bold text-slate-600 dark:text-slate-300">Barcode</span><input value={draft.barcode} onChange={(event) => editDraft('barcode', { barcode: event.target.value })} aria-invalid={Boolean(errorFor('barcode'))} className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 dark:border-slate-700 dark:bg-slate-900" /></label>
               <label className="space-y-1.5 text-xs"><span className="font-bold text-slate-600 dark:text-slate-300">Product type</span><input value={draft.productType} onChange={(event) => editDraft('productType', { productType: event.target.value })} aria-invalid={Boolean(errorFor('productType'))} className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 dark:border-slate-700 dark:bg-slate-900" /></label>
@@ -604,7 +627,7 @@ export default function SupplierReviewEditorModal({
           </section>
           </details>
 
-          <details open className="order-40 rounded-2xl border border-slate-200 p-4 dark:border-slate-800">
+          <details className="order-40 rounded-2xl border border-slate-200 p-4 dark:border-slate-800">
             <summary className="cursor-pointer text-xs font-black uppercase tracking-wider text-slate-700 outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-slate-200">Specifications</summary>
           <fieldset className="mt-4 grid gap-4 sm:grid-cols-2">
               <legend className="sr-only">Category specifications</legend>
@@ -734,11 +757,11 @@ export default function SupplierReviewEditorModal({
           </details>
 
           <div className="order-50 grid gap-3 sm:grid-cols-2" aria-live="polite">
-            <div className={`rounded-2xl border p-4 ${profit.profit >= 0 ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-600' : 'border-red-500/20 bg-red-500/10 text-red-600'}`}>
-              <span className="block text-[9px] font-black uppercase tracking-wider">Profit</span><strong className="text-lg">{money(profit.profit)}</strong>
+            <div className={`rounded-2xl border p-4 ${!profit.available ? 'border-slate-300 bg-slate-50 text-slate-500' : profit.profit !== null && profit.profit >= 0 ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-600' : 'border-red-500/20 bg-red-500/10 text-red-600'}`}>
+              <span className="block text-[9px] font-black uppercase tracking-wider">Profit</span><strong className="text-lg">{formatSupplierProfitLabel(profit.profit, profit.available)}</strong>
             </div>
-            <div className={`rounded-2xl border p-4 ${profit.marginPercent >= 0 ? 'border-blue-500/20 bg-blue-500/10 text-blue-600' : 'border-red-500/20 bg-red-500/10 text-red-600'}`}>
-              <span className="block text-[9px] font-black uppercase tracking-wider">Margin</span><strong className="text-lg">{profit.marginPercent.toFixed(2)}%</strong>
+            <div className={`rounded-2xl border p-4 ${!profit.available ? 'border-slate-300 bg-slate-50 text-slate-500' : profit.marginPercent !== null && profit.marginPercent >= 0 ? 'border-blue-500/20 bg-blue-500/10 text-blue-600' : 'border-red-500/20 bg-red-500/10 text-red-600'}`}>
+              <span className="block text-[9px] font-black uppercase tracking-wider">Margin</span><strong className="text-lg">{formatSupplierMarginLabel(profit.marginPercent, profit.available)}</strong>
             </div>
           </div>
 

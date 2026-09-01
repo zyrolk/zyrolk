@@ -161,6 +161,8 @@ test('Sprint 5 sparse updates preserve approved catalog and private supplier met
     title: 'Updated name',
     model: 'NEW-MODEL',
     providedFields: sparse.providedFields,
+    supplierCostAvailable: false,
+    supplierStockAvailable: false,
   });
 });
 
@@ -193,7 +195,7 @@ test('Sprint 5 emits structured warnings for missing publication and incomplete 
   const product = ProductParser.parseJsonPayload({ sku: 'WARN-1', title: 'Warning product', options: { Color: ['Black'] } });
   const warnings = buildSupplierImportWarnings(product, { price: 0, category: '', brand: '', specs: {} });
   assert.deepEqual(warnings.map((warning) => warning.code), [
-    'missing_images', 'missing_brand', 'missing_category', 'missing_price', 'missing_stock', 'missing_specifications', 'missing_variant_data',
+    'missing_images', 'missing_brand', 'missing_category', 'missing_price', 'missing_cost', 'missing_stock', 'missing_specifications', 'missing_variant_data',
   ]);
   assert.ok(warnings.every((warning) => warning.severity === 'warning'));
 });
