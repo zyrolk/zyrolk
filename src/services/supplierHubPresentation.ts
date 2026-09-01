@@ -305,9 +305,8 @@ export function supplierReviewRawMetadata(item: {
 }
 
 /** One clear operator-facing reason per issue (dedupes field codes vs error messages). */
-export function supplierReviewOperatorProblems(item: ReviewPresentationItem & {
+export function supplierReviewOperatorProblems(item: SupplierReviewQuickApprovalItem & {
   mediaFailures?: Array<{ reason?: string; retryable?: boolean }> | null;
-  managedMedia?: unknown;
 }): string[] {
   const validation = item.productValidation || {};
   const missingFields = Array.isArray(validation.missingFields)

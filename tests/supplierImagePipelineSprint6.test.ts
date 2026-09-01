@@ -131,12 +131,17 @@ test("Sprint 6 rejects non-HTTPS and unsupported MIME values without retrying", 
   assert.equal(result.failures[0].retryable, false);
 });
 
-test("Sprint 6 rejects declared MIME that does not match decoded image content", async () => {
+test("Sprint 6 accepts declared MIME that differs from decoded image content when bytes are valid", async () => {
   const fixture = dependencies({ fetchImage: async () => response(pngBody, "image/jpeg") });
   const result = await acquireSupplierManagedMedia({} as Firestore, request, fixture.dependencies);
-  assert.equal(result.assets.length, 0);
-  assert.match(result.failures[0].reason, /does not match/u);
-  assert.equal(fixture.savedFiles.length, 0);
+  assert.equal(result.failures.length, 0);
+  assert.equal(result.assets.length, 1);
+  assert.equal(result.assets[0].mimeType, "image/png");
+  assert.equal(fixture.savedFiles.length, 4);
+  const acquired = fixture.audits.find((entry) => entry.event === "supplier_media_acquired");
+  assert.equal(acquired?.mimeTypeMismatch, true);
+  assert.equal(acquired?.declaredMimeType, "image/jpeg");
+  assert.equal(acquired?.detectedMimeType, "image/png");
 });
 
 test("Sprint 6 rejects images whose declared size exceeds the production limit", async () => {

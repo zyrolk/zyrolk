@@ -164,6 +164,12 @@ export function validateSupplierImageMimeType(value: string | null): string {
   return mimeType;
 }
 
+export function parseDeclaredSupplierImageMimeType(value: string | null): string | null {
+  const mimeType = String(value || "").split(";", 1)[0].trim().toLowerCase();
+  if (!mimeType || !ALLOWED_IMAGE_MIME_TYPES.has(mimeType)) return null;
+  return mimeType;
+}
+
 export function supplierMediaRetryDelayMs(attempt: number): number {
   const safeAttempt = Math.max(1, Math.floor(attempt));
   return Math.min(30_000 * (2 ** (safeAttempt - 1)), 60 * 60 * 1_000);
@@ -311,18 +317,27 @@ const defaultDependencies = (db: Firestore): SupplierMediaPipelineDependencies =
   };
 };
 
+interface DownloadedSupplierImage {
+  body: Buffer;
+  mimeType: string;
+  width: number;
+  height: number;
+  declaredMimeType: string | null;
+  mimeTypeMismatch: boolean;
+}
+
 const downloadSupplierImage = async (
   url: string,
   sourceId: string,
   dependencies: SupplierMediaPipelineDependencies,
-): Promise<{ body: Buffer; mimeType: string; width: number; height: number }> => {
+): Promise<DownloadedSupplierImage> => {
   const response = await dependencies.fetchImage(url, sourceId);
   if (!response.ok) {
     const retryable = response.status === 408 || response.status === 429 || response.status >= 500;
     if (retryable) throw new Error(`Supplier image server returned HTTP ${response.status}.`);
     throw new SupplierMediaValidationError(`Supplier image server rejected the request with HTTP ${response.status}.`);
   }
-  const declaredMimeType = validateSupplierImageMimeType(response.headers.get("content-type"));
+  const declaredMimeType = parseDeclaredSupplierImageMimeType(response.headers.get("content-type"));
   const declaredLength = Number(response.headers.get("content-length"));
   if (Number.isFinite(declaredLength) && declaredLength > MAX_SUPPLIER_IMAGE_BYTES) {
     throw new SupplierMediaValidationError("Supplier image exceeds the maximum allowed size.");
@@ -344,11 +359,16 @@ const downloadSupplierImage = async (
   if (!detectedMimeType || !ALLOWED_IMAGE_MIME_TYPES.has(detectedMimeType)) {
     throw new SupplierMediaValidationError("Supplier image encoding is not supported.");
   }
-  if (detectedMimeType !== declaredMimeType) {
-    throw new SupplierMediaValidationError("Supplier image MIME type does not match its content.");
-  }
   if (!metadata.width || !metadata.height) throw new SupplierMediaValidationError("Supplier image dimensions could not be determined.");
-  return { body, mimeType: detectedMimeType, width: metadata.width, height: metadata.height };
+  const mimeTypeMismatch = declaredMimeType !== null && declaredMimeType !== detectedMimeType;
+  return {
+    body,
+    mimeType: detectedMimeType,
+    width: metadata.width,
+    height: metadata.height,
+    declaredMimeType,
+    mimeTypeMismatch,
+  };
 };
 
 const createVariant = async (body: Buffer, width: number): Promise<{ body: Buffer; width: number; height: number }> => {
@@ -490,6 +510,11 @@ export async function acquireSupplierManagedMedia(
         contentHash,
         fileSize: downloaded.body.length,
         mimeType: downloaded.mimeType,
+        ...(downloaded.mimeTypeMismatch ? {
+          mimeTypeMismatch: true,
+          declaredMimeType: downloaded.declaredMimeType,
+          detectedMimeType: downloaded.mimeType,
+        } : {}),
         timestamp: uploadTimestamp,
         retryCount: Math.max(0, Number(request.retryCount) || 0),
         processingDurationMs: Math.max(0, Date.now() - processingStartedAt),
