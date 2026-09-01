@@ -37,6 +37,8 @@ export interface SupplierCatalogTraversalCheckpoint {
   deltaToken: string | null;
   terminationReason: SupplierCatalogTraversalTerminationReason;
   status: SupplierCatalogTraversalStatus;
+  /** Cumulative observations at the start of the current limited batch. */
+  productsObservedAtBatchStart?: number;
 }
 
 export interface SupplierCatalogPageMetrics {
@@ -70,6 +72,7 @@ export interface SupplierCatalogTraversalOptions {
   shouldPause?: () => boolean;
   now?: () => number;
   traversalId?: string;
+  catalogContinuation?: "continue" | "restart";
 }
 
 const safeCount = (value: unknown): number => {
@@ -177,20 +180,38 @@ export function createSupplierCatalogTraversalCheckpoint(
     syncJobId?: string;
     totalProductLimit?: number | null;
     deletionReconciliationEligible?: boolean;
+    catalogContinuation?: "continue" | "restart";
   } = {},
 ): SupplierCatalogTraversalCheckpoint {
   const now = options.now ?? Date.now();
   const requestedMode = options.syncMode === "incremental" ? "incremental" : "full";
   const requestedFingerprint = String(options.requestFingerprint || "").trim();
   const requestedJobId = String(options.syncJobId || "").trim();
-  const scopeMatches = (!requestedFingerprint || initial.requestFingerprint === requestedFingerprint)
-    && (!requestedJobId || initial.syncJobId === requestedJobId)
+  const restartRequested = options.catalogContinuation === "restart";
+  const sameRequestScope = (!requestedFingerprint || initial.requestFingerprint === requestedFingerprint)
     && (!initial.syncMode || initial.syncMode === requestedMode);
-  const resumable = scopeMatches && ["in_progress", "paused", "reconciling"].includes(String(initial.status || ""));
+  const sameJobScope = sameRequestScope
+    && (!requestedJobId || initial.syncJobId === requestedJobId);
+  const limitedContinuation = !restartRequested
+    && options.catalogContinuation !== "restart"
+    && initial.status === "limited"
+    && initial.terminationReason === "limit_reached"
+    && sameRequestScope
+    && Boolean(requestedFingerprint);
+  const standardResume = !restartRequested
+    && sameJobScope
+    && ["in_progress", "paused", "reconciling"].includes(String(initial.status || ""));
+  const resumable = limitedContinuation || standardResume;
   const requestedTotalProductLimit = normalizeSupplierTotalProductLimit(options.totalProductLimit);
   const startedAt = resumable && typeof initial.startedAt === "string" && initial.startedAt
     ? initial.startedAt
     : new Date(now).toISOString();
+  const resumedProductsObserved = resumable ? safeCount(initial.productsObserved ?? initial.productsScanned) : 0;
+  const productsObservedAtBatchStart = limitedContinuation
+    ? resumedProductsObserved
+    : resumable
+      ? safeCount(initial.productsObservedAtBatchStart)
+      : 0;
   return {
     traversalId: resumable && typeof initial.traversalId === "string" && initial.traversalId
       ? initial.traversalId
@@ -198,7 +219,8 @@ export function createSupplierCatalogTraversalCheckpoint(
     cursor: resumable && typeof initial.cursor === "string" && initial.cursor ? initial.cursor : null,
     pagesProcessed: resumable ? safeCount(initial.pagesProcessed) : 0,
     productsScanned: resumable ? safeCount(initial.productsScanned) : 0,
-    productsObserved: resumable ? safeCount(initial.productsObserved ?? initial.productsScanned) : 0,
+    productsObserved: resumedProductsObserved,
+    productsObservedAtBatchStart,
     productsImported: resumable ? safeCount(initial.productsImported) : 0,
     invalidProducts: resumable ? safeCount(initial.invalidProducts) : 0,
     deletionReconciliationEligible: resumable
@@ -216,7 +238,7 @@ export function createSupplierCatalogTraversalCheckpoint(
     requestFingerprint: requestedFingerprint || null,
     syncJobId: requestedJobId || null,
     totalProductLimit: resumable
-      ? normalizeSupplierTotalProductLimit(initial.totalProductLimit)
+      ? normalizeSupplierTotalProductLimit(initial.totalProductLimit ?? requestedTotalProductLimit)
       : requestedTotalProductLimit,
     catalogTotalProducts: resumable ? safeOptionalCount(initial.catalogTotalProducts) : null,
     catalogTotalReliability: resumable
@@ -241,6 +263,7 @@ export async function runSupplierCatalogTraversal(options: SupplierCatalogTraver
     syncJobId: options.syncJobId,
     totalProductLimit: options.totalProductLimit,
     deletionReconciliationEligible: hasFilters ? false : options.deletionReconciliationEligible,
+    catalogContinuation: options.catalogContinuation,
   });
   if (hasFilters && checkpoint.deletionReconciliationEligible) {
     checkpoint = { ...checkpoint, deletionReconciliationEligible: false };
@@ -277,9 +300,10 @@ export async function runSupplierCatalogTraversal(options: SupplierCatalogTraver
     }
 
     const requestedCursor = checkpoint.cursor;
+    const batchBaseline = safeCount(checkpoint.productsObservedAtBatchStart);
     const remainingLimit = checkpoint.totalProductLimit === null
       ? null
-      : Math.max(0, checkpoint.totalProductLimit - checkpoint.productsObserved);
+      : Math.max(0, checkpoint.totalProductLimit - (checkpoint.productsObserved - batchBaseline));
     if (remainingLimit === 0) {
       checkpoint = {
         ...checkpoint,
@@ -325,7 +349,7 @@ export async function runSupplierCatalogTraversal(options: SupplierCatalogTraver
     const productsObserved = checkpoint.productsObserved + pageObservedProducts;
     const limitReached = !page.complete
       && checkpoint.totalProductLimit !== null
-      && productsObserved >= checkpoint.totalProductLimit;
+      && (productsObserved - batchBaseline) >= checkpoint.totalProductLimit;
     const deletionReconciliationEligible = checkpoint.deletionReconciliationEligible
       && pageInvalidProducts === 0
       && !limitReached;

@@ -515,7 +515,12 @@ export async function decideSupplierQueueItem(
     if (reviewSnapshot.exists && !isPending(reviewSnapshot.data()?.status) && !reviewIsConflict) {
       throw new ApiError("Supplier review item is no longer pending; reload and try again.", 409);
     }
-    if (reviewQueueState && reviewQueueState !== "review_pending" && reviewQueueState !== "conflict") {
+    if (
+      action === "approved"
+      && reviewQueueState
+      && reviewQueueState !== "review_pending"
+      && reviewQueueState !== "conflict"
+    ) {
       throw new ApiError("Supplier review item is not ready for an admin decision; reload and try again.", 409);
     }
     if (action === "approved" && reviewIsConflict && options.resolveConflict !== true) {
@@ -1107,6 +1112,11 @@ export async function decideSupplierQueueItem(
       decisionCompletedAt: now,
       decisionCompletedBy: reviewer,
       approvalConflict: FieldValue.delete(),
+      leaseOwner: FieldValue.delete(),
+      leaseAcquiredAt: FieldValue.delete(),
+      leaseExpiresAt: FieldValue.delete(),
+      leaseId: FieldValue.delete(),
+      processingStartedAt: FieldValue.delete(),
     }, { merge: true });
     transaction.delete(pendingReference);
     transaction.delete(importReference);

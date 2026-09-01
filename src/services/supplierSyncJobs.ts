@@ -117,7 +117,7 @@ export const formatSupplierSyncProgress = (job: SupplierSyncJobView): string => 
   const label = supplierSyncJobStateLabel(job.state);
   const { pagesProcessed, percent, productsQueued, productsScanned } = job.progress;
   if (!isSupplierSyncJobActive(job)) {
-    return `${label} · ${productsScanned} scanned · ${productsQueued} queued`;
+    return `${label} · ${productsScanned} scanned · ${productsQueued} queued for processing`;
   }
 
   const determinate = isSupplierSyncProgressDeterminate(job);

@@ -68,11 +68,20 @@ export function normalizeSupplierSyncRequest(value: unknown): SupplierSyncReques
     "Supplier sync total product limit",
     SUPPLIER_SYNC_TOTAL_PRODUCT_LIMIT_MAX,
   );
+  const continuationRaw = record.catalogContinuation === undefined
+    ? undefined
+    : String(record.catalogContinuation).trim().toLowerCase();
+  const catalogContinuation = continuationRaw === "continue" || continuationRaw === "restart"
+    ? continuationRaw
+    : continuationRaw === undefined
+      ? undefined
+      : (() => { throw new Error("Supplier sync catalog continuation must be continue or restart."); })();
   return {
     mode: requestedMode,
     ...(Object.keys(filters).length > 0 ? { filters } : {}),
     ...(pageSize !== undefined ? { pageSize } : {}),
     ...(totalProductLimit !== undefined ? { totalProductLimit } : {}),
+    ...(catalogContinuation ? { catalogContinuation } : {}),
   };
 }
 

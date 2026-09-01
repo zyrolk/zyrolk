@@ -37,6 +37,7 @@ export interface SupplierReviewQuickCardProps {
   isPreparing: boolean;
   decisionReady: boolean;
   canQuickApprove: boolean;
+  canReject: boolean;
   needsResolution: boolean;
   processing: boolean;
   canRetryMedia?: boolean;
@@ -106,6 +107,7 @@ export function SupplierReviewQuickCard({
   isPreparing,
   decisionReady,
   canQuickApprove,
+  canReject,
   needsResolution,
   processing,
   canRetryMedia = false,
@@ -221,16 +223,25 @@ export function SupplierReviewQuickCard({
                 {processing ? 'Approving…' : 'Approve'}
               </button>
             )}
-            <button type="button" onClick={onReject} disabled={processing} aria-label={`Reject ${productName}`} className="min-h-11 rounded-xl bg-red-600 px-3 text-[10px] font-black text-white hover:bg-red-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 disabled:cursor-not-allowed disabled:opacity-50">Reject</button>
+            {canReject && (
+              <button type="button" onClick={onReject} disabled={processing} aria-label={`Reject ${productName}`} className="min-h-11 rounded-xl bg-red-600 px-3 text-[10px] font-black text-white hover:bg-red-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 disabled:cursor-not-allowed disabled:opacity-50">Reject</button>
+            )}
             <button type="button" onClick={onViewDetails} disabled={processing} aria-label={`Review product ${productName}`} className={`min-h-11 rounded-xl px-3 text-[10px] font-black focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 disabled:cursor-not-allowed disabled:opacity-50 ${needsResolution ? 'col-span-2 border border-amber-500/30 bg-amber-500/10 text-amber-700 sm:col-span-1 dark:text-amber-300' : 'border border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'}`}>Review Product</button>
           </div>
         )}
 
         {isPreparing && !terminalState && (
-          <div className="mt-auto border-t border-slate-100 p-3 dark:border-slate-800">
-            <button type="button" disabled className="min-h-11 w-full cursor-not-allowed rounded-xl border border-slate-200 bg-slate-50 px-4 text-[10px] font-black text-slate-400 dark:border-slate-800 dark:bg-slate-900/40" aria-disabled="true">
-              Review unavailable while media is processing
-            </button>
+          <div className="mt-auto border-t border-slate-100 p-3 dark:border-slate-800" onClick={(event) => event.stopPropagation()}>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              {canReject && (
+                <button type="button" onClick={onReject} disabled={processing} aria-label={`Reject ${productName}`} className="min-h-11 rounded-xl bg-red-600 px-3 text-[10px] font-black text-white hover:bg-red-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 disabled:cursor-not-allowed disabled:opacity-50">
+                  Reject
+                </button>
+              )}
+              <button type="button" disabled className={`min-h-11 rounded-xl border border-slate-200 bg-slate-50 px-4 text-[10px] font-black text-slate-400 dark:border-slate-800 dark:bg-slate-900/40 ${canReject ? '' : 'w-full'}`} aria-disabled="true">
+                Approval unavailable while media is processing
+              </button>
+            </div>
           </div>
         )}
 

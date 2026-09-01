@@ -56,6 +56,7 @@ const quickCardProps = (overrides: Partial<SupplierReviewQuickCardProps> = {}): 
   isPreparing: false,
   decisionReady: true,
   canQuickApprove: true,
+  canReject: true,
   needsResolution: false,
   processing: false,
   onApprove: () => undefined,

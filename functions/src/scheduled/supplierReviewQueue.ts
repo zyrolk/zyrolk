@@ -292,6 +292,98 @@ export function buildSupplierQueueLifecycle(createdAt = new Date().toISOString()
   };
 }
 
+export function supplierReviewSourceImageUrls(product: { mediaGallery?: readonly string[] }): string[] {
+  return [...(product.mediaGallery || [])].map((url) => String(url || "").trim()).filter(Boolean);
+}
+
+export function supplierManagedMediaMatchesSourceUrls(
+  managedMedia: unknown,
+  sourceUrls: readonly string[],
+): boolean {
+  const assets = extractSupplierMediaFromRecord(managedMedia);
+  if (assets.length === 0 || sourceUrls.length === 0) return false;
+  if (assets.length !== sourceUrls.length) return false;
+  return sourceUrls.every((url, index) => {
+    const asset = assets[index];
+    return Boolean(asset?.firebaseStorageUrl) && (
+      url === asset.originalSupplierUrl || url === asset.firebaseStorageUrl
+    );
+  });
+}
+
+export function supplierReviewQueueMediaIsReady(managedMedia: unknown): boolean {
+  const assets = extractSupplierMediaFromRecord(managedMedia);
+  return assets.length > 0 && assets.every((asset) => /^https:\/\/\S+$/u.test(asset.firebaseStorageUrl));
+}
+
+export interface SupplierReviewQueueUpsertLifecycle {
+  lifecycleFields: Record<string, unknown>;
+  preserveReviewPending: boolean;
+  requeueForMedia: boolean;
+  preservedManagedMedia?: SupplierManagedMediaAsset[];
+}
+
+/** Preserves review_pending and managed media when a resync does not require media refresh. */
+export function resolveSupplierReviewQueueUpsertLifecycle(input: {
+  existing?: Record<string, unknown>;
+  sourceUrls: readonly string[];
+  queueCreatedAt: string;
+}): SupplierReviewQueueUpsertLifecycle {
+  const existing = input.existing;
+  if (!existing || Object.keys(existing).length === 0) {
+    return {
+      lifecycleFields: buildSupplierQueueLifecycle(input.queueCreatedAt),
+      preserveReviewPending: false,
+      requeueForMedia: true,
+    };
+  }
+  const state = String(existing.queueState || "").toLowerCase();
+  const managedMedia = existing.managedMedia;
+  const mediaReady = supplierReviewQueueMediaIsReady(managedMedia)
+    && supplierManagedMediaMatchesSourceUrls(managedMedia, input.sourceUrls);
+  const imagesChanged = !supplierManagedMediaMatchesSourceUrls(managedMedia, input.sourceUrls);
+  const mediaFailed = String(existing.mediaStatus || "").toLowerCase() === "failed"
+    || state === "retryable_failure"
+    || state === "dead_letter";
+  if (state === "review_pending" && mediaReady && !imagesChanged) {
+    return {
+      lifecycleFields: {
+        queueState: "review_pending" satisfies SupplierQueueState,
+        retryCount: Number(existing.retryCount || 0),
+        retryLimit: Number(existing.retryLimit || DEFAULT_RETRY_LIMIT),
+        nextRetryAt: existing.nextRetryAt || existing.queueCreatedAt || input.queueCreatedAt,
+        queueCreatedAt: existing.queueCreatedAt || input.queueCreatedAt,
+      },
+      preserveReviewPending: true,
+      requeueForMedia: false,
+      preservedManagedMedia: extractSupplierMediaFromRecord(managedMedia),
+    };
+  }
+  if (imagesChanged || mediaFailed || !mediaReady) {
+    return {
+      lifecycleFields: buildSupplierQueueLifecycle(input.queueCreatedAt),
+      preserveReviewPending: false,
+      requeueForMedia: true,
+    };
+  }
+  return {
+    lifecycleFields: {
+      queueState: existing.queueState,
+      retryCount: Number(existing.retryCount || 0),
+      retryLimit: Number(existing.retryLimit || DEFAULT_RETRY_LIMIT),
+      nextRetryAt: existing.nextRetryAt || existing.queueCreatedAt || input.queueCreatedAt,
+      queueCreatedAt: existing.queueCreatedAt || input.queueCreatedAt,
+    },
+    preserveReviewPending: false,
+    requeueForMedia: false,
+    preservedManagedMedia: extractSupplierMediaFromRecord(managedMedia),
+  };
+}
+
+export function supplierReviewQueueDecisionStates(): ReadonlySet<string> {
+  return new Set(["approved", "rejected", "suppressed"]);
+}
+
 export function classifySupplierQueueFailure(error: unknown): SupplierQueueFailureClassification {
   const name = error instanceof Error ? error.name.toLowerCase() : "";
   const message = error instanceof Error ? error.message.toLowerCase() : String(error || "").toLowerCase();
@@ -433,7 +525,10 @@ async function markSupplierQueueProcessing(db: Firestore, queueItemId: string, w
   return db.runTransaction(async (transaction) => {
     const snapshot = await transaction.get(reference);
     const record = snapshot.exists ? snapshot.data() as SupplierQueueRecord : null;
-    if (!record || stateFor(record) !== "leased" || asString(record.leaseOwner) !== workerId || isSupplierQueueLeaseExpired(record, now)) {
+    if (!record || supplierReviewQueueDecisionStates().has(stateFor(record))) {
+      throw new Error("Supplier queue item is no longer processable.");
+    }
+    if (stateFor(record) !== "leased" || asString(record.leaseOwner) !== workerId || isSupplierQueueLeaseExpired(record, now)) {
       throw new Error("Supplier queue lease is no longer owned by this worker.");
     }
     transaction.set(reference, {
@@ -463,7 +558,10 @@ async function completeSupplierQueueItem(db: Firestore, queueItemId: string, wor
   await db.runTransaction(async (transaction) => {
     const snapshot = await transaction.get(reviewReference);
     const record = snapshot.exists ? snapshot.data() as SupplierQueueRecord : null;
-    if (!record || stateFor(record) !== "processing" || asString(record.leaseOwner) !== workerId || isSupplierQueueLeaseExpired(record, now)) {
+    if (!record) throw new Error("Supplier queue lease is no longer owned by this worker.");
+    const currentState = stateFor(record);
+    if (supplierReviewQueueDecisionStates().has(currentState)) return;
+    if (currentState !== "processing" || asString(record.leaseOwner) !== workerId || isSupplierQueueLeaseExpired(record, now)) {
       throw new Error("Supplier queue lease is no longer owned by this worker.");
     }
     const importPayload = asRecord(record.importPayload);
@@ -612,6 +710,13 @@ export async function processSupplierReviewQueueItem(
     await completeSupplierQueueItem(db, queueItemId, workerId, currentTime());
     return { queueItemId, outcome: "completed", state: "review_pending" };
   } catch (error) {
+    const currentSnapshot = await db.collection("supplier_review_queue").doc(queueItemId).get();
+    const terminalState = currentSnapshot.exists
+      ? stateFor(currentSnapshot.data() as SupplierQueueRecord)
+      : null;
+    if (terminalState && supplierReviewQueueDecisionStates().has(terminalState)) {
+      return { queueItemId, outcome: "skipped", state: terminalState };
+    }
     const state = await recordSupplierQueueFailure(db, queueItemId, workerId, error, currentTime());
     const supplierId = asString(leased.supplierId) || asString(asRecord(leased.supplierSnapshot).supplierId) || asString(leased.sourceId) || null;
     if (state === "dead_letter") {

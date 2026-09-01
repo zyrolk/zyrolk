@@ -47,7 +47,7 @@ test('active single-source traversal reports indeterminate progress instead of a
     state: 'completed',
     progress: { ...buildJob().progress, phase: 'completed', percent: 100, completedSources: 1 },
   }));
-  assert.equal(completed, 'Completed · 40 scanned · 8 queued');
+  assert.equal(completed, 'Completed · 40 scanned · 8 queued for processing');
 });
 
 test('job selection follows the worker state instead of a newer waiting job', () => {

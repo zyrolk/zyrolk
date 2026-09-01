@@ -89,6 +89,8 @@ import {
 import {
   buildSupplierQueueLifecycle,
   classifySupplierQueueFailure,
+  resolveSupplierReviewQueueUpsertLifecycle,
+  supplierReviewSourceImageUrls,
 } from "./supplierReviewQueue";
 import {
   normalizeSupplierCatalogPageSize,
@@ -2403,6 +2405,12 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
         const legacySourcePageSize = resolveSupplierProductLimit(sourceSettings.productLimit, settings.productLimit, maxProducts);
         const sourcePageSize = syncRequest.pageSize || legacySourcePageSize;
         const requestFingerprint = supplierSyncRequestFingerprint(syncRequest, source, sourcePageSize);
+        const catalogContinuation = syncRequest.catalogContinuation
+          ?? (source.catalogSync?.status === "limited"
+            && source.catalogSync?.requestFingerprint === requestFingerprint
+            && source.catalogSync?.terminationReason === "limit_reached"
+            ? "continue"
+            : undefined);
         const resumesTraversal = ["in_progress", "paused", "reconciling"].includes(String(source.catalogSync?.status || ""))
           && source.catalogSync?.requestFingerprint === requestFingerprint
           && source.catalogSync?.syncJobId === batchId;
@@ -2428,6 +2436,7 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
           deletionReconciliationEligible,
           requestFingerprint,
           syncJobId: batchId,
+          catalogContinuation,
           initial: source.catalogSync,
           shouldPause: () => Date.now() >= syncDeadlineMs || options.control?.shouldCancel() === true,
           persistCheckpoint: async (checkpoint) => {
@@ -3026,9 +3035,21 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
             dryRunComparisonCount++;
           } else {
             const pendingChange = buildPendingChange(queueItem, comparison);
+            const sourceImageUrls = supplierReviewSourceImageUrls(product);
+            const queueLifecycle = resolveSupplierReviewQueueUpsertLifecycle({
+              existing: activeReviewQueueData,
+              sourceUrls: sourceImageUrls,
+              queueCreatedAt,
+            });
+            const preservedManagedMedia = queueLifecycle.preservedManagedMedia?.length
+              ? queueLifecycle.preservedManagedMedia
+              : Array.isArray(activeReviewQueueData?.managedMedia) && queueLifecycle.requeueForMedia === false
+                ? activeReviewQueueData.managedMedia
+                : Array.isArray(productPayload.supplierMedia) ? productPayload.supplierMedia : [];
             const baseQueueData = {
               ...queueItem,
-              ...buildSupplierQueueLifecycle(queueCreatedAt),
+              ...queueLifecycle.lifecycleFields,
+              managedMedia: preservedManagedMedia,
               correlationId: queueItemId,
               importPayload: {
                 ...product,
@@ -3083,23 +3104,27 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
               data: queueData,
               atomicGroup: queueItemId,
             });
-            const auditReference = adminDb.collection("supplier_approval_audit").doc();
-            queuedWrites.push({
-              collection: "supplier_approval_audit",
-              id: auditReference.id,
-              create: true,
-              atomicGroup: queueItemId,
-              data: buildSupplierAuditEvent({
-                queueItemId,
-                queueItem: queueData,
-                action: "queued",
-                previousState: null,
-                newState: "queued",
-              }, auditReference.id),
-            });
-            metrics.productsQueued++;
-            if (comparison.status === "NEW_PRODUCT") metrics.productsImported++;
-            else metrics.productsUpdated++;
+            if (queueLifecycle.requeueForMedia) {
+              const auditReference = adminDb.collection("supplier_approval_audit").doc();
+              queuedWrites.push({
+                collection: "supplier_approval_audit",
+                id: auditReference.id,
+                create: true,
+                atomicGroup: queueItemId,
+                data: buildSupplierAuditEvent({
+                  queueItemId,
+                  queueItem: queueData,
+                  action: "queued",
+                  previousState: activeReviewQueueData ? String(activeReviewQueueData.queueState || null) : null,
+                  newState: "queued",
+                }, auditReference.id),
+              });
+              metrics.productsQueued++;
+              if (comparison.status === "NEW_PRODUCT") metrics.productsImported++;
+              else metrics.productsUpdated++;
+            } else {
+              metrics.productsUpdated++;
+            }
           }
         }
 

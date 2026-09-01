@@ -78,6 +78,8 @@ export interface SupplierCatalogFilterRequest {
   search?: string;
 }
 
+export type SupplierCatalogSyncContinuation = "continue" | "restart";
+
 export interface SupplierSyncRequestControls {
   mode: SupplierCatalogSyncMode;
   filters?: SupplierCatalogFilterRequest;
@@ -85,6 +87,11 @@ export interface SupplierSyncRequestControls {
   pageSize?: number;
   /** Maximum supplier observations processed across the complete requested run. */
   totalProductLimit?: number;
+  /**
+   * Limited full-sync traversal control. Continue resumes the persisted supplier
+   * cursor after a limit-terminated run; restart intentionally begins again.
+   */
+  catalogContinuation?: SupplierCatalogSyncContinuation;
 }
 
 export interface SupplierIncrementalCatalogRequest {

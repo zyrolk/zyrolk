@@ -60,6 +60,7 @@ import {
   supplierConnectionPresentation,
   SupplierHubSection,
   supplierReviewDecisionReady,
+  supplierReviewCanReject,
   supplierReviewCanQuickApprove,
   supplierReviewChangeLabel,
   supplierReviewDisplayLabel,
@@ -1499,7 +1500,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                 {isSupplierSyncJobActive(activeSyncJob) && !isSupplierSyncProgressDeterminate(activeSyncJob) && activeSyncJob.progress.pagesProcessed > 0
                   ? 'In progress · '
                   : isSupplierSyncProgressDeterminate(activeSyncJob) ? `${activeSyncJob.progress.percent}% · ` : ''}
-                {activeSyncJob.progress.productsScanned} products checked · {activeSyncJob.progress.productsQueued} changes found
+                {activeSyncJob.progress.productsScanned} scanned · {activeSyncJob.progress.productsQueued} queued for processing
                 {isSupplierSyncJobActive(activeSyncJob)
                   && isSupplierSyncProgressDeterminate(activeSyncJob)
                   && activeSyncJob.progress.etaMs !== null
@@ -1758,6 +1759,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                         isPreparing={isPreparing}
                         decisionReady={supplierReviewDecisionReady(item)}
                         canQuickApprove={canQuickApprove}
+                        canReject={supplierReviewCanReject(item)}
                         needsResolution={needsResolution}
                         processing={processingChangeId === item.id}
                         canRetryMedia={supplierReviewCanRetryMedia(item)}

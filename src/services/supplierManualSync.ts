@@ -22,6 +22,7 @@ export interface SupplierManualSyncRequest {
     search?: string;
   };
   totalProductLimit?: number;
+  catalogContinuation?: 'continue' | 'restart';
 }
 
 export interface SupplierManualSyncDraft {
@@ -31,6 +32,7 @@ export interface SupplierManualSyncDraft {
   subcategory?: string;
   search?: string;
   totalProductLimit?: string | number | null;
+  catalogContinuation?: 'continue' | 'restart';
   capabilities?: SupplierSyncCapabilities | null;
 }
 
@@ -84,5 +86,6 @@ export function buildSupplierManualSyncRequest(draft: SupplierManualSyncDraft): 
     mode: draft.mode,
     ...(Object.keys(filters).length > 0 ? { filters } : {}),
     ...(totalProductLimit !== undefined ? { totalProductLimit } : {}),
+    ...(draft.catalogContinuation ? { catalogContinuation: draft.catalogContinuation } : {}),
   };
 }

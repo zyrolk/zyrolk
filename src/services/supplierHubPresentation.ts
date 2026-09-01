@@ -125,6 +125,13 @@ export function supplierReviewDecisionReady(item: ReviewPresentationItem): boole
   return state === 'review_pending' || state === 'conflict' || (!state && normalized(item.status) === 'pending');
 }
 
+export function supplierReviewCanReject(item: ReviewPresentationItem): boolean {
+  const state = normalized(item.queueState);
+  if (state === 'approved' || state === 'rejected' || state === 'suppressed') return false;
+  if (state === 'review_pending' || state === 'conflict' || supplierReviewIsPreparing(item)) return true;
+  return !state && normalized(item.status) === 'pending';
+}
+
 export function supplierReviewIsConflict(item: SupplierReviewQuickApprovalItem): boolean {
   return normalized(item.status) === 'conflict'
     || normalized(item.queueState) === 'conflict'

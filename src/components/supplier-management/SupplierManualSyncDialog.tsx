@@ -16,6 +16,13 @@ interface SupplierManualSyncDialogProps {
     name?: string;
     supplierName?: string;
     syncCapabilities?: SupplierSyncCapabilities;
+    catalogSync?: {
+      status?: string;
+      terminationReason?: string | null;
+      productsObserved?: number;
+      totalProductLimit?: number | null;
+      cursor?: string | null;
+    };
   };
   /** First-ever sync for this source — require an explicit product count limit. */
   isInitialSync?: boolean;
@@ -47,8 +54,14 @@ export default function SupplierManualSyncDialog({
   const [subcategory, setSubcategory] = useState('');
   const [search, setSearch] = useState('');
   const [totalProductLimit, setTotalProductLimit] = useState(isInitialSync ? '5' : '');
+  const [restartFromBeginning, setRestartFromBeginning] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
   const supplierName = String(source.supplierName || source.name || source.id);
+  const limitedCheckpointAvailable = source.catalogSync?.status === 'limited'
+    && source.catalogSync?.terminationReason === 'limit_reached'
+    && Boolean(source.catalogSync?.cursor);
+  const observedCount = Number(source.catalogSync?.productsObserved || 0);
+  const batchLimit = Number(source.catalogSync?.totalProductLimit || 0);
   const supportsCategory = supplierSyncFilterIsSupported(capabilities.categoryFilter);
   const supportsSubcategory = supplierSyncFilterIsSupported(capabilities.subcategoryFilter);
   const supportsSearch = supplierSyncFilterIsSupported(capabilities.searchFilter);
@@ -75,6 +88,8 @@ export default function SupplierManualSyncDialog({
         search,
         totalProductLimit,
         capabilities,
+        ...(limitedCheckpointAvailable && !restartFromBeginning ? { catalogContinuation: 'continue' as const } : {}),
+        ...(restartFromBeginning ? { catalogContinuation: 'restart' as const } : {}),
       });
       if (await onSubmit(request)) onClose();
     } catch (error) {
@@ -99,7 +114,9 @@ export default function SupplierManualSyncDialog({
             <p className="mt-1 text-xs text-slate-500">
               {isInitialSync
                 ? 'Choose a Product count limit for this controlled first sync. Catalog fetch page size is separate and does not stop the run.'
-                : 'Choose which supplier products to check. Every detected change still goes to Product Review.'}
+                : limitedCheckpointAvailable
+                  ? `Continue from product ${observedCount + 1} using the saved supplier cursor, or restart from the beginning.`
+                  : 'Choose which supplier products to check. Every detected change still goes to Product Review.'}
             </p>
           </div>
           <button type="button" onClick={onClose} disabled={busy} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-slate-500 hover:bg-slate-100 disabled:opacity-50 dark:hover:bg-slate-800" aria-label="Close manual sync options">
@@ -177,13 +194,49 @@ export default function SupplierManualSyncDialog({
           </small>
         </label>
 
+        {limitedCheckpointAvailable && mode === 'full' && (
+          <fieldset className="mt-6 space-y-3">
+            <legend className="text-[10px] font-black uppercase tracking-wider text-slate-500">Limited sync continuation</legend>
+            <label className="flex min-h-14 cursor-pointer items-start gap-3 rounded-2xl border border-slate-200 p-4 has-[:checked]:border-blue-500 has-[:checked]:bg-blue-500/5 dark:border-slate-800">
+              <input
+                type="radio"
+                name="supplier-sync-continuation"
+                checked={!restartFromBeginning}
+                onChange={() => setRestartFromBeginning(false)}
+                className="mt-0.5 accent-blue-600"
+              />
+              <span>
+                <strong className="block text-xs text-slate-900 dark:text-white">Continue next batch</strong>
+                <small className="mt-1 block text-[10px] leading-relaxed text-slate-500">
+                  Resume after the last {batchLimit > 0 ? batchLimit : 'limited'} products already scanned ({observedCount} observed).
+                </small>
+              </span>
+            </label>
+            <label className="flex min-h-14 cursor-pointer items-start gap-3 rounded-2xl border border-slate-200 p-4 has-[:checked]:border-amber-500 has-[:checked]:bg-amber-500/5 dark:border-slate-800">
+              <input
+                type="radio"
+                name="supplier-sync-continuation"
+                checked={restartFromBeginning}
+                onChange={() => setRestartFromBeginning(true)}
+                className="mt-0.5 accent-amber-600"
+              />
+              <span>
+                <strong className="block text-xs text-slate-900 dark:text-white">Start from beginning</strong>
+                <small className="mt-1 block text-[10px] leading-relaxed text-slate-500">
+                  Reset the saved supplier cursor and scan from product 1 again.
+                </small>
+              </span>
+            </label>
+          </fieldset>
+        )}
+
         {validationError && <p role="alert" className="mt-4 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300">{validationError}</p>}
 
         <footer className="sticky bottom-0 mt-6 flex flex-col-reverse gap-2 border-t border-slate-200 bg-white pt-4 dark:border-slate-800 dark:bg-slate-950 sm:flex-row sm:justify-end">
           <button type="button" onClick={onClose} disabled={busy} className="min-h-11 rounded-xl bg-slate-100 px-4 text-xs font-black text-slate-700 disabled:opacity-50 dark:bg-slate-800 dark:text-slate-200">Cancel</button>
           <button type="submit" disabled={busy} className="flex min-h-11 items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 text-xs font-black text-white disabled:cursor-not-allowed disabled:opacity-50">
             <RefreshCw className={`h-4 w-4 ${busy ? 'animate-spin' : ''}`} aria-hidden="true" />
-            {busy ? 'Starting…' : isInitialSync ? 'Start Initial Sync' : 'Start Sync'}
+            {busy ? 'Starting…' : isInitialSync ? 'Start Initial Sync' : limitedCheckpointAvailable && !restartFromBeginning ? 'Continue Next Batch' : 'Start Sync'}
           </button>
         </footer>
       </form>
