@@ -73,6 +73,20 @@ function readProductDetail(item: Record<string, unknown>): Record<string, unknow
   return optionalRecord(item.productDetail) || item;
 }
 
+function readWholesalePrice(item: Record<string, unknown>, detail: Record<string, unknown>): number {
+  return optionalNumber(item.reSellingPrice)
+    ?? optionalNumber(item.resellingPrice)
+    ?? optionalNumber(item.reSellerPrice)
+    ?? optionalNumber(item.buyingPrice)
+    ?? optionalNumber(item.price)
+    ?? optionalNumber(detail.reSellingPrice)
+    ?? optionalNumber(detail.resellingPrice)
+    ?? optionalNumber(detail.reSellerPrice)
+    ?? optionalNumber(detail.buyingPrice)
+    ?? optionalNumber(detail.price)
+    ?? 0;
+}
+
 function readCategoryLabels(
   detail: Record<string, unknown>,
   item: Record<string, unknown>,
@@ -127,10 +141,7 @@ export class ProductParser {
     const sku = optionalString(detail.sku) || optionalString(item.sku) || supplierProductId || "";
     const title = optionalString(detail.name) || optionalString(item.name) || "";
     const longDescription = optionalString(detail.description) || optionalString(item.description) || "";
-    const wholesalePrice = optionalNumber(item.reSellingPrice)
-      ?? optionalNumber(item.resellingPrice)
-      ?? optionalNumber(item.reSellerPrice)
-      ?? 0;
+    const wholesalePrice = readWholesalePrice(item, detail);
     const recommendedRetailPrice = optionalNumber(detail.sellingPrice)
       ?? optionalNumber(item.sellingPrice)
       ?? optionalNumber(item.marketPrice)

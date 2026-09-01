@@ -116,6 +116,52 @@ function asRecordArray(value: unknown): Record<string, unknown>[] {
   return value.map(asRecord).filter((entry): entry is Record<string, unknown> => Boolean(entry));
 }
 
+export function isDropexFieldAbsent(value: unknown): boolean {
+  return value === undefined
+    || value === null
+    || (typeof value === "string" && !value.trim());
+}
+
+function isDropexSupplierCostAbsent(
+  item: Record<string, unknown>,
+  detail: Record<string, unknown>,
+): boolean {
+  return [
+    item.reSellingPrice,
+    item.resellingPrice,
+    item.reSellerPrice,
+    item.buyingPrice,
+    item.price,
+    detail.reSellingPrice,
+    detail.resellingPrice,
+    detail.reSellerPrice,
+    detail.buyingPrice,
+    detail.price,
+  ].every(isDropexFieldAbsent);
+}
+
+function needsDropexProductEnrichment(
+  item: Record<string, unknown>,
+  detail: Record<string, unknown>,
+): boolean {
+  const retailPriceAbsent = isDropexFieldAbsent(detail.sellingPrice)
+    && isDropexFieldAbsent(item.sellingPrice)
+    && isDropexFieldAbsent(item.marketPrice);
+  const descriptionAbsent = isDropexFieldAbsent(detail.description)
+    && isDropexFieldAbsent(item.description);
+  const imageAbsent = isDropexFieldAbsent(detail.image)
+    && isDropexFieldAbsent(item.image);
+  const inventoryAbsent = isDropexFieldAbsent(detail.onHandInventory)
+    && isDropexFieldAbsent(item.onHandInventory)
+    && isDropexFieldAbsent(item.stock);
+
+  return retailPriceAbsent
+    || descriptionAbsent
+    || imageAbsent
+    || isDropexSupplierCostAbsent(item, detail)
+    || inventoryAbsent;
+}
+
 export class DropexConnectorService {
   private session: DropexAuthenticatedSession | null = null;
   private loginInFlight: { credentialFingerprint: string; promise: Promise<DropexAuthenticatedSession> } | null = null;
@@ -450,11 +496,7 @@ export class DropexConnectorService {
         const detail = asRecord(item.productDetail) || item;
         const productId = String(detail.id || item.productId || item.id || "").trim();
         let enrichment: Record<string, unknown> | undefined;
-        const needsEnrichment = productId && (
-          detail.sellingPrice === undefined
-          || detail.description === undefined
-          || detail.image === undefined
-        );
+        const needsEnrichment = Boolean(productId && needsDropexProductEnrichment(item, detail));
         if (needsEnrichment) {
           enrichment = await this.enrichProductDto(credentials, outboundPolicy, productId);
         }

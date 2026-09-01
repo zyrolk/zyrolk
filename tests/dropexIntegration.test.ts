@@ -17,7 +17,7 @@ import {
   classifyDropexHttpStatus,
   transientRetryDelayMs,
 } from "../functions/src/api/suppliers/dropex/dropexHttpErrors";
-import { DropexConnectorService } from "../functions/src/api/suppliers/dropex/DropexConnectorService";
+import { DropexConnectorService, isDropexFieldAbsent } from "../functions/src/api/suppliers/dropex/DropexConnectorService";
 import {
   runSupplierCatalogTraversal,
 } from "../functions/src/scheduled/supplierCatalogTraversal";
@@ -67,10 +67,43 @@ const catalogItem = {
     sku: "DPX-101",
     description: "Supplier description",
     image: "holder.jpg,holder-alt.jpg",
+    sellingPrice: 890,
     onHandInventory: 12,
     productCategoryId: 7,
   },
   reSellingPrice: 450,
+};
+
+const thinCatalogItem = {
+  productDetail: {
+    id: 1206,
+    name: "Electric Knife Sharpener Swifty Sharp",
+    sku: "ATF0080",
+    sellingPrice: 1000,
+    description: null,
+    image: null,
+    productCategoryId: 7,
+  },
+};
+
+const thinCatalogItemUndefinedPlaceholders = {
+  productDetail: {
+    id: 1207,
+    name: "Undefined Placeholder Product",
+    sku: "ATF0081",
+    sellingPrice: 1000,
+    productCategoryId: 7,
+  },
+};
+
+const atf0080DtoPayload = {
+  buyingPrice: 650,
+  sellingPrice: 1000,
+  onHandInventory: 25,
+  openInventory: 10,
+  dedicatedInventory: 5,
+  description: "Sharpens knives quickly.",
+  image: "atf0080-main.jpg",
 };
 
 const categoryPayload = [
@@ -363,4 +396,168 @@ test("later Dropex supplier changes still route through review updates", () => {
   assert.equal(product.wholesalePrice, 450);
   product.wholesalePrice = 500;
   assert.notEqual(product.wholesalePrice, 450);
+});
+
+test("Dropex null and undefined placeholders both count as absent for enrichment", () => {
+  assert.equal(isDropexFieldAbsent(undefined), true);
+  assert.equal(isDropexFieldAbsent(null), true);
+  assert.equal(isDropexFieldAbsent(""), true);
+  assert.equal(isDropexFieldAbsent("   "), true);
+  assert.equal(isDropexFieldAbsent(0), false);
+  assert.equal(isDropexFieldAbsent("atf0080-main.jpg"), false);
+});
+
+test("Dropex thin catalog rows trigger DTO enrichment for missing cost, stock, and media", async () => {
+  let dtoCalls = 0;
+  const service = new DropexConnectorService({
+    supplierId: "dropex-supplier",
+    sourceId: "dropex-source",
+    credentialReference: "dropex-production",
+  }, {
+    fetchOutbound: async (url) => {
+      if (url.endsWith("/auth/login")) {
+        return response(200, JSON.stringify({ access_token: loginToken }));
+      }
+      if (url.includes("/api/v1/re-seller-products/get")) {
+        return response(200, JSON.stringify({
+          content: [thinCatalogItem],
+          totalElements: 1,
+          number: 0,
+          size: 1,
+          last: true,
+        }));
+      }
+      if (url.endsWith("/api/v1/product-categories")) {
+        return response(200, JSON.stringify(categoryPayload));
+      }
+      if (url.includes("/api/v1/products/1206/dto")) {
+        dtoCalls += 1;
+        return response(200, JSON.stringify(atf0080DtoPayload));
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    },
+  });
+
+  const page = await service.fetchCatalogPage(
+    { username: "dropex-user", password: "dropex-pass" },
+    outboundPolicy,
+    { cursor: "0", pageSize: 1 },
+  );
+
+  assert.equal(dtoCalls, 1);
+  assert.equal(page.products.length, 1);
+  const product = page.products[0] as RawA2ZProduct;
+  assert.equal(product.sku, "ATF0080");
+  assert.equal(product.title, "Electric Knife Sharpener Swifty Sharp");
+  assert.equal(product.wholesalePrice, 650);
+  assert.equal(product.recommendedRetailPrice, 1000);
+  assert.equal(product.inventoryLevel, 25);
+  assert.equal(product.longDescription, "Sharpens knives quickly.");
+  assert.equal(product.mediaGallery?.[0], "https://myorders-lk-documents.s3.ap-south-1.amazonaws.com/products/atf0080-main.jpg");
+  assert.deepEqual(product.extraAttributes, {
+    openInventory: 10,
+    dedicatedInventory: 5,
+  });
+});
+
+test("Dropex thin catalog rows with undefined placeholders also trigger DTO enrichment", async () => {
+  let dtoCalls = 0;
+  const service = new DropexConnectorService({
+    supplierId: "dropex-supplier",
+    sourceId: "dropex-source",
+    credentialReference: "dropex-production",
+  }, {
+    fetchOutbound: async (url) => {
+      if (url.endsWith("/auth/login")) {
+        return response(200, JSON.stringify({ access_token: loginToken }));
+      }
+      if (url.includes("/api/v1/re-seller-products/get")) {
+        return response(200, JSON.stringify({
+          content: [thinCatalogItemUndefinedPlaceholders],
+          totalElements: 1,
+          number: 0,
+          size: 1,
+          last: true,
+        }));
+      }
+      if (url.endsWith("/api/v1/product-categories")) {
+        return response(200, JSON.stringify(categoryPayload));
+      }
+      if (url.includes("/api/v1/products/1207/dto")) {
+        dtoCalls += 1;
+        return response(200, JSON.stringify(atf0080DtoPayload));
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    },
+  });
+
+  const page = await service.fetchCatalogPage(
+    { username: "dropex-user", password: "dropex-pass" },
+    outboundPolicy,
+    { cursor: "0", pageSize: 1 },
+  );
+
+  assert.equal(dtoCalls, 1);
+  assert.equal((page.products[0] as RawA2ZProduct).wholesalePrice, 650);
+});
+
+test("Dropex full catalog rows skip unnecessary DTO enrichment", async () => {
+  let dtoCalls = 0;
+  const service = new DropexConnectorService({
+    supplierId: "dropex-supplier",
+    sourceId: "dropex-source",
+    credentialReference: "dropex-production",
+  }, {
+    fetchOutbound: async (url) => {
+      if (url.endsWith("/auth/login")) {
+        return response(200, JSON.stringify({ access_token: loginToken }));
+      }
+      if (url.includes("/api/v1/re-seller-products/get")) {
+        return response(200, JSON.stringify({
+          content: [catalogItem],
+          totalElements: 1,
+          number: 0,
+          size: 1,
+          last: true,
+        }));
+      }
+      if (url.endsWith("/api/v1/product-categories")) {
+        return response(200, JSON.stringify(categoryPayload));
+      }
+      if (url.includes("/api/v1/products/") && url.endsWith("/dto")) {
+        dtoCalls += 1;
+        return response(200, JSON.stringify({ sellingPrice: 890 }));
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    },
+  });
+
+  const page = await service.fetchCatalogPage(
+    { username: "dropex-user", password: "dropex-pass" },
+    outboundPolicy,
+    { cursor: "0", pageSize: 1 },
+  );
+
+  assert.equal(dtoCalls, 0);
+  assert.equal((page.products[0] as RawA2ZProduct).wholesalePrice, 450);
+  assert.equal((page.products[0] as RawA2ZProduct).recommendedRetailPrice, 890);
+});
+
+test("Dropex detail-level reseller cost aliases map without DTO enrichment", () => {
+  const parsed = ProductParser.parseCatalogItem({
+    productDetail: {
+      id: 1206,
+      name: "Electric Knife Sharpener Swifty Sharp",
+      sku: "ATF0080",
+      sellingPrice: 1000,
+      resellingPrice: 650,
+      onHandInventory: 25,
+      image: "atf0080-main.jpg",
+      description: "Sharpens knives quickly.",
+    },
+  });
+
+  assert.equal(parsed.wholesalePrice, 650);
+  assert.equal(parsed.recommendedRetailPrice, 1000);
+  assert.equal(parsed.inventoryLevel, 25);
 });
