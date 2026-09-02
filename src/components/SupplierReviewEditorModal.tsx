@@ -158,6 +158,10 @@ export default function SupplierReviewEditorModal({
     () => brands.find((brand) => brand.id === draft.brand),
     [brands, draft.brand],
   );
+  const specificationsRequired = useMemo(
+    () => supplierReviewSpecificationsRequired(item, categories, draft.category),
+    [categories, draft.category, item],
+  );
   const validationChecklist = useMemo(() => {
     const checks: Array<{ label: string; fields: Array<keyof typeof validationErrors> }> = [
       { label: 'Images', fields: ['primaryImageUrl', 'galleryImageUrls'] },
@@ -168,7 +172,6 @@ export default function SupplierReviewEditorModal({
       { label: 'Specifications', fields: ['specifications'] },
       { label: 'Stock', fields: ['stock'] },
     ];
-    const specificationsRequired = supplierReviewSpecificationsRequired(item, categories, draft.category);
     const specificationsSatisfied = supplierReviewSpecificationsSatisfied(
       specificationCount,
       item,
@@ -176,6 +179,9 @@ export default function SupplierReviewEditorModal({
       draft.category,
     );
     return checks.map((check) => {
+      if (check.label === 'Specifications' && !specificationsRequired && specificationCount === 0) {
+        return { label: check.label, valid: true, note: 'Not required' };
+      }
       const error = check.label === 'Specifications'
         ? (validationErrors.specifications
           || (!specificationsSatisfied && specificationsRequired
@@ -184,17 +190,25 @@ export default function SupplierReviewEditorModal({
         : check.fields.map((field) => validationErrors[field]).find(Boolean);
       return { label: check.label, valid: !error, error };
     });
-  }, [categories, draft.category, item, specificationCount, validationErrors]);
+  }, [categories, draft.category, item, specificationCount, specificationsRequired, validationErrors]);
   const previewImages = useMemo(() => {
     const images = [draft.primaryImageUrl, ...draft.galleryImageUrls]
       .map((url) => String(url || '').trim())
       .filter((url, index, list) => Boolean(url) && list.indexOf(url) === index);
     return images.filter((url) => isValidSupplierImageUrl(url));
   }, [draft.galleryImageUrls, draft.primaryImageUrl]);
-  const importWarnings = [
-    ...(item.productValidation?.errors || []),
-    ...(item.productValidation?.warnings || []),
-  ];
+  const importWarnings = useMemo(() => {
+    const warnings = [
+      ...(item.productValidation?.errors || []),
+      ...(item.productValidation?.warnings || []),
+    ];
+    if (specificationsRequired) return warnings;
+    return warnings.filter((warning) => {
+      const field = String(warning.field || '').trim().toLowerCase();
+      const code = String(warning.code || '').trim().toLowerCase();
+      return field !== 'specifications' && !field.startsWith('specs.') && code !== 'missing_specifications';
+    });
+  }, [item, specificationsRequired]);
   const supplierVideoUrls = useMemo(() => {
     const snapshot = item.supplierSnapshot || {};
     const metadata = snapshot.supplierMetadata && typeof snapshot.supplierMetadata === 'object'
@@ -871,7 +885,7 @@ export default function SupplierReviewEditorModal({
               {validationChecklist.map((check) => (
                 <li key={check.label} className="flex items-start gap-2 rounded-xl bg-white/60 px-3 py-2 dark:bg-slate-950/30">
                   <span className={`mt-0.5 font-black ${check.valid ? 'text-emerald-600' : 'text-red-600'}`} aria-hidden="true">{check.valid ? '✓' : '✕'}</span>
-                  <span><strong className="block">{check.label}</strong>{check.error && <span className="mt-0.5 block text-[9px] font-semibold text-red-600 dark:text-red-300">{check.error}</span>}</span>
+                  <span><strong className="block">{check.label}</strong>{check.note ? <span className="mt-0.5 block text-[9px] font-semibold text-slate-500 dark:text-slate-400">{check.note}</span> : null}{check.error && <span className="mt-0.5 block text-[9px] font-semibold text-red-600 dark:text-red-300">{check.error}</span>}</span>
                 </li>
               ))}
             </ul>

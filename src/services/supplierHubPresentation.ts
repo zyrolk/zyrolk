@@ -585,6 +585,7 @@ export function supplierConnectionPresentation(
   const sourceStatus = normalized(record.sourceStatus || record.status);
   const connectionStatus = normalized(record.connectionStatus);
   const syncStatus = normalized(record.syncStatus || record.catalogSyncStatus);
+  const failureClassification = normalized(record.lastFailureClassification);
 
   if (!enabled || sourceStatus === 'disabled' || sourceStatus === 'inactive') {
     return { state: 'disabled', label: 'Disabled' };
@@ -595,8 +596,23 @@ export function supplierConnectionPresentation(
   if (isSyncing || sourceStatus === 'syncing' || syncStatus === 'syncing' || syncStatus === 'running') {
     return { state: 'syncing', label: 'Syncing' };
   }
-  if (connectionStatus === 'connected') return { state: 'connected', label: 'Connected' };
+  if (connectionStatus === 'connected' || connectionStatus === 'partial') {
+    return { state: 'connected', label: 'Connected' };
+  }
+  if (connectionStatus === 'failed' && isSupplierConnectionClassifiedFailure(failureClassification)) {
+    return { state: 'problem', label: 'Connection Problem' };
+  }
+  if (isSupplierConnectionClassifiedFailure(failureClassification)) {
+    return { state: 'problem', label: 'Connection Problem' };
+  }
+  if (connectionStatus === 'failed') {
+    return { state: 'connected', label: 'Connected' };
+  }
   return { state: 'problem', label: 'Connection Problem' };
+}
+
+function isSupplierConnectionClassifiedFailure(classification: string): boolean {
+  return classification === 'connector' || classification === 'network';
 }
 
 export function supplierReviewApiState(filter: ProductReviewFilter): 'active' | 'conflict' | 'history' {

@@ -59,7 +59,8 @@ test('supplier cards expose only business controls and delay Auto Sync until Ini
 
   assert.match(hub, /<SupplierConnectionBadge source=\{source\}/);
   assert.match(connectionBadge, /supplierConnectionPresentation/);
-  assert.equal(supplierConnectionPresentation({ connectionStatus: 'failed' }).label, 'Connection Problem');
+  assert.equal(supplierConnectionPresentation({ connectionStatus: 'failed', lastFailureClassification: 'connector' }).label, 'Connection Problem');
+  assert.equal(supplierConnectionPresentation({ connectionStatus: 'failed', lastFailureClassification: 'validation' }).label, 'Connected');
   assert.match(hub, /disabled=\{savingSettingsSourceId !== null \|\| !supplierHasCompletedInitialSync\(source\)\}/);
   assert.match(hub, /setManualSyncSource\(source\)/);
   assert.doesNotMatch(hub, /runManualSupplierSync\(\{ sourceIds: \[id\], mode: 'full' \}\)/);

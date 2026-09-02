@@ -89,3 +89,20 @@ export function buildSupplierManualSyncRequest(draft: SupplierManualSyncDraft): 
     ...(draft.catalogContinuation ? { catalogContinuation: draft.catalogContinuation } : {}),
   };
 }
+
+export interface SupplierCatalogContinuationCheckpoint {
+  status?: string;
+  terminationReason?: string | null;
+  cursor?: string | null;
+}
+
+/** Continue is only offered when a prior limited run left a safe forward cursor. */
+export function isSupplierCatalogContinuationResumable(
+  catalogSync?: SupplierCatalogContinuationCheckpoint | null,
+): boolean {
+  if (!catalogSync?.cursor) return false;
+  const status = String(catalogSync.status || '').trim().toLowerCase();
+  const reason = String(catalogSync.terminationReason || '').trim().toLowerCase();
+  if (status === 'completed') return false;
+  return status === 'limited' && reason === 'limit_reached';
+}

@@ -174,6 +174,6 @@ test('SH-2C serializes timer and checkpoint heartbeat persistence and renders in
   assert.match(worker, /let heartbeatQueue: Promise<void> = Promise\.resolve\(\)/u);
   assert.match(worker, /heartbeatQueue\.then\(\(\) => persistHeartbeat\(input\)\)/u);
   assert.match(worker, /reportProgress: reportAttemptProgress/u);
-  assert.match(component, /aria-valuenow=\{isSupplierSyncProgressDeterminate\(activeSyncJob\) \? activeSyncJob\.progress\.percent : undefined\}/u);
+  assert.match(component, /aria-valuenow=\{isSupplierSyncProgressDeterminate\(currentSyncJob\) \? currentSyncJob\.progress\.percent : undefined\}/u);
   assert.doesNotMatch(component, /Calculating ETA/u);
 });

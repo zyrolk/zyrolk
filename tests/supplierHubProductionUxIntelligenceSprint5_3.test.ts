@@ -15,7 +15,8 @@ test('one connection presentation normalizes every supported Supplier Hub state'
   assert.deepEqual(supplierConnectionPresentation({ connectionStatus: 'connected' }, true), { state: 'syncing', label: 'Syncing' });
   assert.deepEqual(supplierConnectionPresentation({ operationalState: 'paused', connectionStatus: 'connected' }, true), { state: 'paused', label: 'Paused' });
   assert.deepEqual(supplierConnectionPresentation({ enabled: false, connectionStatus: 'connected' }, true), { state: 'disabled', label: 'Disabled' });
-  assert.deepEqual(supplierConnectionPresentation({ connectionStatus: 'failed' }), { state: 'problem', label: 'Connection Problem' });
+  assert.deepEqual(supplierConnectionPresentation({ connectionStatus: 'failed', lastFailureClassification: 'connector' }), { state: 'problem', label: 'Connection Problem' });
+  assert.deepEqual(supplierConnectionPresentation({ connectionStatus: 'failed', lastFailureClassification: 'validation' }), { state: 'connected', label: 'Connected' });
 });
 
 test('supplier operations share the memoized connection badge while Product Review uses compact attribution', () => {

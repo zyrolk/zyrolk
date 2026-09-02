@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { RefreshCw, Search, SlidersHorizontal, X } from 'lucide-react';
 import {
   buildSupplierManualSyncRequest,
+  isSupplierCatalogContinuationResumable,
   SupplierManualSyncRequest,
   SupplierSyncCapabilities,
   SupplierSyncFilterExecution,
@@ -57,9 +58,7 @@ export default function SupplierManualSyncDialog({
   const [restartFromBeginning, setRestartFromBeginning] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
   const supplierName = String(source.supplierName || source.name || source.id);
-  const limitedCheckpointAvailable = source.catalogSync?.status === 'limited'
-    && source.catalogSync?.terminationReason === 'limit_reached'
-    && Boolean(source.catalogSync?.cursor);
+  const limitedCheckpointAvailable = isSupplierCatalogContinuationResumable(source.catalogSync);
   const observedCount = Number(source.catalogSync?.productsObserved || 0);
   const batchLimit = Number(source.catalogSync?.totalProductLimit || 0);
   const supportsCategory = supplierSyncFilterIsSupported(capabilities.categoryFilter);

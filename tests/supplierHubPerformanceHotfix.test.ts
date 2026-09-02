@@ -98,7 +98,7 @@ test('Supplier Hub keeps its authenticated API callback stable across progress r
 test('Supplier Hub prevents another source sync while an active job is being tracked', () => {
   const component = projectFile('src/components/SupplierHubFiveStars.tsx');
   assert.match(component, /syncStartInFlightRef\.current \|\| isSupplierSyncJobActive\(currentJob\)/);
-  assert.match(component, /const currentJob = activeSyncJobRef\.current/);
+  assert.match(component, /const currentJob = currentSyncJobRef\.current/);
   assert.match(component, /disabled=\{isSyncing \|\| syncingSourceId !== null \|\| testingSourceId !== null\}/);
   assert.match(component, /supplier-sync\/jobs\?limit=20/);
 });
@@ -108,9 +108,10 @@ test('supplier updates remain owned by the canonical parent job state and shared
   const operations = projectFile('src/components/supplier-operations/SupplierOperationsDashboard.tsx');
 
   assert.match(parent, /const handleSyncSupplier = useCallback/);
-  assert.match(parent, /applyActiveSyncJob\(result\.job\)/);
-  assert.match(parent, /const applyActiveSyncJob = useCallback[\s\S]*setIsSyncing\(active\)/);
+  assert.match(parent, /applyStartedSyncJob\(result\.job\)/);
+  assert.match(parent, /const applySyncJobViews = useCallback[\s\S]*setIsSyncing\(active\)/);
   assert.doesNotMatch(operations, /onSyncSupplier|syncInProgress|const runSupplierAction/);
+  assert.match(parent, /activeSyncJob=\{currentSyncJob\}/);
   assert.match(operations, /activeSyncJob/);
 });
 
@@ -136,8 +137,8 @@ test('settings, terminal jobs, queue actions, and retry banners update their can
   assert.match(parent, /setSupplierSettings\(\(current: any\) => \(\{/);
   assert.match(parent, /pendingSupplierSettingsRef\.current = submittedSettings/);
   assert.match(parent, /setSupplierSources\(\(current\) => current\.map/);
-  assert.match(parent, /setSyncErrorMsg\(null\);[\s\S]*setSyncStatusMsg\(formatSupplierSyncProgress\(result\.job\)\)/);
-  assert.match(parent, /applyActiveSyncJob\(null\)/);
+  assert.match(parent, /setSyncErrorMsg\(null\);[\s\S]*applySyncJobViews\(jobsResult\.jobs\)/);
+  assert.match(parent, /applySyncJobViews\(\[\]\)/);
   assert.match(parent, /refreshKey=\{operationsRefreshKey\}/);
   assert.match(operations, /setSnapshotError\(null\)/);
   assert.match(operations, /setQueueError\(null\)/);

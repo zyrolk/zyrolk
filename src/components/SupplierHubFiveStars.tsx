@@ -45,8 +45,9 @@ import {
   formatSupplierSyncEta,
   formatSupplierSyncProgress,
   isSupplierSyncJobActive,
+  isSupplierSyncJobTerminal,
   isSupplierSyncProgressDeterminate,
-  selectSupplierSyncJobForDisplay,
+  selectSupplierSyncJobViews,
   supplierSyncJobDetailLine,
   supplierSyncJobHeadline,
   SupplierSyncJobView,
@@ -204,20 +205,29 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
   
   // Syncing state
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
-  const [syncStatusMsg, setSyncStatusMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [syncErrorMsg, setSyncErrorMsg] = useState<string | null>(null);
-  const [activeSyncJob, setActiveSyncJob] = useState<SupplierSyncJobView | null>(null);
+  const [currentSyncJob, setCurrentSyncJob] = useState<SupplierSyncJobView | null>(null);
+  const [lastSyncJob, setLastSyncJob] = useState<SupplierSyncJobView | null>(null);
   const [operationsRefreshKey, setOperationsRefreshKey] = useState(0);
   const [syncJobAction, setSyncJobAction] = useState<'cancel' | 'retry' | 'resume' | null>(null);
   const syncStartInFlightRef = useRef(false);
-  const activeSyncJobRef = useRef<SupplierSyncJobView | null>(null);
+  const currentSyncJobRef = useRef<SupplierSyncJobView | null>(null);
   const pendingSupplierSettingsRef = useRef<Record<string, unknown> | null>(null);
-  const applyActiveSyncJob = useCallback((job: SupplierSyncJobView | null) => {
-    const active = isSupplierSyncJobActive(job);
-    activeSyncJobRef.current = job;
+  const applySyncJobViews = useCallback((jobs: SupplierSyncJobView[]) => {
+    const { current, last } = selectSupplierSyncJobViews(jobs);
+    currentSyncJobRef.current = current;
+    setCurrentSyncJob(current);
+    setLastSyncJob(last);
+    const active = isSupplierSyncJobActive(current);
     syncStartInFlightRef.current = active;
-    setActiveSyncJob(job);
+    setIsSyncing(active);
+  }, []);
+  const applyStartedSyncJob = useCallback((job: SupplierSyncJobView) => {
+    currentSyncJobRef.current = job;
+    setCurrentSyncJob(job);
+    const active = isSupplierSyncJobActive(job);
+    syncStartInFlightRef.current = active;
     setIsSyncing(active);
   }, []);
 
@@ -333,13 +343,9 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
     setErrorMsg(null);
     if (jobsResponse.ok && jobsResult.success === true && Array.isArray(jobsResult.jobs)) {
       setSyncErrorMsg(null);
-      const selectedJob = selectSupplierSyncJobForDisplay(jobsResult.jobs);
-      if (selectedJob) {
-        applyActiveSyncJob(selectedJob);
-        setSyncStatusMsg(formatSupplierSyncProgress(selectedJob));
-      } else applyActiveSyncJob(null);
+      applySyncJobViews(jobsResult.jobs);
     }
-  }, [applyActiveSyncJob]);
+  }, [applySyncJobViews]);
 
   useEffect(() => {
     let cancelled = false;
@@ -466,10 +472,10 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
     return `${supplierLabel} · ${connectorLabel}`;
   }, [supplierSourceById]);
   const sourceIsSyncing = useCallback((sourceId: string): boolean => Boolean(
-    activeSyncJob
-    && isSupplierSyncJobActive(activeSyncJob)
-    && (activeSyncJob.sourceIds.includes(sourceId) || activeSyncJob.progress.currentSourceId === sourceId)
-  ), [activeSyncJob]);
+    currentSyncJob
+    && isSupplierSyncJobActive(currentSyncJob)
+    && (currentSyncJob.sourceIds.includes(sourceId) || currentSyncJob.progress.currentSourceId === sourceId)
+  ), [currentSyncJob]);
 
   // Supplier Settings Engine state
   const [editingSourceId, setEditingSourceId] = useState<string | null>(null);
@@ -653,8 +659,8 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
   }, [editingReviewItem, reviewQueue]);
 
   useEffect(() => {
-    const jobId = activeSyncJob?.id;
-    if (!jobId || !isSupplierSyncJobActive(activeSyncJob)) return;
+    const jobId = currentSyncJob?.id;
+    if (!jobId || !isSupplierSyncJobActive(currentSyncJob)) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
 
@@ -665,9 +671,8 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
         if (!response.ok || result.success !== true || !result.job) throw new Error(result.error || 'Synchronization status could not be loaded.');
         if (cancelled) return;
         const active = isSupplierSyncJobActive(result.job);
-        if (active) applyActiveSyncJob(result.job);
+        if (active) applyStartedSyncJob(result.job);
         setSyncErrorMsg(null);
-        setSyncStatusMsg(formatSupplierSyncProgress(result.job));
         if (!active) {
           setOperationsRefreshKey((current) => current + 1);
           void refreshSupplierQueueViews();
@@ -677,12 +682,10 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
             jobs?: SupplierSyncJobView[];
           };
           if (!cancelled && jobsResponse.ok && jobsResult.success === true && Array.isArray(jobsResult.jobs)) {
-            const nextJob = selectSupplierSyncJobForDisplay(jobsResult.jobs);
-            if (nextJob && nextJob.id !== result.job.id && isSupplierSyncJobActive(nextJob)) {
-              applyActiveSyncJob(nextJob);
-              setSyncStatusMsg(formatSupplierSyncProgress(nextJob));
-            } else if (activeSyncJobRef.current?.id === jobId) applyActiveSyncJob(null);
-          } else if (activeSyncJobRef.current?.id === jobId) applyActiveSyncJob(null);
+            applySyncJobViews(jobsResult.jobs);
+          } else if (currentSyncJobRef.current?.id === jobId) {
+            applySyncJobViews([]);
+          }
         }
         if (active) timer = setTimeout(poll, 2_000);
       } catch (error) {
@@ -697,18 +700,29 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [activeSyncJob?.id, activeSyncJob?.state]);
+  }, [applyStartedSyncJob, applySyncJobViews, currentSyncJob?.id, currentSyncJob?.state]);
 
-  const handleSyncJobAction = async (action: 'cancel' | 'retry' | 'resume') => {
-    if (!activeSyncJob) return;
+  const handleSyncJobAction = async (action: 'cancel' | 'retry' | 'resume', job: SupplierSyncJobView) => {
     setSyncJobAction(action);
     setSyncErrorMsg(null);
     try {
-      const response = await postSupplierApi(`/api/supplier-sync/jobs/${encodeURIComponent(activeSyncJob.id)}/${action}`, {});
+      const response = await postSupplierApi(`/api/supplier-sync/jobs/${encodeURIComponent(job.id)}/${action}`, {});
       const result = await response.json().catch(() => ({})) as { success?: boolean; job?: SupplierSyncJobView; error?: string };
       if (!response.ok || result.success !== true || !result.job) throw new Error(result.error || `Synchronization could not ${action}.`);
-      applyActiveSyncJob(result.job);
-      setSyncStatusMsg(formatSupplierSyncProgress(result.job));
+      if (isSupplierSyncJobActive(result.job)) {
+        applyStartedSyncJob(result.job);
+      } else {
+        const jobsResponse = await getSupplierApi('/api/supplier-sync/jobs?limit=20');
+        const jobsResult = await jobsResponse.json().catch(() => ({})) as { success?: boolean; jobs?: SupplierSyncJobView[] };
+        if (jobsResponse.ok && jobsResult.success === true && Array.isArray(jobsResult.jobs)) {
+          applySyncJobViews(jobsResult.jobs);
+        } else {
+          setLastSyncJob(result.job);
+          setCurrentSyncJob(null);
+          currentSyncJobRef.current = null;
+          setIsSyncing(false);
+        }
+      }
     } catch (error) {
       setSyncErrorMsg(error instanceof Error ? error.message : `Synchronization could not ${action}.`);
     } finally {
@@ -867,16 +881,14 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
   };
 
   const handleSyncSupplier = useCallback(async (request: SupplierManualSyncRequest): Promise<boolean> => {
-    const currentJob = activeSyncJobRef.current;
+    const currentJob = currentSyncJobRef.current;
     if (syncStartInFlightRef.current || isSupplierSyncJobActive(currentJob)) {
-      if (currentJob) setSyncStatusMsg(formatSupplierSyncProgress(currentJob));
       return false;
     }
     let accepted = false;
     syncStartInFlightRef.current = true;
     setIsSyncing(true);
     setSyncErrorMsg(null);
-      setSyncStatusMsg('Starting the supplier product update...');
     try {
       const response = await postSupplierApi('/api/supplier-sync', { ...request });
       const result = await response.json().catch(() => ({})) as {
@@ -893,15 +905,11 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
       if ((!response.ok && !followsExistingActiveJob) || result.success !== true || !result.job) {
         throw new Error(result.error || 'Supplier synchronization could not be completed.');
       }
-      applyActiveSyncJob(result.job);
-      setSyncStatusMsg(followsExistingActiveJob || result.created === false
-        ? 'This supplier update is already in progress.'
-        : 'Supplier product update started.');
+      applyStartedSyncJob(result.job);
       accepted = true;
       return true;
     } catch (error: any) {
       setSyncErrorMsg(error.message || 'Supplier synchronization failed.');
-      setSyncStatusMsg(null);
       return false;
     } finally {
       if (!accepted) {
@@ -909,7 +917,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
         setIsSyncing(false);
       }
     }
-  }, [applyActiveSyncJob, postSupplierApi]);
+  }, [applyStartedSyncJob, postSupplierApi]);
 
   // --- CONNECT SUPPLIER HANDLERS ---
   const buildNewSupplierSource = (
@@ -1535,73 +1543,48 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
       </div>
 
       {/* Notifications and messages */}
-      {syncStatusMsg && (
-        <motion.div 
-          initial={{ opacity: 0, y: -5 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="p-3.5 bg-blue-500/10 text-blue-500 text-xs font-semibold rounded-2xl border border-blue-500/20 flex items-center gap-2"
-        >
-          <Info className="h-4 w-4 shrink-0 animate-pulse" />
-          <span>{syncStatusMsg}</span>
-        </motion.div>
-      )}
-
-      {activeSyncJob && (
+      {currentSyncJob && isSupplierSyncJobActive(currentSyncJob) && (
         <section
-          aria-label="Supplier catalog update progress"
+          aria-label="Current supplier catalog update"
           className="rounded-2xl border border-slate-200/70 bg-white/80 p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900/60"
         >
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0 space-y-1">
+              <p className="text-[9px] font-black uppercase tracking-wider text-blue-600 dark:text-blue-400">Current sync</p>
               <div className="flex items-center gap-2">
                 <Activity className="h-4 w-4 text-blue-500" aria-hidden="true" />
                 <p className="text-xs font-extrabold text-slate-900 dark:text-white">
-                  {supplierSyncJobHeadline(activeSyncJob)}
+                  {supplierSyncJobHeadline(currentSyncJob)}
                 </p>
               </div>
               <p className="text-[11px] text-slate-500 dark:text-slate-400" aria-live="polite">
-                {supplierSyncJobDetailLine(activeSyncJob)}
+                {supplierSyncJobDetailLine(currentSyncJob)}
               </p>
-              {activeSyncJob.state === 'waiting' && activeSyncJob.waitingReason ? (
+              {currentSyncJob.state === 'waiting' && currentSyncJob.waitingReason ? (
                 <p className="text-[11px] font-semibold text-amber-600 dark:text-amber-400">
                   Supplier update is waiting to continue.
                 </p>
               ) : null}
-              {activeSyncJob.state === 'failed' && activeSyncJob.lastFailureReason ? (
-                <p className="text-[11px] font-semibold text-rose-600 dark:text-rose-400">
-                  {activeSyncJob.lastFailureReason}
-                </p>
-              ) : null}
             </div>
             <div className="flex flex-wrap gap-2">
-              {activeSubTab === 'settings' && canAccessAdvanced && ['pending', 'running', 'waiting'].includes(activeSyncJob.state) && (
+              {activeSubTab === 'settings' && canAccessAdvanced && ['pending', 'running', 'waiting'].includes(currentSyncJob.state) && (
                 <button
                   type="button"
-                  onClick={() => handleSyncJobAction('cancel')}
-                  disabled={syncJobAction !== null || activeSyncJob.cancellationRequestedAt != null}
+                  onClick={() => handleSyncJobAction('cancel', currentSyncJob)}
+                  disabled={syncJobAction !== null || currentSyncJob.cancellationRequestedAt != null}
                   className="min-h-10 rounded-xl border border-rose-200 px-3 text-[11px] font-bold text-rose-600 transition-colors hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-rose-900/60 dark:hover:bg-rose-950/30"
                 >
-                  {activeSyncJob.cancellationRequestedAt ? 'Cancelling…' : 'Cancel'}
+                  {currentSyncJob.cancellationRequestedAt ? 'Cancelling…' : 'Cancel'}
                 </button>
               )}
-              {activeSubTab === 'settings' && canAccessAdvanced && (activeSyncJob.state === 'waiting' || activeSyncJob.state === 'cancelled') && (
+              {activeSubTab === 'settings' && canAccessAdvanced && (currentSyncJob.state === 'waiting' || currentSyncJob.state === 'cancelled') && (
                 <button
                   type="button"
-                  onClick={() => handleSyncJobAction('resume')}
+                  onClick={() => handleSyncJobAction('resume', currentSyncJob)}
                   disabled={syncJobAction !== null}
                   className="min-h-10 rounded-xl bg-blue-600 px-3 text-[11px] font-bold text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Resume
-                </button>
-              )}
-              {activeSyncJob.state === 'failed' && (
-                <button
-                  type="button"
-                  onClick={() => handleSyncJobAction('retry')}
-                  disabled={syncJobAction !== null}
-                  className="min-h-10 rounded-xl bg-blue-600 px-3 text-[11px] font-bold text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  Retry
                 </button>
               )}
             </div>
@@ -1612,19 +1595,57 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
             aria-label="Supplier catalog update progress"
             aria-valuemin={0}
             aria-valuemax={100}
-            aria-valuenow={isSupplierSyncProgressDeterminate(activeSyncJob) ? activeSyncJob.progress.percent : undefined}
-            aria-valuetext={formatSupplierSyncProgress(activeSyncJob)}
+            aria-valuenow={isSupplierSyncProgressDeterminate(currentSyncJob) ? currentSyncJob.progress.percent : undefined}
+            aria-valuetext={formatSupplierSyncProgress(currentSyncJob)}
           >
             <div
-              className={`h-full rounded-full bg-gradient-to-r from-blue-600 to-cyan-500 transition-[width] duration-500 motion-reduce:transition-none ${isSupplierSyncProgressDeterminate(activeSyncJob) ? '' : 'w-1/3 animate-pulse motion-reduce:animate-none'}`}
-              style={isSupplierSyncProgressDeterminate(activeSyncJob)
-                ? { width: `${Math.max(0, Math.min(100, activeSyncJob.progress.percent))}%` }
+              className={`h-full rounded-full bg-gradient-to-r from-blue-600 to-cyan-500 transition-[width] duration-500 motion-reduce:transition-none ${isSupplierSyncProgressDeterminate(currentSyncJob) ? '' : 'w-1/3 animate-pulse motion-reduce:animate-none'}`}
+              style={isSupplierSyncProgressDeterminate(currentSyncJob)
+                ? { width: `${Math.max(0, Math.min(100, currentSyncJob.progress.percent))}%` }
                 : undefined}
             />
           </div>
         </section>
       )}
 
+      {lastSyncJob && isSupplierSyncJobTerminal(lastSyncJob) && (!currentSyncJob || lastSyncJob.id !== currentSyncJob.id) && (
+        <section
+          aria-label="Last supplier catalog update"
+          className="rounded-2xl border border-slate-200/70 bg-white/80 p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900/60"
+        >
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0 space-y-1">
+              <p className="text-[9px] font-black uppercase tracking-wider text-slate-400">Last sync</p>
+              <div className="flex items-center gap-2">
+                <Activity className={`h-4 w-4 ${lastSyncJob.state === 'failed' ? 'text-rose-500' : 'text-emerald-500'}`} aria-hidden="true" />
+                <p className="text-xs font-extrabold text-slate-900 dark:text-white">
+                  {supplierSyncJobHeadline(lastSyncJob)}
+                </p>
+              </div>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                {supplierSyncJobDetailLine(lastSyncJob)}
+              </p>
+              {lastSyncJob.state === 'failed' && lastSyncJob.lastFailureReason ? (
+                <p className="text-[11px] font-semibold text-rose-600 dark:text-rose-400">
+                  {lastSyncJob.lastFailureReason}
+                </p>
+              ) : null}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {lastSyncJob.state === 'failed' && (
+                <button
+                  type="button"
+                  onClick={() => handleSyncJobAction('retry', lastSyncJob)}
+                  disabled={syncJobAction !== null || isSupplierSyncJobActive(currentSyncJob)}
+                  className="min-h-10 rounded-xl bg-blue-600 px-3 text-[11px] font-bold text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Retry
+                </button>
+              )}
+            </div>
+          </div>
+        </section>
+      )}
       {successMsg && (
         <motion.div 
           initial={{ opacity: 0, y: -5 }}
@@ -1693,7 +1714,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
         {activeSubTab === 'activity' && (!supplierSourcesLoaded || supplierSources.length > 0) && (
           <SupplierOperationsDashboard
             requestApi={requestSupplierApi}
-            activeSyncJob={activeSyncJob}
+            activeSyncJob={currentSyncJob}
             refreshKey={operationsRefreshKey}
             mode="activity"
             supplierSources={supplierSources}
@@ -2454,7 +2475,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
               </div>
             <SupplierOperationsDashboard
               requestApi={requestSupplierApi}
-              activeSyncJob={activeSyncJob}
+              activeSyncJob={currentSyncJob}
               refreshKey={operationsRefreshKey}
               mode="advanced"
             />

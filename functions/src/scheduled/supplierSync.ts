@@ -214,6 +214,31 @@ export function resolveSupplierSyncRunStatus(input: {
   return "Success";
 }
 
+/** Only connector/network failures should degrade stored connection health. */
+export function isSupplierConnectionClassifiedFailure(classification: string): boolean {
+  const normalized = String(classification || "").trim().toLowerCase();
+  return normalized === "connector" || normalized === "network";
+}
+
+/**
+ * Manual verification runs that scan nothing are not a silent success — the
+ * operator needs an explicit partial outcome to restart or adjust continuation.
+ */
+export function resolveSupplierSyncRunStatusForZeroScan(
+  trigger: "scheduled" | "manual",
+  status: SyncStatus,
+  metrics: Pick<SyncMetrics, "productsScanned" | "productsQueued">,
+  syncRequest?: SupplierSyncRequest,
+): SyncStatus {
+  if (status !== "Success") return status;
+  if (metrics.productsScanned > 0 || metrics.productsQueued > 0) return status;
+  const manualVerification = trigger === "manual" && (
+    syncRequest?.catalogContinuation != null
+    || syncRequest?.totalProductLimit != null
+  );
+  return manualVerification ? "Partial" : status;
+}
+
 interface ExistingProduct {
   id: string;
   name?: string;
@@ -2256,17 +2281,29 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
 
   if (sources.length === 0) {
     const finishedAt = new Date();
+    const zeroScanMessage = "All supplier sources had already completed successfully for this synchronization job.";
+    if (trigger === "manual" && metrics.productsScanned === 0 && metrics.productsQueued === 0) {
+      metrics.errors.push(
+        "No new supplier products were scanned. This job may have already finished, or the saved continuation checkpoint has no remaining catalogue pages. Use Start from beginning if you expected more products.",
+      );
+    }
+    const status = resolveSupplierSyncRunStatusForZeroScan(
+      trigger,
+      "Success",
+      metrics,
+      syncRequest,
+    );
     await writeHistory(
       batchId,
       trigger,
-      "Success",
+      status,
       startedAt,
       finishedAt,
       metrics,
-      "All supplier sources had already completed successfully for this synchronization job.",
+      zeroScanMessage,
       syncRequest,
     );
-    return buildRunResult(batchId, "Success", metrics, startedAt.getTime(), syncRequest);
+    return buildRunResult(batchId, status, metrics, startedAt.getTime(), syncRequest);
   }
 
   const hasWritableSources = sources.some((source) => source.settings?.dryRunMode !== true);
@@ -3526,7 +3563,7 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
         });
         if (source.settings?.dryRunMode !== true) {
           await adminDb.collection("supplierSources").doc(source.id).set({
-            connectionStatus: "Failed",
+            ...(isSupplierConnectionClassifiedFailure(failureClassification) ? { connectionStatus: "Failed" } : {}),
             lastError: message,
             lastFailureClassification: failureClassification,
             lastFailedSyncAt: new Date().toISOString(),
@@ -3598,12 +3635,27 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
     await commitQueuedItems(queuedWrites);
     const finishedAt = new Date();
     await releaseSourceSyncLeases(sources.filter((source) => source.settings?.dryRunMode !== true), batchId, finishedAt.getTime());
-    const status = resolveSupplierSyncRunStatus({
-      completedSources: completedSourceCount,
-      failedSources: metrics.sourceFailures,
-      incompleteSources: incompleteTraversalCount,
-      interrupted: cancellationInterrupted,
-    });
+    const status = resolveSupplierSyncRunStatusForZeroScan(
+      trigger,
+      resolveSupplierSyncRunStatus({
+        completedSources: completedSourceCount,
+        failedSources: metrics.sourceFailures,
+        incompleteSources: incompleteTraversalCount,
+        interrupted: cancellationInterrupted,
+      }),
+      metrics,
+      syncRequest,
+    );
+    if (
+      status === "Partial"
+      && metrics.productsScanned === 0
+      && metrics.productsQueued === 0
+      && trigger === "manual"
+    ) {
+      metrics.errors.push(
+        "No supplier products were scanned during this manual run. The continuation checkpoint may be exhausted, or this job may already have completed. Use Start from beginning if you expected more catalogue items.",
+      );
+    }
     const nextSync = getNextSyncIso(settings, finishedAt.getTime());
 
     await adminDb.collection("supplier_settings").doc("config").set({

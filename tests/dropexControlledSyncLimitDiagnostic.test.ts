@@ -212,8 +212,9 @@ test('DROPEX-LIMIT-08 failed terminal sync jobs remain selectable after refresh 
   assert.equal(selected?.id, 'failed-job');
   assert.equal(isSupplierSyncJobActive(selected), false);
   const hub = readFileSync('src/components/SupplierHubFiveStars.tsx', 'utf8');
-  assert.doesNotMatch(hub, /if \(selectedJob && isSupplierSyncJobActive\(selectedJob\)\)/u);
-  assert.match(hub, /if \(selectedJob\) \{\s*applyActiveSyncJob\(selectedJob\)/u);
+  assert.match(hub, /selectSupplierSyncJobViews/u);
+  assert.match(hub, /lastSyncJob/u);
+  assert.match(hub, /currentSyncJob/u);
 });
 
 test('DROPEX-LIMIT-09 supplier category mapping falls back to supplierCategory when hierarchy is empty', () => {

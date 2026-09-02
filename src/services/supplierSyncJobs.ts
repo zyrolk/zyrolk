@@ -54,9 +54,50 @@ export const isSupplierSyncJobActive = (job: SupplierSyncJobView | null | undefi
   job?.state === 'pending' || job?.state === 'running' || job?.state === 'waiting'
 );
 
+export const isSupplierSyncJobTerminal = (job: SupplierSyncJobView | null | undefined): boolean => (
+  job?.state === 'completed' || job?.state === 'failed' || job?.state === 'cancelled'
+);
+
 const syncJobTime = (value: string | null | undefined, fallback: number): number => {
   const parsed = Date.parse(String(value || ''));
   return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const sortActiveSupplierSyncJobs = (jobs: readonly SupplierSyncJobView[]): SupplierSyncJobView[] => (
+  jobs
+    .filter(isSupplierSyncJobActive)
+    .sort((left, right) => {
+      if (left.state === 'running' && right.state !== 'running') return -1;
+      if (right.state === 'running' && left.state !== 'running') return 1;
+      const nextAttemptDifference = syncJobTime(left.nextAttemptAt, 0) - syncJobTime(right.nextAttemptAt, 0);
+      if (nextAttemptDifference !== 0) return nextAttemptDifference;
+      return syncJobTime(left.createdAt, 0) - syncJobTime(right.createdAt, 0);
+    })
+);
+
+/** Active queued/running/waiting job, if any. */
+export const selectCurrentSupplierSyncJob = (
+  jobs: readonly SupplierSyncJobView[],
+): SupplierSyncJobView | null => sortActiveSupplierSyncJobs(jobs)[0] ?? null;
+
+/** Newest terminal job when no active work exists. */
+export const selectLastTerminalSupplierSyncJob = (
+  jobs: readonly SupplierSyncJobView[],
+): SupplierSyncJobView | null => {
+  const terminals = jobs
+    .filter(isSupplierSyncJobTerminal)
+    .sort((left, right) => syncJobTime(right.createdAt, 0) - syncJobTime(left.createdAt, 0));
+  return terminals[0] ?? null;
+};
+
+export const selectSupplierSyncJobViews = (
+  jobs: readonly SupplierSyncJobView[],
+): { current: SupplierSyncJobView | null; last: SupplierSyncJobView | null } => {
+  const current = selectCurrentSupplierSyncJob(jobs);
+  const last = selectLastTerminalSupplierSyncJob(
+    jobs.filter((job) => !current || job.id !== current.id),
+  );
+  return { current, last };
 };
 
 /**
@@ -66,27 +107,9 @@ const syncJobTime = (value: string | null | undefined, fallback: number): number
  */
 export const selectSupplierSyncJobForDisplay = (
   jobs: readonly SupplierSyncJobView[],
-): SupplierSyncJobView | null => {
-  const candidates = jobs.filter((job) => Boolean(job?.id));
-  if (candidates.length === 0) return null;
-
-  const running = candidates
-    .filter((job) => job.state === 'running')
-    .sort((left, right) => syncJobTime(left.startedAt, Number.MAX_SAFE_INTEGER)
-      - syncJobTime(right.startedAt, Number.MAX_SAFE_INTEGER));
-  if (running[0]) return running[0];
-
-  const queued = candidates
-    .filter(isSupplierSyncJobActive)
-    .sort((left, right) => {
-      const nextAttemptDifference = syncJobTime(left.nextAttemptAt, 0) - syncJobTime(right.nextAttemptAt, 0);
-      if (nextAttemptDifference !== 0) return nextAttemptDifference;
-      return syncJobTime(left.createdAt, 0) - syncJobTime(right.createdAt, 0);
-    });
-  if (queued[0]) return queued[0];
-
-  return [...candidates].sort((left, right) => syncJobTime(right.createdAt, 0) - syncJobTime(left.createdAt, 0))[0];
-};
+): SupplierSyncJobView | null => (
+  selectCurrentSupplierSyncJob(jobs) ?? selectLastTerminalSupplierSyncJob(jobs)
+);
 
 export const supplierSyncJobStateLabel = (state: SupplierSyncJobState): string => ({
   pending: 'Pending',
@@ -100,11 +123,14 @@ export const supplierSyncJobStateLabel = (state: SupplierSyncJobState): string =
 /** One operator-facing sync headline that never combines contradictory states. */
 export const supplierSyncJobHeadline = (job: SupplierSyncJobView): string => {
   const { productsScanned, pagesProcessed } = job.progress;
-  if (job.state === 'running' || (isSupplierSyncJobActive(job) && (pagesProcessed > 0 || productsScanned > 0))) {
+  if (isSupplierSyncJobActive(job) && (job.state === 'running' || pagesProcessed > 0 || productsScanned > 0)) {
     return `Sync in progress · ${productsScanned} scanned`;
   }
   if (job.state === 'waiting') return 'Sync waiting to continue';
   if (job.state === 'pending') return 'Sync pending';
+  if (job.state === 'completed' && productsScanned === 0) {
+    return 'Catalog update · Completed with no new products scanned';
+  }
   return `Catalog update · ${supplierSyncJobStateLabel(job.state)}`;
 };
 
