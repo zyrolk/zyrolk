@@ -192,8 +192,8 @@ export function createSupplierCatalogTraversalCheckpoint(
     && (!initial.syncMode || initial.syncMode === requestedMode);
   const sameJobScope = sameRequestScope
     && (!requestedJobId || initial.syncJobId === requestedJobId);
-  const limitedContinuation = !restartRequested
-    && options.catalogContinuation !== "restart"
+  const limitedContinuation = options.catalogContinuation === "continue"
+    && !restartRequested
     && initial.status === "limited"
     && initial.terminationReason === "limit_reached"
     && sameRequestScope
@@ -347,8 +347,7 @@ export async function runSupplierCatalogTraversal(options: SupplierCatalogTraver
     const pageMetrics = await options.processPage(page, checkpoint);
     const pageInvalidProducts = safeCount(pageMetrics.invalidProducts);
     const productsObserved = checkpoint.productsObserved + pageObservedProducts;
-    const limitReached = !page.complete
-      && checkpoint.totalProductLimit !== null
+    const limitReached = checkpoint.totalProductLimit !== null
       && (productsObserved - batchBaseline) >= checkpoint.totalProductLimit;
     const deletionReconciliationEligible = checkpoint.deletionReconciliationEligible
       && pageInvalidProducts === 0

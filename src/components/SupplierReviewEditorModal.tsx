@@ -21,6 +21,7 @@ import {
   supplierOfferIsLocked,
 } from '../services/supplierOffers';
 import {
+  supplierReviewRawMetadata,
   supplierReviewSpecificationsRequired,
   supplierReviewSpecificationsSatisfied,
 } from '../services/supplierHubPresentation';
@@ -152,6 +153,7 @@ export default function SupplierReviewEditorModal({
     () => brands.find((brand) => brand.id === item.brandMapping?.mappedBrandId),
     [brands, item.brandMapping?.mappedBrandId],
   );
+  const supplierMetadata = useMemo(() => supplierReviewRawMetadata(item), [item]);
   const selectedBrand = useMemo(
     () => brands.find((brand) => brand.id === draft.brand),
     [brands, draft.brand],
@@ -391,12 +393,12 @@ export default function SupplierReviewEditorModal({
             </div>
             <div className="rounded-xl bg-white/70 p-3 dark:bg-slate-900/60">
               <span className="block text-[9px] font-black uppercase text-slate-400">Supplier category</span>
-              <strong>{item.categoryMapping?.supplierCategory || 'Not supplied'}</strong>
+              <strong>{supplierMetadata.supplierCategory || 'Not supplied'}</strong>
               {item.categoryMapping?.targetCategoryId ? <><div className="mt-2 flex flex-wrap items-center gap-2"><span className="text-[10px] text-slate-500">Suggested Category</span><strong className="text-xs text-blue-700 dark:text-blue-300">{suggestedCategory?.name || item.categoryMapping.targetCategoryId}</strong><span className="rounded-full bg-blue-500/10 px-2 py-0.5 text-[9px] font-black text-blue-600">{Math.round(Number(item.categoryMapping.confidence || 0))}% confidence</span></div>{isEditing ? <button type="button" onClick={() => setDraft((current) => ({ ...current, category: item.categoryMapping?.targetCategoryId || '', subcategory: item.categoryMapping?.targetSubcategoryId || '' }))} disabled={draft.category === item.categoryMapping.targetCategoryId && draft.subcategory === (item.categoryMapping.targetSubcategoryId || '')} className="mt-2 rounded-lg bg-blue-600 px-3 py-2 text-[10px] font-black text-white disabled:cursor-not-allowed disabled:opacity-40">Apply</button> : null}</> : <p className="mt-2 rounded-lg border border-dashed border-blue-500/20 p-3 text-[10px] text-slate-500">No category suggestion is available. Select a category manually.</p>}
             </div>
             <div className="rounded-xl bg-white/70 p-3 dark:bg-slate-900/60">
               <span className="block text-[9px] font-black uppercase text-slate-400">Supplier brand</span>
-              <strong>{item.brandMapping?.supplierBrand || 'Not supplied'}</strong>
+              <strong>{supplierMetadata.supplierBrand || item.brandMapping?.supplierBrand || 'Not supplied'}</strong>
               {item.brandMapping?.mappedBrandId ? <><div className="mt-2 flex flex-wrap items-center gap-2"><span className="text-[10px] text-slate-500">Suggested Brand</span><strong className="text-xs text-blue-700 dark:text-blue-300">{suggestedBrand?.name || item.brandMapping.mappedBrandId}</strong><span className="rounded-full bg-blue-500/10 px-2 py-0.5 text-[9px] font-black text-blue-600">{Math.round(Number(item.brandMapping.confidence || 0))}% confidence</span></div>{isEditing ? <button type="button" onClick={() => setDraft((current) => ({ ...current, brand: item.brandMapping?.mappedBrandId || '' }))} disabled={draft.brand === item.brandMapping.mappedBrandId} className="mt-2 rounded-lg bg-blue-600 px-3 py-2 text-[10px] font-black text-white disabled:cursor-not-allowed disabled:opacity-40">Apply</button> : null}</> : <p className="mt-2 rounded-lg border border-dashed border-blue-500/20 p-3 text-[10px] text-slate-500">No brand suggestion is available. Select a brand manually.</p>}
             </div>
           </section>

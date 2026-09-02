@@ -334,7 +334,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
     if (jobsResponse.ok && jobsResult.success === true && Array.isArray(jobsResult.jobs)) {
       setSyncErrorMsg(null);
       const selectedJob = selectSupplierSyncJobForDisplay(jobsResult.jobs);
-      if (selectedJob && isSupplierSyncJobActive(selectedJob)) {
+      if (selectedJob) {
         applyActiveSyncJob(selectedJob);
         setSyncStatusMsg(formatSupplierSyncProgress(selectedJob));
       } else applyActiveSyncJob(null);
@@ -1565,6 +1565,11 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
               {activeSyncJob.state === 'waiting' && activeSyncJob.waitingReason ? (
                 <p className="text-[11px] font-semibold text-amber-600 dark:text-amber-400">
                   Supplier update is waiting to continue.
+                </p>
+              ) : null}
+              {activeSyncJob.state === 'failed' && activeSyncJob.lastFailureReason ? (
+                <p className="text-[11px] font-semibold text-rose-600 dark:text-rose-400">
+                  {activeSyncJob.lastFailureReason}
                 </p>
               ) : null}
             </div>

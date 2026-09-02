@@ -85,7 +85,7 @@ export interface SupplierSyncRequestControls {
   filters?: SupplierCatalogFilterRequest;
   /** Optional connector page size. Persisted source settings remain the compatibility fallback. */
   pageSize?: number;
-  /** Maximum supplier observations processed across the complete requested run. */
+  /** Maximum supplier products scanned for one sync job (not per page, retry, or worker loop). */
   totalProductLimit?: number;
   /**
    * Limited full-sync traversal control. Continue resumes the persisted supplier

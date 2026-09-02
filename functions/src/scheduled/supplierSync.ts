@@ -2494,6 +2494,7 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
           ?? (source.catalogSync?.status === "limited"
             && source.catalogSync?.requestFingerprint === requestFingerprint
             && source.catalogSync?.terminationReason === "limit_reached"
+            && source.catalogSync?.syncJobId !== batchId
             ? "continue"
             : undefined);
         const resumesTraversal = ["in_progress", "paused", "reconciling"].includes(String(source.catalogSync?.status || ""))
@@ -3109,7 +3110,9 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
           const productType = String(product.productType || product.specifications?.productType || product.specifications?.["Product Type"] || "").trim();
           const categoryMapping = suggestSupplierCategory({
             sourceId: source.id,
-            supplierCategories: product.categoryHierarchy || [],
+            supplierCategories: (product.categoryHierarchy && product.categoryHierarchy.length > 0)
+              ? product.categoryHierarchy
+              : [product.supplierCategory, product.supplierSubcategory].filter((value): value is string => Boolean(String(value || "").trim())),
             productTitle: product.title,
             keywords: supplierKeywords,
             productType,
