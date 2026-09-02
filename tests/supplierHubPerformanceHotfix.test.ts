@@ -40,14 +40,15 @@ const buildJob = (overrides: Partial<SupplierSyncJobView> = {}): SupplierSyncJob
 
 test('active single-source traversal reports indeterminate progress instead of a false zero percent', () => {
   const summary = formatSupplierSyncProgress(buildJob());
-  assert.match(summary, /Running · In progress · 40 scanned/);
+  assert.match(summary, /Sync in progress · 40 scanned/u);
+  assert.match(summary, /Scanning supplier catalogue/u);
   assert.doesNotMatch(summary, /0%/);
 
   const completed = formatSupplierSyncProgress(buildJob({
     state: 'completed',
     progress: { ...buildJob().progress, phase: 'completed', percent: 100, completedSources: 1 },
   }));
-  assert.equal(completed, 'Completed · 40 scanned · 8 queued for processing');
+  assert.equal(completed, 'Catalog update · Completed · 40 scanned · 8 queued for processing');
 });
 
 test('job selection follows the worker state instead of a newer waiting job', () => {

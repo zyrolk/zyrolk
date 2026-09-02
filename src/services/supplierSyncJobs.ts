@@ -97,6 +97,40 @@ export const supplierSyncJobStateLabel = (state: SupplierSyncJobState): string =
   cancelled: 'Cancelled',
 })[state];
 
+/** One operator-facing sync headline that never combines contradictory states. */
+export const supplierSyncJobHeadline = (job: SupplierSyncJobView): string => {
+  const { productsScanned, pagesProcessed } = job.progress;
+  if (job.state === 'running' || (isSupplierSyncJobActive(job) && (pagesProcessed > 0 || productsScanned > 0))) {
+    return `Sync in progress · ${productsScanned} scanned`;
+  }
+  if (job.state === 'waiting') return 'Sync waiting to continue';
+  if (job.state === 'pending') return 'Sync pending';
+  return `Catalog update · ${supplierSyncJobStateLabel(job.state)}`;
+};
+
+/** Secondary sync detail line derived from persisted counters only. */
+export const supplierSyncJobDetailLine = (job: SupplierSyncJobView): string => {
+  const { productsQueued, productsScanned, percent, etaMs } = job.progress;
+  const determinate = isSupplierSyncProgressDeterminate(job);
+  const parts: string[] = [];
+
+  if (job.state === 'running') {
+    parts.push(determinate ? `${percent}% complete` : 'Scanning supplier catalogue');
+  } else if (job.state === 'waiting' && productsScanned > 0) {
+    parts.push('Queued items still processing');
+  } else if (job.state === 'pending') {
+    parts.push('Waiting to start');
+  }
+
+  parts.push(`${productsScanned} scanned · ${productsQueued} queued for processing`);
+
+  if (isSupplierSyncJobActive(job) && determinate && etaMs !== null) {
+    parts.push(formatSupplierSyncEta(etaMs));
+  }
+
+  return parts.join(' · ');
+};
+
 export const formatSupplierSyncEta = (etaMs: number | null | undefined): string => {
   if (etaMs === null || etaMs === undefined || !Number.isFinite(etaMs) || etaMs < 0) return 'Time remaining unavailable';
   if (etaMs < 60_000) return 'Less than a minute remaining';
@@ -114,20 +148,7 @@ export const isSupplierSyncProgressDeterminate = (job: SupplierSyncJobView): boo
 );
 
 export const formatSupplierSyncProgress = (job: SupplierSyncJobView): string => {
-  const label = supplierSyncJobStateLabel(job.state);
-  const { pagesProcessed, percent, productsQueued, productsScanned } = job.progress;
-  if (!isSupplierSyncJobActive(job)) {
-    return `${label} · ${productsScanned} scanned · ${productsQueued} queued for processing`;
-  }
-
-  const determinate = isSupplierSyncProgressDeterminate(job);
-  const progressLabel = determinate
-    ? `${percent}%`
-    : pagesProcessed > 0 || productsScanned > 0
-      ? 'In progress'
-      : 'Starting';
-  const etaLabel = determinate && job.progress.etaMs !== null
-    ? ` · ${formatSupplierSyncEta(job.progress.etaMs)}`
-    : '';
-  return `${label} · ${progressLabel} · ${productsScanned} scanned${etaLabel}`;
+  const headline = supplierSyncJobHeadline(job);
+  const detail = supplierSyncJobDetailLine(job);
+  return detail ? `${headline} · ${detail}` : headline;
 };

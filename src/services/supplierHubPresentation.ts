@@ -1,4 +1,10 @@
+import { isValidSupplierImageUrl } from './connectors/a2z-website/productImages';
+import { countStructuredSupplierSpecifications } from './supplierReviewEditor';
+
 export type SupplierHubSection = 'suppliers' | 'review' | 'activity' | 'settings';
+
+export const SUPPLIER_REVIEW_STALE_REFRESH_MESSAGE =
+  'This product changed while it was open. Product Review has been refreshed.';
 
 export type ProductReviewFilter =
   | 'new_products'
@@ -36,6 +42,8 @@ export interface SupplierReviewQuickApprovalItem extends ReviewPresentationItem 
     specs?: unknown;
     media?: unknown;
     supplierMedia?: unknown;
+    imageUrl?: unknown;
+    imageUrls?: unknown;
   } | null;
 }
 
@@ -178,12 +186,82 @@ export function supplierReviewManagedImageUrl(item: SupplierReviewQuickApprovalI
   return /^https:\/\/\S+$/iu.test(url) ? url : '';
 }
 
+/** Counts only non-empty structured specification key/value pairs. */
+export { countStructuredSupplierSpecifications } from './supplierReviewEditor';
+
+/**
+ * Shared review image selector for cards and read-only modal previews.
+ * Managed Firebase URLs win for publish parity, then explicit primary, gallery, and legacy fields.
+ */
+export function supplierReviewDisplayImageUrl(item: SupplierReviewQuickApprovalItem): string {
+  const managed = supplierReviewManagedImageUrl(item);
+  if (managed) return managed;
+
+  const payload = item.productPayload || {};
+  const primary = String(payload.imageUrl || (item as { imageUrl?: unknown }).imageUrl || '').trim();
+  if (isValidSupplierImageUrl(primary)) return primary;
+
+  const gallery = Array.isArray(payload.imageUrls) ? payload.imageUrls : [];
+  for (const candidate of gallery) {
+    const url = String(candidate || '').trim();
+    if (isValidSupplierImageUrl(url)) return url;
+  }
+
+  for (const record of managedMediaRecords(item)) {
+    for (const field of ['firebaseStorageUrl', 'url', 'imageUrl', 'src', 'original', 'thumbnail']) {
+      const url = String(record[field] || '').trim();
+      if (isValidSupplierImageUrl(url)) return url;
+    }
+  }
+
+  return '';
+}
+
 /** Uses the canonical approval payload field instead of the legacy UI alias. */
 export function supplierReviewSpecificationCount(item: SupplierReviewQuickApprovalItem): number {
-  const specs = item.productPayload?.specs;
-  return specs && typeof specs === 'object' && !Array.isArray(specs)
-    ? Object.keys(specs).length
-    : 0;
+  return countStructuredSupplierSpecifications(item.productPayload?.specs);
+}
+
+export function supplierReviewSpecificationsRequired(
+  item: Pick<SupplierReviewQuickApprovalItem, 'productValidation'>,
+  categories: readonly { id?: unknown; specificationTemplate?: Array<{ required?: boolean }> }[] | undefined,
+  categoryId: string,
+): boolean {
+  const selectedCategory = categories?.find((candidate) => String(candidate.id || '').trim() === categoryId.trim());
+  if ((selectedCategory?.specificationTemplate || []).some((field) => field.required === true)) return true;
+
+  const missingFields = Array.isArray(item.productValidation?.missingFields)
+    ? item.productValidation.missingFields.map((field) => String(field || '').trim().toLowerCase())
+    : [];
+  if (missingFields.includes('specifications')) return true;
+
+  const errors = Array.isArray(item.productValidation?.errors) ? item.productValidation.errors : [];
+  return errors.some((error) => {
+    const record = error && typeof error === 'object' ? error as { field?: unknown; code?: unknown } : {};
+    const field = String(record.field || '').trim().toLowerCase();
+    const code = String(record.code || '').trim().toLowerCase();
+    return field === 'specifications' || field.startsWith('specs.') || code === 'missing_specifications';
+  });
+}
+
+export function supplierReviewSpecificationsSatisfied(
+  specificationCount: number,
+  item: Pick<SupplierReviewQuickApprovalItem, 'productValidation'>,
+  categories: readonly { id?: unknown; specificationTemplate?: Array<{ required?: boolean }> }[] | undefined,
+  categoryId: string,
+): boolean {
+  if (specificationCount > 0) return true;
+  return !supplierReviewSpecificationsRequired(item, categories, categoryId);
+}
+
+export function isSupplierReviewStaleObservationError(message: unknown): boolean {
+  const text = String(message || '').trim().toLowerCase();
+  if (!text) return false;
+  return text.includes('no longer pending')
+    || text.includes('reload product review')
+    || text.includes('changed after it was opened')
+    || text.includes('observation changed')
+    || text.includes('already processed or no longer exists');
 }
 
 export function supplierReviewCanQuickApprove(item: SupplierReviewQuickApprovalItem): boolean {

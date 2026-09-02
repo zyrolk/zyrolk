@@ -4,6 +4,7 @@ import {
   buildSupplierReviewMetadataSections,
   buildSupplierReviewFieldChanges,
   calculateSupplierProfit,
+  countStructuredSupplierSpecifications,
   setSupplierReviewDraftFieldOwner,
   SupplierReviewDraft,
   SupplierReviewEditableField,
@@ -19,13 +20,20 @@ import {
   supplierOfferIsActive,
   supplierOfferIsLocked,
 } from '../services/supplierOffers';
-import { formatSupplierTimestamp, supplierReviewSpecificationCount } from '../services/supplierHubPresentation';
+import {
+  supplierReviewSpecificationsRequired,
+  supplierReviewSpecificationsSatisfied,
+} from '../services/supplierHubPresentation';
+import {
+  supplierDescriptionPlainText,
+} from '../services/supplierReviewDescription';
 import {
   formatSupplierCostLabel,
   formatSupplierMarginLabel,
   formatSupplierProfitLabel,
   formatSupplierStockLabel,
 } from '../services/supplierCommerceSemantics';
+import { formatSupplierTimestamp } from '../services/supplierHubPresentation';
 
 interface SupplierReviewEditorModalProps {
   item: SupplierReviewSourceItem;
@@ -79,6 +87,12 @@ const metadataText = (value: unknown): string => {
   }
 };
 
+const ReadOnlyValue = ({ children, className = '' }: { children: React.ReactNode; className?: string }) => (
+  <div className={`min-h-11 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700 dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-200 ${className}`}>
+    {children}
+  </div>
+);
+
 export default function SupplierReviewEditorModal({
   item,
   initialDraft,
@@ -126,7 +140,10 @@ export default function SupplierReviewEditorModal({
   );
   const metadataSections = useMemo(() => buildSupplierReviewMetadataSections(item), [item]);
   const fieldChanges = useMemo(() => buildSupplierReviewFieldChanges(item), [item]);
-  const specificationCount = useMemo(() => supplierReviewSpecificationCount(item), [item]);
+  const specificationCount = useMemo(
+    () => countStructuredSupplierSpecifications(draft.specifications),
+    [draft.specifications],
+  );
   const suggestedCategory = useMemo(
     () => categories.find((category) => category.id === item.categoryMapping?.targetCategoryId),
     [categories, item.categoryMapping?.targetCategoryId],
@@ -134,6 +151,10 @@ export default function SupplierReviewEditorModal({
   const suggestedBrand = useMemo(
     () => brands.find((brand) => brand.id === item.brandMapping?.mappedBrandId),
     [brands, item.brandMapping?.mappedBrandId],
+  );
+  const selectedBrand = useMemo(
+    () => brands.find((brand) => brand.id === draft.brand),
+    [brands, draft.brand],
   );
   const validationChecklist = useMemo(() => {
     const checks: Array<{ label: string; fields: Array<keyof typeof validationErrors> }> = [
@@ -145,11 +166,29 @@ export default function SupplierReviewEditorModal({
       { label: 'Specifications', fields: ['specifications'] },
       { label: 'Stock', fields: ['stock'] },
     ];
+    const specificationsRequired = supplierReviewSpecificationsRequired(item, categories, draft.category);
+    const specificationsSatisfied = supplierReviewSpecificationsSatisfied(
+      specificationCount,
+      item,
+      categories,
+      draft.category,
+    );
     return checks.map((check) => {
-      const error = check.fields.map((field) => validationErrors[field]).find(Boolean);
+      const error = check.label === 'Specifications'
+        ? (validationErrors.specifications
+          || (!specificationsSatisfied && specificationsRequired
+            ? 'The supplier did not provide product specifications.'
+            : undefined))
+        : check.fields.map((field) => validationErrors[field]).find(Boolean);
       return { label: check.label, valid: !error, error };
     });
-  }, [validationErrors]);
+  }, [categories, draft.category, item, specificationCount, validationErrors]);
+  const previewImages = useMemo(() => {
+    const images = [draft.primaryImageUrl, ...draft.galleryImageUrls]
+      .map((url) => String(url || '').trim())
+      .filter((url, index, list) => Boolean(url) && list.indexOf(url) === index);
+    return images.filter((url) => isValidSupplierImageUrl(url));
+  }, [draft.galleryImageUrls, draft.primaryImageUrl]);
   const importWarnings = [
     ...(item.productValidation?.errors || []),
     ...(item.productValidation?.warnings || []),
@@ -165,6 +204,9 @@ export default function SupplierReviewEditorModal({
 
   useEffect(() => { onCloseRef.current = onClose; }, [onClose]);
   useEffect(() => { isPublishingRef.current = isPublishing; }, [isPublishing]);
+  useEffect(() => {
+    if (!isEditing) setDraft(initialDraft);
+  }, [initialDraft, isEditing]);
 
   useEffect(() => {
     previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -300,28 +342,32 @@ export default function SupplierReviewEditorModal({
   });
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/75 p-2 backdrop-blur-sm sm:p-4" role="presentation">
+    <div className="fixed inset-0 z-[70] flex items-end justify-center bg-black/75 p-0 backdrop-blur-sm sm:items-center sm:p-4" role="presentation">
       <div
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="supplier-review-editor-title"
-        className="max-h-[calc(100dvh-1rem)] w-full max-w-3xl overflow-y-auto overscroll-contain rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-2xl dark:border-slate-800 dark:bg-[#111928] sm:max-h-[92vh] sm:rounded-3xl sm:p-6"
+        className="flex max-h-[100dvh] w-full max-w-3xl flex-col overflow-hidden rounded-t-2xl border border-slate-200 bg-white text-left shadow-2xl dark:border-slate-800 dark:bg-[#111928] sm:max-h-[92vh] sm:rounded-3xl"
       >
-        <div className="sticky top-0 z-30 mb-5 flex items-start justify-between gap-4 border-b border-slate-100 bg-white/95 pb-4 backdrop-blur dark:border-slate-800 dark:bg-[#111928]/95">
-          <div className="flex items-center gap-3">
-            <span className="rounded-xl bg-blue-500/10 p-2 text-blue-500"><Package className="h-5 w-5" /></span>
-            <div>
-              <h3 id="supplier-review-editor-title" className="text-base font-black text-slate-900 dark:text-white">{isEditing ? 'Edit product data' : 'Product details'}</h3>
-              <p className="text-[11px] text-slate-400">{isEditing ? 'Update storefront values while preserving the supplier record.' : `Read-only supplier review · ${specificationCount} specifications`}</p>
+        <div className="shrink-0 border-b border-slate-100 bg-white/95 px-4 pb-4 pt-[max(1rem,env(safe-area-inset-top))] backdrop-blur dark:border-slate-800 dark:bg-[#111928]/95 sm:px-6 sm:pt-6">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <span className="rounded-xl bg-blue-500/10 p-2 text-blue-500"><Package className="h-5 w-5" /></span>
+              <div>
+                <h3 id="supplier-review-editor-title" className="text-base font-black text-slate-900 dark:text-white">{isEditing ? 'Edit product data' : 'Product details'}</h3>
+                <p className="text-[11px] text-slate-400">{isEditing ? 'Update storefront values while preserving the supplier record.' : `Read-only supplier review · ${specificationCount} specifications`}</p>
+              </div>
             </div>
+            <button type="button" onClick={onClose} disabled={isPublishing} aria-label="Close product editor" className="rounded-full bg-slate-100 p-2 text-slate-500 disabled:opacity-50 dark:bg-slate-800">
+              <X className="h-4 w-4" />
+            </button>
           </div>
-          <button type="button" onClick={onClose} disabled={isPublishing} aria-label="Close product editor" className="rounded-full bg-slate-100 p-2 text-slate-500 disabled:opacity-50 dark:bg-slate-800">
-            <X className="h-4 w-4" />
-          </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="flex flex-col gap-5" aria-readonly={!isEditing}>
+        <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col" aria-readonly={!isEditing}>
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[calc(6.5rem+env(safe-area-inset-bottom))] pt-4 sm:px-6 sm:pb-28">
+          <div className="flex flex-col gap-5">
           {!isEditing && (
             <p id="supplier-review-read-only-note" className="order-[-1] rounded-xl border border-blue-500/20 bg-blue-500/10 px-3 py-2 text-[10px] font-semibold text-blue-700 dark:text-blue-200">
               Details are read-only. Choose Edit product data before changing storefront values.
@@ -346,12 +392,12 @@ export default function SupplierReviewEditorModal({
             <div className="rounded-xl bg-white/70 p-3 dark:bg-slate-900/60">
               <span className="block text-[9px] font-black uppercase text-slate-400">Supplier category</span>
               <strong>{item.categoryMapping?.supplierCategory || 'Not supplied'}</strong>
-              {item.categoryMapping?.targetCategoryId ? <><div className="mt-2 flex flex-wrap items-center gap-2"><span className="text-[10px] text-slate-500">Suggested Category</span><strong className="text-xs text-blue-700 dark:text-blue-300">{suggestedCategory?.name || item.categoryMapping.targetCategoryId}</strong><span className="rounded-full bg-blue-500/10 px-2 py-0.5 text-[9px] font-black text-blue-600">{Math.round(Number(item.categoryMapping.confidence || 0))}% confidence</span></div><button type="button" onClick={() => setDraft((current) => ({ ...current, category: item.categoryMapping?.targetCategoryId || '', subcategory: item.categoryMapping?.targetSubcategoryId || '' }))} disabled={draft.category === item.categoryMapping.targetCategoryId && draft.subcategory === (item.categoryMapping.targetSubcategoryId || '')} className="mt-2 rounded-lg bg-blue-600 px-3 py-2 text-[10px] font-black text-white disabled:cursor-not-allowed disabled:opacity-40">Apply</button></> : <p className="mt-2 rounded-lg border border-dashed border-blue-500/20 p-3 text-[10px] text-slate-500">No category suggestion is available. Select a category manually.</p>}
+              {item.categoryMapping?.targetCategoryId ? <><div className="mt-2 flex flex-wrap items-center gap-2"><span className="text-[10px] text-slate-500">Suggested Category</span><strong className="text-xs text-blue-700 dark:text-blue-300">{suggestedCategory?.name || item.categoryMapping.targetCategoryId}</strong><span className="rounded-full bg-blue-500/10 px-2 py-0.5 text-[9px] font-black text-blue-600">{Math.round(Number(item.categoryMapping.confidence || 0))}% confidence</span></div>{isEditing ? <button type="button" onClick={() => setDraft((current) => ({ ...current, category: item.categoryMapping?.targetCategoryId || '', subcategory: item.categoryMapping?.targetSubcategoryId || '' }))} disabled={draft.category === item.categoryMapping.targetCategoryId && draft.subcategory === (item.categoryMapping.targetSubcategoryId || '')} className="mt-2 rounded-lg bg-blue-600 px-3 py-2 text-[10px] font-black text-white disabled:cursor-not-allowed disabled:opacity-40">Apply</button> : null}</> : <p className="mt-2 rounded-lg border border-dashed border-blue-500/20 p-3 text-[10px] text-slate-500">No category suggestion is available. Select a category manually.</p>}
             </div>
             <div className="rounded-xl bg-white/70 p-3 dark:bg-slate-900/60">
               <span className="block text-[9px] font-black uppercase text-slate-400">Supplier brand</span>
               <strong>{item.brandMapping?.supplierBrand || 'Not supplied'}</strong>
-              {item.brandMapping?.mappedBrandId ? <><div className="mt-2 flex flex-wrap items-center gap-2"><span className="text-[10px] text-slate-500">Suggested Brand</span><strong className="text-xs text-blue-700 dark:text-blue-300">{suggestedBrand?.name || item.brandMapping.mappedBrandId}</strong><span className="rounded-full bg-blue-500/10 px-2 py-0.5 text-[9px] font-black text-blue-600">{Math.round(Number(item.brandMapping.confidence || 0))}% confidence</span></div><button type="button" onClick={() => setDraft((current) => ({ ...current, brand: item.brandMapping?.mappedBrandId || '' }))} disabled={draft.brand === item.brandMapping.mappedBrandId} className="mt-2 rounded-lg bg-blue-600 px-3 py-2 text-[10px] font-black text-white disabled:cursor-not-allowed disabled:opacity-40">Apply</button></> : <p className="mt-2 rounded-lg border border-dashed border-blue-500/20 p-3 text-[10px] text-slate-500">No brand suggestion is available. Select a brand manually.</p>}
+              {item.brandMapping?.mappedBrandId ? <><div className="mt-2 flex flex-wrap items-center gap-2"><span className="text-[10px] text-slate-500">Suggested Brand</span><strong className="text-xs text-blue-700 dark:text-blue-300">{suggestedBrand?.name || item.brandMapping.mappedBrandId}</strong><span className="rounded-full bg-blue-500/10 px-2 py-0.5 text-[9px] font-black text-blue-600">{Math.round(Number(item.brandMapping.confidence || 0))}% confidence</span></div>{isEditing ? <button type="button" onClick={() => setDraft((current) => ({ ...current, brand: item.brandMapping?.mappedBrandId || '' }))} disabled={draft.brand === item.brandMapping.mappedBrandId} className="mt-2 rounded-lg bg-blue-600 px-3 py-2 text-[10px] font-black text-white disabled:cursor-not-allowed disabled:opacity-40">Apply</button> : null}</> : <p className="mt-2 rounded-lg border border-dashed border-blue-500/20 p-3 text-[10px] text-slate-500">No brand suggestion is available. Select a brand manually.</p>}
             </div>
           </section>
           </details>
@@ -435,8 +481,9 @@ export default function SupplierReviewEditorModal({
           </section>
           </details>
 
-          <details open className="order-20 rounded-2xl border border-slate-200 p-4 dark:border-slate-800">
+          <details open={isEditing} className="order-20 rounded-2xl border border-slate-200 p-4 dark:border-slate-800">
             <summary className="cursor-pointer text-xs font-black uppercase tracking-wider text-slate-700 outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-slate-200">Product, pricing & catalogue</summary>
+          {isEditing ? (
           <div className="mt-4 grid gap-4 sm:grid-cols-2">
             <label className="space-y-1.5 text-xs sm:col-span-2">
               <span className="font-bold text-slate-600 dark:text-slate-300">Product Name</span>
@@ -536,6 +583,22 @@ export default function SupplierReviewEditorModal({
               <span className="flex items-center gap-2"><input type="checkbox" checked={draft.isActive} onChange={(event) => editDraft('isActive', { isActive: event.target.checked })} />{draft.isActive ? 'Active' : 'Inactive'}</span>
             </label>
           </div>
+          ) : (
+          <div className="mt-4 grid gap-4 sm:grid-cols-2">
+            <div className="space-y-1.5 text-xs sm:col-span-2"><span className="font-bold text-slate-600 dark:text-slate-300">Product Name</span><ReadOnlyValue>{draft.productName || 'Not supplied'}</ReadOnlyValue></div>
+            <div className="space-y-1.5 text-xs"><span className="font-bold text-slate-600 dark:text-slate-300">Selling Price</span><ReadOnlyValue>{money(draft.sellingPrice)}</ReadOnlyValue></div>
+            <div className="space-y-1.5 text-xs"><span className="font-bold text-slate-600 dark:text-slate-300">Compare Price</span><ReadOnlyValue>{money(draft.comparePrice)}</ReadOnlyValue></div>
+            <div className="space-y-1.5 text-xs"><span className="font-bold text-slate-600 dark:text-slate-300">Cost Price</span><ReadOnlyValue>{formatSupplierCostLabel(draft.costPrice, draft.supplierCostAvailable)}</ReadOnlyValue></div>
+            <div className="space-y-1.5 text-xs"><span className="font-bold text-slate-600 dark:text-slate-300">Stock</span><ReadOnlyValue>{formatSupplierStockLabel(draft.stock, draft.supplierStockAvailable)}</ReadOnlyValue></div>
+            <div className="space-y-1.5 text-xs"><span className="font-bold text-slate-600 dark:text-slate-300">Category</span><ReadOnlyValue>{selectedCategory?.name || draft.category || 'Not selected'}</ReadOnlyValue></div>
+            <div className="space-y-1.5 text-xs"><span className="font-bold text-slate-600 dark:text-slate-300">Registered brand</span><ReadOnlyValue>{selectedBrand?.name || draft.brand || 'Not selected'}</ReadOnlyValue></div>
+            <div className="space-y-1.5 text-xs sm:col-span-2">
+              <span className="font-bold text-slate-600 dark:text-slate-300">Full description</span>
+              <ReadOnlyValue className="whitespace-pre-wrap break-words">{supplierDescriptionPlainText(draft.description) || 'Not supplied'}</ReadOnlyValue>
+            </div>
+            <div className="space-y-1.5 text-xs sm:col-span-2"><span className="font-bold text-slate-600 dark:text-slate-300">Storefront status</span><ReadOnlyValue>{draft.isActive ? 'Active' : 'Inactive'}</ReadOnlyValue></div>
+          </div>
+          )}
           </details>
 
           <details className="order-[60] rounded-2xl border border-blue-500/20 bg-blue-500/5 p-4">
@@ -599,6 +662,7 @@ export default function SupplierReviewEditorModal({
           </section>
           </details>
 
+          {isEditing ? (
           <details className="order-30 rounded-2xl border border-slate-200 p-4 dark:border-slate-800">
             <summary className="cursor-pointer text-xs font-black uppercase tracking-wider text-slate-700 outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-slate-200">Content, SEO & merchandising</summary>
           <section className="mt-4 space-y-4" aria-labelledby="supplier-review-content-title">
@@ -626,9 +690,11 @@ export default function SupplierReviewEditorModal({
             </div>
           </section>
           </details>
+          ) : null}
 
-          <details className="order-40 rounded-2xl border border-slate-200 p-4 dark:border-slate-800">
+          <details open={!isEditing || specificationCount > 0} className="order-40 rounded-2xl border border-slate-200 p-4 dark:border-slate-800">
             <summary className="cursor-pointer text-xs font-black uppercase tracking-wider text-slate-700 outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-slate-200">Specifications</summary>
+          {isEditing ? (
           <fieldset className="mt-4 grid gap-4 sm:grid-cols-2">
               <legend className="sr-only">Category specifications</legend>
               {(selectedCategory?.specificationTemplate || []).map((field) => (
@@ -650,8 +716,20 @@ export default function SupplierReviewEditorModal({
               </div>
               {errorFor('specifications') && <span className="text-[10px] font-semibold text-red-500 sm:col-span-2">{errorFor('specifications')}</span>}
           </fieldset>
+          ) : (
+          <dl className="mt-4 grid gap-3 sm:grid-cols-2">
+            {Object.entries(draft.specifications || {}).filter(([name, value]) => String(name).trim() && String(value).trim()).map(([name, value]) => (
+              <div key={name} className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2 dark:border-slate-800 dark:bg-slate-900/60">
+                <dt className="text-[9px] font-black uppercase tracking-wide text-slate-400">{name}</dt>
+                <dd className="mt-1 text-xs font-semibold text-slate-700 dark:text-slate-200">{value}</dd>
+              </div>
+            ))}
+            {specificationCount === 0 ? <p className="text-[10px] font-semibold text-slate-400 sm:col-span-2">No structured specifications supplied.</p> : null}
+          </dl>
+          )}
           </details>
 
+          {isEditing ? (
           <details className="order-[90] rounded-2xl border border-violet-500/20 bg-violet-500/5 p-4">
             <summary className="cursor-pointer text-xs font-black text-violet-700 outline-none focus-visible:ring-2 focus-visible:ring-violet-500 dark:text-violet-200">Advanced field protection</summary>
           <section className="mt-3 space-y-3" aria-labelledby="supplier-field-ownership-title">
@@ -672,9 +750,11 @@ export default function SupplierReviewEditorModal({
             </div>
           </section>
           </details>
+          ) : null}
 
-          <details open className="order-10 rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-900/40">
-            <summary className="cursor-pointer text-xs font-black uppercase tracking-wider text-slate-700 outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-slate-200">Images & gallery</summary>
+          <details open={isEditing || previewImages.length > 0} className={`order-10 rounded-2xl border border-slate-200 p-4 dark:border-slate-800 ${isEditing ? 'bg-slate-50 dark:bg-slate-900/40' : ''}`}>
+            <summary className="cursor-pointer text-xs font-black uppercase tracking-wider text-slate-700 outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-slate-200">{isEditing ? 'Images & gallery' : 'Product images'}</summary>
+          {isEditing ? (
           <section className="mt-4 space-y-4" aria-labelledby="supplier-product-images-title">
             <div>
               <h4 id="supplier-product-images-title" className="text-xs font-black uppercase tracking-wider text-slate-700 dark:text-slate-200">Product Images</h4>
@@ -754,6 +834,24 @@ export default function SupplierReviewEditorModal({
               </div>
             )}
           </section>
+          ) : (
+          <section className="mt-4 space-y-3" aria-labelledby="supplier-product-images-title">
+            <h4 id="supplier-product-images-title" className="sr-only">Product images</h4>
+            <p className="text-[10px] font-bold text-slate-500">{previewImages.length} supplier image{previewImages.length === 1 ? '' : 's'}</p>
+            {previewImages.length === 0 ? (
+              <p className="rounded-xl border border-dashed border-slate-300 px-4 py-6 text-center text-[10px] font-semibold text-slate-400 dark:border-slate-700">No valid product images.</p>
+            ) : (
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                {previewImages.map((imageUrl, index) => (
+                  <div key={`${imageUrl}-${index}`} className="relative flex aspect-square items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
+                    {index === 0 ? <span className="absolute left-2 top-2 z-10 rounded-full bg-emerald-600 px-2 py-1 text-[8px] font-black uppercase text-white">Primary</span> : null}
+                    <img src={imageUrl} alt={`Product image ${index + 1}`} onError={() => markMediaFailure(imageUrl)} className="h-full w-full object-contain" referrerPolicy="no-referrer" />
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+          )}
           </details>
 
           <div className="order-50 grid gap-3 sm:grid-cols-2" aria-live="polite">
@@ -775,11 +873,14 @@ export default function SupplierReviewEditorModal({
                 </li>
               ))}
             </ul>
-            {missingFields.length > 0 && <p id="supplier-publish-blocked-reason" className="mt-3 text-[10px] font-bold">Approve & Publish is unavailable until every failed checklist item is completed.</p>}
+            {validationChecklist.some((check) => !check.valid) && <p id="supplier-publish-blocked-reason" className="mt-3 text-[10px] font-bold">Approve & Publish is unavailable until every failed checklist item is completed.</p>}
           </section>
           </fieldset>
+          </div>
+          </div>
 
-          <div className="sticky bottom-0 z-30 order-[100] -mx-4 -mb-4 flex flex-col-reverse gap-2 border-t border-slate-100 bg-white/95 p-4 backdrop-blur dark:border-slate-800 dark:bg-[#111928]/95 sm:mx-0 sm:mb-0 sm:flex-row sm:justify-end sm:px-0 sm:pb-0">
+          <div className="shrink-0 border-t border-slate-100 bg-white/95 px-4 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] backdrop-blur dark:border-slate-800 dark:bg-[#111928]/95 sm:px-6">
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
             <button type="button" onClick={onClose} disabled={isPublishing} className="min-h-11 w-full rounded-xl border border-slate-200 px-4 text-xs font-bold text-slate-500 disabled:opacity-50 dark:border-slate-700 sm:w-auto">Close</button>
             {!isEditing ? (
               <button ref={detailsActionRef} type="button" onClick={beginEditing} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 text-xs font-black text-white hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 sm:w-auto" aria-describedby="supplier-review-read-only-note">
@@ -788,11 +889,12 @@ export default function SupplierReviewEditorModal({
             ) : (
               <>
                 <button type="button" onClick={cancelEditing} disabled={isPublishing} className="min-h-11 w-full rounded-xl border border-slate-200 px-4 text-xs font-bold text-slate-600 disabled:opacity-50 dark:border-slate-700 dark:text-slate-300 sm:w-auto">Cancel editing</button>
-                <button type="submit" disabled={isPublishing || missingFields.length > 0} aria-describedby={missingFields.length > 0 ? 'supplier-publish-blocked-reason' : undefined} title={missingFields.length > 0 ? `Publishing blocked: ${Object.values(validationErrors).join(' ')}` : 'Approve and publish this product'} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 text-xs font-black text-white disabled:cursor-not-allowed disabled:bg-slate-600 sm:w-auto">
+                <button type="submit" disabled={isPublishing || validationChecklist.some((check) => !check.valid)} aria-describedby={validationChecklist.some((check) => !check.valid) ? 'supplier-publish-blocked-reason' : undefined} title={validationChecklist.some((check) => !check.valid) ? `Publishing blocked: ${Object.values(validationErrors).join(' ')}` : 'Approve and publish this product'} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 text-xs font-black text-white disabled:cursor-not-allowed disabled:bg-slate-600 sm:w-auto">
                   <Check className="h-4 w-4" />{isPublishing ? 'Publishing...' : 'Approve & Publish'}
                 </button>
               </>
             )}
+          </div>
           </div>
         </form>
       </div>

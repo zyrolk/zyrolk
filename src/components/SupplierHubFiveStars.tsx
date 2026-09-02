@@ -47,7 +47,8 @@ import {
   isSupplierSyncJobActive,
   isSupplierSyncProgressDeterminate,
   selectSupplierSyncJobForDisplay,
-  supplierSyncJobStateLabel,
+  supplierSyncJobDetailLine,
+  supplierSyncJobHeadline,
   SupplierSyncJobView,
 } from '../services/supplierSyncJobs';
 import { SupplierManualSyncRequest } from '../services/supplierManualSync';
@@ -65,6 +66,7 @@ import {
   supplierReviewChangeLabel,
   supplierReviewDisplayLabel,
   supplierReviewIsPreparing,
+  supplierReviewDisplayImageUrl,
   supplierReviewManagedImageUrl,
   supplierReviewOperatorProblems,
   supplierReviewRawMetadata,
@@ -74,6 +76,8 @@ import {
   supplierReviewStorefrontLabel,
   supplierReviewTerminalItem,
   supplierBusinessErrorMessage,
+  isSupplierReviewStaleObservationError,
+  SUPPLIER_REVIEW_STALE_REFRESH_MESSAGE,
   formatSupplierTimestamp,
   formatSupplierDuration,
   supplierAdministratorLabel,
@@ -623,6 +627,32 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
   }, [activeSubTab, reviewFilter]);
 
   useEffect(() => {
+    if (!editingReviewItem) return;
+    const fresh = reviewQueue.find((item) => item.id === editingReviewItem.id);
+    if (!fresh) {
+      setEditingReviewItem(null);
+      setSupplierOffers([]);
+      setSupplierOfferError(null);
+      return;
+    }
+    if (
+      fresh.supplierOfferPendingRevision !== editingReviewItem.supplierOfferPendingRevision
+      || fresh.queueState !== editingReviewItem.queueState
+      || fresh.status !== editingReviewItem.status
+    ) {
+      if (!supplierReviewDecisionReady(fresh) || supplierReviewIsPreparing(fresh)) {
+        setEditingReviewItem(null);
+        setSupplierOffers([]);
+        setSupplierOfferError(null);
+        setSuccessMsg(SUPPLIER_REVIEW_STALE_REFRESH_MESSAGE);
+        setTimeout(() => setSuccessMsg(null), 6000);
+        return;
+      }
+      setEditingReviewItem(fresh);
+    }
+  }, [editingReviewItem, reviewQueue]);
+
+  useEffect(() => {
     const jobId = activeSyncJob?.id;
     if (!jobId || !isSupplierSyncJobActive(activeSyncJob)) return;
     let cancelled = false;
@@ -772,6 +802,9 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
       conflict?: ReviewQueueItem['approvalConflict'];
     };
     if (response.status === 409 && result.status === 'conflict' && result.conflict) return result;
+    if (response.status === 409 && isSupplierReviewStaleObservationError(result.error)) {
+      return { success: false, status: 'stale_observation', error: result.error };
+    }
     if (!response.ok || result.success !== true) {
       throw new Error(result.error || 'Supplier review action could not be completed.');
     }
@@ -1200,7 +1233,20 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
   };
 
   // --- REVIEW QUEUE APPROVAL HANDLERS ---
+  const reconcileStaleSupplierReviewItem = async (item: ReviewQueueItem) => {
+    setRejectingReviewItem((current) => (current?.id === item.id ? null : current));
+    setRejectionReasonDraft('');
+    setEditingReviewItem((current) => (current?.id === item.id ? null : current));
+    setSupplierOffers([]);
+    setSupplierOfferError(null);
+    await refreshSupplierQueueViews();
+    setErrorMsg(null);
+    setSuccessMsg(SUPPLIER_REVIEW_STALE_REFRESH_MESSAGE);
+    setTimeout(() => setSuccessMsg(null), 6000);
+  };
+
   const handleApproveReviewItem = async (item: ReviewQueueItem, draft: SupplierReviewDraft) => {
+    if (processingChangeId) return;
     setProcessingChangeId(item.id);
     try {
       const result = await decideSupplierReviewQueueItem(item.id, 'approve', {
@@ -1208,6 +1254,10 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
         resolveConflict: item.queueState === 'conflict' || item.status === 'CONFLICT',
         expectedPendingRevision: item.supplierOfferPendingRevision,
       });
+      if (result.status === 'stale_observation') {
+        await reconcileStaleSupplierReviewItem(item);
+        return;
+      }
       if (result.success !== true && result.status === 'conflict') {
         setEditingReviewItem({
           ...item,
@@ -1233,6 +1283,10 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
       setTimeout(() => setSuccessMsg(null), refreshSucceeded ? 3000 : 7000);
     } catch (error: any) {
       console.error("Review approval error:", error);
+      if (isSupplierReviewStaleObservationError(error?.message)) {
+        await reconcileStaleSupplierReviewItem(item);
+        return;
+      }
       void refreshSupplierQueueViews();
       setErrorMsg(`Failed to approve: ${error.message || 'Unknown error'}`);
       setTimeout(() => setErrorMsg(null), 4000);
@@ -1242,12 +1296,17 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
   };
 
   const handleRejectReviewItem = async (item: ReviewQueueItem, rejectionReason: string) => {
+    if (processingChangeId) return;
     setProcessingChangeId(item.id);
     try {
-      await decideSupplierReviewQueueItem(item.id, 'reject', {
+      const result = await decideSupplierReviewQueueItem(item.id, 'reject', {
         rejectionReason: rejectionReason.trim(),
         expectedPendingRevision: item.supplierOfferPendingRevision,
       });
+      if (result.status === 'stale_observation') {
+        await reconcileStaleSupplierReviewItem(item);
+        return;
+      }
       setRejectingReviewItem(null);
       setRejectionReasonDraft('');
       setReviewQueue((current) => current.map((candidate) => candidate.id === item.id
@@ -1260,6 +1319,10 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
       setTimeout(() => setSuccessMsg(null), refreshSucceeded ? 3000 : 7000);
     } catch (error: any) {
       console.error("Review rejection error:", error);
+      if (isSupplierReviewStaleObservationError(error?.message)) {
+        await reconcileStaleSupplierReviewItem(item);
+        return;
+      }
       setErrorMsg(`Failed to reject: ${error.message || 'Unknown error'}`);
       setTimeout(() => setErrorMsg(null), 4000);
     } finally {
@@ -1493,19 +1556,11 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
               <div className="flex items-center gap-2">
                 <Activity className="h-4 w-4 text-blue-500" aria-hidden="true" />
                 <p className="text-xs font-extrabold text-slate-900 dark:text-white">
-                  Catalog update · {supplierSyncJobStateLabel(activeSyncJob.state)}
+                  {supplierSyncJobHeadline(activeSyncJob)}
                 </p>
               </div>
               <p className="text-[11px] text-slate-500 dark:text-slate-400" aria-live="polite">
-                {isSupplierSyncJobActive(activeSyncJob) && !isSupplierSyncProgressDeterminate(activeSyncJob) && activeSyncJob.progress.pagesProcessed > 0
-                  ? 'In progress · '
-                  : isSupplierSyncProgressDeterminate(activeSyncJob) ? `${activeSyncJob.progress.percent}% · ` : ''}
-                {activeSyncJob.progress.productsScanned} scanned · {activeSyncJob.progress.productsQueued} queued for processing
-                {isSupplierSyncJobActive(activeSyncJob)
-                  && isSupplierSyncProgressDeterminate(activeSyncJob)
-                  && activeSyncJob.progress.etaMs !== null
-                  ? ` · ${formatSupplierSyncEta(activeSyncJob.progress.etaMs)}`
-                  : ''}
+                {supplierSyncJobDetailLine(activeSyncJob)}
               </p>
               {activeSyncJob.state === 'waiting' && activeSyncJob.waitingReason ? (
                 <p className="text-[11px] font-semibold text-amber-600 dark:text-amber-400">
@@ -1712,7 +1767,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                   {visibleReviewItems.map((item) => {
                     const draft = createSupplierReviewDraft(item);
                     const profit = calculateSupplierProfit(draft.sellingPrice, draft.costPrice, draft.supplierCostAvailable);
-                    const managedImageUrl = supplierReviewManagedImageUrl(item);
+                    const managedImageUrl = supplierReviewDisplayImageUrl(item);
                     const isPreparing = supplierReviewIsPreparing(item);
                     const canQuickApprove = supplierReviewCanQuickApprove(item);
                     const needsResolution = supplierReviewDecisionReady(item) && !canQuickApprove;

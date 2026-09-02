@@ -44,8 +44,9 @@ test('review editor keeps every field while presenting mobile-friendly sections'
     'Model', 'Barcode', 'Product type', 'SEO slug', 'Tags', 'Key features', "What's included",
   ]) assert.match(editor, new RegExp(field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
 
-  assert.match(editor, /max-h-\[calc\(100dvh-1rem\)\]/);
-  assert.match(editor, /sticky bottom-0 z-30/);
+  assert.match(editor, /max-h-\[100dvh\]/);
+  assert.match(editor, /pb-\[calc\(6\.5rem\+env\(safe-area-inset-bottom\)\)\]/);
+  assert.match(editor, /shrink-0 border-t border-slate-100/);
 });
 
 test('suggestions, validation checklist, and gallery controls reuse existing draft data', () => {

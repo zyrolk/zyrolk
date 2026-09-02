@@ -533,9 +533,19 @@ export function validateSupplierReviewDraft(
     .map((field) => field.name);
   if (missingSpecifications.length > 0) {
     errors.specifications = `Complete required specifications: ${missingSpecifications.join(', ')}.`;
+  } else if (countStructuredSupplierSpecifications(draft.specifications) === 0
+    && (selectedCategory?.specificationTemplate || []).some((field) => field.required === true)) {
+    errors.specifications = 'Complete required specifications before publishing.';
   }
 
   return errors;
+}
+
+export function countStructuredSupplierSpecifications(specs: unknown): number {
+  if (!specs || typeof specs !== 'object' || Array.isArray(specs)) return 0;
+  return Object.entries(specs as Record<string, unknown>)
+    .filter(([key, value]) => String(key || '').trim() && String(value ?? '').trim())
+    .length;
 }
 
 export function validateSupplierPublishPayload(

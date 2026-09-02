@@ -98,6 +98,10 @@ test('quick review uses managed media and canonical productPayload.specs', () =>
   assert.equal(supplierReviewSpecificationCount(readyItem), 2);
   assert.equal(supplierReviewSpecificationCount({
     ...readyItem,
+    productPayload: { specs: { Model: '', Colour: 'Blue' } },
+  } as unknown as typeof readyItem), 1);
+  assert.equal(supplierReviewSpecificationCount({
+    ...readyItem,
     productPayload: { specs: {}, specifications: { Legacy: 'must not count' } },
   } as unknown as typeof readyItem), 0);
   assert.equal(supplierReviewCanQuickApprove({ ...readyItem, managedMedia: [] }), false);
@@ -212,7 +216,7 @@ test('launch review UI exposes only individual quick decisions and compact busin
   assert.doesNotMatch(hub, /Bulk Approve|Bulk Reject|bulk-approve|bulk-reject/u);
   assert.doesNotMatch(hub, />Dismiss</u);
   assert.match(quickReview, /supplierReviewCanQuickApprove\(item\)/u);
-  assert.match(quickReview, /supplierReviewManagedImageUrl\(item\)/u);
+  assert.match(quickReview, /supplierReviewDisplayImageUrl\(item\)/u);
   assert.match(quickReview, /handleApproveReviewItem\(item, draft\)/u);
   assert.match(hub, /expectedPendingRevision: item\.supplierOfferPendingRevision/u);
 });
@@ -223,7 +227,7 @@ test('rendered View Details starts read-only and makes editing explicit', () => 
   assert.match(modal, /<fieldset disabled=\{!isEditing \|\| isPublishing\}/u);
   assert.match(modal, /Details are read-only/u);
   assert.match(modal, /Edit product data/u);
-  assert.match(modal, /supplierReviewSpecificationCount\(item\)/u);
+  assert.match(modal, /countStructuredSupplierSpecifications\(draft\.specifications\)/u);
   assert.match(modal, /Approve & Publish/u);
 
   const modalItem = {
