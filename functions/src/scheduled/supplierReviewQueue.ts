@@ -20,6 +20,7 @@ import {
 } from "../api/suppliers/supplierQueueIdentity";
 import { recordSupplierOperationalAlertSafely } from "../api/suppliers/supplierOperationalAlerts";
 import { recordSupplierQueueProcessingDurationMetric } from "../api/suppliers/supplierCloudMonitoring";
+import { appLogger } from "../api/logging";
 
 export const SUPPLIER_QUEUE_STATES = [
   "queued",
@@ -315,6 +316,63 @@ export function supplierManagedMediaMatchesSourceUrls(
 export function supplierReviewQueueMediaIsReady(managedMedia: unknown): boolean {
   const assets = extractSupplierMediaFromRecord(managedMedia);
   return assets.length > 0 && assets.every((asset) => /^https:\/\/\S+$/u.test(asset.firebaseStorageUrl));
+}
+
+/** Resolves the canonical managed object path across current and legacy shapes. */
+export function supplierReviewQueueStoragePath(record: Record<string, unknown>): string {
+  const variants = record.variants && typeof record.variants === "object" && !Array.isArray(record.variants)
+    ? record.variants as Record<string, unknown>
+    : {};
+  const large = variants.large && typeof variants.large === "object" && !Array.isArray(variants.large)
+    ? variants.large as Record<string, unknown>
+    : {};
+  return String(large.storagePath || record.originalStoragePath || record.storagePath || "").trim();
+}
+
+export async function decorateSupplierReviewQueueAdminMedia(
+  items: Array<Record<string, unknown> & { id: string }>,
+  signStoragePath?: (storagePath: string) => Promise<string>,
+): Promise<Array<Record<string, unknown> & { id: string }>> {
+  let signer = signStoragePath;
+  if (!signer) {
+    // Unit tests and non-function tooling use synthetic Storage records. Only
+    // the deployed API should mint short-lived admin review URLs.
+    if (process.env.NODE_ENV !== "production" && !process.env.K_SERVICE && !process.env.FUNCTION_TARGET) return items;
+    const bucket = (() => {
+      try { return getStorage().bucket(); } catch { return null; }
+    })();
+    if (!bucket) return items;
+    signer = async (storagePath: string) => {
+      const [url] = await bucket.file(storagePath).getSignedUrl({
+        action: "read",
+        version: "v4",
+        expires: Date.now() + 15 * 60 * 1000,
+      });
+      return url;
+    };
+  }
+  return Promise.all(items.map(async (item) => {
+    const managed = Array.isArray(item.managedMedia) ? item.managedMedia : [];
+    if (managed.length === 0) return item;
+    const decorated = await Promise.all(managed.map(async (asset) => {
+      if (!asset || typeof asset !== "object" || Array.isArray(asset)) return asset;
+      const record = asset as Record<string, unknown>;
+      const storagePath = supplierReviewQueueStoragePath(record);
+      if (!storagePath) return record;
+      try {
+        return { ...record, adminReviewUrl: await signer(storagePath) };
+      } catch (error) {
+        appLogger.warn("Supplier review media signing failed.", {
+          queueItemId: item.id,
+          assetId: typeof record.assetId === "string" ? record.assetId : undefined,
+          reason: "signed_url_generation_failed",
+          errorType: error instanceof Error ? error.name : typeof error,
+        });
+        return record;
+      }
+    }));
+    return { ...item, managedMedia: decorated };
+  }));
 }
 
 export interface SupplierReviewQueueUpsertLifecycle {
@@ -983,44 +1041,6 @@ export async function listSupplierQueuePage(
     limit?: number;
   },
 ): Promise<SupplierQueuePageResult> {
-  const decorateAdminMedia = async (
-    items: Array<Record<string, unknown> & { id: string }>,
-  ): Promise<Array<Record<string, unknown> & { id: string }>> => {
-    // Unit tests and non-function tooling use synthetic Storage records. Only
-    // the deployed API should mint short-lived admin review URLs.
-    if (process.env.NODE_ENV !== "production" && !process.env.K_SERVICE && !process.env.FUNCTION_TARGET) return items;
-    const bucket = (() => {
-      try { return getStorage().bucket(); } catch { return null; }
-    })();
-    if (!bucket) return items;
-    return Promise.all(items.map(async (item) => {
-      const managed = Array.isArray(item.managedMedia) ? item.managedMedia : [];
-      if (managed.length === 0) return item;
-      const decorated = await Promise.all(managed.map(async (asset) => {
-        if (!asset || typeof asset !== "object" || Array.isArray(asset)) return asset;
-        const record = asset as Record<string, unknown>;
-        const variants = record.variants && typeof record.variants === "object" && !Array.isArray(record.variants)
-          ? record.variants as Record<string, unknown>
-          : {};
-        const large = variants.large && typeof variants.large === "object" && !Array.isArray(variants.large)
-          ? variants.large as Record<string, unknown>
-          : {};
-        const storagePath = String(large.storagePath || record.originalStoragePath || "").trim();
-        if (!storagePath) return record;
-        try {
-          const [url] = await bucket.file(storagePath).getSignedUrl({
-            action: "read",
-            version: "v4",
-            expires: Date.now() + 15 * 60 * 1000,
-          });
-          return { ...record, adminReviewUrl: url };
-        } catch {
-          return record;
-        }
-      }));
-      return { ...item, managedMedia: decorated };
-    }));
-  };
   const pageLimit = Number.isInteger(options.limit) ? Math.max(1, Math.min(100, Number(options.limit))) : 50;
   const state = options.view === "review" ? options.state || "active" : "active";
   const collectionName = options.view === "review"
@@ -1089,7 +1109,7 @@ export async function listSupplierQueuePage(
     return {
       view: options.view,
       state,
-      items: await decorateAdminMedia(documents.map((document) => ({ id: document.id, ...document.data() }))),
+      items: await decorateSupplierReviewQueueAdminMedia(documents.map((document) => ({ id: document.id, ...document.data() }))),
       nextCursor,
     };
   }
@@ -1104,7 +1124,7 @@ export async function listSupplierQueuePage(
   return {
     view: options.view,
     state,
-    items: await decorateAdminMedia(pageDocuments.map((document) => ({ id: document.id, ...document.data() }))),
+    items: await decorateSupplierReviewQueueAdminMedia(pageDocuments.map((document) => ({ id: document.id, ...document.data() }))),
     nextCursor: cursorDocument?.id || null,
   };
 }

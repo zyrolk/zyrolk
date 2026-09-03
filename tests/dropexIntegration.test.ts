@@ -19,6 +19,10 @@ import {
 } from "../functions/src/api/suppliers/dropex/dropexHttpErrors";
 import { DropexConnectorService, isDropexFieldAbsent } from "../functions/src/api/suppliers/dropex/DropexConnectorService";
 import {
+  decorateSupplierReviewQueueAdminMedia,
+  supplierReviewQueueStoragePath,
+} from "../functions/src/scheduled/supplierReviewQueue";
+import {
   runSupplierCatalogTraversal,
 } from "../functions/src/scheduled/supplierCatalogTraversal";
 import type {
@@ -609,4 +613,33 @@ test("Dropex category absence triggers DTO enrichment and data envelopes resolve
 
   assert.equal(dtoCalls, 1);
   assert.deepEqual((page.products[0] as RawA2ZProduct).categoryHierarchy, ["Kitchen"]);
+});
+
+test("Supplier review response signing resolves current and top-level managed storage paths", () => {
+  const current = supplierReviewQueueStoragePath({
+    originalStoragePath: "supplier-media/current/original.jpg",
+    variants: { large: { storagePath: "supplier-media/current/large/image.webp" } },
+  });
+  const observed = supplierReviewQueueStoragePath({
+    storagePath: "supplier-media/observed/large/image.webp",
+    firebaseStorageUrl: "https://firebasestorage.googleapis.com/v0/b/private/o/observed",
+  });
+  assert.equal(current, "supplier-media/current/large/image.webp");
+  assert.equal(observed, "supplier-media/observed/large/image.webp");
+});
+
+test("authenticated review response decoration attaches adminReviewUrl per managed asset", async () => {
+  const items = await decorateSupplierReviewQueueAdminMedia([
+    {
+      id: "dropex-0141",
+      managedMedia: [{
+        assetId: "asset-0141",
+        firebaseStorageUrl: "https://firebasestorage.googleapis.com/v0/b/private/o/large.webp",
+        variants: { large: { storagePath: "supplier-media/dropex/0141/large.webp" } },
+      }],
+    },
+  ], async (storagePath) => `https://signed.example.test/review?path=${encodeURIComponent(storagePath)}`);
+  const asset = (items[0].managedMedia as Array<Record<string, unknown>>)[0];
+  assert.match(String(asset.adminReviewUrl), /^https:\/\/signed\.example\.test\/review\?/u);
+  assert.equal(asset.firebaseStorageUrl, "https://firebasestorage.googleapis.com/v0/b/private/o/large.webp");
 });
