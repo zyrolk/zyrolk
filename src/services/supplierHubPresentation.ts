@@ -175,15 +175,22 @@ const managedMediaRecords = (item: SupplierReviewQuickApprovalItem): Array<Recor
     : [];
 };
 
-/** Returns only a managed Firebase Storage URL that approval can publish. */
+/** Returns the managed review URL, preferring the short-lived admin URL when present. */
 export function supplierReviewManagedImageUrl(item: SupplierReviewQuickApprovalItem): string {
   const ordered = managedMediaRecords(item).sort((left, right) => {
     const primaryDifference = Number(right.isPrimary === true) - Number(left.isPrimary === true);
     if (primaryDifference !== 0) return primaryDifference;
     return Number(left.sortOrder || 0) - Number(right.sortOrder || 0);
   });
-  const url = String(ordered[0]?.firebaseStorageUrl || '').trim();
+  const url = String(ordered[0]?.adminReviewUrl || ordered[0]?.firebaseStorageUrl || '').trim();
   return /^https:\/\/\S+$/iu.test(url) ? url : '';
+}
+
+export function supplierReviewManagedMediaReady(item: SupplierReviewQuickApprovalItem): boolean {
+  const records = managedMediaRecords(item);
+  return String(item.mediaStatus || '').toLowerCase() === 'ready'
+    && records.length > 0
+    && records.every((record) => /^https:\/\/\S+$/iu.test(String(record.firebaseStorageUrl || '').trim()));
 }
 
 /** Counts only non-empty structured specification key/value pairs. */

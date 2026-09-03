@@ -10,6 +10,7 @@ import {
 import { runSupplierCatalogTraversal } from '../functions/src/scheduled/supplierCatalogTraversal';
 import {
   formatSupplierSyncProgress,
+  supplierSyncJobDetailLine,
   isSupplierSyncProgressDeterminate,
   SupplierSyncJobView,
 } from '../src/services/supplierSyncJobs';
@@ -28,6 +29,21 @@ const job = (progress: ReturnType<typeof calculateSupplierSyncJobProgress>): Sup
   retryLimit: 5,
   resumeCount: 0,
   progress,
+});
+
+test('SH-2C waiting progress reports the persisted reason instead of implying media completion', () => {
+  const waiting = job(calculateSupplierSyncJobProgress(start, {
+    phase: 'waiting',
+    productsScanned: 5,
+    productsQueued: 2,
+  }));
+  const detail = supplierSyncJobDetailLine({
+    ...waiting,
+    state: 'waiting',
+    waitingReason: 'Retrying after a transient supplier error.',
+  });
+  assert.match(detail, /Waiting: Retrying after a transient supplier error\./u);
+  assert.doesNotMatch(detail, /Queued items still processing/u);
 });
 
 test('SH-2C uses only an exact catalog total for determinate percent and ETA', () => {

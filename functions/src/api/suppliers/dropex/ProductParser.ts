@@ -189,6 +189,10 @@ export class ProductParser {
       ?? 0;
     const mediaGallery = extractDropexProductImages(detail.image ?? item.image);
     const categoryFields = readCategoryLabels(detail, item, options.categoryLookup);
+    const rawCategoryId = detail.productCategoryId
+      ?? detail.categoryId
+      ?? item.productCategoryId
+      ?? item.categoryId;
     const brand = optionalString(detail.brand) || optionalString(item.brand);
     const openInventory = optionalNumber(detail.openInventory) ?? optionalNumber(item.openInventory);
     const dedicatedInventory = optionalNumber(detail.dedicatedInventory) ?? optionalNumber(item.dedicatedInventory);
@@ -198,6 +202,9 @@ export class ProductParser {
     const retailProvided = retailPriceWasProvided(item, detail);
 
     const extraAttributes: Record<string, unknown> = {};
+    if (rawCategoryId !== undefined && rawCategoryId !== null && String(rawCategoryId).trim()) {
+      extraAttributes.supplierCategoryId = String(rawCategoryId).trim();
+    }
     if (openInventory !== undefined) extraAttributes.openInventory = openInventory;
     if (dedicatedInventory !== undefined) extraAttributes.dedicatedInventory = dedicatedInventory;
     if (maxOrderCount !== undefined) extraAttributes.maxOrderCount = maxOrderCount;

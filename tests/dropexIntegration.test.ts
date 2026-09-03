@@ -455,6 +455,7 @@ test("Dropex thin catalog rows trigger DTO enrichment for missing cost, stock, a
   assert.equal(product.longDescription, "Sharpens knives quickly.");
   assert.equal(product.mediaGallery?.[0], "https://myorders-lk-documents.s3.ap-south-1.amazonaws.com/products/atf0080-main.jpg");
   assert.deepEqual(product.extraAttributes, {
+    supplierCategoryId: "7",
     openInventory: 10,
     dedicatedInventory: 5,
   });
@@ -560,4 +561,52 @@ test("Dropex detail-level reseller cost aliases map without DTO enrichment", () 
   assert.equal(parsed.wholesalePrice, 650);
   assert.equal(parsed.recommendedRetailPrice, 1000);
   assert.equal(parsed.inventoryLevel, 25);
+});
+
+test("Dropex category absence triggers DTO enrichment and data envelopes resolve category IDs", async () => {
+  let dtoCalls = 0;
+  const service = new DropexConnectorService({
+    supplierId: "dropex-supplier",
+    sourceId: "dropex-source",
+    credentialReference: "dropex-production",
+  }, {
+    fetchOutbound: async (url) => {
+      if (url.endsWith("/auth/login")) return response(200, JSON.stringify({ access_token: loginToken }));
+      if (url.includes("/api/v1/re-seller-products/get")) {
+        return response(200, JSON.stringify({
+          content: [{ productDetail: {
+            id: 1210,
+            name: "Category Enrichment Product",
+            sku: "CAT-1210",
+            sellingPrice: 1000,
+            reSellingPrice: 650,
+            onHandInventory: 4,
+            description: "Description",
+            image: "category.jpg",
+          } }],
+          totalElements: 1,
+          number: 0,
+          size: 1,
+          last: true,
+        }));
+      }
+      if (url.endsWith("/api/v1/product-categories")) {
+        return response(200, JSON.stringify({ data: [{ id: 7, name: "Kitchen" }] }));
+      }
+      if (url.includes("/api/v1/products/1210/dto")) {
+        dtoCalls += 1;
+        return response(200, JSON.stringify({ productCategoryId: 7 }));
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    },
+  });
+
+  const page = await service.fetchCatalogPage(
+    { username: "dropex-user", password: "dropex-pass" },
+    outboundPolicy,
+    { cursor: "0", pageSize: 1 },
+  );
+
+  assert.equal(dtoCalls, 1);
+  assert.deepEqual((page.products[0] as RawA2ZProduct).categoryHierarchy, ["Kitchen"]);
 });

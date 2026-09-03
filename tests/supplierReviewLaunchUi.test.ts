@@ -11,6 +11,7 @@ import {
   supplierReviewDisplayLabel,
   supplierReviewIsStale,
   supplierReviewManagedImageUrl,
+  supplierReviewManagedMediaReady,
   supplierReviewOperatorProblems,
   supplierReviewRawMetadata,
   supplierReviewSpecificationCount,
@@ -94,6 +95,9 @@ test('stale or unbound queue revisions fail closed before the API request', () =
 
 test('quick review uses managed media and canonical productPayload.specs', () => {
   assert.equal(supplierReviewManagedImageUrl(readyItem), managedImage);
+  assert.equal(supplierReviewManagedMediaReady({ ...readyItem, mediaStatus: 'ready' }), true);
+  assert.equal(supplierReviewManagedMediaReady({ ...readyItem, mediaStatus: 'ready', managedMedia: [{ adminReviewUrl: 'https://signed.example/review.webp', firebaseStorageUrl: managedImage }] }), true);
+  assert.equal(supplierReviewManagedImageUrl({ ...readyItem, managedMedia: [{ adminReviewUrl: 'https://signed.example/review.webp', firebaseStorageUrl: managedImage }] }), 'https://signed.example/review.webp');
   assert.notEqual(supplierReviewManagedImageUrl(readyItem), readyItem.imageUrl);
   assert.equal(supplierReviewSpecificationCount(readyItem), 2);
   assert.equal(supplierReviewSpecificationCount({

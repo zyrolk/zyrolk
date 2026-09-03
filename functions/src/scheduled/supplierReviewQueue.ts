@@ -1,4 +1,5 @@
 import { FieldValue, Firestore } from "firebase-admin/firestore";
+import { getStorage } from "firebase-admin/storage";
 import { createSupplierAuditEvent, SupplierAuditActor } from "../api/suppliers/supplierAuditTrail";
 import {
   acquireSupplierManagedMedia,
@@ -982,6 +983,44 @@ export async function listSupplierQueuePage(
     limit?: number;
   },
 ): Promise<SupplierQueuePageResult> {
+  const decorateAdminMedia = async (
+    items: Array<Record<string, unknown> & { id: string }>,
+  ): Promise<Array<Record<string, unknown> & { id: string }>> => {
+    // Unit tests and non-function tooling use synthetic Storage records. Only
+    // the deployed API should mint short-lived admin review URLs.
+    if (process.env.NODE_ENV !== "production" && !process.env.K_SERVICE && !process.env.FUNCTION_TARGET) return items;
+    const bucket = (() => {
+      try { return getStorage().bucket(); } catch { return null; }
+    })();
+    if (!bucket) return items;
+    return Promise.all(items.map(async (item) => {
+      const managed = Array.isArray(item.managedMedia) ? item.managedMedia : [];
+      if (managed.length === 0) return item;
+      const decorated = await Promise.all(managed.map(async (asset) => {
+        if (!asset || typeof asset !== "object" || Array.isArray(asset)) return asset;
+        const record = asset as Record<string, unknown>;
+        const variants = record.variants && typeof record.variants === "object" && !Array.isArray(record.variants)
+          ? record.variants as Record<string, unknown>
+          : {};
+        const large = variants.large && typeof variants.large === "object" && !Array.isArray(variants.large)
+          ? variants.large as Record<string, unknown>
+          : {};
+        const storagePath = String(large.storagePath || record.originalStoragePath || "").trim();
+        if (!storagePath) return record;
+        try {
+          const [url] = await bucket.file(storagePath).getSignedUrl({
+            action: "read",
+            version: "v4",
+            expires: Date.now() + 15 * 60 * 1000,
+          });
+          return { ...record, adminReviewUrl: url };
+        } catch {
+          return record;
+        }
+      }));
+      return { ...item, managedMedia: decorated };
+    }));
+  };
   const pageLimit = Number.isInteger(options.limit) ? Math.max(1, Math.min(100, Number(options.limit))) : 50;
   const state = options.view === "review" ? options.state || "active" : "active";
   const collectionName = options.view === "review"
@@ -1050,7 +1089,7 @@ export async function listSupplierQueuePage(
     return {
       view: options.view,
       state,
-      items: documents.map((document) => ({ id: document.id, ...document.data() })),
+      items: await decorateAdminMedia(documents.map((document) => ({ id: document.id, ...document.data() }))),
       nextCursor,
     };
   }
@@ -1065,7 +1104,7 @@ export async function listSupplierQueuePage(
   return {
     view: options.view,
     state,
-    items: pageDocuments.map((document) => ({ id: document.id, ...document.data() })),
+    items: await decorateAdminMedia(pageDocuments.map((document) => ({ id: document.id, ...document.data() }))),
     nextCursor: cursorDocument?.id || null,
   };
 }

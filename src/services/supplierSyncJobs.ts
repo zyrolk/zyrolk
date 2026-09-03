@@ -142,8 +142,9 @@ export const supplierSyncJobDetailLine = (job: SupplierSyncJobView): string => {
 
   if (job.state === 'running') {
     parts.push(determinate ? `${percent}% complete` : 'Scanning supplier catalogue');
-  } else if (job.state === 'waiting' && productsScanned > 0) {
-    parts.push('Queued items still processing');
+  } else if (job.state === 'waiting') {
+    const reason = String(job.waitingReason || '').trim();
+    parts.push(reason ? `Waiting: ${reason}` : 'Waiting to retry supplier work');
   } else if (job.state === 'pending') {
     parts.push('Waiting to start');
   }

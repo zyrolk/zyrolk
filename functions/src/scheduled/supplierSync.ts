@@ -1536,12 +1536,9 @@ async function commitQueuedItems(items: SupplierSyncWrite[]): Promise<void> {
       const reviewReference = reviewWrite
         ? adminDb.collection(reviewWrite.collection).doc(reviewWrite.id)
         : null;
-      const reviewIdentity = reviewWrite
+      const reviewIdentityFromWrite = reviewWrite
         ? getSupplierQueueIdentityCandidate(reviewWrite.data)
         : null;
-      if (reviewWrite && (!reviewIdentity?.sourceId || !reviewIdentity.supplierProductId)) {
-        throw new Error("A Product Review write requires a stable supplier product identity.");
-      }
       await adminDb.runTransaction(async (transaction) => {
         const [currentOffer, currentReview] = await Promise.all([
           transaction.get(offerReference),
@@ -1554,7 +1551,13 @@ async function commitQueuedItems(items: SupplierSyncWrite[]): Promise<void> {
         )) {
           throw new Error("Supplier offer state changed while its Product Review observation was being committed.");
         }
-        if (currentReview?.exists && !supplierReviewQueueRecordMatchesIdentity(currentReview.data(), {
+        const reviewIdentity = reviewWrite
+          ? (reviewIdentityFromWrite?.sourceId && reviewIdentityFromWrite.supplierProductId
+            ? reviewIdentityFromWrite
+            : currentReview?.exists ? getSupplierQueueIdentityCandidate(currentReview.data()) : null)
+          : null;
+        const reviewHasStableIdentity = Boolean(reviewIdentity?.sourceId && reviewIdentity.supplierProductId);
+        if (currentReview?.exists && reviewHasStableIdentity && !supplierReviewQueueRecordMatchesIdentity(currentReview.data(), {
           sourceId: reviewIdentity!.sourceId,
           supplierProductId: reviewIdentity!.supplierProductId,
           supplierCode: reviewIdentity!.supplierProductId,
@@ -1562,9 +1565,24 @@ async function commitQueuedItems(items: SupplierSyncWrite[]): Promise<void> {
           throw new Error("A deterministic Product Review ID is already owned by a different supplier product identity.");
         }
         for (const item of group) {
+          if (item === reviewWrite && !reviewHasStableIdentity) continue;
           const reference = adminDb.collection(item.collection).doc(item.id);
           if (item.create) transaction.create(reference, item.data);
           else transaction.set(reference, item.data, { merge: true });
+        }
+        if (reviewWrite && !reviewHasStableIdentity) {
+          const auditReference = adminDb.collection("supplier_operations_audit").doc();
+          transaction.create(auditReference, {
+            id: auditReference.id,
+            eventId: auditReference.id,
+            module: "supplier_automation",
+            action: "SUPPLIER_PRODUCT_DEFERRED_NO_IDENTITY",
+            sourceId: String(reviewWrite.data.sourceId || "") || null,
+            offerId: fencedOffer.id,
+            productId: String(reviewWrite.data.productId || reviewWrite.data.canonicalProductId || "") || null,
+            reason: "Product Review observation deferred because no stable supplier product identity was available.",
+            timestamp: FieldValue.serverTimestamp(),
+          });
         }
       });
       index = groupEnd;

@@ -41,15 +41,6 @@ interface DropexLoginResponse {
   accessToken?: string;
 }
 
-interface DropexPageResponse {
-  content?: unknown[];
-  totalElements?: number;
-  totalPages?: number;
-  number?: number;
-  size?: number;
-  last?: boolean;
-}
-
 const REQUEST_TIMEOUT_MS = 15_000;
 const TOKEN_REFRESH_SKEW_MS = 60_000;
 
@@ -154,12 +145,25 @@ function needsDropexProductEnrichment(
   const inventoryAbsent = isDropexFieldAbsent(detail.onHandInventory)
     && isDropexFieldAbsent(item.onHandInventory)
     && isDropexFieldAbsent(item.stock);
+  const categoryAbsent = [
+    detail.productCategoryId,
+    detail.categoryId,
+    item.productCategoryId,
+    item.categoryId,
+    detail.categoryName,
+    detail.category,
+    item.categoryName,
+    item.category,
+    detail.productCategory,
+    item.productCategory,
+  ].every(isDropexFieldAbsent);
 
   return retailPriceAbsent
     || descriptionAbsent
     || imageAbsent
     || isDropexSupplierCostAbsent(item, detail)
-    || inventoryAbsent;
+    || inventoryAbsent
+    || categoryAbsent;
 }
 
 export class DropexConnectorService {
@@ -360,7 +364,11 @@ export class DropexConnectorService {
       throw new Error("Failed to parse Dropex product categories as JSON.");
     }
 
-    const categories = Array.isArray(parsed) ? parsed : asRecordArray((parsed as DropexPageResponse).content);
+    const parsedRecord = asRecord(parsed);
+    const categories = Array.isArray(parsed)
+      ? asRecordArray(parsed)
+      : asRecordArray(parsedRecord?.content)
+        .concat(asRecordArray(parsedRecord?.data));
     const byId = new Map<string, { category?: string; subcategory?: string; hierarchy?: string[] }>();
 
     for (const category of categories) {

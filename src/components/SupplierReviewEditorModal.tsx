@@ -22,6 +22,7 @@ import {
 } from '../services/supplierOffers';
 import {
   supplierReviewRawMetadata,
+  supplierReviewManagedMediaReady,
   supplierReviewSpecificationsRequired,
   supplierReviewSpecificationsSatisfied,
 } from '../services/supplierHubPresentation';
@@ -182,7 +183,9 @@ export default function SupplierReviewEditorModal({
       if (check.label === 'Specifications' && !specificationsRequired && specificationCount === 0) {
         return { label: check.label, valid: true, note: 'Not required' };
       }
-      const error = check.label === 'Specifications'
+      const error = check.label === 'Images'
+        ? (supplierReviewManagedMediaReady(item) ? undefined : 'Managed supplier media is not ready for publication.')
+        : check.label === 'Specifications'
         ? (validationErrors.specifications
           || (!specificationsSatisfied && specificationsRequired
             ? 'The supplier did not provide product specifications.'
@@ -192,11 +195,16 @@ export default function SupplierReviewEditorModal({
     });
   }, [categories, draft.category, item, specificationCount, specificationsRequired, validationErrors]);
   const previewImages = useMemo(() => {
-    const images = [draft.primaryImageUrl, ...draft.galleryImageUrls]
+    const managedPreviewImages = (Array.isArray(item.managedMedia) ? item.managedMedia : [])
+      .map((asset) => (asset && typeof asset === 'object' ? String((asset as Record<string, unknown>).adminReviewUrl || (asset as Record<string, unknown>).firebaseStorageUrl || '').trim() : ''))
+      .filter(Boolean);
+    const images = !isEditing && supplierReviewManagedMediaReady(item) && managedPreviewImages.length > 0
+      ? managedPreviewImages
+      : [draft.primaryImageUrl, ...draft.galleryImageUrls]
       .map((url) => String(url || '').trim())
       .filter((url, index, list) => Boolean(url) && list.indexOf(url) === index);
     return images.filter((url) => isValidSupplierImageUrl(url));
-  }, [draft.galleryImageUrls, draft.primaryImageUrl]);
+  }, [draft.galleryImageUrls, draft.primaryImageUrl, isEditing, item, item.managedMedia, item.mediaStatus]);
   const importWarnings = useMemo(() => {
     const warnings = [
       ...(item.productValidation?.errors || []),
