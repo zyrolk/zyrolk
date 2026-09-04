@@ -78,6 +78,7 @@ import {
   supplierReviewTerminalLabel,
   supplierReviewStorefrontLabel,
   supplierReviewTerminalItem,
+  supplierReviewActionableQueueCount,
   supplierBusinessErrorMessage,
   isSupplierReviewStaleObservationError,
   SUPPLIER_REVIEW_STALE_REFRESH_MESSAGE,
@@ -200,9 +201,11 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
   const [reviewQueue, setReviewQueue] = useState<ReviewQueueItem[]>([]);
   const [supplierReviewCursor, setSupplierReviewCursor] = useState<string | null>(null);
   const [supplierReviewLoading, setSupplierReviewLoading] = useState(false);
+  const [supplierReviewActionableCount, setSupplierReviewActionableCount] = useState<number | null>(null);
   const [supplierQueueError, setSupplierQueueError] = useState<string | null>(null);
   const supplierQueueRequestIdRef = useRef(0);
   const supplierAuditRequestIdRef = useRef(0);
+  const supplierReviewCountRequestIdRef = useRef(0);
   const supplierReviewLoadedPagesRef = useRef(1);
   
   // Syncing state
@@ -272,6 +275,23 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
   const connectCloseButtonRef = useRef<HTMLButtonElement>(null);
   const connectPreviousFocusRef = useRef<HTMLElement | null>(null);
   const connectModalBusyRef = useRef(false);
+
+  const refreshSupplierReviewActionableCount = useCallback(async (): Promise<void> => {
+    const requestId = ++supplierReviewCountRequestIdRef.current;
+    try {
+      const response = await getSupplierApi('/api/supplier-operations/summary');
+      const result = await response.json().catch(() => ({})) as {
+        success?: boolean;
+        queues?: Record<string, unknown>;
+      };
+      if (!response.ok || result.success !== true || !result.queues) return;
+      if (requestId === supplierReviewCountRequestIdRef.current) {
+        setSupplierReviewActionableCount(supplierReviewActionableQueueCount(result.queues));
+      }
+    } catch {
+      // Keep the last authoritative count while a transient summary request fails.
+    }
+  }, []);
 
   const closeConnectModal = useCallback(() => {
     setShowConnectModal(false);
@@ -347,7 +367,8 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
       setSyncErrorMsg(null);
       applySyncJobViews(jobsResult.jobs);
     }
-  }, [applySyncJobViews]);
+    void refreshSupplierReviewActionableCount();
+  }, [applySyncJobViews, refreshSupplierReviewActionableCount]);
 
   useEffect(() => {
     let cancelled = false;
@@ -614,6 +635,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
   };
 
   const refreshSupplierQueueViews = async (): Promise<boolean> => {
+    void refreshSupplierReviewActionableCount();
     return loadSupplierQueueView({ pageCount: supplierReviewLoadedPagesRef.current });
   };
 
@@ -1711,7 +1733,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
       <div className="flex w-full flex-wrap items-center gap-1.5 border-b border-slate-100 pb-1.5 dark:border-slate-800">
         {[
           { id: 'suppliers', label: 'Suppliers', badge: supplierSources.length, icon: Globe },
-          { id: 'review', label: 'Product Review', badge: reviewQueue.length, icon: UserCheck, badgeColor: 'bg-blue-500 text-white' },
+          { id: 'review', label: 'Product Review', badge: supplierReviewActionableCount, icon: UserCheck, badgeColor: 'bg-blue-500 text-white' },
           { id: 'activity', label: 'Activity', badge: null, icon: Activity },
           { id: 'settings', label: 'Settings', badge: null, icon: Settings },
         ].map((tab) => {

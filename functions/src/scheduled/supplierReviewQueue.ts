@@ -957,7 +957,7 @@ const reviewStatusValues = (state: SupplierReviewQueuePageState): string[] => {
   if (state === "conflict") return ["CONFLICT"];
   if (state === "approved") return ["Approved"];
   if (state === "rejected") return ["Rejected"];
-  if (state === "history") return ["Approved", "Rejected"];
+  if (state === "history") return ["Approved", "Rejected", "Pending", "CONFLICT"];
   if (state === "review_pending") return ["Pending"];
   return ["Pending", "CONFLICT"];
 };
@@ -992,7 +992,9 @@ const reviewRecordIsApproved = (record: SupplierQueueRecord): boolean => (
 const reviewRecordIsTerminalDecision = (record: SupplierQueueRecord): boolean => (
   reviewRecordIsApproved(record)
   || normalizedReviewValue(record.status) === "rejected"
+  || normalizedReviewValue(record.status) === "deleted"
   || ["rejected", "suppressed"].includes(normalizedReviewValue(record.queueState))
+  || normalizedReviewValue(record.decisionAction) === "deleted"
 );
 
 const reviewComparisonIsRemoval = (value: unknown): boolean => {
@@ -1009,8 +1011,11 @@ export const reviewRecordMatchesBusinessFilter = (
 ): boolean => {
   const comparisonStatus = normalizedReviewValue(asRecord(record.comparison).comparisonStatus);
   if (filter === "approved_history") return reviewRecordIsTerminalDecision(record);
+  if (reviewRecordIsTerminalDecision(record)) return false;
   if (filter === "conflicts") return reviewRecordIsConflict(record);
+  if (reviewRecordIsConflict(record)) return false;
   if (filter === "removed_products") return reviewComparisonIsRemoval(comparisonStatus);
+  if (reviewComparisonIsRemoval(comparisonStatus)) return false;
   if (filter === "new_products") return comparisonStatus === "new_product";
   if (filter === "needs_attention") {
     const validation = asRecord(record.productValidation);

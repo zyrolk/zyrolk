@@ -8,6 +8,7 @@ import {
   supplierReviewApiState,
   supplierReviewStatusLabel,
   supplierReviewCanRemove,
+  supplierReviewIsTerminalDecision,
 } from '../src/services/supplierHubPresentation';
 import { createSupplierReviewDraft, updateSupplierReviewDraftField } from '../src/services/supplierReviewEditor';
 
@@ -66,6 +67,9 @@ test('Review History projects approved, rejected, and safely dismissed terminal 
   assert.equal(matchesProductReviewFilter(records[1].data, 'approved_history'), true);
   assert.equal(matchesProductReviewFilter(records[2].data, 'approved_history'), true);
   assert.equal(supplierReviewStatusLabel(records[2].data), 'Dismissed');
+  assert.equal(supplierReviewIsTerminalDecision(records[2].data), true);
+  assert.equal(matchesProductReviewFilter(records[2].data, 'needs_attention'), false);
+  assert.equal(matchesProductReviewFilter(records[2].data, 'new_products'), false);
 });
 
 test('Needs Attention includes failed media while conflicts retain an explicit status', () => {

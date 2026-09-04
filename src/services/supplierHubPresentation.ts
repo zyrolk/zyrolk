@@ -565,17 +565,24 @@ const isApproved = (item: ReviewPresentationItem | ChangePresentationItem): bool
   normalized(item.status) === 'approved' || normalized(item.queueState) === 'approved'
 );
 
-const isTerminalReviewDecision = (item: ReviewPresentationItem): boolean => (
+/** Terminal review decisions are history-only, never actionable. */
+export const supplierReviewIsTerminalDecision = (item: ReviewPresentationItem): boolean => (
   isApproved(item)
   || normalized(item.status) === 'rejected'
+  || normalized(item.status) === 'deleted'
   || ['rejected', 'suppressed'].includes(normalized(item.queueState))
+  || normalized(item.decisionAction) === 'deleted'
 );
 
 export function matchesProductReviewFilter(item: ReviewPresentationItem, filter: ProductReviewFilter): boolean {
   const comparisonStatus = normalized(item.comparison?.comparisonStatus);
-  if (filter === 'approved_history') return isTerminalReviewDecision(item);
+  const terminal = supplierReviewIsTerminalDecision(item);
+  if (filter === 'approved_history') return terminal;
+  if (terminal) return false;
   if (filter === 'conflicts') return isConflict(item);
+  if (isConflict(item)) return false;
   if (filter === 'removed_products') return isRemovedChange(comparisonStatus);
+  if (isRemovedChange(comparisonStatus)) return false;
   if (filter === 'new_products') return comparisonStatus === 'new_product';
   if (filter === 'needs_attention') {
     return item.productValidation?.readyToPublish === false
@@ -597,6 +604,15 @@ export function matchesProductChangeFilter(item: ChangePresentationItem, filter:
   if (filter === 'product_updates') return !isApproved(item) && !isConflict(item) && !isRemovedChange(item.changeType);
   if (filter === 'needs_attention') return ['retryable_failure', 'dead_letter'].includes(normalized(item.queueState));
   return false;
+}
+
+/** Counts all active queue work represented by the authoritative operations summary. */
+export function supplierReviewActionableQueueCount(queues: Record<string, unknown> | null | undefined): number {
+  return ['queued', 'leased', 'processing', 'review_pending', 'conflict', 'retryable_failure', 'dead_letter']
+    .reduce((total, state) => {
+      const count = Number(queues?.[state] || 0);
+      return total + (Number.isFinite(count) ? Math.max(0, count) : 0);
+    }, 0);
 }
 
 export function supplierHealthLabel(source: Record<string, unknown>): string {

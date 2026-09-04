@@ -90,6 +90,25 @@ test('Product Review filtered cursor continues after the last scanned document w
   assert.equal(second.nextCursor, null);
 });
 
+test('terminal dismissed observations are excluded from active business filters', async () => {
+  const dismissed = activeReview(0, 'NEW_PRODUCT');
+  dismissed.data = {
+    ...dismissed.data,
+    status: 'Rejected',
+    queueState: 'suppressed',
+    decisionAction: 'deleted',
+    productValidation: { readyToPublish: false, missingFields: ['category'], errors: [] },
+  };
+  const page = await listSupplierQueuePage(createReviewQueueFirestore([dismissed]) as never, {
+    view: 'review', state: 'history', businessFilter: 'approved_history', limit: 10,
+  });
+  assert.deepEqual(page.items.map((item) => item.id), ['review-000']);
+  const activePage = await listSupplierQueuePage(createReviewQueueFirestore([dismissed]) as never, {
+    view: 'review', state: 'active', businessFilter: 'needs_attention', limit: 10,
+  });
+  assert.deepEqual(activePage.items, []);
+});
+
 test('Product Review API core keeps existing generic pagination behaviour when no business filter is supplied', async () => {
   const records = [activeReview(0, 'PRICE_CHANGED'), activeReview(1, 'NEW_PRODUCT')];
   const page = await listSupplierQueuePage(createReviewQueueFirestore(records) as never, {
