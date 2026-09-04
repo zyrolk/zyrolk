@@ -11,7 +11,20 @@ if (getApps().length === 0) {
     || process.env.GOOGLE_CLOUD_PROJECT
     || process.env.FIREBASE_PROJECT_ID
     || "zyrolk-e0164";
-  initializeApp({ projectId });
+  const firebaseConfig = (() => {
+    try {
+      const parsed = JSON.parse(String(process.env.FIREBASE_CONFIG || "{}"));
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? parsed as Record<string, unknown>
+        : {};
+    } catch {
+      return {};
+    }
+  })();
+  const storageBucket = typeof firebaseConfig.storageBucket === "string" && firebaseConfig.storageBucket.trim().length > 0
+    ? firebaseConfig.storageBucket.trim()
+    : `${projectId}.firebasestorage.app`;
+  initializeApp({ projectId, storageBucket });
 }
 
 export const adminDb = getFirestore();
