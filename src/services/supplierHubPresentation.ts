@@ -175,15 +175,30 @@ const managedMediaRecords = (item: SupplierReviewQuickApprovalItem): Array<Recor
     : [];
 };
 
-/** Returns the managed review URL, preferring the short-lived admin URL when present. */
-export function supplierReviewManagedImageUrl(item: SupplierReviewQuickApprovalItem): string {
-  const ordered = managedMediaRecords(item).sort((left, right) => {
+/**
+ * Returns the response-only managed review image set in deterministic order.
+ * Signed admin URLs are preferred; canonical Firebase URLs remain identity
+ * metadata and are only a local fallback for legacy responses.
+ */
+export function supplierReviewManagedImageUrls(item: SupplierReviewQuickApprovalItem): string[] {
+  const ordered = [...managedMediaRecords(item)].sort((left, right) => {
     const primaryDifference = Number(right.isPrimary === true) - Number(left.isPrimary === true);
     if (primaryDifference !== 0) return primaryDifference;
     return Number(left.sortOrder || 0) - Number(right.sortOrder || 0);
   });
-  const url = String(ordered[0]?.adminReviewUrl || ordered[0]?.firebaseStorageUrl || '').trim();
-  return /^https:\/\/\S+$/iu.test(url) ? url : '';
+  const signed = ordered
+    .map((record) => String(record.adminReviewUrl || '').trim())
+    .filter((url) => /^https:\/\/\S+$/iu.test(url));
+  if (signed.length > 0) return [...new Set(signed)];
+  return ordered
+    .map((record) => String(record.firebaseStorageUrl || '').trim())
+    .filter((url) => /^https:\/\/\S+$/iu.test(url))
+    .filter((url, index, values) => values.indexOf(url) === index);
+}
+
+/** Returns the managed review URL, preferring the short-lived admin URL when present. */
+export function supplierReviewManagedImageUrl(item: SupplierReviewQuickApprovalItem): string {
+  return supplierReviewManagedImageUrls(item)[0] || '';
 }
 
 export function supplierReviewManagedMediaReady(item: SupplierReviewQuickApprovalItem): boolean {

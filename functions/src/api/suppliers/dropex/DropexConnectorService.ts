@@ -107,6 +107,34 @@ function asRecordArray(value: unknown): Record<string, unknown>[] {
   return value.map(asRecord).filter((entry): entry is Record<string, unknown> => Boolean(entry));
 }
 
+/** Accept the envelopes used by the Dropex inventory service without treating
+ * an unavailable category as a made-up label. */
+function envelopeRecords(value: unknown): Record<string, unknown>[] {
+  if (Array.isArray(value)) return asRecordArray(value);
+  const record = asRecord(value);
+  if (!record) return [];
+  const direct = [record.content, record.data, record.products]
+    .flatMap((candidate) => asRecordArray(candidate));
+  if (direct.length > 0) return direct;
+  for (const nested of [record.data, record.content]) {
+    const nestedRecords = envelopeRecords(nested);
+    if (nestedRecords.length > 0) return nestedRecords;
+  }
+  return [];
+}
+
+function envelopeRecord(value: unknown): Record<string, unknown> {
+  const record = asRecord(value);
+  if (!record) return asRecordArray(value)[0] || {};
+  for (const candidate of [record.data, record.content]) {
+    const nested = asRecord(candidate);
+    if (nested) return nested;
+    const first = asRecordArray(candidate)[0];
+    if (first) return first;
+  }
+  return record;
+}
+
 export function isDropexFieldAbsent(value: unknown): boolean {
   return value === undefined
     || value === null
@@ -134,6 +162,7 @@ function isDropexSupplierCostAbsent(
 function needsDropexProductEnrichment(
   item: Record<string, unknown>,
   detail: Record<string, unknown>,
+  categoryLookup?: DropexCategoryLookup,
 ): boolean {
   const retailPriceAbsent = isDropexFieldAbsent(detail.sellingPrice)
     && isDropexFieldAbsent(item.sellingPrice)
@@ -145,18 +174,20 @@ function needsDropexProductEnrichment(
   const inventoryAbsent = isDropexFieldAbsent(detail.onHandInventory)
     && isDropexFieldAbsent(item.onHandInventory)
     && isDropexFieldAbsent(item.stock);
+  const categoryId = detail.productCategoryId
+    ?? detail.categoryId
+    ?? item.productCategoryId
+    ?? item.categoryId;
   const categoryAbsent = [
-    detail.productCategoryId,
-    detail.categoryId,
-    item.productCategoryId,
-    item.categoryId,
     detail.categoryName,
     detail.category,
     item.categoryName,
     item.category,
     detail.productCategory,
     item.productCategory,
-  ].every(isDropexFieldAbsent);
+  ].every(isDropexFieldAbsent)
+    && !categoryLookup?.resolveCategory(categoryId).category
+    && !categoryLookup?.resolveCategory(categoryId).subcategory;
 
   return retailPriceAbsent
     || descriptionAbsent
@@ -364,11 +395,7 @@ export class DropexConnectorService {
       throw new Error("Failed to parse Dropex product categories as JSON.");
     }
 
-    const parsedRecord = asRecord(parsed);
-    const categories = Array.isArray(parsed)
-      ? asRecordArray(parsed)
-      : asRecordArray(parsedRecord?.content)
-        .concat(asRecordArray(parsedRecord?.data));
+    const categories = envelopeRecords(parsed);
     const byId = new Map<string, { category?: string; subcategory?: string; hierarchy?: string[] }>();
 
     for (const category of categories) {
@@ -420,7 +447,7 @@ export class DropexConnectorService {
 
     try {
       const parsed = JSON.parse(bodyText);
-      return asRecord(parsed) || {};
+      return envelopeRecord(parsed);
     } catch {
       throw new Error(`Failed to parse Dropex product DTO for product ${productId}.`);
     }
@@ -504,7 +531,7 @@ export class DropexConnectorService {
         const detail = asRecord(item.productDetail) || item;
         const productId = String(detail.id || item.productId || item.id || "").trim();
         let enrichment: Record<string, unknown> | undefined;
-        const needsEnrichment = Boolean(productId && needsDropexProductEnrichment(item, detail));
+        const needsEnrichment = Boolean(productId && needsDropexProductEnrichment(item, detail, categoryLookup));
         if (needsEnrichment) {
           enrichment = await this.enrichProductDto(credentials, outboundPolicy, productId);
         }

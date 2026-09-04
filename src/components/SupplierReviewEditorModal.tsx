@@ -23,6 +23,7 @@ import {
 import {
   supplierReviewRawMetadata,
   supplierReviewManagedMediaReady,
+  supplierReviewManagedImageUrls,
   supplierReviewSpecificationsRequired,
   supplierReviewSpecificationsSatisfied,
 } from '../services/supplierHubPresentation';
@@ -87,6 +88,14 @@ const metadataText = (value: unknown): string => {
   } catch {
     return String(value);
   }
+};
+
+const changePreviewText = (field: unknown, value: unknown): string => {
+  const normalizedField = String(field || '').trim().toLowerCase();
+  if (normalizedField === 'description' || normalizedField === 'longdescription' || normalizedField === 'shortdescription') {
+    return supplierDescriptionPlainText(value);
+  }
+  return metadataText(value);
 };
 
 const ReadOnlyValue = ({ children, className = '' }: { children: React.ReactNode; className?: string }) => (
@@ -195,9 +204,7 @@ export default function SupplierReviewEditorModal({
     });
   }, [categories, draft.category, item, specificationCount, specificationsRequired, validationErrors]);
   const previewImages = useMemo(() => {
-    const managedPreviewImages = (Array.isArray(item.managedMedia) ? item.managedMedia : [])
-      .map((asset) => (asset && typeof asset === 'object' ? String((asset as Record<string, unknown>).adminReviewUrl || (asset as Record<string, unknown>).firebaseStorageUrl || '').trim() : ''))
-      .filter(Boolean);
+    const managedPreviewImages = supplierReviewManagedImageUrls(item);
     const images = !isEditing && supplierReviewManagedMediaReady(item) && managedPreviewImages.length > 0
       ? managedPreviewImages
       : [draft.primaryImageUrl, ...draft.galleryImageUrls]
@@ -461,11 +468,11 @@ export default function SupplierReviewEditorModal({
                     <dd className="mt-2 grid gap-2 sm:grid-cols-2">
                       <div>
                         <span className="text-[8px] font-black uppercase tracking-wide text-slate-400">Previous</span>
-                        <p className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-words text-[10px] font-semibold text-slate-600 dark:text-slate-300">{metadataText(change.before)}</p>
+                        <p className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-words text-[10px] font-semibold text-slate-600 dark:text-slate-300">{changePreviewText(change.field, change.before)}</p>
                       </div>
                       <div>
                         <span className="text-[8px] font-black uppercase tracking-wide text-slate-400">Supplier value</span>
-                        <p className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-words text-[10px] font-semibold text-blue-700 dark:text-blue-200">{metadataText(change.after)}</p>
+                        <p className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-words text-[10px] font-semibold text-blue-700 dark:text-blue-200">{changePreviewText(change.field, change.after)}</p>
                       </div>
                     </dd>
                   </div>

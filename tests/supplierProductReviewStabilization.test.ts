@@ -15,6 +15,7 @@ import {
   supplierReviewDisplayImageUrl,
   supplierReviewIsPreparing,
   supplierReviewManagedImageUrl,
+  supplierReviewManagedImageUrls,
   supplierReviewSpecificationCount,
   supplierReviewSpecificationsRequired,
   supplierReviewSpecificationsSatisfied,
@@ -227,6 +228,37 @@ test('PR-STAB-07 display image projection falls back from managed media to suppl
     ...galleryOnly,
     productPayload: { ...galleryOnly.productPayload, imageUrls: supplierImages },
   }), supplierImages[0]);
+});
+
+test('PR-STAB-07b quick card and details share signed managed-media projection', () => {
+  const managedMedia = supplierImages.map((_, index) => ({
+    firebaseStorageUrl: `https://firebasestorage.googleapis.com/v0/b/private/o/managed-${index}.webp`,
+    adminReviewUrl: `https://signed.example.test/review-${index}.webp`,
+    isPrimary: index === 0,
+    sortOrder: index,
+  }));
+  const item = { ...baseItem, mediaStatus: 'ready', managedMedia };
+  assert.equal(supplierReviewManagedImageUrls(item).length, 5);
+  assert.equal(supplierReviewManagedImageUrl(item), managedMedia[0].adminReviewUrl);
+  assert.equal(supplierReviewDisplayImageUrl(item), managedMedia[0].adminReviewUrl);
+  const markup = modalMarkup({ item });
+  assert.equal((markup.match(/<img[^>]+src="https:\/\/signed\.example\.test\/review-/gu) || []).length, 5);
+  assert.doesNotMatch(markup, /No valid product images/u);
+});
+
+test('PR-STAB-07c What Changed renders description values as plain text', () => {
+  const markup = modalMarkup({
+    item: {
+      comparison: {
+        comparisonStatus: 'DESCRIPTION_CHANGED',
+        fieldChanges: [{ field: 'longDescription', label: 'Full Description', before: '<p>Old</p>', after: '<p><strong>New</strong></p>' }],
+      },
+    },
+  });
+  assert.match(markup, /Old/u);
+  assert.match(markup, /New/u);
+  const changedSection = markup.slice(markup.indexOf('supplier-proposed-changes-title'), markup.indexOf('</section>', markup.indexOf('supplier-proposed-changes-title')));
+  assert.doesNotMatch(changedSection, /&lt;\/?(?:p|strong)&gt;/iu);
 });
 
 // 8. zero valid specs => count 0 + warning + failed checklist WHEN specs required

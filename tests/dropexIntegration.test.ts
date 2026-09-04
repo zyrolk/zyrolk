@@ -615,6 +615,50 @@ test("Dropex category absence triggers DTO enrichment and data envelopes resolve
   assert.deepEqual((page.products[0] as RawA2ZProduct).categoryHierarchy, ["Kitchen"]);
 });
 
+test("Dropex nested category and DTO envelopes preserve supplied category metadata", async () => {
+  let dtoCalls = 0;
+  const service = new DropexConnectorService({
+    supplierId: "dropex-supplier",
+    sourceId: "dropex-source-nested",
+    credentialReference: "dropex-production",
+  }, {
+    fetchOutbound: async (url) => {
+      if (url.endsWith("/auth/login")) return response(200, JSON.stringify({ access_token: loginToken }));
+      if (url.includes("/api/v1/re-seller-products/get")) {
+        return response(200, JSON.stringify({ content: [{ productDetail: {
+          id: 1221, name: "Nested Category Product", sku: "ATF0081", sellingPrice: 1000,
+          reSellingPrice: 750, onHandInventory: 4, productCategoryId: 7,
+        } }] }));
+      }
+      if (url.endsWith("/api/v1/product-categories")) {
+        return response(200, JSON.stringify({ data: { content: [{ id: 7, name: "Kitchen" }] } }));
+      }
+      if (url.includes("/api/v1/products/1221/dto")) {
+        dtoCalls += 1;
+        return response(200, JSON.stringify({ data: { productCategoryId: 7, categoryName: "Kitchen" } }));
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    },
+  });
+  const page = await service.fetchCatalogPage(
+    { username: "dropex-user", password: "dropex-pass" }, outboundPolicy, { cursor: "0", pageSize: 1 },
+  );
+  const product = page.products[0] as RawA2ZProduct;
+  assert.equal(dtoCalls, 1);
+  assert.equal(product.supplierCategory, "Kitchen");
+  assert.deepEqual(product.categoryHierarchy, ["Kitchen"]);
+  assert.equal(product.extraAttributes?.supplierCategoryId, "7");
+});
+
+test("Dropex missing upstream category remains honestly absent", () => {
+  const product = ProductParser.parseCatalogItem({
+    productDetail: { id: 1222, name: "Uncategorized Product", sku: "ATF0082", reSellingPrice: 750, stock: 4 },
+  }, { categoryLookup: { resolveCategory: () => ({}) } });
+  assert.equal(product.supplierCategory, undefined);
+  assert.equal(product.supplierSubcategory, undefined);
+  assert.equal(product.categoryHierarchy, undefined);
+});
+
 test("Supplier review response signing resolves current and top-level managed storage paths", () => {
   const current = supplierReviewQueueStoragePath({
     originalStoragePath: "supplier-media/current/original.jpg",

@@ -21,7 +21,7 @@ test("local Admin Auth uses the same Firebase project while production keeps env
   assert.match(firebaseAdmin, /process\.env\.GOOGLE_CLOUD_PROJECT/);
   assert.match(firebaseAdmin, /process\.env\.FIREBASE_PROJECT_ID/);
   assert.match(firebaseAdmin, /\|\| "zyrolk-e0164"/);
-  assert.match(firebaseAdmin, /initializeApp\(\{ projectId \}\)/);
+  assert.match(firebaseAdmin, /initializeApp\(\{ projectId, storageBucket \}\)/);
 });
 
 test("localhost omits token revocation lookup while production Functions retain it", () => {
