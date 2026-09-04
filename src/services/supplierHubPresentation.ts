@@ -20,7 +20,7 @@ export const PRODUCT_REVIEW_FILTERS: ReadonlyArray<{ id: ProductReviewFilter; la
   { id: 'removed_products', label: 'Removed Products' },
   { id: 'conflicts', label: 'Conflicts' },
   { id: 'needs_attention', label: 'Needs Attention' },
-  { id: 'approved_history', label: 'Approval History' },
+  { id: 'approved_history', label: 'Review History' },
 ];
 
 export interface ReviewPresentationItem {
@@ -357,6 +357,16 @@ export function supplierReviewStatusLabel(item: ReviewPresentationItem): string 
   if (state === 'rejected' || state === 'suppressed') return 'Rejected';
   if (!state && normalized(item.status) === 'pending') return 'Ready for Review';
   return String(item.status || 'Preparing');
+}
+
+/** Terminal label for history cards; dismissed observations are not approvals. */
+export function supplierReviewTerminalLabel(item: ReviewPresentationItem): 'Approved' | 'Rejected' | 'Dismissed by admin' | undefined {
+  const state = normalized(item.queueState);
+  const decision = normalized(item.decisionAction);
+  if (decision === 'deleted') return 'Dismissed by admin';
+  if (state === 'approved' || decision === 'approved' || normalized(item.status) === 'approved') return 'Approved';
+  if (state === 'rejected' || decision === 'rejected' || normalized(item.status) === 'rejected') return 'Rejected';
+  return undefined;
 }
 
 /** True while queue/media work is still in flight and approval must stay disabled. */

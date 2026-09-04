@@ -43,7 +43,7 @@ export interface SupplierReviewQuickCardProps {
   processing: boolean;
   canRetryMedia?: boolean;
   retryingMedia?: boolean;
-  terminalState?: 'Approved' | 'Rejected';
+  terminalState?: 'Approved' | 'Rejected' | 'Dismissed by admin';
   onApprove: () => void;
   onReject: () => void;
   onRemove?: () => void;
@@ -154,8 +154,10 @@ export function SupplierReviewQuickCard({
               <span className="rounded-lg bg-slate-100 px-2 py-1 text-[9px] font-black text-slate-600 dark:bg-slate-800 dark:text-slate-300">{terminalState || statusLabel}</span>
             </div>
             <div className="mt-3 flex flex-wrap gap-2">
-              <span className="rounded-full bg-blue-500/10 px-2 py-0.5 text-[9px] font-black text-blue-600">{changeLabel}</span>
-              <span className={`rounded-full px-2 py-0.5 text-[9px] font-black ${storefrontVisible ? 'bg-emerald-500/10 text-emerald-600' : 'bg-slate-500/10 text-slate-600 dark:text-slate-300'}`}>{storefrontVisible ? 'Visible after approval' : 'Approved but hidden'}</span>
+              <span className="rounded-full bg-blue-500/10 px-2 py-0.5 text-[9px] font-black text-blue-600">{terminalState === 'Dismissed by admin' ? 'Removed from Review' : changeLabel}</span>
+              {terminalState !== 'Rejected' && terminalState !== 'Dismissed by admin' && (
+                <span className={`rounded-full px-2 py-0.5 text-[9px] font-black ${storefrontVisible ? 'bg-emerald-500/10 text-emerald-600' : 'bg-slate-500/10 text-slate-600 dark:text-slate-300'}`}>{storefrontVisible ? 'Visible after approval' : 'Approved but hidden'}</span>
+              )}
             </div>
           </div>
         </div>
@@ -197,7 +199,7 @@ export function SupplierReviewQuickCard({
           </div>
         )}
 
-        {blockingProblems.length > 0 && !isPreparing && (
+        {blockingProblems.length > 0 && !isPreparing && !terminalState && (
           <div className="mx-4 mt-3 rounded-xl bg-amber-500/10 p-3 text-[10px] font-bold text-amber-700 dark:text-amber-300" role="status">
             <p className="font-black">Review required</p>
             <ul className="mt-1 list-disc space-y-1 pl-4">{blockingProblems.map((problem) => <li key={problem}>{problem}</li>)}</ul>
@@ -257,7 +259,7 @@ export function SupplierReviewQuickCard({
 
         {terminalState && (
           <div className="p-3" onClick={(event) => event.stopPropagation()}>
-            <p className="mb-2 text-center text-[10px] font-black text-emerald-700 dark:text-emerald-300" role="status">Decision recorded: {terminalState}</p>
+            <p className="mb-2 text-center text-[10px] font-black text-emerald-700 dark:text-emerald-300" role="status">{terminalState === 'Dismissed by admin' ? 'Removed from Review' : `Decision recorded: ${terminalState}`}</p>
             <button type="button" onClick={onViewHistory} className="min-h-11 w-full rounded-xl border border-blue-500/20 bg-blue-500/10 px-4 text-[10px] font-black text-blue-700 dark:text-blue-300">View decision history</button>
           </div>
         )}

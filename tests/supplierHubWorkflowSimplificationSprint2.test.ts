@@ -34,7 +34,7 @@ test('Product Review presents the required business filters and maps them to exi
     'Removed Products',
     'Conflicts',
     'Needs Attention',
-    'Approval History',
+    'Review History',
   ]);
   assert.equal(matchesProductReviewFilter({ comparison: { comparisonStatus: 'NEW_PRODUCT' } }, 'new_products'), true);
   assert.equal(matchesProductReviewFilter({ comparison: { comparisonStatus: 'PRICE_CHANGED' } }, 'product_updates'), true);

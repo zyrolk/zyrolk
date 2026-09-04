@@ -113,7 +113,7 @@ export default function SupplierReviewHistoryModal({
               <p className="mt-1 text-[11px] text-slate-400">{item.supplierName || 'Supplier'} · {item.supplierCode}</p>
             </div>
           </div>
-          <button ref={closeButtonRef} type="button" onClick={onClose} aria-label="Close approval history" className="rounded-full bg-slate-100 p-2 text-slate-500 dark:bg-slate-800"><X className="h-4 w-4" /></button>
+          <button ref={closeButtonRef} type="button" onClick={onClose} aria-label="Close review history" className="rounded-full bg-slate-100 p-2 text-slate-500 dark:bg-slate-800"><X className="h-4 w-4" /></button>
         </header>
 
         <div className="mt-4 grid gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-xs dark:border-slate-800 dark:bg-slate-900/40 sm:grid-cols-3">
@@ -124,7 +124,7 @@ export default function SupplierReviewHistoryModal({
 
         <div className="mt-5 space-y-3">
           <h4 className="flex items-center gap-2 text-xs font-black uppercase tracking-wide text-slate-700 dark:text-slate-200"><Clock3 className="h-4 w-4" aria-hidden="true" />Immutable review timeline</h4>
-          {loading && events.length === 0 ? <p role="status" className="rounded-xl border border-slate-200 p-4 text-xs text-slate-500 dark:border-slate-800">Loading approval history…</p> : null}
+          {loading && events.length === 0 ? <p role="status" className="rounded-xl border border-slate-200 p-4 text-xs text-slate-500 dark:border-slate-800">Loading review history…</p> : null}
           {error ? <p role="alert" className="rounded-xl border border-red-500/20 bg-red-500/10 p-3 text-xs font-semibold text-red-600">{error}</p> : null}
           {!loading && !error && events.length === 0 ? <p className="rounded-xl border border-dashed border-slate-200 p-4 text-xs text-slate-500 dark:border-slate-800">No audit events were found for this legacy review record.</p> : null}
           <ol className="space-y-3">

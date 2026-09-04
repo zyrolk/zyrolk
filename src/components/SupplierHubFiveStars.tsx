@@ -75,6 +75,7 @@ import {
   supplierReviewApiState,
   supplierReviewCanRetryMedia,
   supplierReviewStatusLabel,
+  supplierReviewTerminalLabel,
   supplierReviewStorefrontLabel,
   supplierReviewTerminalItem,
   supplierBusinessErrorMessage,
@@ -862,7 +863,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
         error?: string;
       };
       if (!response.ok || result.success !== true || !Array.isArray(result.events)) {
-        throw new Error(result.error || 'Approval history could not be loaded.');
+        throw new Error(result.error || 'Review history could not be loaded.');
       }
       if (requestId !== supplierAuditRequestIdRef.current) return;
       setReviewAuditEvents((current) => append ? mergeSupplierQueuePage(current, result.events || []) : result.events || []);
@@ -870,7 +871,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
       setReviewAuditError(null);
     } catch (error) {
       if (requestId === supplierAuditRequestIdRef.current) {
-        setReviewAuditError(error instanceof Error ? error.message : 'Approval history could not be loaded.');
+        setReviewAuditError(error instanceof Error ? error.message : 'Review history could not be loaded.');
       }
     } finally {
       if (requestId === supplierAuditRequestIdRef.current) setReviewAuditLoading(false);
@@ -1289,7 +1290,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
       const refreshSucceeded = await refreshSupplierQueueViews();
       setSuccessMsg(refreshSucceeded
         ? `Approved: "${draft.productName.trim()}" is no longer actionable.`
-        : `Approved: "${draft.productName.trim()}". Queue refresh failed, so this decision remains locked locally; reload or open Approval History to confirm.`);
+        : `Approved: "${draft.productName.trim()}". Queue refresh failed, so this decision remains locked locally; reload or open Review History to confirm.`);
       setTimeout(() => setSuccessMsg(null), refreshSucceeded ? 3000 : 7000);
     } catch (error: any) {
       console.error("Review approval error:", error);
@@ -1325,7 +1326,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
       const refreshSucceeded = await refreshSupplierQueueViews();
       setSuccessMsg(refreshSucceeded
         ? `Rejected: "${item.productName}" is no longer actionable.`
-        : `Rejected: "${item.productName}". Queue refresh failed, so this decision remains locked locally; reload or open Approval History to confirm.`);
+        : `Rejected: "${item.productName}". Queue refresh failed, so this decision remains locked locally; reload or open Review History to confirm.`);
       setTimeout(() => setSuccessMsg(null), refreshSucceeded ? 3000 : 7000);
     } catch (error: any) {
       console.error("Review rejection error:", error);
@@ -1845,9 +1846,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                     const brandLabel = supplierReviewDisplayLabel(draft.brand, brands);
                     const rawMetadata = supplierReviewRawMetadata(item);
                     const statusLabel = supplierReviewStatusLabel(item);
-                    const terminalState = statusLabel === 'Approved' || statusLabel === 'Rejected'
-                      ? statusLabel
-                      : undefined;
+                    const terminalState = supplierReviewTerminalLabel(item);
                     const blockingProblems = supplierReviewOperatorProblems(item);
                     return (
                       <SupplierReviewQuickCard
@@ -2852,7 +2851,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
           item={historyReviewItem}
           events={reviewAuditEvents}
           loading={reviewAuditLoading}
-          error={reviewAuditError ? supplierBusinessErrorMessage(reviewAuditError, 'Approval history could not be loaded.') : null}
+          error={reviewAuditError ? supplierBusinessErrorMessage(reviewAuditError, 'Review history could not be loaded.') : null}
           nextCursor={reviewAuditCursor}
           currentAdmin={auth.currentUser}
           onLoadMore={() => loadSupplierReviewAudit(historyReviewItem, reviewAuditCursor || undefined, true)}

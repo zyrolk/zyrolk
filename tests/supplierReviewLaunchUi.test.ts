@@ -16,6 +16,7 @@ import {
   supplierReviewRawMetadata,
   supplierReviewSpecificationCount,
   supplierReviewStorefrontLabel,
+  supplierReviewTerminalLabel,
   supplierReviewTerminalItem,
 } from '../src/services/supplierHubPresentation';
 import { createSupplierReviewDraft } from '../src/services/supplierReviewEditor';
@@ -172,6 +173,34 @@ test('successful decisions render terminal state without stale Approve or Reject
     assert.doesNotMatch(markup, /aria-label="Reject Rendered QA product"/u);
     assert.match(markup, /View decision history/u);
   }
+
+  const dismissed = { ...readyItem, status: 'Rejected', queueState: 'suppressed', decisionAction: 'deleted' };
+  assert.equal(supplierReviewTerminalLabel(dismissed), 'Dismissed by admin');
+  const dismissedMarkup = renderQuickCard({
+    statusLabel: 'Dismissed',
+    changeLabel: 'New product',
+    storefrontVisible: true,
+    blockingProblems: ['Select an active product category.', 'Select an active registered brand.'],
+    decisionReady: true,
+    canQuickApprove: true,
+    canReject: true,
+    terminalState: 'Dismissed by admin',
+  });
+  assert.match(dismissedMarkup, />Removed from Review</u);
+  assert.match(dismissedMarkup, />Dismissed by admin</u);
+  assert.doesNotMatch(dismissedMarkup, />New product</u);
+  assert.doesNotMatch(dismissedMarkup, /Visible after approval|Review required|Review Product|aria-label="Approve|aria-label="Reject/u);
+
+  const rejectedMarkup = renderQuickCard({
+    statusLabel: 'Rejected',
+    storefrontVisible: true,
+    blockingProblems: ['Select an active product category.'],
+    decisionReady: true,
+    canQuickApprove: true,
+    canReject: true,
+    terminalState: 'Rejected',
+  });
+  assert.doesNotMatch(rejectedMarkup, /Visible after approval|Review required|Review Product|aria-label="Approve|aria-label="Reject/u);
 
   const hub = projectFile('src/components/SupplierHubFiveStars.tsx');
   const approvalStart = hub.indexOf('const handleApproveReviewItem');

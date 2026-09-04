@@ -48,7 +48,7 @@ const reviewHistoryDb = (records: StoredReview[]) => {
   };
 };
 
-test('Approval History projects approved, rejected, and safely dismissed terminal decisions', async () => {
+test('Review History projects approved, rejected, and safely dismissed terminal decisions', async () => {
   const records: StoredReview[] = [
     { id: 'approved', data: { status: 'Approved', queueState: 'approved', createdAt: '3', decisionAction: 'approved' } },
     { id: 'rejected', data: { status: 'Rejected', queueState: 'rejected', createdAt: '2', decisionAction: 'rejected' } },
