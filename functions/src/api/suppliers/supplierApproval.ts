@@ -307,21 +307,27 @@ const record = (value: unknown): Record<string, unknown> => value && typeof valu
   ? value as Record<string, unknown>
   : {};
 
-const supplierReviewAllowsDismissal = (queueItem: QueueItemRecord): boolean => {
+const ACTIVE_SUPPLIER_REVIEW_STATES = new Set([
+  "queued",
+  "leased",
+  "processing",
+  "review_pending",
+  "conflict",
+  "retryable_failure",
+  "dead_letter",
+]);
+
+/**
+ * Removal is a queue-observation action, not a product deletion. Any active
+ * pending observation may be discarded by an authorized admin; terminal
+ * decisions are immutable and must not be removed a second time.
+ */
+const supplierReviewAllowsRemoval = (queueItem: QueueItemRecord): boolean => {
   const queueState = String(queueItem.queueState || "").trim().toLowerCase();
   const status = String(queueItem.status || "").trim().toLowerCase();
-  const validation = record(queueItem.productValidation);
-  const missingFields = Array.isArray(validation.missingFields) ? validation.missingFields : [];
-  const validationErrors = Array.isArray(validation.errors) ? validation.errors : [];
-  const mediaStatus = String(queueItem.mediaStatus || "").trim().toLowerCase();
-
-  return queueState === "conflict"
-    || status === "conflict"
-    || validation.readyToPublish === false
-    || missingFields.length > 0
-    || validationErrors.length > 0
-    || mediaStatus === "failed"
-    || mediaStatus === "partial";
+  if (["approved", "rejected", "suppressed"].includes(queueState)) return false;
+  if (queueState && !ACTIVE_SUPPLIER_REVIEW_STATES.has(queueState)) return false;
+  return isPending(queueItem.status) || status === "conflict" || ACTIVE_SUPPLIER_REVIEW_STATES.has(queueState);
 };
 
 const stringValue = (value: unknown): string => typeof value === "string" ? value.trim() : "";
@@ -533,8 +539,8 @@ export async function decideSupplierQueueItem(
       id: requestedQueueItemId,
       reviewQueueItemId,
     };
-    if (action === "deleted" && !supplierReviewAllowsDismissal(queueItem)) {
-      throw new ApiError("Only conflicts or reviews needing attention can be dismissed.", 409);
+    if (action === "deleted" && !supplierReviewAllowsRemoval(queueItem)) {
+      throw new ApiError("Only an active unpublished supplier review can be removed.", 409);
     }
     const resolvedQueueIdentity = await resolveSupplierQueueIdentity(db, transaction, queueItem);
     const approvalBaselineCandidate = parseSupplierProductApprovalBaseline(queueItem.approvalBaseline);
@@ -1052,7 +1058,7 @@ export async function decideSupplierQueueItem(
           updatedAt: now,
         }, { merge: true });
       }
-      if (action !== "approved") {
+      if (action === "rejected") {
         if (supplierSkuClaimId && shouldReleaseSupplierPortalSkuClaim(queueItem, action)) {
           transaction.delete(db.collection("supplier_sku_claims").doc(supplierSkuClaimId));
         }

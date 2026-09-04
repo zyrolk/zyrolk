@@ -140,6 +140,19 @@ export function supplierReviewCanReject(item: ReviewPresentationItem): boolean {
   return !state && normalized(item.status) === 'pending';
 }
 
+/**
+ * Removal discards only an active supplier observation. It never exposes a
+ * terminal approved/rejected/suppressed record as removable in the UI; the
+ * server repeats this precondition inside its transaction.
+ */
+export function supplierReviewCanRemove(item: ReviewPresentationItem): boolean {
+  const state = normalized(item.queueState);
+  const status = normalized(item.status);
+  if (state === 'approved' || state === 'rejected' || state === 'suppressed') return false;
+  if (state && !['queued', 'leased', 'processing', 'review_pending', 'conflict', 'retryable_failure', 'dead_letter'].includes(state)) return false;
+  return status === 'pending' || status === 'conflict' || Boolean(state);
+}
+
 export function supplierReviewIsConflict(item: SupplierReviewQuickApprovalItem): boolean {
   return normalized(item.status) === 'conflict'
     || normalized(item.queueState) === 'conflict'

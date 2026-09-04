@@ -495,8 +495,8 @@ test('rejected removal preserves effective availability and live product state',
   assert.equal(documents.get('products/canonical-product')?.stock, canonicalProduct.stock);
 });
 
-test('stale approval and rejection cannot decide a newer pending observation', async (t) => {
-  for (const action of ['approved', 'rejected'] as const) {
+test('stale approval, rejection, and removal cannot decide a newer pending observation', async (t) => {
+  for (const action of ['approved', 'rejected', 'deleted'] as const) {
     await t.test(action, async () => {
       const fixture = approvedPendingDecisionFixture();
       const newerObserved = buildSupplierProductOffer({
@@ -528,7 +528,9 @@ test('stale approval and rejection cannot decide a newer pending observation', a
         { uid: 'admin-1', email: 'admin@zyro.lk' },
         action === 'approved'
           ? { expectedPendingRevision: fixture.pendingObservation.revision }
-          : { rejectionReason: 'Reject old observation.', expectedPendingRevision: fixture.pendingObservation.revision },
+          : action === 'rejected'
+            ? { rejectionReason: 'Reject old observation.', expectedPendingRevision: fixture.pendingObservation.revision }
+            : { deletionReason: 'review_removed_by_admin', expectedPendingRevision: fixture.pendingObservation.revision },
       ), /observation changed|reload Product Review/i);
       assert.equal((fixture.documents.get(`supplier_product_offers/${fixture.sourceB.id}`)?.pendingObservation as StoredDocument).revision, newerPending.revision);
     });
@@ -580,18 +582,39 @@ for (const action of ['rejected', 'deleted'] as const) {
   });
 }
 
-test('ordinary ready reviews cannot be dismissed through the trusted API', async () => {
+test('ordinary ready reviews can be removed without deleting the supplier offer or product', async () => {
   const { db, documents, pendingRevision } = decisionFixture();
 
-  await assert.rejects(decideSupplierQueueItem(
+  const result = await decideSupplierQueueItem(
     db as never,
     'review-1',
     'deleted',
     { uid: 'admin-1', email: 'admin@zyro.lk' },
-    { deletionReason: 'Attempt to bypass a normal review.', expectedPendingRevision: pendingRevision },
-  ), /Only conflicts or reviews needing attention can be dismissed/i);
+    { deletionReason: 'review_removed_by_admin', expectedPendingRevision: pendingRevision },
+  );
 
-  assert.equal(documents.get('supplier_review_queue/review-1')?.queueState, 'review_pending');
+  assert.equal(result.success, true);
+  assert.equal(documents.get('supplier_review_queue/review-1')?.queueState, 'suppressed');
+  assert.equal(documents.get('supplier_review_queue/review-1')?.decisionAction, 'deleted');
+  assert.equal([...documents.keys()].some((key) => key.startsWith('supplier_product_offers/')), true);
+});
+
+test('removing a pending update never hard-deletes an approved product or offer', async () => {
+  const { db, documents, sourceB, pendingObservation } = approvedPendingDecisionFixture();
+
+  const result = await decideSupplierQueueItem(
+    db as never,
+    'review-1',
+    'deleted',
+    { uid: 'admin-1', email: 'admin@zyro.lk' },
+    { deletionReason: 'review_removed_by_admin', expectedPendingRevision: pendingObservation.revision },
+  );
+
+  assert.equal(result.success, true);
+  assert.equal(documents.has('products/canonical-product'), true);
+  assert.equal(documents.has('product_private/canonical-product'), true);
+  assert.equal(documents.get(`supplier_product_offers/${sourceB.id}`)?.reviewStatus, 'approved');
+  assert.equal(documents.get(`supplier_product_offers/${sourceB.id}`)?.pendingObservation, null);
 });
 
 test('dead-letter retry repairs stale queue identity before returning the item to workers', async () => {

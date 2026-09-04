@@ -7,6 +7,7 @@ import {
   matchesProductReviewFilter,
   supplierReviewApiState,
   supplierReviewStatusLabel,
+  supplierReviewCanRemove,
 } from '../src/services/supplierHubPresentation';
 import { createSupplierReviewDraft, updateSupplierReviewDraftField } from '../src/services/supplierReviewEditor';
 
@@ -72,6 +73,13 @@ test('Needs Attention includes failed media while conflicts retain an explicit s
   assert.equal(supplierReviewStatusLabel({ queueState: 'conflict' }), 'Conflict');
 });
 
+test('Product Review removal is limited to active observations and never terminal history', () => {
+  assert.equal(supplierReviewCanRemove({ status: 'Pending', queueState: 'review_pending' }), true);
+  assert.equal(supplierReviewCanRemove({ status: 'Pending', queueState: 'queued' }), true);
+  assert.equal(supplierReviewCanRemove({ status: 'Approved', queueState: 'approved' }), false);
+  assert.equal(supplierReviewCanRemove({ status: 'Rejected', queueState: 'suppressed', decisionAction: 'deleted' }), false);
+});
+
 test('Product Review SEO fields use the existing admin ownership and approval contract', () => {
   const item = {
     id: 'review-seo', productName: 'Supplier Phone', supplierCode: 'PHONE-1', supplierName: 'Supplier',
@@ -108,7 +116,9 @@ test('Product Review exposes only server-authoritative decisions and bounded tru
 
   assert.match(hub, /Search loaded products or supplier codes/);
   assert.match(hub, /Use Load more products to extend the bounded search/);
-  assert.doesNotMatch(hub, /decideSupplierReviewQueueItem\(item\.id, 'delete'/);
+  assert.match(hub, /decideSupplierReviewQueueItem\(item\.id, 'delete'/);
+  assert.match(hub, /Remove this item from Product Review\?/);
+  assert.match(hub, /does not delete the supplier product or a published Zyro product/);
   assert.match(routes, /supplier-review-queue\/:queueItemId\/delete/);
   assert.match(hub, /expectedPendingRevision: item\.supplierOfferPendingRevision/);
   assert.match(quickCard, /View decision history/);
@@ -116,7 +126,7 @@ test('Product Review exposes only server-authoritative decisions and bounded tru
   assert.match(historyModal, /Immutable review timeline/);
   assert.match(historyModal, /supplierAdministratorLabel/);
   assert.match(routes, /supplier-review-queue\/:queueItemId\/audit/);
-  assert.match(approval, /Only conflicts or reviews needing attention can be dismissed/);
+  assert.match(approval, /Only an active unpublished supplier review can be removed/);
   assert.match(reviewQueue, /url === existingAssets\[index\]\?\.originalSupplierUrl/);
   assert.match(rules, /match \/supplier_approval_audit\/\{docId\}[\s\S]*allow create, update, delete: if false;/);
   assert.equal(indexes.indexes.some((index) => index.collectionGroup === 'supplier_approval_audit'

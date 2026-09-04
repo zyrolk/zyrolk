@@ -63,6 +63,7 @@ import {
   SupplierHubSection,
   supplierReviewDecisionReady,
   supplierReviewCanReject,
+  supplierReviewCanRemove,
   supplierReviewCanQuickApprove,
   supplierReviewChangeLabel,
   supplierReviewDisplayLabel,
@@ -525,6 +526,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
   const [supplierOfferError, setSupplierOfferError] = useState<string | null>(null);
   const [rejectingReviewItem, setRejectingReviewItem] = useState<ReviewQueueItem | null>(null);
   const [rejectionReasonDraft, setRejectionReasonDraft] = useState('');
+  const [removingReviewItem, setRemovingReviewItem] = useState<ReviewQueueItem | null>(null);
   const [historyReviewItem, setHistoryReviewItem] = useState<ReviewQueueItem | null>(null);
   const [reviewAuditEvents, setReviewAuditEvents] = useState<SupplierReviewAuditEvent[]>([]);
   const [reviewAuditCursor, setReviewAuditCursor] = useState<string | null>(null);
@@ -1338,6 +1340,42 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
     }
   };
 
+  const handleRemoveReviewItem = async (item: ReviewQueueItem) => {
+    if (processingChangeId) return;
+    setProcessingChangeId(item.id);
+    try {
+      const result = await decideSupplierReviewQueueItem(item.id, 'delete', {
+        deletionReason: 'review_removed_by_admin',
+        expectedPendingRevision: item.supplierOfferPendingRevision,
+      });
+      if (result.status === 'stale_observation') {
+        setRemovingReviewItem(null);
+        await reconcileStaleSupplierReviewItem(item);
+        return;
+      }
+      setRemovingReviewItem(null);
+      setEditingReviewItem((current) => current?.id === item.id ? null : current);
+      setSupplierOffers([]);
+      setSupplierOfferError(null);
+      setReviewQueue((current) => current.filter((candidate) => candidate.id !== item.id));
+      const refreshSucceeded = await refreshSupplierQueueViews();
+      setSuccessMsg(refreshSucceeded
+        ? `Removed: "${item.productName}" is no longer in Product Review.`
+        : `Removed: "${item.productName}". Queue refresh failed; reload to confirm counts.`);
+      setTimeout(() => setSuccessMsg(null), refreshSucceeded ? 3000 : 7000);
+    } catch (error: any) {
+      if (isSupplierReviewStaleObservationError(error?.message)) {
+        setRemovingReviewItem(null);
+        await reconcileStaleSupplierReviewItem(item);
+        return;
+      }
+      setErrorMsg(`Failed to remove from Product Review: ${error.message || 'Unknown error'}`);
+      setTimeout(() => setErrorMsg(null), 4000);
+    } finally {
+      setProcessingChangeId(null);
+    }
+  };
+
   // --- SETTINGS CONFIGURATION HANDLERS ---
   const handleSaveSupplierSettings = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1841,6 +1879,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                         decisionReady={supplierReviewDecisionReady(item)}
                         canQuickApprove={canQuickApprove}
                         canReject={supplierReviewCanReject(item)}
+                        canRemove={supplierReviewCanRemove(item)}
                         needsResolution={needsResolution}
                         processing={processingChangeId === item.id}
                         canRetryMedia={supplierReviewCanRetryMedia(item)}
@@ -1848,6 +1887,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                         terminalState={terminalState}
                         onApprove={() => void handleApproveReviewItem(item, draft)}
                         onReject={() => { setRejectingReviewItem(item); setRejectionReasonDraft(''); }}
+                        onRemove={() => setRemovingReviewItem(item)}
                         onViewDetails={() => openSupplierReviewEditor(item)}
                         onViewHistory={() => openSupplierReviewHistory(item)}
                         onRetryMedia={() => void handleRetryDeadLetterMedia(item)}
@@ -2802,6 +2842,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
               setSupplierOfferError(null);
             }
           }}
+          onRemove={() => setRemovingReviewItem(editingReviewItem)}
           onPublish={(draft) => handleApproveReviewItem(editingReviewItem, draft)}
         />
       )}
@@ -2855,6 +2896,21 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
               <button type="submit" disabled={!rejectionReasonDraft.trim() || processingChangeId === rejectingReviewItem.id} className="rounded-xl bg-red-600 px-4 py-2 text-xs font-bold text-white disabled:opacity-50">Reject Product</button>
             </div>
           </form>
+        </div>
+      )}
+
+      {removingReviewItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-xs" role="dialog" aria-modal="true" aria-labelledby="supplier-remove-review-title">
+          <div className="w-full max-w-md space-y-4 rounded-3xl border border-slate-200 bg-white p-6 text-left shadow-2xl dark:border-slate-800 dark:bg-[#111928]">
+            <div>
+              <h3 id="supplier-remove-review-title" className="text-sm font-extrabold text-slate-900 dark:text-white">Remove from Product Review?</h3>
+              <p className="mt-2 text-xs leading-relaxed text-slate-500">Remove this item from Product Review? This does not delete the supplier product or a published Zyro product.</p>
+            </div>
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setRemovingReviewItem(null)} disabled={processingChangeId === removingReviewItem.id} className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-bold text-slate-600 disabled:opacity-50 dark:border-slate-700 dark:text-slate-300">Cancel</button>
+              <button type="button" onClick={() => void handleRemoveReviewItem(removingReviewItem)} disabled={processingChangeId === removingReviewItem.id} className="rounded-xl bg-amber-600 px-4 py-2 text-xs font-black text-white disabled:opacity-50">{processingChangeId === removingReviewItem.id ? 'Removing…' : 'Remove from Review'}</button>
+            </div>
+          </div>
         </div>
       )}
 

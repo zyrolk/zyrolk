@@ -578,7 +578,7 @@ test("SH-3 dismissal, conflicts, attention states, history, and pagination remai
 }, async (t) => {
   assert.match(process.env.FIRESTORE_EMULATOR_HOST || "", /^(127\.0\.0\.1|localhost):\d+$/u);
 
-  await t.test("ordinary review dismissal is denied while conflict dismissal is audited", async () => {
+  await t.test("ordinary review removal is soft-terminal, preserves source identity, and conflict removal remains audited", async () => {
     const identity = identityFor("dismiss-conflict");
     const { sourceId } = await seedSource(identity);
     const first = supplierProduct(identity);
@@ -596,14 +596,24 @@ test("SH-3 dismissal, conflicts, attention states, history, and pagination remai
       mediaStatus: "ready",
     }, { merge: true });
     const ordinaryRevision = await pendingRevisionForReview(ordinary);
-    await assert.rejects(decideSupplierQueueItem(adminDb, ordinary.id, "deleted", {
+    const ordinarySourceBefore = await adminDb.collection("supplierSources").doc(sourceId).get();
+    const ordinaryOfferId = String(ordinary.data().supplierOfferId);
+    const ordinaryOfferBefore = await adminDb.collection("supplier_product_offers").doc(ordinaryOfferId).get();
+    const removed = await decideSupplierQueueItem(adminDb, ordinary.id, "deleted", {
       uid: "sh3-admin",
       email: "admin@example.test",
     }, {
-      deletionReason: "Attempted ordinary dismissal.",
+      deletionReason: "review_removed_by_admin",
       expectedPendingRevision: ordinaryRevision,
-    }), /Only conflicts or reviews needing attention can be dismissed/i);
-    assert.equal((await adminDb.collection("supplier_review_queue").doc(ordinary.id).get()).data()?.queueState, "review_pending");
+    });
+    assert.equal(removed.success, true);
+    const removedReview = (await adminDb.collection("supplier_review_queue").doc(ordinary.id).get()).data()!;
+    assert.equal(removedReview.queueState, "suppressed");
+    assert.equal(removedReview.decisionAction, "deleted");
+    assert.equal((await adminDb.collection("supplierSources").doc(sourceId).get()).exists, ordinarySourceBefore.exists);
+    assert.equal((await adminDb.collection("supplier_product_offers").doc(ordinaryOfferId).get()).exists, ordinaryOfferBefore.exists);
+    assert.equal((await adminDb.collection("products").where("supplierOfferId", "==", ordinaryOfferId).get()).size, 0);
+    assert.ok((await auditActions(ordinary.id)).includes("delete"));
 
     configureConnector(sourceId, [first, duplicate]);
     await runFullSync(sourceId, "dismiss-conflict");
