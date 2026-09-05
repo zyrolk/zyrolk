@@ -55,12 +55,24 @@ test('Product Review presents the required business filters and maps them to exi
   assert.equal(matchesProductReviewFilter({ status: 'Pending', queueState: 'review_pending', comparisonStatus: 'PRICE_CHANGED' }, 'product_updates'), true);
   assert.equal(matchesProductReviewFilter({ status: 'Pending', queueState: 'review_pending', productValidation: { readyToPublish: false } }, 'needs_attention'), true);
   assert.equal(supplierReviewIsTerminalDecision({ status: 'Pending', queueState: 'review_pending', reviewStatus: 'rejected' }), true);
+  assert.equal(supplierReviewIsTerminalDecision({ status: 'Pending', queueState: 'review_pending', decisionAction: 'dismissed' }), true);
+  assert.equal(supplierReviewIsTerminalDecision({ status: 'suppressed', queueState: 'review_pending' }), true);
+  for (const terminal of [
+    { status: 'Pending', queueState: 'review_pending', decisionAction: 'dismissed' },
+    { status: 'suppressed', queueState: 'review_pending' },
+  ]) {
+    for (const filter of ['new_products', 'product_updates', 'needs_attention', 'conflicts'] as const) {
+      assert.equal(matchesProductReviewFilter({ ...terminal, comparison: { comparisonStatus: 'NEW_PRODUCT', changedFields: ['price'] }, productValidation: { readyToPublish: false } }, filter), false);
+    }
+    assert.equal(matchesProductReviewFilter(terminal, 'approved_history'), true);
+  }
   assert.equal(matchesProductReviewFilter({ status: 'Approved', queueState: 'approved', comparison: { comparisonStatus: 'NEW_PRODUCT' } }, 'new_products'), false);
   assert.equal(matchesProductReviewFilter({ queueState: 'conflict', comparison: { comparisonStatus: 'PRICE_CHANGED' }, productValidation: { readyToPublish: false } }, 'needs_attention'), false);
   assert.equal(matchesProductReviewFilter({ queueState: 'review_pending', comparison: { comparisonStatus: 'SUPPLIER_OFFER_REMOVED' }, productValidation: { readyToPublish: false } }, 'needs_attention'), false);
   assert.equal(matchesProductChangeFilter({ changeType: 'PRODUCT_REMOVED' }, 'removed_products'), true);
   assert.equal(supplierReviewActionableQueueCount({ queued: 1, leased: 1, processing: 1, review_pending: 2, conflict: 1, retryable_failure: 2, dead_letter: 1, approved: 50, rejected: 20, suppressed: 4 }), 9);
   assert.equal(supplierReviewActionableQueueCount({ actionable: 3, review_pending: 102, rejected: 50, suppressed: 10 }), 3);
+  assert.equal(supplierReviewActionableQueueCount({ queued: 2, actionable: 2, dismissed: 20, suppressed: 20, rejected: 20, approved: 20, deleted: 20 }), 2);
   assert.equal(supplierReviewApiState('conflicts'), 'conflict');
   assert.equal(supplierReviewApiState('approved_history'), 'history');
 });

@@ -52,6 +52,8 @@ const actionLabel = (value: unknown): string => {
   if (action === 'approve' || action === 'approved') return 'Approved';
   if (action === 'reject' || action === 'rejected') return 'Rejected';
   if (action === 'delete' || action === 'deleted') return 'Dismissed';
+  if (action === 'dismissed') return 'Dismissed';
+  if (action === 'suppressed') return 'Suppressed';
   return action ? action.replaceAll('_', ' ') : 'Review event';
 };
 

@@ -120,6 +120,12 @@ test('Sprint 3 prevents duplicate review documents and active duplicate review r
     'rejected',
     true,
   ), null);
+  assert.deepEqual(selectSupplierComparisonForReview(
+    { status: 'UNCHANGED', changedFields: [], fieldChanges: [] },
+    {},
+    'suppressed',
+    false,
+  ), { status: 'UNCHANGED', changedFields: [], fieldChanges: [] });
   const syncSource = readFileSync('functions/src/scheduled/supplierSync.ts', 'utf8');
   assert.match(syncSource, /if \(activeReviewQueueDoc\) queueItemId = activeReviewQueueDoc\.id/);
   assert.match(syncSource, /reviewRecordIsTerminalDecision/);

@@ -176,6 +176,8 @@ test('successful decisions render terminal state without stale Approve or Reject
 
   const dismissed = { ...readyItem, status: 'Rejected', queueState: 'suppressed', decisionAction: 'deleted' };
   assert.equal(supplierReviewTerminalLabel(dismissed), 'Dismissed by admin');
+  assert.equal(supplierReviewTerminalLabel({ status: 'Pending', queueState: 'review_pending', decisionAction: 'dismissed' }), 'Dismissed by admin');
+  assert.equal(supplierReviewTerminalLabel({ status: 'suppressed', queueState: 'review_pending' }), 'Suppressed');
   const dismissedMarkup = renderQuickCard({
     statusLabel: 'Dismissed',
     changeLabel: 'New product',
@@ -201,6 +203,17 @@ test('successful decisions render terminal state without stale Approve or Reject
     terminalState: 'Rejected',
   });
   assert.doesNotMatch(rejectedMarkup, /Visible after approval|Review required|Review Product|aria-label="Approve|aria-label="Reject/u);
+
+  const suppressedMarkup = renderQuickCard({
+    statusLabel: 'Suppressed',
+    terminalState: 'Suppressed',
+    storefrontVisible: true,
+    blockingProblems: ['Select an active product category.'],
+    decisionReady: true,
+    canQuickApprove: true,
+    canReject: true,
+  });
+  assert.doesNotMatch(suppressedMarkup, /Visible after approval|Review required|Review Product|aria-label="Approve|aria-label="Reject|Remove from Review/u);
 
   const hub = projectFile('src/components/SupplierHubFiveStars.tsx');
   const approvalStart = hub.indexOf('const handleApproveReviewItem');

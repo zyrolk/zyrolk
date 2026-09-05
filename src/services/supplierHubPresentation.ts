@@ -355,25 +355,32 @@ export function supplierReviewTerminalItem<T extends ReviewPresentationItem>(
 
 export function supplierReviewStatusLabel(item: ReviewPresentationItem): string {
   const state = normalized(item.queueState);
+  const terminal = supplierReviewTerminalLabel(item);
+  if (terminal === 'Approved') return 'Approved';
+  if (terminal === 'Rejected') return 'Rejected';
+  if (terminal === 'Suppressed') return 'Suppressed';
+  if (terminal === 'Dismissed by admin') return 'Dismissed';
   if (state === 'queued' || state === 'leased' || state === 'processing') return 'Preparing';
   if (state === 'review_pending') return 'Ready for Review';
   if (state === 'retryable_failure') return 'Needs Attention';
   if (state === 'dead_letter') return 'Needs Attention';
   if (state === 'conflict') return 'Conflict';
   if (state === 'approved') return 'Approved';
-  if ((state === 'rejected' || state === 'suppressed') && normalized(item.decisionAction) === 'deleted') return 'Dismissed';
   if (state === 'rejected' || state === 'suppressed') return 'Rejected';
   if (!state && normalized(item.status) === 'pending') return 'Ready for Review';
   return String(item.status || 'Preparing');
 }
 
 /** Terminal label for history cards; dismissed observations are not approvals. */
-export function supplierReviewTerminalLabel(item: ReviewPresentationItem): 'Approved' | 'Rejected' | 'Dismissed by admin' | undefined {
+export function supplierReviewTerminalLabel(item: ReviewPresentationItem): 'Approved' | 'Rejected' | 'Dismissed by admin' | 'Suppressed' | undefined {
   const state = normalized(item.queueState);
   const decision = normalized(item.decisionAction);
-  if (decision === 'deleted') return 'Dismissed by admin';
-  if (state === 'approved' || decision === 'approved' || normalized(item.status) === 'approved') return 'Approved';
-  if (state === 'rejected' || decision === 'rejected' || normalized(item.status) === 'rejected') return 'Rejected';
+  const status = normalized(item.status);
+  const reviewStatus = normalized(item.reviewStatus);
+  if (decision === 'deleted' || decision === 'dismissed') return 'Dismissed by admin';
+  if (state === 'approved' || decision === 'approved' || status === 'approved' || reviewStatus === 'approved') return 'Approved';
+  if (state === 'rejected' || decision === 'rejected' || status === 'rejected' || reviewStatus === 'rejected') return 'Rejected';
+  if (state === 'suppressed' || decision === 'suppressed' || status === 'suppressed' || reviewStatus === 'suppressed') return 'Suppressed';
   return undefined;
 }
 
@@ -589,11 +596,10 @@ const isApproved = (item: ReviewPresentationItem | ChangePresentationItem): bool
 /** Terminal review decisions are history-only, never actionable. */
 export const supplierReviewIsTerminalDecision = (item: ReviewPresentationItem): boolean => (
   isApproved(item)
-  || normalized(item.status) === 'rejected'
-  || normalized(item.status) === 'deleted'
-  || ['approved', 'rejected', 'suppressed', 'deleted'].includes(normalized(item.reviewStatus))
-  || ['rejected', 'suppressed'].includes(normalized(item.queueState))
-  || ['approved', 'rejected', 'deleted', 'suppressed'].includes(normalized(item.decisionAction))
+  || ['rejected', 'suppressed', 'deleted', 'dismissed'].includes(normalized(item.status))
+  || ['approved', 'rejected', 'suppressed', 'deleted', 'dismissed'].includes(normalized(item.reviewStatus))
+  || ['rejected', 'suppressed', 'deleted', 'dismissed'].includes(normalized(item.queueState))
+  || ['approved', 'rejected', 'deleted', 'dismissed', 'suppressed'].includes(normalized(item.decisionAction))
 );
 
 export function matchesProductReviewFilter(item: ReviewPresentationItem, filter: ProductReviewFilter): boolean {

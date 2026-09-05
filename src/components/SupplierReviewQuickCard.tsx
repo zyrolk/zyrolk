@@ -43,7 +43,7 @@ export interface SupplierReviewQuickCardProps {
   processing: boolean;
   canRetryMedia?: boolean;
   retryingMedia?: boolean;
-  terminalState?: 'Approved' | 'Rejected' | 'Dismissed by admin';
+  terminalState?: 'Approved' | 'Rejected' | 'Dismissed by admin' | 'Suppressed';
   onApprove: () => void;
   onReject: () => void;
   onRemove?: () => void;
@@ -155,7 +155,7 @@ export function SupplierReviewQuickCard({
             </div>
             <div className="mt-3 flex flex-wrap gap-2">
               <span className="rounded-full bg-blue-500/10 px-2 py-0.5 text-[9px] font-black text-blue-600">{terminalState === 'Dismissed by admin' ? 'Removed from Review' : changeLabel}</span>
-              {terminalState !== 'Rejected' && terminalState !== 'Dismissed by admin' && (
+              {(!terminalState || terminalState === 'Approved') && (
                 <span className={`rounded-full px-2 py-0.5 text-[9px] font-black ${storefrontVisible ? 'bg-emerald-500/10 text-emerald-600' : 'bg-slate-500/10 text-slate-600 dark:text-slate-300'}`}>{storefrontVisible ? 'Visible after approval' : 'Approved but hidden'}</span>
               )}
             </div>

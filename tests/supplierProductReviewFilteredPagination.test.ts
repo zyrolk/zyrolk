@@ -139,6 +139,26 @@ test('legacy terminal status fields cannot overlap active views or actionable co
   assert.equal(reviewRecordIsActionable(activeAttention.data as never), true);
 });
 
+test('legacy dismissed and suppressed-only records are history-only', async () => {
+  const dismissed = activeReview(4, 'NEW_PRODUCT');
+  dismissed.data = { ...dismissed.data, decisionAction: 'dismissed' };
+  const suppressed = activeReview(5, 'PRICE_CHANGED');
+  suppressed.data = { ...suppressed.data, status: 'suppressed' };
+  const records = [dismissed, suppressed];
+
+  const history = await listSupplierQueuePage(createReviewQueueFirestore(records) as never, {
+    view: 'review', state: 'history', businessFilter: 'approved_history', limit: 10,
+  });
+  assert.deepEqual(history.items.map((item) => item.id), ['review-004', 'review-005']);
+  for (const record of records) {
+    assert.equal(reviewRecordIsActionable(record.data as never), false);
+    const active = await listSupplierQueuePage(createReviewQueueFirestore([record]) as never, {
+      view: 'review', state: 'active', businessFilter: 'needs_attention', limit: 10,
+    });
+    assert.deepEqual(active.items, []);
+  }
+});
+
 test('legacy top-level comparison fields remain filterable without terminal overlap', async () => {
   const active = activeReview(0, 'UNCHANGED');
   active.data = { ...active.data, comparison: null, comparisonStatus: 'PRICE_CHANGED', changedFields: ['Cost Price'] };

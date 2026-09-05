@@ -962,7 +962,8 @@ const reviewStatusValues = (state: SupplierReviewQueuePageState): string[] => {
   if (state === "history") return [
     "Approved", "Rejected", "Pending", "CONFLICT",
     "approved", "rejected", "pending", "conflict",
-    "Suppressed", "suppressed", "Deleted", "deleted",
+    "APPROVED", "REJECTED", "PENDING", "SUPPRESSED", "DELETED", "DISMISSED",
+    "Suppressed", "suppressed", "Deleted", "deleted", "Dismissed", "dismissed",
   ];
   if (state === "review_pending") return ["Pending", "pending"];
   return ["Pending", "CONFLICT", "pending", "conflict"];
@@ -1002,11 +1003,10 @@ const reviewRecordIsApproved = (record: SupplierQueueRecord): boolean => (
 
 export const reviewRecordIsTerminalDecision = (record: SupplierQueueRecord): boolean => (
   reviewRecordIsApproved(record)
-  || normalizedReviewValue(record.status) === "rejected"
-  || normalizedReviewValue(record.status) === "deleted"
-  || ["rejected", "suppressed", "deleted"].includes(normalizedReviewValue(record.reviewStatus))
-  || ["rejected", "suppressed"].includes(normalizedReviewValue(record.queueState))
-  || ["approved", "rejected", "deleted", "suppressed"].includes(normalizedReviewValue(record.decisionAction))
+  || ["rejected", "suppressed", "deleted", "dismissed"].includes(normalizedReviewValue(record.status))
+  || ["rejected", "suppressed", "deleted", "dismissed"].includes(normalizedReviewValue(record.reviewStatus))
+  || ["rejected", "suppressed", "deleted", "dismissed"].includes(normalizedReviewValue(record.queueState))
+  || ["approved", "rejected", "deleted", "dismissed", "suppressed"].includes(normalizedReviewValue(record.decisionAction))
 );
 
 export const reviewRecordIsActionable = (record: SupplierQueueRecord): boolean => (
