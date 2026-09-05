@@ -583,7 +583,7 @@ for (const action of ['rejected', 'deleted'] as const) {
 }
 
 test('ordinary ready reviews can be removed without deleting the supplier offer or product', async () => {
-  const { db, documents, pendingRevision } = decisionFixture();
+  const { db, documents, sourceB, pendingRevision } = decisionFixture();
 
   const result = await decideSupplierQueueItem(
     db as never,
@@ -596,7 +596,10 @@ test('ordinary ready reviews can be removed without deleting the supplier offer 
   assert.equal(result.success, true);
   assert.equal(documents.get('supplier_review_queue/review-1')?.queueState, 'suppressed');
   assert.equal(documents.get('supplier_review_queue/review-1')?.decisionAction, 'deleted');
-  assert.equal([...documents.keys()].some((key) => key.startsWith('supplier_product_offers/')), true);
+  assert.equal(documents.get('supplier_review_queue/review-1')?.sourceId, 'source-b');
+  assert.equal(documents.has(`supplier_product_offers/${sourceB.id}`), true);
+  assert.equal(documents.has('products/canonical-product'), true);
+  assert.equal([...documents.keys()].some((key) => key.startsWith('supplier_approval_audit/')), true);
 });
 
 test('removing a pending update never hard-deletes an approved product or offer', async () => {

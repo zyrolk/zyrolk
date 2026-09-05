@@ -7,6 +7,10 @@ import {
   parseSupplierApprovalDraft,
   parseSupplierReviewQueueItemIds,
 } from "../suppliers/supplierApproval";
+import {
+  executeSupplierReviewCleanup,
+  previewSupplierReviewCleanup,
+} from "../suppliers/supplierReviewCleanup";
 import { appendSupplierAuditEvent, createSupplierAuditEvent } from "../suppliers/supplierAuditTrail";
 import {
   loadSupplierOperationsAudit,
@@ -538,6 +542,39 @@ export function registerSupplierRoutes(app: express.Express): void {
         logMessage: "Supplier queue page lookup failed.",
         fallbackMessage: "Supplier queue items could not be loaded.",
         context: { route: req.path },
+      });
+    }
+  });
+
+  app.get("/api/supplier-review-queue/maintenance/prelaunch-cleanup", requireSupplierHubAdmin, async (_req, res) => {
+    try {
+      res.status(200).json({
+        success: true,
+        dryRun: true,
+        preview: await previewSupplierReviewCleanup(adminDb),
+      });
+    } catch (error: unknown) {
+      sendSupplierFailure(res, error, {
+        logMessage: "Supplier Product Review cleanup preview failed.",
+        fallbackMessage: "Supplier Product Review cleanup preview could not be generated.",
+        context: { route: "/api/supplier-review-queue/maintenance/prelaunch-cleanup" },
+      });
+    }
+  });
+
+  app.post("/api/supplier-review-queue/maintenance/prelaunch-cleanup", requireSupplierHubAdmin, async (req, res) => {
+    try {
+      const result = await executeSupplierReviewCleanup(
+        adminDb,
+        req.body && typeof req.body === "object" ? req.body : {},
+        reviewerFor(res),
+      );
+      res.status(result.failed > 0 ? 409 : 200).json({ success: result.failed === 0, ...result });
+    } catch (error: unknown) {
+      sendSupplierFailure(res, error, {
+        logMessage: "Supplier Product Review cleanup failed.",
+        fallbackMessage: "Supplier Product Review cleanup could not be completed.",
+        context: { route: "/api/supplier-review-queue/maintenance/prelaunch-cleanup" },
       });
     }
   });

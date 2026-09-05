@@ -995,7 +995,7 @@ const reviewRecordIsConflict = (record: SupplierQueueRecord): boolean => (
   || normalizedReviewValue(record.queueState) === "conflict"
 );
 
-const reviewRecordIsApproved = (record: SupplierQueueRecord): boolean => (
+export const reviewRecordIsApproved = (record: SupplierQueueRecord): boolean => (
   normalizedReviewValue(record.status) === "approved"
   || normalizedReviewValue(record.reviewStatus) === "approved"
   || normalizedReviewValue(record.queueState) === "approved"

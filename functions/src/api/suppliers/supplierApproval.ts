@@ -322,7 +322,7 @@ const ACTIVE_SUPPLIER_REVIEW_STATES = new Set([
  * pending observation may be discarded by an authorized admin; terminal
  * decisions are immutable and must not be removed a second time.
  */
-const supplierReviewAllowsRemoval = (queueItem: QueueItemRecord): boolean => {
+export const supplierReviewAllowsRemoval = (queueItem: QueueItemRecord): boolean => {
   const queueState = String(queueItem.queueState || "").trim().toLowerCase();
   const status = String(queueItem.status || "").trim().toLowerCase();
   if (["approved", "rejected", "suppressed"].includes(queueState)) return false;
