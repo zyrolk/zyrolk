@@ -9,6 +9,7 @@ import {
   supplierHealthLabel,
   supplierReviewApiState,
   supplierReviewActionableQueueCount,
+  supplierReviewIsTerminalDecision,
 } from '../src/services/supplierHubPresentation';
 
 const projectFile = (path: string): string => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
@@ -45,11 +46,21 @@ test('Product Review presents the required business filters and maps them to exi
   assert.equal(matchesProductReviewFilter({ status: 'Approved' }, 'approved_history'), true);
   assert.equal(matchesProductReviewFilter({ status: 'Rejected', queueState: 'suppressed', decisionAction: 'deleted', productValidation: { readyToPublish: false, missingFields: ['category'] } }, 'needs_attention'), false);
   assert.equal(matchesProductReviewFilter({ status: 'Rejected', queueState: 'rejected', productValidation: { readyToPublish: false } }, 'product_updates'), false);
+  assert.equal(matchesProductReviewFilter({ status: 'Pending', queueState: 'review_pending', reviewStatus: 'rejected' }, 'needs_attention'), false);
+  assert.equal(matchesProductReviewFilter({ status: 'Pending', queueState: 'review_pending', decisionAction: 'rejected' }, 'product_updates'), false);
+  assert.equal(matchesProductReviewFilter({ status: 'Pending', queueState: 'review_pending', reviewStatus: 'deleted' }, 'new_products'), false);
+  assert.equal(matchesProductReviewFilter({ status: 'Pending', queueState: 'review_pending', decisionAction: 'deleted' }, 'approved_history'), true);
+  assert.equal(matchesProductReviewFilter({ status: 'Pending', queueState: 'review_pending', reviewStatus: 'rejected' }, 'approved_history'), true);
+  assert.equal(matchesProductReviewFilter({ status: 'Pending', queueState: 'review_pending', comparison: { comparisonStatus: 'PRICE_CHANGED' } }, 'product_updates'), true);
+  assert.equal(matchesProductReviewFilter({ status: 'Pending', queueState: 'review_pending', comparisonStatus: 'PRICE_CHANGED' }, 'product_updates'), true);
+  assert.equal(matchesProductReviewFilter({ status: 'Pending', queueState: 'review_pending', productValidation: { readyToPublish: false } }, 'needs_attention'), true);
+  assert.equal(supplierReviewIsTerminalDecision({ status: 'Pending', queueState: 'review_pending', reviewStatus: 'rejected' }), true);
   assert.equal(matchesProductReviewFilter({ status: 'Approved', queueState: 'approved', comparison: { comparisonStatus: 'NEW_PRODUCT' } }, 'new_products'), false);
   assert.equal(matchesProductReviewFilter({ queueState: 'conflict', comparison: { comparisonStatus: 'PRICE_CHANGED' }, productValidation: { readyToPublish: false } }, 'needs_attention'), false);
   assert.equal(matchesProductReviewFilter({ queueState: 'review_pending', comparison: { comparisonStatus: 'SUPPLIER_OFFER_REMOVED' }, productValidation: { readyToPublish: false } }, 'needs_attention'), false);
   assert.equal(matchesProductChangeFilter({ changeType: 'PRODUCT_REMOVED' }, 'removed_products'), true);
   assert.equal(supplierReviewActionableQueueCount({ queued: 1, leased: 1, processing: 1, review_pending: 2, conflict: 1, retryable_failure: 2, dead_letter: 1, approved: 50, rejected: 20, suppressed: 4 }), 9);
+  assert.equal(supplierReviewActionableQueueCount({ actionable: 3, review_pending: 102, rejected: 50, suppressed: 10 }), 3);
   assert.equal(supplierReviewApiState('conflicts'), 'conflict');
   assert.equal(supplierReviewApiState('approved_history'), 'history');
 });

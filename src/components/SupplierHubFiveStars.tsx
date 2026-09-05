@@ -118,6 +118,7 @@ export interface ComparisonResult {
 export interface ReviewQueueItem {
   id: string;
   status: 'Pending' | 'CONFLICT' | 'Approved' | 'Rejected';
+  reviewStatus?: string;
   queueState?: string;
   supplierCode: string;
   productName: string;

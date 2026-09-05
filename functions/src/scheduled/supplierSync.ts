@@ -90,6 +90,7 @@ import {
 import {
   buildSupplierQueueLifecycle,
   classifySupplierQueueFailure,
+  reviewRecordIsTerminalDecision,
   resolveSupplierReviewQueueUpsertLifecycle,
   supplierReviewSourceImageUrls,
 } from "./supplierReviewQueue";
@@ -683,10 +684,10 @@ async function loadSupplierQueueCandidates(
   )))];
   const reviewSnapshots = await Promise.all([
     ...chunkValues(supplierCodes).map((codes) => (
-      adminDb.collection("supplier_review_queue").select("supplierCode", "barcode", "sourceId", "supplierId", "supplierPriority", "queueState", "status", "canonicalProductId", "productId", "matchedProductId", "supplierOfferId", "productPayload", "supplierSnapshot", "comparison", "comparisonStatus", "approvalBaseline", "reconciliationAction", "createdAt", "queueCreatedAt").where("supplierCode", "in", codes).limit(300).get()
+      adminDb.collection("supplier_review_queue").select("supplierCode", "barcode", "sourceId", "supplierId", "supplierPriority", "queueState", "status", "reviewStatus", "decisionAction", "canonicalProductId", "productId", "matchedProductId", "supplierOfferId", "productPayload", "supplierSnapshot", "comparison", "comparisonStatus", "approvalBaseline", "reconciliationAction", "createdAt", "queueCreatedAt").where("supplierCode", "in", codes).limit(300).get()
     )),
     ...chunkValues(supplierOfferIds).map((offerIds) => (
-      adminDb.collection("supplier_review_queue").select("supplierCode", "barcode", "sourceId", "supplierId", "supplierPriority", "queueState", "status", "canonicalProductId", "productId", "matchedProductId", "supplierOfferId", "productPayload", "supplierSnapshot", "comparison", "comparisonStatus", "approvalBaseline", "reconciliationAction", "createdAt", "queueCreatedAt").where("supplierOfferId", "in", offerIds).limit(300).get()
+      adminDb.collection("supplier_review_queue").select("supplierCode", "barcode", "sourceId", "supplierId", "supplierPriority", "queueState", "status", "reviewStatus", "decisionAction", "canonicalProductId", "productId", "matchedProductId", "supplierOfferId", "productPayload", "supplierSnapshot", "comparison", "comparisonStatus", "approvalBaseline", "reconciliationAction", "createdAt", "queueCreatedAt").where("supplierOfferId", "in", offerIds).limit(300).get()
     )),
   ]);
   const importSnapshots = await Promise.all(chunkValues(supplierCodes).flatMap((codes) => [
@@ -2744,12 +2745,9 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
           productsToProcess,
           queueCandidates.review,
         );
-        const activeReviewQueueDocs = queueCandidates.review.filter((queueDoc) => {
-          const state = String(queueDoc.data().queueState || "").toLowerCase();
-          const status = String(queueDoc.data().status || "").toLowerCase();
-          return !["approved", "rejected", "suppressed"].includes(state)
-            && !["approved", "rejected", "suppressed"].includes(status);
-        });
+        const activeReviewQueueDocs = queueCandidates.review.filter((queueDoc) => (
+          !reviewRecordIsTerminalDecision(queueDoc.data())
+        ));
         activeReviewQueueDocs.forEach((queueDoc) => {
           const data = queueDoc.data();
           const sku = normalizeConflictValue(data.supplierCode);

@@ -1,4 +1,5 @@
 import { AggregateField, Firestore, Timestamp } from "firebase-admin/firestore";
+import { reviewRecordIsActionable } from "../../scheduled/supplierReviewQueue";
 
 export const OPERATIONS_PAGE_LIMIT = 50;
 export const OPERATIONS_MAX_PAGE_LIMIT = 100;
@@ -131,9 +132,19 @@ export async function loadSupplierOperationsSummary(db: Firestore): Promise<Reco
   today.setUTCHours(0, 0, 0, 0);
   const todayIso = today.toISOString();
   const supplierSnapshotPromise = db.collection("supplierSources").limit(1_000).get();
+  const actionableStatusSnapshotPromise = db.collection("supplier_review_queue")
+    .where("status", "in", ["Pending", "CONFLICT", "pending", "conflict", "Approved", "Rejected", "Suppressed", "Deleted", "approved", "rejected", "suppressed", "deleted"])
+    .select("status", "reviewStatus", "queueState", "decisionAction")
+    .get();
+  const actionableQueueStateSnapshotPromise = db.collection("supplier_review_queue")
+    .where("queueState", "in", ["queued", "leased", "processing", "review_pending", "conflict", "retryable_failure", "dead_letter"])
+    .select("status", "reviewStatus", "queueState", "decisionAction")
+    .get();
   const queueStates = ["queued", "leased", "processing", "review_pending", "approved", "rejected", "conflict", "retryable_failure", "dead_letter", "suppressed"];
   const [
     supplierSnapshot,
+    actionableStatusSnapshot,
+    actionableQueueStateSnapshot,
     historySnapshot,
     todayHistorySnapshot,
     approvalSnapshot,
@@ -155,6 +166,8 @@ export async function loadSupplierOperationsSummary(db: Firestore): Promise<Reco
     ...stateCounts
   ] = await Promise.all([
     supplierSnapshotPromise,
+    actionableStatusSnapshotPromise,
+    actionableQueueStateSnapshotPromise,
     db.collection("supplier_sync_history").orderBy("createdAt", "desc").limit(50).get(),
     db.collection("supplier_sync_history").where("createdAt", ">=", todayIso).limit(500).get(),
     db.collection("supplier_approval_audit").where("timestamp", ">=", Timestamp.fromDate(today)).limit(500).get(),
@@ -189,6 +202,12 @@ export async function loadSupplierOperationsSummary(db: Firestore): Promise<Reco
     ...document.data(),
   } as DocumentRecord));
   const queueCounts = Object.fromEntries(queueStates.map((state, index) => [state, stateCounts[index]]));
+  const actionableQueueDocuments = new Map([
+    ...actionableStatusSnapshot.docs,
+    ...actionableQueueStateSnapshot.docs,
+  ].map((document) => [document.id, document]));
+  const actionableReviewCount = [...actionableQueueDocuments.values()]
+    .filter((document) => reviewRecordIsActionable(document.data() as never)).length;
   const approvalEvents = approvalSnapshot.docs.map((document) => document.data());
   const histories = historySnapshot.docs.map((document) => document.data());
   const publishedToday = approvalEvents.filter((event) => event.action === "approve" || event.action === "approved").length;
@@ -260,7 +279,7 @@ export async function loadSupplierOperationsSummary(db: Firestore): Promise<Reco
       productsUpdatedToday: updatedToday,
       productsPublishedToday: publishedToday,
       totalProducts: totalOfferSnapshot.data().count,
-      pendingReview: number(queueCounts.review_pending) + number(queueCounts.conflict),
+      pendingReview: actionableReviewCount,
       approvedProducts: approvedOfferSnapshot.data().count,
       updatedProducts: updatedReviewSnapshot.data().count,
       removedProducts: removedReviewSnapshot.data().count,
@@ -270,6 +289,7 @@ export async function loadSupplierOperationsSummary(db: Firestore): Promise<Reco
     suppliers: projectedSuppliers,
     queues: {
       ...queueCounts,
+      actionable: actionableReviewCount,
       pending: number(queueCounts.queued) + number(queueCounts.review_pending),
       retry: number(queueCounts.retryable_failure),
       queueAgeMs: oldestCreatedAt ? Math.max(0, now - new Date(oldestCreatedAt).getTime()) : 0,

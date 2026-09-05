@@ -25,10 +25,14 @@ export const PRODUCT_REVIEW_FILTERS: ReadonlyArray<{ id: ProductReviewFilter; la
 
 export interface ReviewPresentationItem {
   status?: unknown;
+  reviewStatus?: unknown;
   queueState?: unknown;
   decisionAction?: unknown;
   mediaStatus?: unknown;
-  comparison?: { comparisonStatus?: unknown } | null;
+  comparisonStatus?: unknown;
+  changedFields?: unknown[];
+  fieldChanges?: unknown[];
+  comparison?: { comparisonStatus?: unknown; changedFields?: unknown[]; fieldChanges?: unknown[] } | null;
   productValidation?: { readyToPublish?: unknown; missingFields?: unknown[]; errors?: unknown[] } | null;
 }
 
@@ -129,11 +133,13 @@ export function supplierAdministratorLabel(
 }
 
 export function supplierReviewDecisionReady(item: ReviewPresentationItem): boolean {
+  if (supplierReviewIsTerminalDecision(item)) return false;
   const state = normalized(item.queueState);
   return state === 'review_pending' || state === 'conflict' || (!state && normalized(item.status) === 'pending');
 }
 
 export function supplierReviewCanReject(item: ReviewPresentationItem): boolean {
+  if (supplierReviewIsTerminalDecision(item)) return false;
   const state = normalized(item.queueState);
   if (state === 'approved' || state === 'rejected' || state === 'suppressed') return false;
   if (state === 'review_pending' || state === 'conflict' || supplierReviewIsPreparing(item)) return true;
@@ -146,6 +152,7 @@ export function supplierReviewCanReject(item: ReviewPresentationItem): boolean {
  * server repeats this precondition inside its transaction.
  */
 export function supplierReviewCanRemove(item: ReviewPresentationItem): boolean {
+  if (supplierReviewIsTerminalDecision(item)) return false;
   const state = normalized(item.queueState);
   const status = normalized(item.status);
   if (state === 'approved' || state === 'rejected' || state === 'suppressed') return false;
@@ -155,6 +162,7 @@ export function supplierReviewCanRemove(item: ReviewPresentationItem): boolean {
 
 export function supplierReviewIsConflict(item: SupplierReviewQuickApprovalItem): boolean {
   return normalized(item.status) === 'conflict'
+    || normalized(item.reviewStatus) === 'conflict'
     || normalized(item.queueState) === 'conflict'
     || Boolean(item.approvalConflict);
 }
@@ -548,6 +556,7 @@ interface ReviewChangeSummary {
 
 interface ChangePresentationItem {
   status?: unknown;
+  reviewStatus?: unknown;
   queueState?: unknown;
   changeType?: unknown;
 }
@@ -557,12 +566,24 @@ const isRemovedChange = (value: unknown): boolean => {
   return state.includes('removed') || state.includes('deleted') || state.includes('deactivat');
 };
 
+const hasPendingProductReviewChange = (item: ReviewPresentationItem, comparisonStatus: string): boolean => {
+  if (['price_changed', 'stock_changed', 'description_changed', 'image_changed'].includes(comparisonStatus)) return true;
+  return (Array.isArray(item.comparison?.changedFields) && item.comparison.changedFields.length > 0)
+    || (Array.isArray(item.comparison?.fieldChanges) && item.comparison.fieldChanges.length > 0)
+    || (Array.isArray(item.changedFields) && item.changedFields.length > 0)
+    || (Array.isArray(item.fieldChanges) && item.fieldChanges.length > 0);
+};
+
 const isConflict = (item: ReviewPresentationItem | ChangePresentationItem): boolean => (
-  normalized(item.status) === 'conflict' || normalized(item.queueState) === 'conflict'
+  normalized(item.status) === 'conflict'
+  || normalized(item.reviewStatus) === 'conflict'
+  || normalized(item.queueState) === 'conflict'
 );
 
 const isApproved = (item: ReviewPresentationItem | ChangePresentationItem): boolean => (
-  normalized(item.status) === 'approved' || normalized(item.queueState) === 'approved'
+  normalized(item.status) === 'approved'
+  || normalized(item.reviewStatus) === 'approved'
+  || normalized(item.queueState) === 'approved'
 );
 
 /** Terminal review decisions are history-only, never actionable. */
@@ -570,12 +591,13 @@ export const supplierReviewIsTerminalDecision = (item: ReviewPresentationItem): 
   isApproved(item)
   || normalized(item.status) === 'rejected'
   || normalized(item.status) === 'deleted'
+  || ['approved', 'rejected', 'suppressed', 'deleted'].includes(normalized(item.reviewStatus))
   || ['rejected', 'suppressed'].includes(normalized(item.queueState))
-  || normalized(item.decisionAction) === 'deleted'
+  || ['approved', 'rejected', 'deleted', 'suppressed'].includes(normalized(item.decisionAction))
 );
 
 export function matchesProductReviewFilter(item: ReviewPresentationItem, filter: ProductReviewFilter): boolean {
-  const comparisonStatus = normalized(item.comparison?.comparisonStatus);
+  const comparisonStatus = normalized(item.comparison?.comparisonStatus || item.comparisonStatus);
   const terminal = supplierReviewIsTerminalDecision(item);
   if (filter === 'approved_history') return terminal;
   if (terminal) return false;
@@ -594,7 +616,8 @@ export function matchesProductReviewFilter(item: ReviewPresentationItem, filter:
   return !isApproved(item)
     && !isConflict(item)
     && comparisonStatus !== 'new_product'
-    && !isRemovedChange(comparisonStatus);
+    && !isRemovedChange(comparisonStatus)
+    && hasPendingProductReviewChange(item, comparisonStatus);
 }
 
 export function matchesProductChangeFilter(item: ChangePresentationItem, filter: ProductReviewFilter): boolean {
@@ -608,6 +631,8 @@ export function matchesProductChangeFilter(item: ChangePresentationItem, filter:
 
 /** Counts all active queue work represented by the authoritative operations summary. */
 export function supplierReviewActionableQueueCount(queues: Record<string, unknown> | null | undefined): number {
+  const explicit = Number(queues?.actionable);
+  if (Number.isFinite(explicit) && explicit >= 0) return Math.floor(explicit);
   return ['queued', 'leased', 'processing', 'review_pending', 'conflict', 'retryable_failure', 'dead_letter']
     .reduce((total, state) => {
       const count = Number(queues?.[state] || 0);

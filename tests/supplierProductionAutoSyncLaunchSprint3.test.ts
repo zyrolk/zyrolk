@@ -122,6 +122,8 @@ test('Sprint 3 prevents duplicate review documents and active duplicate review r
   ), null);
   const syncSource = readFileSync('functions/src/scheduled/supplierSync.ts', 'utf8');
   assert.match(syncSource, /if \(activeReviewQueueDoc\) queueItemId = activeReviewQueueDoc\.id/);
+  assert.match(syncSource, /reviewRecordIsTerminalDecision/);
+  assert.match(syncSource, /queueState\", \"status\", \"reviewStatus\", \"decisionAction/);
   assert.match(syncSource, /reconciliationAction: "supplier_offer_reactivated"/);
 });
 

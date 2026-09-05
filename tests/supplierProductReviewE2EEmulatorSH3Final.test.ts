@@ -30,6 +30,7 @@ const { SERVER_FILTERED_FULL_CATALOG_CAPABILITIES } = requireFunctions("../funct
 const {
   listSupplierQueuePage,
   processSupplierReviewQueueItem,
+  reviewRecordIsTerminalDecision,
 } = requireFunctions("../functions/src/scheduled/supplierReviewQueue.ts") as typeof import("../functions/src/scheduled/supplierReviewQueue");
 const { runSupplierSync } = requireFunctions("../functions/src/scheduled/supplierSync.ts") as typeof import("../functions/src/scheduled/supplierSync");
 const { buildZyroSkuClaimId } = requireFunctions("../functions/src/api/suppliers/supplierProductIdentity.ts") as typeof import("../functions/src/api/suppliers/supplierProductIdentity");
@@ -711,7 +712,7 @@ test("SH-3 dismissal, conflicts, attention states, history, and pagination remai
     });
     assert.equal(secondPage.items.length, 2);
     assert.equal(new Set([...firstPage.items, ...secondPage.items].map((item) => item.id)).size, 4);
-    assert.ok([...firstPage.items, ...secondPage.items].every((item) => ["approved", "rejected", "suppressed"].includes(String(item.queueState))));
+    assert.ok([...firstPage.items, ...secondPage.items].every((item) => reviewRecordIsTerminalDecision(item)));
   });
 
   await t.test("review-specific audit cursors cannot cross review identities", async () => {

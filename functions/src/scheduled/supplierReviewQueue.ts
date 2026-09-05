@@ -61,6 +61,8 @@ export interface SupplierReviewQueueMetrics {
 interface SupplierQueueRecord extends Record<string, unknown> {
   queueState?: unknown;
   status?: unknown;
+  reviewStatus?: unknown;
+  decisionAction?: unknown;
   retryCount?: unknown;
   retryLimit?: unknown;
   nextRetryAt?: unknown;
@@ -957,14 +959,19 @@ const reviewStatusValues = (state: SupplierReviewQueuePageState): string[] => {
   if (state === "conflict") return ["CONFLICT"];
   if (state === "approved") return ["Approved"];
   if (state === "rejected") return ["Rejected"];
-  if (state === "history") return ["Approved", "Rejected", "Pending", "CONFLICT"];
-  if (state === "review_pending") return ["Pending"];
-  return ["Pending", "CONFLICT"];
+  if (state === "history") return [
+    "Approved", "Rejected", "Pending", "CONFLICT",
+    "approved", "rejected", "pending", "conflict",
+    "Suppressed", "suppressed", "Deleted", "deleted",
+  ];
+  if (state === "review_pending") return ["Pending", "pending"];
+  return ["Pending", "CONFLICT", "pending", "conflict"];
 };
 
 const reviewRecordMatchesState = (record: SupplierQueueRecord, state: SupplierReviewQueuePageState): boolean => {
   const queueState = stateFor(record);
-  if (state === "history") return ["approved", "rejected", "suppressed"].includes(queueState);
+  if (state === "history") return reviewRecordIsTerminalDecision(record);
+  if (reviewRecordIsTerminalDecision(record)) return false;
   if (state === "active") {
     return [
       "queued",
@@ -982,19 +989,37 @@ const reviewRecordMatchesState = (record: SupplierQueueRecord, state: SupplierRe
 const normalizedReviewValue = (value: unknown): string => String(value || "").trim().toLowerCase();
 
 const reviewRecordIsConflict = (record: SupplierQueueRecord): boolean => (
-  normalizedReviewValue(record.status) === "conflict" || normalizedReviewValue(record.queueState) === "conflict"
+  normalizedReviewValue(record.status) === "conflict"
+  || normalizedReviewValue(record.reviewStatus) === "conflict"
+  || normalizedReviewValue(record.queueState) === "conflict"
 );
 
 const reviewRecordIsApproved = (record: SupplierQueueRecord): boolean => (
-  normalizedReviewValue(record.status) === "approved" || normalizedReviewValue(record.queueState) === "approved"
+  normalizedReviewValue(record.status) === "approved"
+  || normalizedReviewValue(record.reviewStatus) === "approved"
+  || normalizedReviewValue(record.queueState) === "approved"
 );
 
-const reviewRecordIsTerminalDecision = (record: SupplierQueueRecord): boolean => (
+export const reviewRecordIsTerminalDecision = (record: SupplierQueueRecord): boolean => (
   reviewRecordIsApproved(record)
   || normalizedReviewValue(record.status) === "rejected"
   || normalizedReviewValue(record.status) === "deleted"
+  || ["rejected", "suppressed", "deleted"].includes(normalizedReviewValue(record.reviewStatus))
   || ["rejected", "suppressed"].includes(normalizedReviewValue(record.queueState))
-  || normalizedReviewValue(record.decisionAction) === "deleted"
+  || ["approved", "rejected", "deleted", "suppressed"].includes(normalizedReviewValue(record.decisionAction))
+);
+
+export const reviewRecordIsActionable = (record: SupplierQueueRecord): boolean => (
+  !reviewRecordIsTerminalDecision(record)
+  && [
+    "queued",
+    "leased",
+    "processing",
+    "review_pending",
+    "conflict",
+    "retryable_failure",
+    "dead_letter",
+  ].includes(stateFor(record))
 );
 
 const reviewComparisonIsRemoval = (value: unknown): boolean => {
@@ -1004,12 +1029,23 @@ const reviewComparisonIsRemoval = (value: unknown): boolean => {
     || comparisonStatus.includes("deactivat");
 };
 
+const reviewComparisonHasPendingChange = (record: SupplierQueueRecord, comparisonStatus: string): boolean => {
+  if (["price_changed", "stock_changed", "description_changed", "image_changed"].includes(comparisonStatus)) return true;
+  const comparison = asRecord(record.comparison);
+  return (Array.isArray(comparison.changedFields) && comparison.changedFields.length > 0)
+    || (Array.isArray(comparison.fieldChanges) && comparison.fieldChanges.length > 0)
+    || (Array.isArray(record.changedFields) && record.changedFields.length > 0)
+    || (Array.isArray(record.fieldChanges) && record.fieldChanges.length > 0);
+};
+
 /** Mirrors the Product Review business filters on the server pagination boundary. */
 export const reviewRecordMatchesBusinessFilter = (
   record: SupplierQueueRecord,
   filter: SupplierReviewBusinessFilter,
 ): boolean => {
-  const comparisonStatus = normalizedReviewValue(asRecord(record.comparison).comparisonStatus);
+  const comparisonStatus = normalizedReviewValue(
+    asRecord(record.comparison).comparisonStatus || record.comparisonStatus,
+  );
   if (filter === "approved_history") return reviewRecordIsTerminalDecision(record);
   if (reviewRecordIsTerminalDecision(record)) return false;
   if (filter === "conflicts") return reviewRecordIsConflict(record);
@@ -1028,7 +1064,8 @@ export const reviewRecordMatchesBusinessFilter = (
   return !reviewRecordIsApproved(record)
     && !reviewRecordIsConflict(record)
     && comparisonStatus !== "new_product"
-    && !reviewComparisonIsRemoval(comparisonStatus);
+    && !reviewComparisonIsRemoval(comparisonStatus)
+    && reviewComparisonHasPendingChange(record, comparisonStatus);
 };
 
 /**

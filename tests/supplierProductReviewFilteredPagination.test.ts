@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import { listSupplierQueuePage } from '../functions/src/scheduled/supplierReviewQueue';
+import { listSupplierQueuePage, reviewRecordIsActionable } from '../functions/src/scheduled/supplierReviewQueue';
 
 type StoredDocument = Record<string, unknown>;
 type QuerySnapshot = { docs: DocumentSnapshot[]; size: number; empty: boolean };
@@ -107,6 +107,45 @@ test('terminal dismissed observations are excluded from active business filters'
     view: 'review', state: 'active', businessFilter: 'needs_attention', limit: 10,
   });
   assert.deepEqual(activePage.items, []);
+});
+
+test('legacy terminal status fields cannot overlap active views or actionable counts', async () => {
+  const rejected = activeReview(0, 'PRICE_CHANGED');
+  rejected.data = { ...rejected.data, reviewStatus: 'rejected', decisionAction: 'rejected' };
+  const dismissed = activeReview(1, 'NEW_PRODUCT');
+  dismissed.data = { ...dismissed.data, reviewStatus: 'deleted', decisionAction: 'deleted' };
+  const activeUpdate = activeReview(2, 'STOCK_CHANGED');
+  const activeAttention = activeReview(3, 'DESCRIPTION_CHANGED');
+  activeAttention.data = { ...activeAttention.data, productValidation: { readyToPublish: false, missingFields: ['description'], errors: [] } };
+  const records = [rejected, dismissed, activeUpdate, activeAttention];
+
+  const activeUpdates = await listSupplierQueuePage(createReviewQueueFirestore(records) as never, {
+    view: 'review', state: 'active', businessFilter: 'product_updates', limit: 10,
+  });
+  assert.deepEqual(activeUpdates.items.map((item) => item.id), ['review-002', 'review-003']);
+
+  const attention = await listSupplierQueuePage(createReviewQueueFirestore(records) as never, {
+    view: 'review', state: 'active', businessFilter: 'needs_attention', limit: 10,
+  });
+  assert.deepEqual(attention.items.map((item) => item.id), ['review-003']);
+
+  const history = await listSupplierQueuePage(createReviewQueueFirestore(records) as never, {
+    view: 'review', state: 'history', businessFilter: 'approved_history', limit: 10,
+  });
+  assert.deepEqual(history.items.map((item) => item.id), ['review-000', 'review-001']);
+  assert.equal(reviewRecordIsActionable(rejected.data as never), false);
+  assert.equal(reviewRecordIsActionable(dismissed.data as never), false);
+  assert.equal(reviewRecordIsActionable(activeUpdate.data as never), true);
+  assert.equal(reviewRecordIsActionable(activeAttention.data as never), true);
+});
+
+test('legacy top-level comparison fields remain filterable without terminal overlap', async () => {
+  const active = activeReview(0, 'UNCHANGED');
+  active.data = { ...active.data, comparison: null, comparisonStatus: 'PRICE_CHANGED', changedFields: ['Cost Price'] };
+  const page = await listSupplierQueuePage(createReviewQueueFirestore([active]) as never, {
+    view: 'review', state: 'active', businessFilter: 'product_updates', limit: 10,
+  });
+  assert.deepEqual(page.items.map((item) => item.id), ['review-000']);
 });
 
 test('Product Review API core keeps existing generic pagination behaviour when no business filter is supplied', async () => {
