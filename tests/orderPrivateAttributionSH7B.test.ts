@@ -211,6 +211,10 @@ test("SH-7B captures immutable purchase-time supplier attribution through the re
     assert.equal(privateOrder.schemaVersion, 2);
     assert.equal(privateOrder.revision, 1);
     assert.equal(privateOrder.lines.length, 1);
+    assert.equal(privateOrder.fulfilmentGroups.length, 1);
+    assert.equal(privateOrder.fulfilmentGroups[0].status, "assigned");
+    assert.equal(privateOrder.fulfilmentGroups[0].supplierAccountId, fixture.accountId);
+    assert.deepEqual(privateOrder.assignedSupplierAccountIds, [fixture.accountId]);
     assert.match(privateOrder.lines[0].lineId, /^line-[a-f0-9]{32}$/u);
     assert.deepEqual(privateOrder.lines[0], {
       lineId: privateOrder.lines[0].lineId,

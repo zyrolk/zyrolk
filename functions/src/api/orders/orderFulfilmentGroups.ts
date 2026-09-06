@@ -144,10 +144,10 @@ export function buildInitialFulfilmentGroups(
       lineIds: sortedUnique(group.lineIds),
       supplierAccountId,
       supplierSourceIds: sortedUnique(group.sourceIds),
-      status: "unassigned",
+      status: "assigned",
       revision: 1,
-      assignedAt: null,
-      assignedBy: null,
+      assignedAt: capturedAt,
+      assignedBy: "system:purchase-time-attribution",
       acceptedAt: null,
       processingAt: null,
       packedAt: null,
@@ -241,7 +241,7 @@ const parseGroup = (value: unknown): OrderFulfilmentGroup => {
   };
 };
 
-const assignedAccountIds = (groups: readonly OrderFulfilmentGroup[]): string[] => sortedUnique(
+export const assignedAccountIds = (groups: readonly OrderFulfilmentGroup[]): string[] => sortedUnique(
   groups.filter((group) => group.status !== "unassigned").map((group) => group.supplierAccountId),
 );
 

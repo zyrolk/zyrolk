@@ -32,7 +32,9 @@ test("SH-7C constructs deterministic bounded supplier groups from immutable line
   assert.equal(groups.length, 2);
   assert.deepEqual(groups.find((group) => group.supplierAccountId === "supplier-a")?.lineIds, ["a-1", "a-2"]);
   assert.deepEqual(groups.find((group) => group.supplierAccountId === "supplier-a")?.supplierSourceIds, ["source-a-1", "source-a-2"]);
-  assert.deepEqual(groups.map((group) => group.status), ["unassigned", "unassigned"]);
+  assert.deepEqual(groups.map((group) => group.status), ["assigned", "assigned"]);
+  assert.deepEqual(groups.map((group) => group.assignedAt), [at, at]);
+  assert.deepEqual(groups.map((group) => group.assignedBy), ["system:purchase-time-attribution", "system:purchase-time-attribution"]);
   assert.equal(groups.every((group) => group.revision === 1), true);
   assert.deepEqual(buildInitialFulfilmentGroups([
     line("a-2", "supplier-a", "source-a-2"),

@@ -247,6 +247,8 @@ test("SH-7C groups immutable lines and routes supplier fulfilment transactionall
     assert.deepEqual(privateOrder.fulfilmentGroups.map((group) => group.supplierAccountId), [supplierA, supplierB]);
     assert.equal(privateOrder.fulfilmentGroups.find((group) => group.supplierAccountId === supplierA)?.lineIds.length, 2);
     assert.equal(privateOrder.fulfilmentGroups.find((group) => group.supplierAccountId === supplierA)?.supplierSourceIds.length, 2);
+    assert.deepEqual(privateOrder.assignedSupplierAccountIds, [supplierA, supplierB]);
+    assert.equal(new Set(privateOrder.assignedSupplierAccountIds).size, privateOrder.assignedSupplierAccountIds.length);
     assert.equal(privateOrder.lines.filter((line) => line.fulfilmentMode === "internal").length, 1);
     assert.equal(new Set(privateOrder.fulfilmentGroups.map((group) => group.groupId)).size, 2);
   });
@@ -254,7 +256,9 @@ test("SH-7C groups immutable lines and routes supplier fulfilment transactionall
   await t.test("assignment validates purchase ownership, active account and current source mapping", async () => {
     const pending = await seedOrder("assignment-pending", [{ accountId: supplierA }], "pending");
     await adminDb.collection("orders").doc(pending.orderId).set({ stockReservationStatus: "reserved" }, { merge: true });
+    assert.equal((await groupFor(pending, supplierA)).group.status, "assigned");
     await assert.rejects(assign(pending, supplierA), /confirmed active order/i);
+    await assert.rejects(transition(pending, supplierA, "accepted"), /confirmed active order/i);
 
     const reserved = await seedOrder("assignment-reserved", [{ accountId: supplierA }]);
     await adminDb.collection("orders").doc(reserved.orderId).set({ stockReservationStatus: "reserved" }, { merge: true });
@@ -292,8 +296,8 @@ test("SH-7C groups immutable lines and routes supplier fulfilment transactionall
     const fixture = await seedOrder("lifecycle", [{ accountId: supplierA }]);
     const assigned = await assign(fixture, supplierA);
     assert.equal(assigned.status, "assigned");
-    assert.equal(assigned.groupRevision, 2);
-    assert.equal(assigned.orderPrivateRevision, 2);
+    assert.equal(assigned.groupRevision, 1);
+    assert.equal(assigned.orderPrivateRevision, 1);
     await assert.rejects(transition(fixture, supplierA, "processing"), /cannot move from assigned to processing/i);
 
     const declined = await transition(fixture, supplierA, "unassigned", "Capacity unavailable");
@@ -308,7 +312,7 @@ test("SH-7C groups immutable lines and routes supplier fulfilment transactionall
 
     const stale = await seedOrder("stale", [{ accountId: supplierA }]);
     const before = await groupFor(stale, supplierA);
-    await assign(stale, supplierA);
+    await transition(stale, supplierA, "accepted");
     await assert.rejects(assignOrderFulfilmentGroup({
       db: adminDb,
       orderId: stale.orderId,
@@ -437,8 +441,11 @@ test("SH-7C groups immutable lines and routes supplier fulfilment transactionall
       expectedOrderPrivateRevision: raceBefore.privateOrder.revision,
       adminUid,
     })));
-    assert.equal(assignmentResults.filter((result) => result.status === "fulfilled").length, 1);
-    assert.equal(assignmentResults.filter((result) => result.status === "rejected").length, 1);
+    assert.equal(assignmentResults.filter((result) => result.status === "fulfilled").length, 2);
+    assert.equal(assignmentResults.filter((result) => result.status === "rejected").length, 0);
+    const assignedRaceState = await groupFor(assignmentRace, supplierA);
+    assert.equal(assignedRaceState.group.revision, 1);
+    assert.equal(assignedRaceState.privateOrder.revision, 1);
 
     const cancellationRace = await seedOrder("race-cancel", [{ accountId: supplierA }]);
     await assign(cancellationRace, supplierA);
@@ -491,6 +498,14 @@ test("SH-7C groups immutable lines and routes supplier fulfilment transactionall
       const adminUser = await signInWithEmailAndPassword(auth, adminEmail, password);
       const adminToken = await adminUser.user.getIdToken(true);
       const groupA = await groupFor(fixture, supplierA);
+      const supplierAUser = await signInWithEmailAndPassword(auth, supplierAEmail, password);
+      const supplierAToken = await supplierAUser.user.getIdToken(true);
+      const preAssignmentPortalResponse = await fetch(`${apiBase}/api/supplier-portal?pageSize=100`, {
+        headers: { Authorization: `Bearer ${supplierAToken}` },
+      });
+      assert.equal(preAssignmentPortalResponse.status, 200, await preAssignmentPortalResponse.clone().text());
+      const preAssignmentPortal = await preAssignmentPortalResponse.json() as { orders: Array<Record<string, unknown>> };
+      assert.equal(preAssignmentPortal.orders.some((order) => order.id === fixture.orderId), true);
       const assignmentResponse = await fetch(`${apiBase}/api/supplier-portal/orders/${fixture.orderId}/assign`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
@@ -503,8 +518,6 @@ test("SH-7C groups immutable lines and routes supplier fulfilment transactionall
       });
       assert.equal(assignmentResponse.status, 200, await assignmentResponse.clone().text());
 
-      const supplierAUser = await signInWithEmailAndPassword(auth, supplierAEmail, password);
-      const supplierAToken = await supplierAUser.user.getIdToken(true);
       const portalResponse = await fetch(`${apiBase}/api/supplier-portal?pageSize=100`, {
         headers: { Authorization: `Bearer ${supplierAToken}` },
       });
@@ -537,7 +550,9 @@ test("SH-7C groups immutable lines and routes supplier fulfilment transactionall
         headers: { Authorization: `Bearer ${supplierBToken}` },
       });
       const isolatedPortal = await isolatedResponse.json() as { orders: Array<Record<string, unknown>> };
-      assert.equal(isolatedPortal.orders.some((order) => order.id === fixture.orderId), false);
+      const isolatedOrder = isolatedPortal.orders.find((order) => order.id === fixture.orderId);
+      assert.ok(isolatedOrder);
+      assert.equal(isolatedOrder.groupId, fixture.groupIds[supplierB]);
     } finally {
       await deleteApp(app);
     }
@@ -554,7 +569,7 @@ test("SH-7C groups immutable lines and routes supplier fulfilment transactionall
       assert.doesNotMatch(publicJson, new RegExp(privateName, "u"));
     }
     const audits = await adminDb.collection("supplier_operations_audit").where("orderId", "==", fixture.orderId).get();
-    assert.equal(audits.size, 2);
+    assert.equal(audits.size, 1);
     const auditJson = JSON.stringify(audits.docs.map((document) => document.data()));
     assert.doesNotMatch(auditJson, /purchaseSupplierCost|customerEmail|customerPhone|customerAddress/u);
 

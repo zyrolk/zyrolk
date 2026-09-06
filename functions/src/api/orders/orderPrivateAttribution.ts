@@ -1,6 +1,7 @@
 import { createHash } from "crypto";
 import { CheckoutError } from "../checkout/checkoutLogic";
 import {
+  assignedAccountIds,
   buildInitialFulfilmentGroups,
   OrderFulfilmentGroup,
 } from "./orderFulfilmentGroups";
@@ -231,6 +232,7 @@ export function buildOrderPrivateDocument(
   capturedAt: string,
 ): OrderPrivateDocument {
   const immutableLines = [...lines];
+  const fulfilmentGroups = buildInitialFulfilmentGroups(immutableLines, capturedAt);
   return {
     orderId,
     schemaVersion: ORDER_PRIVATE_SCHEMA_VERSION,
@@ -238,7 +240,7 @@ export function buildOrderPrivateDocument(
     updatedAt: capturedAt,
     revision: 1,
     lines: immutableLines,
-    fulfilmentGroups: buildInitialFulfilmentGroups(immutableLines, capturedAt),
-    assignedSupplierAccountIds: [],
+    fulfilmentGroups,
+    assignedSupplierAccountIds: assignedAccountIds(fulfilmentGroups),
   };
 }
