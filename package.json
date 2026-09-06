@@ -10,6 +10,8 @@
     "preview": "node dist/server.cjs",
     "catalog:foundation:dry-run": "tsx scripts/catalogFoundation.ts",
     "catalog:foundation:apply": "tsx scripts/catalogFoundation.ts --apply",
+    "catalog:launch-taxonomy:dry-run": "tsx scripts/launchTaxonomyBootstrap.ts",
+    "catalog:launch-taxonomy:apply": "tsx scripts/launchTaxonomyBootstrap.ts --apply",
     "security:products:dry-run": "tsx scripts/migrateProductCommercialData.ts",
     "security:products:apply": "tsx scripts/migrateProductCommercialData.ts --apply",
     "security:reviews:dry-run": "tsx scripts/migrateReviewOwnershipData.ts",
