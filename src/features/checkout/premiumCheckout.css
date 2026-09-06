@@ -256,6 +256,7 @@
   .zy-confirmation-totals { grid-column: auto; }
   .zy-confirmation-reference { align-items: flex-start; }
   .zy-confirmation-reference strong { font-size: 1rem; }
+  .zy-order-confirmation { padding-top: calc(1.5rem + 5.2rem); padding-bottom: calc(9rem + env(safe-area-inset-bottom)); }
   .zy-confirmation-actions { display: grid; }
 }
 

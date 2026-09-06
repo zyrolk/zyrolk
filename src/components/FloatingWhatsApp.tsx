@@ -17,8 +17,9 @@ export default function FloatingWhatsApp({ settings, isAdminMode, isOverlayOpen 
   const hasMoved = useRef(false);
 
   const FAB_SIZE = 64;
+  const MOBILE_BOTTOM_CLEARANCE = 136;
   const EDGE_GUTTER = 16;
-  const mobileBottomClearance = () => FAB_SIZE + (window.innerWidth < 768 ? 112 : 24);
+  const mobileBottomClearance = () => FAB_SIZE + (window.innerWidth < 768 ? MOBILE_BOTTOM_CLEARANCE : 24);
   const clampPosition = (x: number, y: number) => {
     const maxX = Math.max(EDGE_GUTTER, window.innerWidth - FAB_SIZE - EDGE_GUTTER);
     const maxY = Math.max(EDGE_GUTTER, window.innerHeight - mobileBottomClearance());
@@ -152,7 +153,7 @@ export default function FloatingWhatsApp({ settings, isAdminMode, isOverlayOpen 
   // Default tailwind fallback classes for initial load to avoid flash
   const fallbackClasses = position
     ? "fixed z-40"
-    : "fixed bottom-[calc(7.25rem+env(safe-area-inset-bottom))] md:bottom-6 right-4 z-40";
+    : "fixed bottom-[calc(8.5rem+env(safe-area-inset-bottom))] md:bottom-6 right-4 z-40";
 
   const isNearLeft = position ? position.x < window.innerWidth / 2 : false;
 
