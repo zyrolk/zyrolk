@@ -45,6 +45,7 @@ import {
   recoverExpiredSupplierReviewQueueLeases,
   retryDeadLetterSupplierReviewQueueItem,
 } from "../../scheduled/supplierReviewQueue";
+import { loadSupplierReviewCatalogTaxonomy } from "../suppliers/supplierReviewCatalog";
 import {
   cleanSupplierSourceId,
   projectSupplierSourceForAdmin,
@@ -519,6 +520,19 @@ export function registerSupplierRoutes(app: express.Express): void {
         logMessage: "Supplier Hub settings update failed.",
         fallbackMessage: "Supplier Hub settings could not be updated.",
         context: { route: req.path },
+      });
+    }
+  });
+
+  app.get("/api/supplier-review-catalog", requireSupplierHubAdmin, async (_req, res) => {
+    try {
+      const catalog = await loadSupplierReviewCatalogTaxonomy(adminDb);
+      res.status(200).json({ success: true, catalog });
+    } catch (error: unknown) {
+      sendSupplierFailure(res, error, {
+        logMessage: "Supplier review catalog lookup failed.",
+        fallbackMessage: "Active Zyro categories and brands could not be loaded.",
+        context: { route: "/api/supplier-review-catalog" },
       });
     }
   });

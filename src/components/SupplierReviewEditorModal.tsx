@@ -580,6 +580,9 @@ export default function SupplierReviewEditorModal({
 
             <label className="space-y-1.5 text-xs">
               <span className="font-bold text-slate-600 dark:text-slate-300">Category</span>
+              {isEditing && categories.filter((category) => category.isActive !== false).length === 0 && (
+                <p className="text-[10px] font-semibold text-amber-700 dark:text-amber-300">No active Zyro categories are configured yet.</p>
+              )}
               <select value={draft.category} onChange={(event) => setDraft((current) => updateSupplierReviewDraftField(updateSupplierReviewDraftField(current, 'category', { category: event.target.value, subcategory: '' }), 'subcategory', {}))} aria-invalid={Boolean(errorFor('category'))} className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 dark:border-slate-700 dark:bg-slate-900">
                 <option value="">Select category</option>
                 {categories.filter((category) => category.isActive !== false).map((category) => <option key={category.id} value={category.id}>{category.name || category.id}</option>)}
@@ -598,6 +601,9 @@ export default function SupplierReviewEditorModal({
 
             <label className="space-y-1.5 text-xs">
               <span className="font-bold text-slate-600 dark:text-slate-300">Registered brand</span>
+              {isEditing && brands.filter((brand) => brand.isActive !== false).length === 0 && (
+                <p className="text-[10px] font-semibold text-amber-700 dark:text-amber-300">No active registered brands are configured yet.</p>
+              )}
               <select value={draft.brand} onChange={(event) => editDraft('brand', { brand: event.target.value })} aria-invalid={Boolean(errorFor('brand'))} className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 dark:border-slate-700 dark:bg-slate-900">
                 <option value="">Select brand</option>
                 {brands.filter((brand) => brand.isActive !== false).map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}

@@ -17,7 +17,7 @@ import {
   Search,
   Trash2
 } from 'lucide-react';
-import { collection, doc, onSnapshot } from 'firebase/firestore';
+import { doc, onSnapshot } from 'firebase/firestore';
 import { onIdTokenChanged } from 'firebase/auth';
 import { auth, db, handleFirestoreError, OperationType } from '../firebase';
 import { Product } from '../types';
@@ -34,6 +34,10 @@ import SupplierManagementDashboard from './supplier-management/SupplierManagemen
 import SupplierManualSyncDialog from './supplier-management/SupplierManualSyncDialog';
 import SupplierConnectionBadge from './supplier-ui/SupplierConnectionBadge';
 import { calculateSupplierProfit, createSupplierReviewDraft, SupplierReviewDraft } from '../services/supplierReviewEditor';
+import { projectSupplierReviewCatalogTaxonomy, supplierReviewValidCategoryIds } from '../services/supplierReviewCatalog';
+import { normalizeCategoryBlueprint } from '../services/products/productBlueprint';
+import { sortCategoriesAlphabetically } from '../services/categories/categoryUtils';
+import { sortBrandsAlphabetically } from '../services/brands/brandUtils';
 import { normalizeSupplierCategory } from '../services/supplierCategoryMapping';
 import {
   sortSupplierOffers,
@@ -403,31 +407,29 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
   const [categories, setCategories] = useState<any[]>([]);
   const [brands, setBrands] = useState<any[]>([]);
 
-  useEffect(() => {
-    if (!['review', 'suppliers', 'settings'].includes(activeSubTab)) return;
-    const unsubscribe = onSnapshot(
-      collection(db, "categories"),
-      (snapshot) => {
-        const catList: any[] = [];
-        snapshot.forEach((d) => catList.push({ id: d.id, ...d.data() }));
-        setCategories(catList);
-      },
-      (error) => {
-        console.error("Categories fetch error:", error);
+  const loadReviewCatalog = useCallback(async () => {
+    try {
+      const response = await getSupplierApi('/api/supplier-review-catalog');
+      if (!response.ok) {
+        throw new Error(`Supplier review catalog request failed with status ${response.status}`);
       }
-    );
-    return () => unsubscribe();
-  }, [activeSubTab]);
+      const payload = await response.json();
+      const taxonomy = projectSupplierReviewCatalogTaxonomy(payload);
+      setCategories(sortCategoriesAlphabetically(
+        taxonomy.categories.map((category) => normalizeCategoryBlueprint(category)),
+      ));
+      setBrands(sortBrandsAlphabetically(taxonomy.brands));
+    } catch (error) {
+      console.error('Supplier review catalog fetch error:', error);
+      setCategories([]);
+      setBrands([]);
+    }
+  }, []);
 
   useEffect(() => {
     if (!['review', 'suppliers', 'settings'].includes(activeSubTab)) return;
-    const unsubscribe = onSnapshot(
-      collection(db, "brands"),
-      (snapshot) => setBrands(snapshot.docs.map((brand) => ({ id: brand.id, ...brand.data() }))),
-      (error) => handleFirestoreError(error, OperationType.GET, "brands"),
-    );
-    return () => unsubscribe();
-  }, [activeSubTab]);
+    void loadReviewCatalog();
+  }, [activeSubTab, loadReviewCatalog]);
 
   useEffect(() => {
     if (activeSubTab !== 'settings') return;
@@ -462,7 +464,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
     )),
     [reviewFilter, reviewQueue, reviewSearch],
   );
-  const validCategoryIds = useMemo(() => categories.map((category) => String(category.id)), [categories]);
+  const validCategoryIds = useMemo(() => supplierReviewValidCategoryIds(categories), [categories]);
   const supplierCategoryOptions = useMemo(() => {
     const values = new Map<string, string>();
     const addCategories = (source: unknown) => {
@@ -542,6 +544,12 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
   const [processingChangeId, setProcessingChangeId] = useState<string | null>(null);
   const [retryingMediaId, setRetryingMediaId] = useState<string | null>(null);
   const [editingReviewItem, setEditingReviewItem] = useState<ReviewQueueItem | null>(null);
+
+  useEffect(() => {
+    if (!editingReviewItem) return;
+    void loadReviewCatalog();
+  }, [editingReviewItem, loadReviewCatalog]);
+
   const [supplierOffers, setSupplierOffers] = useState<SupplierOfferView[]>([]);
   const [supplierOfferSelection, setSupplierOfferSelection] = useState<SupplierOfferSelectionView>({ activeOfferId: null, lockedOfferId: null, failoverEnabled: true });
   const [supplierOffersLoading, setSupplierOffersLoading] = useState(false);
