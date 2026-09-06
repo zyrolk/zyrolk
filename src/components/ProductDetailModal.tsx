@@ -9,6 +9,7 @@ import { onAuthStateChanged, User } from 'firebase/auth';
 import { auth } from '../firebase';
 import { Product, WebsiteSettings } from '../types';
 import { isProductExplicitlyActive } from '../services/storefront/productAvailability';
+import { sanitizeSupplierDescriptionHtml, supplierDescriptionLooksLikeHtml } from '../services/supplierReviewDescription';
 import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
 import {
   PRODUCT_IMAGE_FALLBACK, buildProductGallery, clampGalleryIndex, getDialogEscapeAction, getFocusWrapIndex,
@@ -74,6 +75,9 @@ export default function ProductDetailModal({
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [announcement, setAnnouncement] = useState('');
   const prefersReducedMotion = useReducedMotion();
+  const productDescription = product ? product.description : '';
+  const productDescriptionIsHtml = supplierDescriptionLooksLikeHtml(productDescription);
+  const safeProductDescriptionHtml = sanitizeSupplierDescriptionHtml(productDescription);
 
   // Refs
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -728,9 +732,16 @@ export default function ProductDetailModal({
                     <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
                       Product Overview
                     </h4>
-                    <p className="text-sm text-slate-600 leading-relaxed font-light whitespace-pre-line border-l-3 border-brand-blue/35 pl-4">
-                      {product.description}
-                    </p>
+                    {productDescriptionIsHtml ? (
+                      <div
+                        className="text-sm text-slate-600 leading-relaxed font-light border-l-3 border-brand-blue/35 pl-4 [&_h1]:mb-2 [&_h1]:text-lg [&_h1]:font-bold [&_h2]:mb-2 [&_h2]:text-base [&_h2]:font-bold [&_h3]:mb-2 [&_h3]:text-sm [&_h3]:font-bold [&_h4]:mb-2 [&_h4]:text-sm [&_h4]:font-bold [&_li]:ml-5 [&_li]:list-disc [&_ol]:my-2 [&_p]:mb-3 [&_strong]:font-bold [&_ul]:my-2"
+                        dangerouslySetInnerHTML={{ __html: safeProductDescriptionHtml }}
+                      />
+                    ) : (
+                      <p className="text-sm text-slate-600 leading-relaxed font-light whitespace-pre-line border-l-3 border-brand-blue/35 pl-4">
+                        {productDescription}
+                      </p>
+                    )}
                   </div>
 
                   {/* Quantity selector input element */}
