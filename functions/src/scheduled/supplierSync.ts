@@ -8,7 +8,10 @@ import { COMMERCIAL_PRODUCT_FIELDS, mergeProductData, PRODUCT_PRIVATE_COLLECTION
 import { SupplierRegistry } from "../api/suppliers/SupplierRegistry";
 import { isValidSupplierImageUrl, ProductParser } from "../api/suppliers/a2z/ProductParser";
 import { RawA2ZProduct } from "../api/suppliers/a2z/types";
-import { normalizeSupplierSourceConfig } from "../api/suppliers/supplierSourceCompatibility";
+import {
+  normalizeSupplierSourceConfig,
+  resolveSupplierSourceAutoSyncSchedule,
+} from "../api/suppliers/supplierSourceCompatibility";
 import { SupplierCatalogFilterRequest, SupplierConnector, SupplierSourceConfig } from "../api/suppliers/types";
 import {
   accumulateSupplierProductComparison,
@@ -376,8 +379,12 @@ function toMillis(value: unknown): number | null {
   return null;
 }
 
-function isSyncDue(settings: SupplierSettings): boolean {
+export function isSupplierAutomaticSyncEnabled(settings: Pick<SupplierSettings, "autoSyncEnabled">): boolean {
   return settings.autoSyncEnabled !== false;
+}
+
+function isSyncDue(settings: SupplierSettings): boolean {
+  return isSupplierAutomaticSyncEnabled(settings);
 }
 
 function getNextSyncIso(settings: SupplierSettings, finishedAtMs: number): string | null {
@@ -407,8 +414,7 @@ const sourceLastSuccessfulSync = (source: SupplierSource): unknown => source.las
 
 /** `settings.autoSync` is canonical; `syncSchedule` is retained as a legacy read fallback. */
 export const supplierSourceAutoSyncSchedule = (source: SupplierSource): string => {
-  const configured = String(source.settings?.autoSync || "").trim();
-  return configured || String(source.syncSchedule || "Off").trim() || "Off";
+  return resolveSupplierSourceAutoSyncSchedule(source.settings?.autoSync, source.syncSchedule);
 };
 
 const supplierPriority = (source: SupplierSource): number => {

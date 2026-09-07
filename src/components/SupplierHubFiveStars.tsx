@@ -23,7 +23,10 @@ import { auth, db, handleFirestoreError, OperationType } from '../firebase';
 import { Product } from '../types';
 import { getSupplierApi, patchSupplierApi, postSupplierApi, requestSupplierApi } from '../services/supplierHubApi';
 import { matchesSupplierSearch } from '../services/supplierSearch';
-import { normalizeSupplierSourceForUi } from '../services/supplierSourceUtils';
+import {
+  normalizeSupplierSourceForUi,
+  supplierSourceAutoSyncSchedule,
+} from '../services/supplierSourceUtils';
 import { buildSupplierOnboardingSource, SupplierOnboardingType } from '../services/supplierSourceOnboarding';
 import { reportClientIssue } from '../services/observability/clientDiagnostics';
 import SupplierReviewEditorModal from './SupplierReviewEditorModal';
@@ -1200,7 +1203,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
     setEditCategoriesFilter(currentSettings.categoriesFilter || []);
     setEditBrandFilter(currentSettings.brandFilter || '');
     setEditProductLimit(currentSettings.productLimit || 'All');
-    const configuredSchedule = String(currentSettings.autoSync || source.syncSchedule || 'Off').trim();
+    const configuredSchedule = supplierSourceAutoSyncSchedule(source);
     setEditSyncMode(configuredSchedule.toLowerCase() === 'off' ? 'manual' : 'auto');
     setEditAutoSyncSchedule(configuredSchedule.toLowerCase() === 'off' ? '1 Hour' : configuredSchedule);
     
@@ -1495,7 +1498,12 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
       const result = await response.json().catch(() => ({})) as { success?: boolean; error?: string };
       if (!response.ok || result.success !== true) throw new Error(result.error || 'Advanced supplier settings could not be saved.');
       setSupplierSources((current) => current.map((item) => item.id === sourceId
-        ? normalizeSupplierSourceForUi({ ...item, endpoint: editEndpoint.trim(), settings })
+        ? normalizeSupplierSourceForUi({
+            ...item,
+            endpoint: editEndpoint.trim(),
+            syncSchedule: supplierSourceAutoSyncSchedule({ ...item, settings }),
+            settings,
+          })
         : item));
       setSuccessMsg('Advanced supplier settings saved.');
       setTimeout(() => setSuccessMsg(null), 3000);
@@ -1508,18 +1516,20 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
   };
 
   const handleToggleSupplierAutoSync = async (source: any) => {
-    const currentSchedule = String(source.settings?.autoSync || source.syncSchedule || 'Off').trim();
+    const currentSchedule = supplierSourceAutoSyncSchedule(source);
     const enabled = currentSchedule.toLowerCase() !== 'off';
     const defaultSchedule = String(supplierSettings.syncInterval || '1 Hour');
     const nextSchedule = enabled ? 'Off' : (currentSchedule && currentSchedule.toLowerCase() !== 'off' ? currentSchedule : defaultSchedule);
     setSavingSettingsSourceId(source.id);
     try {
       const settings = { ...(source.settings || {}), autoSync: nextSchedule };
-      const response = await patchSupplierApi(`/api/supplier-sources/${encodeURIComponent(source.id)}`, { source: { settings } });
+      const response = await patchSupplierApi(`/api/supplier-sources/${encodeURIComponent(source.id)}`, {
+        source: { syncSchedule: nextSchedule, settings },
+      });
       const result = await response.json().catch(() => ({})) as { success?: boolean; error?: string };
       if (!response.ok || result.success !== true) throw new Error(result.error || 'Automatic synchronization could not be updated.');
       setSupplierSources((current) => current.map((item) => item.id === source.id
-        ? normalizeSupplierSourceForUi({ ...item, settings })
+        ? normalizeSupplierSourceForUi({ ...item, syncSchedule: nextSchedule, settings })
         : item));
       setSuccessMsg(`Auto Sync ${enabled ? 'disabled' : 'enabled'} for ${source.name || source.supplierName}.`);
       setTimeout(() => setSuccessMsg(null), 3000);
@@ -2010,10 +2020,10 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                       </div>
                       <div className="space-y-0.5">
                         <span className="text-slate-400 font-bold block text-[10px] uppercase">Auto Sync</span>
-                        <button type="button" onClick={() => void handleToggleSupplierAutoSync(source)} disabled={savingSettingsSourceId !== null || !supplierHasCompletedInitialSync(source)} title={supplierHasCompletedInitialSync(source) ? 'Enable or disable automatic synchronization' : 'Run Initial Sync before enabling Auto Sync'} className={`font-bold disabled:cursor-not-allowed disabled:opacity-50 ${String(source.settings?.autoSync || source.syncSchedule || 'Off').toLowerCase() === 'off' ? 'text-slate-500' : 'text-emerald-500'}`}>
-                          {String(source.settings?.autoSync || source.syncSchedule || 'Off').toLowerCase() === 'off'
+                        <button type="button" onClick={() => void handleToggleSupplierAutoSync(source)} disabled={savingSettingsSourceId !== null || !supplierHasCompletedInitialSync(source)} title={supplierHasCompletedInitialSync(source) ? 'Enable or disable automatic synchronization' : 'Run Initial Sync before enabling Auto Sync'} className={`font-bold disabled:cursor-not-allowed disabled:opacity-50 ${supplierSourceAutoSyncSchedule(source).toLowerCase() === 'off' ? 'text-slate-500' : 'text-emerald-500'}`}>
+                          {supplierSourceAutoSyncSchedule(source).toLowerCase() === 'off'
                             ? 'Manual Mode'
-                            : `Auto · ${String(source.settings?.autoSync || source.syncSchedule)}`}
+                            : `Auto · ${supplierSourceAutoSyncSchedule(source)}`}
                         </button>
                       </div>
                       <div className="space-y-0.5 border-t border-slate-100 pt-2 dark:border-slate-800/40">

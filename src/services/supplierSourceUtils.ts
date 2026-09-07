@@ -4,7 +4,37 @@ export interface SupplierSourceLike {
   supplierType?: unknown;
   type?: unknown;
   connectorType?: unknown;
+  syncSchedule?: unknown;
+  settings?: {
+    autoSync?: unknown;
+  } | Record<string, unknown>;
 }
+
+const SUPPLIER_AUTO_SYNC_VALUES = new Map([
+  ['off', 'Off'],
+  ['15 minutes', '15 Minutes'],
+  ['30 minutes', '30 Minutes'],
+  ['1 hour', '1 Hour'],
+  ['3 hours', '3 Hours'],
+  ['6 hours', '6 Hours'],
+  ['daily', 'Daily'],
+]);
+
+/** `settings.autoSync` is canonical; `syncSchedule` is a legacy read fallback. */
+export const resolveSupplierSourceAutoSyncSchedule = (
+  canonicalAutoSync: unknown,
+  legacySyncSchedule: unknown,
+): string => {
+  for (const candidate of [canonicalAutoSync, legacySyncSchedule]) {
+    const normalized = typeof candidate === 'string' ? candidate.trim().toLowerCase() : '';
+    const schedule = SUPPLIER_AUTO_SYNC_VALUES.get(normalized);
+    if (schedule) return schedule;
+  }
+  return 'Off';
+};
+
+export const supplierSourceAutoSyncSchedule = (source: SupplierSourceLike): string =>
+  resolveSupplierSourceAutoSyncSchedule(source.settings?.autoSync, source.syncSchedule);
 
 /** A2Z/HTTP are concrete connectors transported by the legacy website feed. */
 export const getSupplierSourceType = (source: SupplierSourceLike): string => {

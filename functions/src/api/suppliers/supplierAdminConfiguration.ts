@@ -2,7 +2,10 @@ import { randomUUID } from "node:crypto";
 import { FieldValue, Firestore } from "firebase-admin/firestore";
 import { ApiError } from "../errors";
 import { SupplierHubAdminIdentity } from "../middleware/supplierHubAdminAuth";
-import { normalizeSupplierSourceConfig } from "./supplierSourceCompatibility";
+import {
+  normalizeSupplierSourceConfig,
+  resolveSupplierSourceAutoSyncSchedule,
+} from "./supplierSourceCompatibility";
 import { SupplierRegistry } from "./SupplierRegistry";
 import {
   A2ZCredentialProfileError,
@@ -54,6 +57,7 @@ export function projectSupplierSourceForAdmin(value: Record<string, unknown>, so
   const projectedSettings = projected.settings && typeof projected.settings === "object" && !Array.isArray(projected.settings)
     ? projected.settings as Record<string, unknown>
     : {};
+  const canonicalAutoSync = resolveSupplierSourceAutoSyncSchedule(projectedSettings.autoSync, projected.syncSchedule);
   const storedAuthentication = projected.authentication && typeof projected.authentication === "object"
     ? projected.authentication as Record<string, unknown>
     : {};
@@ -90,10 +94,10 @@ export function projectSupplierSourceForAdmin(value: Record<string, unknown>, so
     priority: normalized.priority,
     currency: normalized.currency,
     timezone: normalized.timezone,
-    syncSchedule: normalized.syncSchedule,
+    syncSchedule: canonicalAutoSync,
     settings: {
       ...projectedSettings,
-      autoSync: projectedSettings.autoSync || normalized.syncSchedule || "Off",
+      autoSync: canonicalAutoSync,
     },
     capabilities: projected.capabilities || normalized.capabilities,
     authentication: projectedAuthentication,
@@ -339,7 +343,11 @@ export function sanitizeSupplierSource(
   if (!Number.isInteger(priority) || priority < 0 || priority > 10_000) throw new ApiError("Supplier priority is invalid.", 400);
   const currency = (cleanText(source.currency, "Supplier currency", 8) || "LKR").toUpperCase();
   const timezone = cleanText(source.timezone, "Supplier timezone", 100) || "Asia/Colombo";
-  const syncSchedule = cleanText(source.syncSchedule, "Supplier sync schedule", 50) || "Off";
+  const sourceSettings = source.settings && typeof source.settings === "object" && !Array.isArray(source.settings)
+    ? source.settings as Record<string, unknown>
+    : {};
+  const syncSchedule = resolveSupplierSourceAutoSyncSchedule(sourceSettings.autoSync, source.syncSchedule);
+  const settings = cleanSettings({ ...sourceSettings, autoSync: syncSchedule });
   const allowLegacyGlobalA2ZProfile = connectorType === "a2z" && isExistingGlobalA2ZSource(context.existingSource);
   const authentication = cleanAuthentication(
     source.authentication,
@@ -374,7 +382,7 @@ export function sanitizeSupplierSource(
         ? validateDropexAuthenticationReference(authentication)
         : authentication,
     config: cleanConfig(source.config),
-    settings: cleanSettings(source.settings),
+    settings,
   };
 }
 

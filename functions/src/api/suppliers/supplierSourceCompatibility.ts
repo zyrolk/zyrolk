@@ -2,6 +2,15 @@ import { SupplierSourceConfig, SupplierConnectorType } from "./types";
 
 const DEFAULT_CAPABILITIES = ["catalog.fetch", "connection.test"];
 const AUTHENTICATION_MODES = new Set(["none", "secret_manager", "basic", "api_key", "oauth2"]);
+const SUPPLIER_AUTO_SYNC_VALUES = new Map([
+  ["off", "Off"],
+  ["15 minutes", "15 Minutes"],
+  ["30 minutes", "30 Minutes"],
+  ["1 hour", "1 Hour"],
+  ["3 hours", "3 Hours"],
+  ["6 hours", "6 Hours"],
+  ["daily", "Daily"],
+]);
 
 type SupplierSourceData = FirebaseFirestore.DocumentData;
 
@@ -13,6 +22,19 @@ const hasValue = (value: unknown): boolean =>
 
 const text = (value: unknown, fallback = ""): string =>
   typeof value === "string" ? value.trim() || fallback : fallback;
+
+/** `settings.autoSync` is canonical; `syncSchedule` is a legacy read fallback. */
+export const resolveSupplierSourceAutoSyncSchedule = (
+  canonicalAutoSync: unknown,
+  legacySyncSchedule: unknown,
+): string => {
+  for (const candidate of [canonicalAutoSync, legacySyncSchedule]) {
+    const normalized = text(candidate).toLowerCase();
+    const schedule = SUPPLIER_AUTO_SYNC_VALUES.get(normalized);
+    if (schedule) return schedule;
+  }
+  return "Off";
+};
 
 const normalizePriority = (value: unknown): number => {
   const priority = Number(value);
@@ -57,7 +79,7 @@ export function normalizeSupplierSourceConfig(id: string, data: SupplierSourceDa
     priority: normalizePriority(data.priority ?? settings.priority),
     currency: text(data.currency) || text(settings.currency) || "LKR",
     timezone: text(data.timezone) || text(settings.timezone) || "Asia/Colombo",
-    syncSchedule: text(data.syncSchedule) || text(settings.autoSync) || "Off",
+    syncSchedule: resolveSupplierSourceAutoSyncSchedule(settings.autoSync, data.syncSchedule),
     authentication: {
       mode: AUTHENTICATION_MODES.has(mode) ? mode as SupplierSourceConfig["authentication"]["mode"] : "secret_manager",
       ...(typeof authentication.secretRef === "string" && authentication.secretRef.trim() ? { secretRef: authentication.secretRef.trim() } : {}),
@@ -107,7 +129,8 @@ export function buildSupplierSourceCompatibilityMigration(
   setIfMissing("priority", config.priority);
   setIfMissing("currency", config.currency);
   setIfMissing("timezone", config.timezone);
-  setIfMissing("syncSchedule", config.syncSchedule);
+  const legacySettings = isRecord(data.settings) ? data.settings : {};
+  setIfMissing("syncSchedule", text(data.syncSchedule) || text(legacySettings.autoSync) || config.syncSchedule);
   if (data.capabilities === undefined || data.capabilities === null) patch.capabilities = config.capabilities;
   if (!isRecord(data.authentication)) patch.authentication = config.authentication;
   if (config.websiteUrl) setIfMissing("websiteUrl", config.websiteUrl);
