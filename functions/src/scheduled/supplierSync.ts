@@ -1022,6 +1022,12 @@ function buildProductPayload(
   };
 }
 
+export function buildSupplierReviewQueueImagePayload(
+  mediaGallery: readonly string[] | undefined,
+): { imageUrl: string } {
+  return { imageUrl: mediaGallery?.[0] || "" };
+}
+
 function buildPendingChange(
   queueItem: Record<string, unknown>,
   comparison: { status: SupplierProductComparisonStatus; fieldChanges?: SupplierFieldChange[] },
@@ -3286,7 +3292,7 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
             marketPrice: product.recommendedRetailPrice,
             stock: productPayload.stock,
             barcode: product.barcode || "",
-            imageUrl: product.mediaGallery?.[0],
+            ...buildSupplierReviewQueueImagePayload(product.mediaGallery),
             comparisonStatus: comparison.status,
             comparison: {
               matchFound: !!effectiveMatch,

@@ -33,6 +33,7 @@ import type {
 import type { SupplierOutboundPolicy, SupplierOutboundResponse } from "../functions/src/api/security/supplierOutboundRequest";
 import { RawA2ZProduct } from "../functions/src/api/suppliers/a2z/types";
 import { projectSupplierSourceForAdmin, sanitizeSupplierSource } from "../functions/src/api/suppliers/supplierAdminConfiguration";
+import { buildSupplierReviewQueueImagePayload } from "../functions/src/scheduled/supplierSync";
 import { buildSupplierOnboardingSource } from "../src/services/supplierSourceOnboarding";
 
 const profileSecret = (profiles: Record<string, unknown>): string => (
@@ -504,6 +505,34 @@ test("Dropex thin catalog rows with undefined placeholders also trigger DTO enri
 
   assert.equal(dtoCalls, 1);
   assert.equal((page.products[0] as RawA2ZProduct).wholesalePrice, 650);
+});
+
+test("Dropex item without a usable image produces a Firestore-safe review image payload", () => {
+  const parsed = ProductParser.parseCatalogItem(thinCatalogItemUndefinedPlaceholders);
+  assert.deepEqual(parsed.mediaGallery, []);
+
+  const firestorePayload = {
+    id: "dropex-review-without-image",
+    ...buildSupplierReviewQueueImagePayload(parsed.mediaGallery),
+    imageUrls: [...parsed.mediaGallery],
+    mediaGallery: [...parsed.mediaGallery],
+    managedMedia: [],
+    supplierMedia: [],
+  };
+
+  const assertNoUndefined = (value: unknown, path = "payload"): void => {
+    assert.notEqual(value, undefined, `${path} must not be undefined`);
+    if (Array.isArray(value)) {
+      value.forEach((entry, index) => assertNoUndefined(entry, `${path}[${index}]`));
+      return;
+    }
+    if (value && typeof value === "object") {
+      Object.entries(value).forEach(([key, entry]) => assertNoUndefined(entry, `${path}.${key}`));
+    }
+  };
+
+  assertNoUndefined(firestorePayload);
+  assert.equal(firestorePayload.imageUrl, "");
 });
 
 test("Dropex full catalog rows skip unnecessary DTO enrichment", async () => {
