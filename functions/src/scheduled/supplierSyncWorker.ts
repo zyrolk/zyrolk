@@ -128,6 +128,7 @@ export async function processSupplierSyncJob(jobId: string, now = Date.now()): P
     const result = await runSupplierSync({
       trigger: lease.job.trigger,
       sourceIds: lease.job.sourceIds,
+      ...(lease.job.immediateAutoEnable ? { immediateSourceIds: lease.job.sourceIds } : {}),
       batchId: jobId,
       syncRequest: lease.job.syncRequest,
       control: {

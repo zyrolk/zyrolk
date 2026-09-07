@@ -47,6 +47,7 @@ export interface SupplierSyncJobRecord extends Record<string, unknown> {
   id: string;
   state: SupplierSyncJobState;
   trigger: SupplierSyncJobTrigger;
+  immediateAutoEnable?: boolean;
   sourceIds: string[];
   createdAt: string;
   updatedAt: string;
@@ -70,6 +71,7 @@ export interface CreateSupplierSyncJobInput {
   requestedBy?: { uid?: string; email?: string };
   dedupeKey?: string;
   syncRequest?: SupplierSyncRequest;
+  immediateAutoEnable?: boolean;
 }
 
 export interface SupplierSyncJobAdmissionConflict {
@@ -166,6 +168,9 @@ const stateFor = (value: unknown): SupplierSyncJobState => (
 );
 
 const isActiveSupplierSyncJob = (value: Record<string, unknown>): boolean => ACTIVE_SYNC_JOB_STATES.has(stateFor(value.state));
+const usesSourceReservation = (job: Pick<SupplierSyncJobRecord, "trigger" | "immediateAutoEnable">): boolean => (
+  job.trigger === "manual" || job.immediateAutoEnable === true
+);
 
 const sameSourceScope = (left: readonly string[], right: readonly string[]): boolean => {
   const leftIds = cleanSourceIds(left);
@@ -178,10 +183,15 @@ const sameSyncRequest = (left?: SupplierSyncRequest, right?: SupplierSyncRequest
   === fingerprintSupplierSyncRequest(right || { mode: "full" })
 );
 
-const manualReservationPatch = (jobId: string, sourceIds: readonly string[], now: number): Record<string, unknown> => ({
+const manualReservationPatch = (
+  jobId: string,
+  sourceIds: readonly string[],
+  now: number,
+  trigger: "manual" | "scheduled-auto-enable" = "manual",
+): Record<string, unknown> => ({
   [MANUAL_RESERVATION_JOB_FIELD]: jobId,
   manualReservationSourceIds: cleanSourceIds(sourceIds),
-  manualReservationTrigger: "manual",
+  manualReservationTrigger: trigger,
   manualReservationUpdatedAt: new Date(now).toISOString(),
 });
 
@@ -198,7 +208,7 @@ async function clearOwnedManualReservations(
   transaction: Transaction,
   job: Pick<SupplierSyncJobRecord, "id" | "trigger" | "sourceIds">,
 ): Promise<void> {
-  if (job.trigger !== "manual") return;
+  if (!usesSourceReservation(job)) return;
   const sourceIds = cleanSourceIds(job.sourceIds);
   const references = sourceIds.map((sourceId) => db.collection("supplier_sync_locks").doc(`source-${sourceId}`));
   const snapshots = await Promise.all(references.map((reference) => transaction.get(reference)));
@@ -214,7 +224,7 @@ async function reserveExistingManualJob(
   job: SupplierSyncJobRecord,
   now: number,
 ): Promise<boolean> {
-  if (job.trigger !== "manual") return true;
+  if (!usesSourceReservation(job)) return true;
   const sourceIds = cleanSourceIds(job.sourceIds);
   if (sourceIds.length === 0) return true;
   const references = sourceIds.map((sourceId) => db.collection("supplier_sync_locks").doc(`source-${sourceId}`));
@@ -414,6 +424,7 @@ export async function createSupplierSyncJob(
     resumeCount: 0,
     progress: initialProgress(now),
     ...(input.syncRequest ? { syncRequest: input.syncRequest } : {}),
+    ...(input.immediateAutoEnable ? { immediateAutoEnable: true } : {}),
   };
   const result = await db.runTransaction(async (transaction) => {
     const snapshot = await transaction.get(reference);
@@ -422,7 +433,7 @@ export async function createSupplierSyncJob(
     // manual request without an explicit source scope is a legacy all-sources
     // request and must be resolved by the API before source-level admission can
     // be guaranteed.
-    if (input.trigger !== "manual" || sourceIds.length === 0) {
+    if (!usesSourceReservation({ trigger: input.trigger, immediateAutoEnable: input.immediateAutoEnable }) || sourceIds.length === 0) {
       if (snapshot.exists) {
         return {
           created: false,
@@ -481,20 +492,35 @@ export async function createSupplierSyncJob(
 
     if (
       reusableJob
-      && reusableJob.trigger === "manual"
+      && (
+        reusableJob.trigger === "manual"
+        || (
+          input.immediateAutoEnable === true
+          && reusableJob.immediateAutoEnable === true
+          && reusableJob.trigger === "scheduled"
+        )
+      )
       && isActiveSupplierSyncJob(reusableJob)
       && sameSourceScope(reusableJob.sourceIds, sourceIds)
       && sameSyncRequest(reusableJob.syncRequest, input.syncRequest)
       && conflicts.every((conflict) => conflict.jobId === reusableJob.id)
     ) {
       lockReferences.forEach((lockReference, index) => transaction.set(lockReference, {
-        ...manualReservationPatch(reusableJob.id, sourceIds, now),
+        ...manualReservationPatch(
+          reusableJob.id,
+          sourceIds,
+          now,
+          reusableJob.immediateAutoEnable === true ? "scheduled-auto-enable" : "manual",
+        ),
         sourceId: sourceIds[index],
       }, { merge: true }));
       return { created: false, deduplicated: true, job: reusableJob };
     }
 
     if (conflicts.length > 0) {
+      if (input.immediateAutoEnable === true && reusableJob && isActiveSupplierSyncJob(reusableJob)) {
+        return { created: false, deduplicated: true, job: reusableJob };
+      }
       throw new SupplierSyncJobConflictError([...conflicts]
         .sort((left, right) => left.sourceId.localeCompare(right.sourceId) || left.jobId.localeCompare(right.jobId)));
     }
@@ -508,7 +534,12 @@ export async function createSupplierSyncJob(
 
     transaction.create(reference, record);
     lockReferences.forEach((lockReference, index) => transaction.set(lockReference, {
-      ...manualReservationPatch(record.id, sourceIds, now),
+      ...manualReservationPatch(
+        record.id,
+        sourceIds,
+        now,
+        input.immediateAutoEnable === true ? "scheduled-auto-enable" : "manual",
+      ),
       sourceId: sourceIds[index],
       manualReservationCreatedAt: createdAt,
     }, { merge: true }));

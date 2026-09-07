@@ -305,6 +305,7 @@ interface SyncMetrics {
 export interface SupplierSyncRunOptions {
   trigger?: "scheduled" | "manual";
   sourceIds?: string[];
+  immediateSourceIds?: string[];
   maxRuntimeMs?: number;
   batchId?: string;
   syncRequest?: SupplierSyncRequest;
@@ -545,6 +546,7 @@ export function isSupplierSourceEligibleForSync(
   settings: SupplierSettings,
   trigger: "scheduled" | "manual",
   nowMs: number,
+  immediateSourceIds: readonly string[] = [],
 ): boolean {
   if (trigger === "manual") {
     const operationalState = String(source.operationalState || "").trim().toLowerCase();
@@ -557,8 +559,10 @@ export function isSupplierSourceEligibleForSync(
       && SupplierRegistry.supportedConnectorTypes().includes(connectorType);
   }
 
-  return isSupplierSourceEnabled(source, settings)
-    && isSupplierSourceAutoSyncDue(supplierSourceAutoSyncSchedule(source), sourceLastSuccessfulSync(source), nowMs);
+  if (!isSupplierSourceEnabled(source, settings)) return false;
+  const autoSync = supplierSourceAutoSyncSchedule(source);
+  if (immediateSourceIds.includes(source.id)) return autoSync.toLowerCase() !== "off";
+  return isSupplierSourceAutoSyncDue(autoSync, sourceLastSuccessfulSync(source), nowMs);
 }
 
 export function selectSupplierSourcesForSync(
@@ -567,9 +571,10 @@ export function selectSupplierSourcesForSync(
   settings: SupplierSettings,
   trigger: "scheduled" | "manual",
   nowMs: number,
+  immediateSourceIds: readonly string[] = [],
 ): SupplierSource[] {
   return sources
-    .filter((source) => isSupplierSourceEligibleForSync(source, settings, trigger, nowMs))
+    .filter((source) => isSupplierSourceEligibleForSync(source, settings, trigger, nowMs, immediateSourceIds))
     .filter((source) => requestedSourceIds.length === 0 || requestedSourceIds.includes(source.id));
 }
 
@@ -2202,6 +2207,7 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
   const trigger = options.trigger || "scheduled";
   const syncRequest = normalizeSupplierSyncRequest(options.syncRequest);
   const requestedSourceIds = [...new Set((options.sourceIds || []).map((sourceId) => sourceId.trim()).filter(Boolean))];
+  const immediateSourceIds = [...new Set((options.immediateSourceIds || []).map((sourceId) => sourceId.trim()).filter(Boolean))];
   const startedAt = new Date();
   const runtimeBudgetMs = Number.isFinite(options.maxRuntimeMs) && Number(options.maxRuntimeMs) > 0
     ? Number(options.maxRuntimeMs)
@@ -2266,6 +2272,7 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
     settings,
     trigger,
     startedAt.getTime(),
+    immediateSourceIds,
   )
     .sort((left, right) => supplierPriority(right) - supplierPriority(left) || left.id.localeCompare(right.id));
 

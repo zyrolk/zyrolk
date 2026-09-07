@@ -446,13 +446,24 @@ export function registerSupplierRoutes(app: express.Express): void {
       if (!sourceSnapshot.exists) throw new ApiError("Supplier source was not found.", 404);
       const current = projectSupplierSourceForAdmin(sourceSnapshot.data() || {}, sourceId);
       const requested = req.body?.source && typeof req.body.source === "object" ? req.body.source as Record<string, unknown> : {};
-      await saveSupplierSource(adminDb, sourceId, {
+      const saveResult = await saveSupplierSource(adminDb, sourceId, {
         ...current,
         ...requested,
         config: { ...(current.config as Record<string, unknown> || {}), ...(requested.config as Record<string, unknown> || {}) },
         settings: { ...(current.settings as Record<string, unknown> || {}), ...(requested.settings as Record<string, unknown> || {}) },
       }, reviewerFor(res));
-      res.status(200).json({ success: true, sourceId });
+      res.status(200).json({
+        success: true,
+        sourceId,
+        ...(saveResult.immediateSyncJob ? {
+          immediateSyncAccepted: true,
+          jobId: saveResult.immediateSyncJob.job.id,
+          job: projectSupplierSyncJobForAdmin(saveResult.immediateSyncJob.job),
+        } : {}),
+      });
+      if (saveResult.immediateSyncJob?.created) {
+        startLocalSupplierSyncJob(saveResult.immediateSyncJob.job.id);
+      }
     } catch (error: unknown) {
       sendSupplierFailure(res, error, {
         logMessage: "Supplier source update failed.",

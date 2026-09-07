@@ -11,6 +11,17 @@ import {
   requeueSupplierSyncJob,
   SupplierSyncJobConflictError,
 } from '../functions/src/api/suppliers/supplierSyncJobs';
+import {
+  shouldQueueSupplierAutoEnableJob,
+  supplierSourceEnteredAutoMode,
+} from '../functions/src/api/suppliers/supplierAdminConfiguration';
+import {
+  getSupplierProductLimit,
+} from '../functions/src/scheduled/supplierSyncSettings';
+import {
+  getNextSupplierSourceSyncIso,
+  isSupplierSourceEligibleForSync,
+} from '../functions/src/scheduled/supplierSync';
 
 interface FakeReference { id: string; path: string }
 
@@ -112,6 +123,74 @@ test('SH-2B reuses one active job for repeated requests with the exact same sour
   assert.equal(repeated.deduplicated, true);
   assert.equal(repeated.job.id, first.job.id);
   assert.equal([...db.documents.keys()].filter((path) => path.startsWith('supplier_sync_jobs/')).length, 1);
+});
+
+test('auto-enable transition queues one immediate scheduled job and preserves bounded settings', async () => {
+  const db = new FakeFirestore();
+  assert.equal(supplierSourceEnteredAutoMode({ settings: { autoSync: 'Off' } }, { settings: { autoSync: '1 Hour' } }), true);
+  assert.equal(supplierSourceEnteredAutoMode({ settings: { autoSync: '1 Hour' } }, { settings: { autoSync: '3 Hours' } }), false);
+  const immediate = await createSupplierSyncJob(db as unknown as Firestore, {
+    trigger: 'scheduled',
+    sourceIds: ['dropex'],
+    immediateAutoEnable: true,
+    dedupeKey: 'scheduled-auto-enable-dropex-transition-1',
+    syncRequest: { mode: 'full' },
+  }, 2_000);
+
+  assert.equal(immediate.created, true);
+  assert.equal(immediate.job.trigger, 'scheduled');
+  assert.equal(immediate.job.immediateAutoEnable, true);
+  assert.deepEqual(immediate.job.syncRequest, { mode: 'full' });
+  assert.equal(db.documents.get('supplier_sync_locks/source-dropex')?.manualReservationTrigger, 'scheduled-auto-enable');
+  assert.equal(getSupplierProductLimit('All', 5), 5);
+});
+
+test('saving Auto to Auto does not create another immediate job', () => {
+  assert.equal(supplierSourceEnteredAutoMode({ settings: { autoSync: '1 Hour' } }, { settings: { autoSync: '1 Hour' } }), false);
+  assert.equal(shouldQueueSupplierAutoEnableJob(false, true), false);
+  assert.equal(shouldQueueSupplierAutoEnableJob(true, true), true);
+});
+
+test('Manual A2Z remains excluded from scheduled source selection', () => {
+  const settings = { autoSyncEnabled: true };
+  const a2z = {
+    id: 'a2z-traders',
+    enabled: true,
+    sourceStatus: 'active',
+    supplierAccountId: 'supplier-a',
+    supplierType: 'a2z',
+    settings: { autoSync: 'Off' },
+  };
+  assert.equal(isSupplierSourceEligibleForSync(a2z as never, settings, 'scheduled', Date.now()), false);
+});
+
+test('an existing active immediate job prevents a duplicate', async () => {
+  const db = new FakeFirestore();
+  const first = await createSupplierSyncJob(db as unknown as Firestore, {
+    trigger: 'scheduled',
+    sourceIds: ['dropex'],
+    immediateAutoEnable: true,
+    dedupeKey: 'scheduled-auto-enable-dropex-transition-a',
+    syncRequest: { mode: 'full' },
+  }, 3_000);
+  const duplicate = await createSupplierSyncJob(db as unknown as Firestore, {
+    trigger: 'scheduled',
+    sourceIds: ['dropex'],
+    immediateAutoEnable: true,
+    dedupeKey: 'scheduled-auto-enable-dropex-transition-b',
+    syncRequest: { mode: 'full' },
+  }, 3_001);
+  assert.equal(first.created, true);
+  assert.equal(duplicate.created, false);
+  assert.equal(duplicate.deduplicated, true);
+  assert.equal(duplicate.job.id, first.job.id);
+});
+
+test('normal cadence remains configured after immediate completion', () => {
+  assert.equal(
+    getNextSupplierSourceSyncIso('3 Hours', Date.parse('2026-09-06T12:00:00.000Z')),
+    '2026-09-06T15:00:00.000Z',
+  );
 });
 
 test('SH-2B rejects the same source when active and requested sync controls differ', async () => {

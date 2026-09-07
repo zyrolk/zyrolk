@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { FieldValue, Firestore } from "firebase-admin/firestore";
 import { ApiError } from "../errors";
 import { SupplierHubAdminIdentity } from "../middleware/supplierHubAdminAuth";
@@ -16,6 +17,10 @@ import {
 import { getA2ZCredentials, getDropexCredentials } from "./credentials";
 import { DROPEX_CREDENTIAL_VALIDATION_TARGET } from "./dropex/DropexConnectorService";
 import { buildSupplierTargetUrl } from "../security/supplierUrlProtection";
+import {
+  createSupplierSyncJob,
+  CreateSupplierSyncJobResult,
+} from "./supplierSyncJobs";
 
 const MAX_ID_LENGTH = 160;
 const MAX_TEXT_LENGTH = 2_000;
@@ -388,18 +393,22 @@ export async function saveSupplierSource(
   value: unknown,
   actor: SupplierHubAdminIdentity,
   options: { createOnly?: boolean } = {},
-): Promise<void> {
+): Promise<{ immediateSyncJob: CreateSupplierSyncJobResult | null }> {
   const reference = db.collection("supplierSources").doc(sourceId);
   const settingsReference = db.collection("supplier_settings").doc("config");
-  await db.runTransaction(async (transaction) => {
+  const transition = await db.runTransaction(async (transaction) => {
     const existing = await transaction.get(reference);
-    const settingsSnapshot = options.createOnly ? await transaction.get(settingsReference) : null;
+    const settingsSnapshot = await transaction.get(settingsReference);
     if (options.createOnly && existing.exists) {
       throw new ApiError("A supplier source with this ID already exists.", 409);
     }
     const source = sanitizeSupplierSource(value, {
       existingSource: existing.exists ? existing.data() : undefined,
     });
+    const previousSource = existing.exists ? normalizeSupplierSourceConfig(sourceId, existing.data() || {}) : null;
+    const nextAutoSync = supplierSourceAutoSyncValue(source);
+    const enteredAutoMode = supplierSourceEnteredAutoMode(previousSource, source);
+    const transitionId = enteredAutoMode ? randomUUID() : null;
     if (source.enabled && !source.supplierAccountId) {
       throw new ApiError("Select an active Supplier Portal account before enabling this source.", 422);
     }
@@ -439,6 +448,10 @@ export async function saveSupplierSource(
       updatedAt: FieldValue.serverTimestamp(),
       updatedBy: actor.uid,
       ...legacyCredentialDeletes(),
+      ...(transitionId ? {
+        autoSyncTransitionId: transitionId,
+        autoSyncTransitionAt: FieldValue.serverTimestamp(),
+      } : {}),
     }, { merge: true });
     const auditReference = db.collection("supplier_operations_audit").doc();
     transaction.create(auditReference, {
@@ -459,7 +472,44 @@ export async function saveSupplierSource(
     if (enabledSupplierIds) {
       transaction.set(settingsReference, { enabledSupplierIds }, { merge: true });
     }
+    return {
+      transitionId,
+      globalAutoSyncEnabled: settingsSnapshot?.data()?.autoSyncEnabled !== false,
+      autoSyncEnabled: nextAutoSync !== "off",
+    };
   });
+  if (!transition.transitionId || !shouldQueueSupplierAutoEnableJob(transition.globalAutoSyncEnabled, transition.autoSyncEnabled)) {
+    return { immediateSyncJob: null };
+  }
+  const immediateSyncJob = await createSupplierSyncJob(db, {
+    trigger: "scheduled",
+    sourceIds: [sourceId],
+    immediateAutoEnable: true,
+    dedupeKey: `scheduled-auto-enable-${sourceId}-${transition.transitionId}`,
+    syncRequest: { mode: "full" },
+    requestedBy: { uid: actor.uid, email: actor.email },
+  });
+  return { immediateSyncJob };
+}
+
+const supplierSourceAutoSyncValue = (source: { settings?: Record<string, unknown>; syncSchedule?: string } | null): string => (
+  String(source?.settings?.autoSync || source?.syncSchedule || "Off").trim().toLowerCase()
+);
+
+export function supplierSourceEnteredAutoMode(
+  previous: { settings?: Record<string, unknown>; syncSchedule?: string } | null,
+  next: { settings?: Record<string, unknown>; syncSchedule?: string },
+): boolean {
+  return Boolean(previous)
+    && supplierSourceAutoSyncValue(previous) === "off"
+    && supplierSourceAutoSyncValue(next) !== "off";
+}
+
+export function shouldQueueSupplierAutoEnableJob(
+  globalAutoSyncEnabled: boolean,
+  sourceAutoSyncEnabled: boolean,
+): boolean {
+  return globalAutoSyncEnabled && sourceAutoSyncEnabled;
 }
 
 export function sanitizeSupplierHubSettings(value: unknown): Record<string, unknown> {
