@@ -273,6 +273,10 @@ test("SH-7B captures immutable purchase-time supplier attribution through the re
     assert.equal(result.response.status, 200, result.payload.error);
     const orderId = result.payload.order!.id;
     const before = await readPrivateOrder(orderId);
+    await adminDb.collection("products").doc(selected.productId).set({
+      originalPrice: 1_000,
+      discount: 33,
+    }, { merge: true });
 
     const replacementSourceId = `${fixturePrefix}-history-b-source`;
     const replacementSupplierId = `${fixturePrefix}-history-b-supplier`;
@@ -317,6 +321,28 @@ test("SH-7B captures immutable purchase-time supplier attribution through the re
     ]);
     const failover = await reconcileSupplierProductOfferFailover(adminDb, selected.productId, "sh7b-test");
     assert.equal(failover.activeOfferId, replacement.id);
+    const productAfterFailover = (await adminDb.collection("products").doc(selected.productId).get()).data()!;
+    assert.equal(productAfterFailover.price, 1_100);
+    assert.equal(Object.hasOwn(productAfterFailover, "originalPrice"), false);
+    assert.equal(Object.hasOwn(productAfterFailover, "discount"), false);
+    const failoverAudits = await adminDb.collection("supplier_operations_audit")
+      .where("productId", "==", selected.productId)
+      .get();
+    const failoverAudit = failoverAudits.docs
+      .map((document) => document.data())
+      .find((audit) => audit.action === "automatic_offer_failover");
+    assert.ok(failoverAudit);
+    const auditPublicCommerce = ((failoverAudit?.after as Record<string, unknown> | undefined)?.publicCommerce || {}) as Record<string, unknown>;
+    assert.equal(Object.hasOwn(auditPublicCommerce, "originalPrice"), false);
+    assert.equal(Object.hasOwn(auditPublicCommerce, "discount"), false);
+    const containsFirestoreSentinel = (value: unknown): boolean => {
+      if (!value || typeof value !== "object") return false;
+      if (["DeleteTransform", "ServerTimestampTransform"].includes((value as { constructor?: { name?: string } }).constructor?.name || "")) return true;
+      return Array.isArray(value)
+        ? value.some(containsFirestoreSentinel)
+        : Object.values(value).some(containsFirestoreSentinel);
+    };
+    assert.equal(containsFirestoreSentinel(failoverAudit), false);
     await Promise.all([
       adminDb.collection("supplierSources").doc(selected.sourceId).set({ supplierAccountId: replacementAccountId }, { merge: true }),
       adminDb.collection("product_private").doc(selected.productId).set({ supplierItemCode: "MUTATED-LATER" }, { merge: true }),

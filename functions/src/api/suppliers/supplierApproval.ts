@@ -71,7 +71,9 @@ export interface SupplierApprovalDraft {
   metaDescription?: string;
   keywords?: string[];
   sellingPrice: number;
-  comparePrice: number;
+  comparePrice?: number;
+  /** Explicit customer-promotion intent. Omitted preserves legacy callers. */
+  promotionEnabled?: boolean;
   costPrice?: number;
   marketPrice?: number;
   stock: number;
@@ -234,12 +236,21 @@ export function parseSupplierApprovalDraft(value: unknown): SupplierApprovalDraf
     || (draft.isBestSeller !== undefined && typeof draft.isBestSeller !== "boolean")) {
     throw new ApiError("Product merchandising flags are invalid.", 400);
   }
+  if (draft.promotionEnabled !== undefined && typeof draft.promotionEnabled !== "boolean") {
+    throw new ApiError("Promotion setting is invalid.", 400);
+  }
 
   const sellingPrice = cleanNumber(draft.sellingPrice, "Selling price", { minimum: Number.EPSILON });
-  let comparePrice = cleanNumber(draft.comparePrice, "Compare price", { minimum: 0 });
+  const promotionEnabled = draft.promotionEnabled === undefined ? undefined : draft.promotionEnabled === true;
+  let comparePrice = draft.comparePrice === undefined
+    ? undefined
+    : cleanNumber(draft.comparePrice, "Compare price", { minimum: 0 });
   const costPrice = draft.costPrice === undefined ? undefined : cleanNumber(draft.costPrice, "Cost price", { minimum: 0 });
   const marketPrice = draft.marketPrice === undefined ? undefined : cleanNumber(draft.marketPrice, "Market price", { minimum: 0 });
-  if (comparePrice > 0 && comparePrice < sellingPrice) {
+  if (promotionEnabled === true && (comparePrice === undefined || comparePrice <= sellingPrice)) {
+    throw new ApiError("Regular price must be greater than the selling price when promotion is enabled.", 400);
+  }
+  if (promotionEnabled !== true && comparePrice !== undefined && comparePrice > 0 && comparePrice < sellingPrice) {
     comparePrice = sellingPrice;
   }
 
@@ -257,7 +268,8 @@ export function parseSupplierApprovalDraft(value: unknown): SupplierApprovalDraf
     ...(draft.metaDescription !== undefined ? { metaDescription } : {}),
     ...(draft.keywords !== undefined ? { keywords: cleanTextList(draft.keywords, "SEO keywords") } : {}),
     sellingPrice,
-    comparePrice,
+    ...(comparePrice !== undefined ? { comparePrice } : {}),
+    ...(promotionEnabled !== undefined ? { promotionEnabled } : {}),
     ...(costPrice !== undefined ? { costPrice } : {}),
     ...(marketPrice !== undefined ? { marketPrice } : {}),
     stock: cleanNumber(draft.stock, "Stock", { integer: true, minimum: 0 }),
@@ -350,7 +362,7 @@ const normalizeSupplierCategory = (value: unknown): string => String(value || ""
   .toLocaleLowerCase("en")
   .replace(/[\s_-]+/g, " ");
 
-const toPublicProductPayload = (queueItem: QueueItemRecord, draft: SupplierApprovalDraft | undefined): Record<string, unknown> => {
+export const toPublicProductPayload = (queueItem: QueueItemRecord, draft: SupplierApprovalDraft | undefined): Record<string, unknown> => {
   const originalPayload = record(queueItem.productPayload);
   const productId = cleanText(originalPayload.id, "Product payload ID", 160);
   const fallbackPrimaryImage = stringValue(originalPayload.imageUrl);
@@ -366,9 +378,17 @@ const toPublicProductPayload = (queueItem: QueueItemRecord, draft: SupplierAppro
     throw new ApiError("A valid managed product image is required before publishing.", 422);
   }
   const price = draft?.sellingPrice ?? Number(originalPayload.price);
-  const comparePrice = draft?.comparePrice ?? Number(originalPayload.originalPrice ?? originalPayload.price);
-  if (!Number.isFinite(price) || price <= 0 || !Number.isFinite(comparePrice) || comparePrice < 0 || (comparePrice > 0 && comparePrice < price)) {
+  const existingOriginalPrice = Number(originalPayload.originalPrice);
+  const comparisonStatus = String(queueItem.comparisonStatus || record(queueItem.comparison).comparisonStatus || "").toUpperCase();
+  const legacyPromotionEnabled = comparisonStatus !== "NEW_PRODUCT" && existingOriginalPrice > price;
+  const promotionEnabled = draft?.promotionEnabled === true
+    || (draft?.promotionEnabled === undefined && legacyPromotionEnabled);
+  const comparePrice = draft?.comparePrice ?? (promotionEnabled ? existingOriginalPrice : undefined);
+  if (!Number.isFinite(price) || price <= 0 || (comparePrice !== undefined && (!Number.isFinite(comparePrice) || comparePrice < 0))) {
     throw new ApiError("Supplier product pricing is invalid.", 422);
+  }
+  if (promotionEnabled && (comparePrice === undefined || comparePrice <= price)) {
+    throw new ApiError("Regular price must be greater than the selling price when promotion is enabled.", 422);
   }
   const stock = draft?.stock ?? Number(originalPayload.stock);
   if (!Number.isInteger(stock) || stock < 0) throw new ApiError("Supplier product stock is invalid.", 422);
@@ -376,15 +396,20 @@ const toPublicProductPayload = (queueItem: QueueItemRecord, draft: SupplierAppro
   if (!category) throw new ApiError("Category is required.", 422);
   const productName = draft?.productName || stringValue(originalPayload.name) || stringValue(queueItem.productName);
   if (!productName) throw new ApiError("Product name is required.", 422);
-  const normalizedComparePrice = comparePrice > 0 ? comparePrice : price;
-  const discount = normalizedComparePrice > price
-    ? Math.round(((normalizedComparePrice - price) / normalizedComparePrice) * 100)
-    : 0;
+  const discount = promotionEnabled
+    ? Math.round(((comparePrice! - price) / comparePrice!) * 100)
+    : undefined;
   const specs = record(originalPayload.specs);
   const isActive = (draft?.isActive ?? originalPayload.isActive) === true;
+  const {
+    originalPrice: _legacyOriginalPrice,
+    discount: _legacyDiscount,
+    promotionEnabled: _legacyPromotionEnabled,
+    ...payloadWithoutPromotion
+  } = originalPayload;
 
   return {
-    ...originalPayload,
+    ...payloadWithoutPromotion,
     id: productId,
     imageUrl: images[0],
     imageUrls: images,
@@ -407,10 +432,10 @@ const toPublicProductPayload = (queueItem: QueueItemRecord, draft: SupplierAppro
     metaDescription: draft?.metaDescription ?? originalPayload.metaDescription,
     keywords: draft?.keywords ?? originalPayload.keywords,
     price,
-    originalPrice: normalizedComparePrice,
+    ...(promotionEnabled ? { originalPrice: comparePrice } : {}),
     costPrice: draft?.costPrice ?? Number(originalPayload.costPrice ?? 0),
     marketPrice: draft?.marketPrice ?? Number(originalPayload.marketPrice ?? 0),
-    discount,
+    ...(discount !== undefined ? { discount } : {}),
     stock,
     category,
     subcategory: draft?.subcategory || stringValue(originalPayload.subcategory),
@@ -918,8 +943,18 @@ export async function decideSupplierQueueItem(
         updatedAt: now,
       };
       const { publicData, commercialData } = splitProductData(approvedProductPayload);
+      const publicPrice = Number(approvedProductPayload.price);
+      const publicOriginalPrice = Number(approvedProductPayload.originalPrice);
+      const hasValidPublicPromotion = Number.isFinite(publicPrice)
+        && publicPrice > 0
+        && Number.isFinite(publicOriginalPrice)
+        && publicOriginalPrice > publicPrice;
       transaction.set(db.collection("products").doc(decidedProductId), {
         ...publicData,
+        ...(!hasValidPublicPromotion || effectiveDraft?.promotionEnabled === false ? {
+          originalPrice: FieldValue.delete(),
+          discount: FieldValue.delete(),
+        } : {}),
         ...commercialFieldDeletes(),
       }, { merge: true });
       if (Object.keys(commercialData).length > 0) {

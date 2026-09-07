@@ -23,6 +23,7 @@ const MAX_STOCK = 10_000_000;
 
 const MANUAL_PRODUCT_DRAFT_FIELDS = new Set([
   "id", "sku", "name", "description", "shortDescription", "price", "originalPrice",
+  "promotionEnabled",
   "imageUrl", "imageUrls", "category", "subcategory", "brand", "model", "barcode",
   "productType", "tags", "keyFeatures", "whatsIncluded", "stock", "specs", "isNew",
   "isFeatured", "isBestSeller", "isActive", "supplierId", "supplierItemCode", "costPrice",
@@ -141,6 +142,7 @@ export interface AdminProductDraft {
   shortDescription: string;
   price: number;
   originalPrice?: number;
+  promotionEnabled?: boolean;
   imageUrl: string;
   imageUrls: string[];
   category: string;
@@ -195,6 +197,13 @@ export function parseAdminProductDraft(value: unknown): AdminProductDraft {
   if (originalPrice !== undefined && originalPrice < price) {
     throw new ApiError("Regular price cannot be lower than the sale price.", 400);
   }
+  if (input.promotionEnabled !== undefined && typeof input.promotionEnabled !== "boolean") {
+    throw new ApiError("Promotion setting is invalid.", 400);
+  }
+  const promotionEnabled = input.promotionEnabled === undefined ? undefined : input.promotionEnabled === true;
+  if (promotionEnabled === true && (originalPrice === undefined || originalPrice <= price)) {
+    throw new ApiError("Regular price must be greater than the sale price when promotion is enabled.", 400);
+  }
   const barcode = cleanText(input.barcode, "Barcode", 32);
   if (barcode && !/^\d{8,14}$/u.test(barcode)) throw new ApiError("Barcode must contain 8 to 14 digits.", 400);
 
@@ -206,6 +215,7 @@ export function parseAdminProductDraft(value: unknown): AdminProductDraft {
     shortDescription: cleanText(input.shortDescription, "Short description", 500),
     price,
     ...(originalPrice !== undefined ? { originalPrice } : {}),
+    ...(promotionEnabled !== undefined ? { promotionEnabled } : {}),
     imageUrl: cleanUrl(input.imageUrl, "Primary product image", true),
     imageUrls: cleanTextList(input.imageUrls, "Product gallery", MAX_GALLERY_ITEMS)
       .map((entry) => cleanUrl(entry, "Gallery image")),
@@ -273,7 +283,7 @@ const validateCatalogRelationships = (
   }
 };
 
-const productProjection = (
+export const productProjection = (
   productId: string,
   sku: string,
   draft: AdminProductDraft,
@@ -282,8 +292,15 @@ const productProjection = (
   existingPublic?: Record<string, unknown>,
   routing: { fulfilmentMode: "internal" | "supplier"; supplierId?: string; supplierItemCode?: string } = { fulfilmentMode: "internal" },
 ): { publicData: Record<string, unknown>; commercialData: Record<string, unknown> } => {
-  const discount = draft.originalPrice && draft.originalPrice > draft.price
-    ? Math.round(((draft.originalPrice - draft.price) / draft.originalPrice) * 100)
+  const legacyPromotionEnabled = draft.promotionEnabled === undefined
+    && existingPublic?.originalPrice !== undefined
+    && Number(existingPublic.originalPrice) > Number(existingPublic.price);
+  const promotionEnabled = draft.promotionEnabled === true || legacyPromotionEnabled;
+  const regularPrice = promotionEnabled
+    ? (draft.originalPrice ?? Number(existingPublic?.originalPrice))
+    : undefined;
+  const discount = regularPrice !== undefined && regularPrice > draft.price
+    ? Math.round(((regularPrice - draft.price) / regularPrice) * 100)
     : undefined;
   const combined = compact({
     id: productId,
@@ -291,7 +308,7 @@ const productProjection = (
     description: draft.description,
     shortDescription: draft.shortDescription || undefined,
     price: draft.price,
-    originalPrice: draft.originalPrice,
+    ...(regularPrice !== undefined ? { originalPrice: regularPrice } : {}),
     discount,
     imageUrl: draft.imageUrl,
     imageUrls: draft.imageUrls,

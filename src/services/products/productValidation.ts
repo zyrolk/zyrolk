@@ -30,6 +30,12 @@ export const validateProductForSave = ({
     if (!Number.isFinite(regularPrice) || regularPrice <= 0) errors.push('Regular price must be greater than zero when provided.');
     else if (regularPrice < sellingPrice) errors.push('Regular price cannot be lower than the sale price.');
   }
+  if (product.promotionEnabled === true) {
+    const regularPrice = Number(product.originalPrice);
+    if (!Number.isFinite(regularPrice) || regularPrice <= sellingPrice) {
+      errors.push('Regular price must be greater than the sale price when promotion is enabled.');
+    }
+  }
 
   const stock = Number(product.stock);
   if (!Number.isInteger(stock) || stock < 0) errors.push('Stock must be a non-negative whole number.');

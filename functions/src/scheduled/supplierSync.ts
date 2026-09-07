@@ -929,7 +929,7 @@ export function resolveSupplierProductReviewVisibility(
   };
 }
 
-function buildProductPayload(
+export function buildProductPayload(
   product: RawA2ZProduct,
   match: ExistingProduct | undefined,
   categorySuggestion: SupplierCategorySuggestion,
@@ -952,7 +952,6 @@ function buildProductPayload(
     settings.defaultProfitMargin,
   );
   const price = pricing.sellingPrice;
-  const originalPrice = pricing.comparePrice;
   const imageLimit = getSupplierImageLimit(settings.defaultImageLimit);
   const imageUrls = [...new Set((product.mediaGallery || []).filter(isValidSupplierImageUrl).map((url) => url.trim()))].slice(0, imageLimit);
   const supplierImageUrl = imageUrls[0] || "";
@@ -960,6 +959,23 @@ function buildProductPayload(
   const acceptedSupplierFieldIds = new Set(comparison.fieldChanges?.map((change) => change.field) || []);
   const acceptsField = (field: SupplierFieldChange["field"]): boolean => isNewProduct || acceptedSupplierFieldIds.has(field);
   const priceUpdateEnabled = isNewProduct || (["costPrice", "price", "comparePrice"] as const).some(acceptsField);
+  const existingOriginalPrice = Number(match?.originalPrice);
+  const existingSellingPrice = Number(match?.price);
+  const effectiveSellingPrice = priceUpdateEnabled ? price : existingSellingPrice;
+  const existingPromotionPrice = Number.isFinite(existingOriginalPrice)
+    && existingOriginalPrice > 0
+    && Number.isFinite(existingSellingPrice)
+    && existingOriginalPrice > existingSellingPrice
+    ? existingOriginalPrice
+    : undefined;
+  const promotionFields = existingPromotionPrice !== undefined
+    && Number.isFinite(effectiveSellingPrice)
+    && existingPromotionPrice > effectiveSellingPrice
+    ? {
+      originalPrice: existingPromotionPrice,
+      discount: Math.round(((existingPromotionPrice - effectiveSellingPrice) / existingPromotionPrice) * 100),
+    }
+    : {};
   const stockUpdateEnabled = acceptsField("stock");
   const titleUpdateEnabled = acceptsField("title");
   const descriptionUpdateEnabled = acceptsField("longDescription");
@@ -982,8 +998,7 @@ function buildProductPayload(
     name: titleUpdateEnabled ? product.title : (match?.name || product.title),
     description: descriptionUpdateEnabled ? (product.longDescription || "") : (match?.description || ""),
     price: priceUpdateEnabled ? price : (match?.price || price),
-    originalPrice: priceUpdateEnabled ? originalPrice : (match?.originalPrice || match?.price || originalPrice),
-    discount: priceUpdateEnabled ? pricing.discountPercent : (match?.discount || 0),
+    ...promotionFields,
     stock: stockUpdateEnabled
       ? (stockProvided ? product.inventoryLevel : undefined)
       : (match?.stock),

@@ -4,6 +4,8 @@ export interface Product {
   description: string;
   price: number; // in LKR (this is the sale price if discount is present, or the default price)
   originalPrice?: number; // in LKR (this is the regular/original price)
+  /** Explicit admin intent for customer-visible promotion pricing. */
+  promotionEnabled?: boolean;
   discount?: number; // percentage
   imageUrl: string;
   imageUrls?: string[];

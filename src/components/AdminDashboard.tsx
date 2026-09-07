@@ -5321,7 +5321,9 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                       <span className="block text-[9px] font-black text-blue-500 uppercase tracking-widest">Pricing & Discounts</span>
                       {(() => {
                         const salePriceNum = Number(newProduct.price || 0);
-                        const regularPriceNum = Number(newProduct.originalPrice || 0);
+                        const regularPriceNum = newProduct.promotionEnabled === true
+                          ? Number(newProduct.originalPrice || 0)
+                          : 0;
                         const liveDiscount = (regularPriceNum > salePriceNum && salePriceNum > 0)
                           ? Math.round(((regularPriceNum - salePriceNum) / regularPriceNum) * 100)
                           : 0;
@@ -5332,6 +5334,19 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                         ) : null;
                       })()}
                     </div>
+
+                    <label className="flex min-h-10 items-center gap-2 text-xs font-bold text-slate-500">
+                      <input
+                        type="checkbox"
+                        checked={newProduct.promotionEnabled === true}
+                        onChange={(e) => setNewProduct(prev => ({
+                          ...prev,
+                          promotionEnabled: e.target.checked,
+                          originalPrice: e.target.checked ? prev.originalPrice : undefined,
+                        }))}
+                      />
+                      <span>Promotion (customer visible)</span>
+                    </label>
 
                     <div className="grid grid-cols-2 gap-3">
                       <div className="space-y-1">
@@ -5347,19 +5362,26 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                           className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-hidden focus:border-blue-500 transition-colors text-xs"
                         />
                       </div>
-                      <div className="space-y-1">
-                        <label className="text-slate-400 font-bold">Compare Price <span className="font-normal">(Customer Visible · Optional)</span></label>
-                        <input
-                          type="number"
-                          placeholder="e.g. 130000"
-                          value={newProduct.originalPrice || ""}
-                          onChange={(e) => setNewProduct(prev => ({ ...prev, originalPrice: e.target.value ? Number(e.target.value) : undefined }))}
-                          className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-hidden focus:border-blue-500 transition-colors text-xs"
-                        />
-                      </div>
+                      {newProduct.promotionEnabled === true ? (
+                        <div className="space-y-1">
+                          <label className="text-slate-400 font-bold">Regular / Compare Price <span className="font-normal">(Customer Visible)</span></label>
+                          <input
+                            type="number"
+                            min="0.01"
+                            placeholder="e.g. 130000"
+                            value={newProduct.originalPrice || ""}
+                            onChange={(e) => setNewProduct(prev => ({ ...prev, originalPrice: e.target.value ? Number(e.target.value) : undefined }))}
+                            className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-hidden focus:border-blue-500 transition-colors text-xs"
+                          />
+                        </div>
+                      ) : (
+                        <p className="col-span-2 self-end text-[10px] leading-tight text-slate-400">No customer promotion. Market Price remains admin reference data only.</p>
+                      )}
                     </div>
                     <p className="text-[10px] text-slate-400 leading-tight">
-                      * If the Compare Price is greater than the Selling Price, a discount badge is automatically applied.
+                      {newProduct.promotionEnabled === true
+                        ? '* Discount percentage is calculated automatically from the selling and regular prices.'
+                        : '* Promotion is off by default; supplier reference pricing does not create a customer discount.'}
                     </p>
                   </div>
 

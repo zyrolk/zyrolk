@@ -98,6 +98,8 @@ export interface SupplierReviewDraft {
   keywords: string[];
   sellingPrice: number;
   comparePrice: number;
+  /** Explicit customer-promotion intent; absent/false means no promotion. */
+  promotionEnabled?: boolean;
   costPrice: number;
   marketPrice: number;
   stock: number;
@@ -369,6 +371,14 @@ export function createSupplierReviewDraft(item: SupplierReviewSourceItem): Suppl
   )];
   const storedOwnership = parseSupplierProductFieldOwnership(payload?.supplierFieldOwnership);
   const isNewProduct = item.comparison?.comparisonStatus === 'NEW_PRODUCT';
+  const sellingPrice = finiteNumber(payload?.price, finiteNumber(item.marketPrice));
+  const payloadOriginalPrice = optionalFiniteNumber(payload?.originalPrice);
+  const legacyPromotionEnabled = !isNewProduct
+    && payloadOriginalPrice !== undefined
+    && payloadOriginalPrice > sellingPrice;
+  const promotionEnabled = typeof payload?.promotionEnabled === 'boolean'
+    ? payload.promotionEnabled
+    : legacyPromotionEnabled;
   const fieldOwnership = Object.fromEntries(SUPPLIER_REVIEW_EDITABLE_FIELDS.map((field) => [
     field,
     storedOwnership[field]?.owner || (isNewProduct && !ADMIN_ONLY_REVIEW_FIELDS.has(field) ? 'supplier' : 'admin'),
@@ -389,8 +399,9 @@ export function createSupplierReviewDraft(item: SupplierReviewSourceItem): Suppl
     slug: String(payload?.slug || ''),
     metaDescription: String(payload?.metaDescription || ''),
     keywords: textList(payload?.keywords),
-    sellingPrice: finiteNumber(payload?.price, finiteNumber(item.marketPrice)),
-    comparePrice: finiteNumber(payload?.originalPrice, finiteNumber(item.marketPrice)),
+    sellingPrice,
+    comparePrice: promotionEnabled ? (payloadOriginalPrice ?? 0) : 0,
+    promotionEnabled,
     costPrice: supplierCostAvailable ? finiteNumber(resolvedCost, 0) : finiteNumber(resolvedCost, Number.NaN),
     marketPrice: finiteNumber(payload?.marketPrice, finiteNumber(item.marketPrice)),
     stock: supplierStockAvailable
@@ -487,7 +498,11 @@ export function validateSupplierReviewDraft(
   }
   if (!Number.isFinite(draft.sellingPrice) || draft.sellingPrice <= 0) errors.sellingPrice = 'Selling price must be greater than zero.';
   if (!Number.isFinite(draft.comparePrice) || draft.comparePrice < 0) errors.comparePrice = 'Compare price cannot be negative.';
-  if (draft.comparePrice > 0 && draft.comparePrice < draft.sellingPrice) errors.comparePrice = 'Compare price must be at least the selling price.';
+  if (draft.promotionEnabled === true && draft.comparePrice <= draft.sellingPrice) {
+    errors.comparePrice = 'Regular price must be greater than the selling price when promotion is enabled.';
+  } else if (draft.comparePrice > 0 && draft.comparePrice < draft.sellingPrice) {
+    errors.comparePrice = 'Compare price must be at least the selling price.';
+  }
   if (!draft.supplierCostAvailable) {
     if (!Number.isFinite(draft.costPrice) || draft.costPrice < 0) {
       errors.costPrice = 'Supplier cost was not provided. Enter a valid supplier cost before approval.';
@@ -594,11 +609,12 @@ export function buildSupplierApprovalItem(
   const normalizedImages = normalizeSupplierProductImages(draft.primaryImageUrl, draft.galleryImageUrls);
   const primaryImageUrl = draft.primaryImageUrl.trim();
   const sellingPrice = finiteNumber(draft.sellingPrice);
-  const comparePrice = finiteNumber(draft.comparePrice, sellingPrice);
-  const normalizedComparePrice = comparePrice > 0 ? comparePrice : sellingPrice;
-  const discount = normalizedComparePrice > sellingPrice
-    ? Math.round(((normalizedComparePrice - sellingPrice) / normalizedComparePrice) * 100)
-    : 0;
+  const promotionEnabled = draft.promotionEnabled === true;
+  const comparePrice = finiteNumber(draft.comparePrice, 0);
+  const normalizedComparePrice = promotionEnabled ? comparePrice : undefined;
+  const discount = promotionEnabled && comparePrice > sellingPrice
+    ? Math.round(((comparePrice - sellingPrice) / comparePrice) * 100)
+    : undefined;
   const brand = draft.brand.trim();
   const supplierSnapshot = item.supplierSnapshot || {
     supplierName: item.supplierName || 'Unknown Supplier',
@@ -611,49 +627,55 @@ export function buildSupplierApprovalItem(
     productPayload: { ...originalPayload, specs: { ...(originalPayload.specs || {}) } },
   };
 
+  const approvedProductPayload: Record<string, unknown> = {
+    ...originalPayload,
+    imageUrl: primaryImageUrl,
+    imageUrls: normalizedImages,
+    name: draft.productName.trim(),
+    shortDescription: String(draft.shortDescription || '').trim(),
+    description: String(draft.description || '').trim(),
+    model: String(draft.model || '').trim(),
+    barcode: String(draft.barcode || '').trim(),
+    productType: String(draft.productType || '').trim(),
+    tags: textList(draft.tags),
+    keyFeatures: textList(draft.keyFeatures),
+    whatsIncluded: textList(draft.whatsIncluded),
+    slug: String(draft.slug || '').trim(),
+    metaDescription: String(draft.metaDescription || '').trim(),
+    keywords: textList(draft.keywords),
+    price: sellingPrice,
+    ...(normalizedComparePrice !== undefined ? { originalPrice: normalizedComparePrice } : {}),
+    costPrice: finiteNumber(draft.costPrice),
+    marketPrice: finiteNumber(draft.marketPrice),
+    ...(discount !== undefined ? { discount } : {}),
+    stock: draft.stock,
+    category: draft.category.trim(),
+    subcategory: String(draft.subcategory || '').trim(),
+    brand,
+    specs: {
+      ...(originalPayload.specs || {}),
+      ...(draft.specifications || {}),
+      brand,
+    },
+    isActive: draft.isActive,
+    isNew: draft.isNew,
+    isFeatured: draft.isFeatured,
+    isBestSeller: draft.isBestSeller,
+    active: draft.isActive,
+    visible: draft.isActive,
+    approved: true,
+    published: true,
+    ...(draft.fieldOwnership ? { supplierFieldOwnership: draft.fieldOwnership } : {}),
+  };
+  if (!promotionEnabled) {
+    delete approvedProductPayload.originalPrice;
+    delete approvedProductPayload.discount;
+  }
+
   return {
     ...item,
     productName: draft.productName.trim(),
     supplierSnapshot,
-    productPayload: {
-      ...originalPayload,
-      imageUrl: primaryImageUrl,
-      imageUrls: normalizedImages,
-      name: draft.productName.trim(),
-      shortDescription: String(draft.shortDescription || '').trim(),
-      description: String(draft.description || '').trim(),
-      model: String(draft.model || '').trim(),
-      barcode: String(draft.barcode || '').trim(),
-      productType: String(draft.productType || '').trim(),
-      tags: textList(draft.tags),
-      keyFeatures: textList(draft.keyFeatures),
-      whatsIncluded: textList(draft.whatsIncluded),
-      slug: String(draft.slug || '').trim(),
-      metaDescription: String(draft.metaDescription || '').trim(),
-      keywords: textList(draft.keywords),
-      price: sellingPrice,
-      originalPrice: normalizedComparePrice,
-      costPrice: finiteNumber(draft.costPrice),
-      marketPrice: finiteNumber(draft.marketPrice),
-      discount,
-      stock: draft.stock,
-      category: draft.category.trim(),
-      subcategory: String(draft.subcategory || '').trim(),
-      brand,
-      specs: {
-        ...(originalPayload.specs || {}),
-        ...(draft.specifications || {}),
-        brand,
-      },
-      isActive: draft.isActive,
-      isNew: draft.isNew,
-      isFeatured: draft.isFeatured,
-      isBestSeller: draft.isBestSeller,
-      active: draft.isActive,
-      visible: draft.isActive,
-      approved: true,
-      published: true,
-      ...(draft.fieldOwnership ? { supplierFieldOwnership: draft.fieldOwnership } : {}),
-    },
+    productPayload: approvedProductPayload as SupplierReviewSourceItem['productPayload'],
   };
 }

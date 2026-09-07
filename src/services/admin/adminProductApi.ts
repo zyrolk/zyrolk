@@ -3,7 +3,7 @@ import type { Product } from '../../types';
 import { getAppCheckRequestHeaders } from '../security/appCheck';
 
 const PRODUCT_DRAFT_FIELDS = [
-  'id', 'sku', 'name', 'description', 'shortDescription', 'price', 'originalPrice',
+  'id', 'sku', 'name', 'description', 'shortDescription', 'price', 'originalPrice', 'promotionEnabled',
   'imageUrl', 'imageUrls', 'category', 'subcategory', 'brand', 'model', 'barcode',
   'productType', 'tags', 'keyFeatures', 'whatsIncluded', 'stock', 'specs', 'isNew',
   'isFeatured', 'isBestSeller', 'isActive', 'supplierId', 'supplierItemCode', 'costPrice',

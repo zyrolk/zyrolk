@@ -76,7 +76,22 @@ const createFakeFirestore = (initial: Record<string, StoredDocument>) => {
     limit: (value) => queryReference(collectionName, filters, value),
   });
   const mergeWrite = (reference: DocumentReference, data: StoredDocument, merge = false): void => {
-    documents.set(reference.key, merge ? { ...(documents.get(reference.key) || {}), ...data } : data);
+    if (!merge) {
+      documents.set(reference.key, data);
+      return;
+    }
+    const merged = { ...(documents.get(reference.key) || {}) };
+    Object.entries(data).forEach(([field, value]) => {
+      const constructorName = value && typeof value === 'object'
+        ? (value as { constructor?: { name?: string } }).constructor?.name
+        : undefined;
+      if (constructorName === 'DeleteTransform') {
+        delete merged[field];
+      } else {
+        merged[field] = value;
+      }
+    });
+    documents.set(reference.key, merged);
   };
   const transaction = {
     get: async (reference: DocumentReference | QueryReference): Promise<DocumentSnapshot | QuerySnapshot> => reference.kind === 'query'
@@ -240,6 +255,35 @@ const decisionFixture = (state = 'review_pending') => {
     }),
   };
 };
+
+test('no-draft approval removes stale promotion after a supplier price invalidates it', async () => {
+  const fixture = decisionFixture();
+  const queuedItem = fixture.documents.get('supplier_review_queue/review-1') || {};
+  const queuedPayload: StoredDocument = { ...((queuedItem.productPayload || {}) as StoredDocument), price: 200 };
+  delete queuedPayload.originalPrice;
+  delete queuedPayload.discount;
+  fixture.documents.set('supplier_review_queue/review-1', {
+    ...queuedItem,
+    productPayload: queuedPayload,
+  });
+  fixture.documents.set('product_private/canonical-product', {
+    supplierFieldOwnership: { price: 'supplier', originalPrice: 'admin' },
+  });
+
+  const result = await decideSupplierQueueItem(
+    fixture.db as never,
+    'review-1',
+    'approved',
+    { uid: 'admin-1', email: 'admin@zyro.lk' },
+    { expectedPendingRevision: fixture.pendingRevision },
+  );
+
+  assert.equal(result.success, true, JSON.stringify(result));
+  const publicProduct = fixture.documents.get('products/canonical-product') || {};
+  assert.equal(publicProduct.price, 200);
+  assert.equal(Object.hasOwn(publicProduct, 'originalPrice'), false);
+  assert.equal(Object.hasOwn(publicProduct, 'discount'), false);
+});
 
 const approvedPendingDecisionFixture = () => {
   const sourceA = offer('source-a', 100, { reviewStatus: 'approved', stock: 8 });

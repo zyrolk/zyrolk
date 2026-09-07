@@ -124,7 +124,7 @@ test('product save payload protects system fields and derives launch metadata', 
     draft: {
       ...createProductDraft('electronics', 'ZY-2'),
       id: 'new-phone', name: ' New Phone ', brand: 'sony', subcategory: 'phones',
-      price: 80, originalPrice: 100, stock: 3, imageUrl: ' https://example.com/new.jpg ',
+      price: 80, originalPrice: 100, promotionEnabled: true, stock: 3, imageUrl: ' https://example.com/new.jpg ',
       tags: [' phone ', 'phone'], keyFeatures: [' OLED '], whatsIncluded: [' Cable '],
       rating: 5, reviewsCount: 999, discount: 90, specs: { Display: ' OLED ' },
     },

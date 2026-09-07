@@ -79,6 +79,24 @@ export interface SupplierOfferPendingObservation {
   effective: SupplierOfferEffectiveSnapshot;
 }
 
+const serializeSupplierAuditValue = (value: unknown): unknown => {
+  if (value === undefined || value instanceof FieldValue) return undefined;
+  if (Array.isArray(value)) {
+    return value
+      .map(serializeSupplierAuditValue)
+      .filter((entry): entry is unknown => entry !== undefined);
+  }
+  if (value && typeof value === "object") {
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) return value;
+    return Object.fromEntries(Object.entries(value).flatMap(([key, entry]) => {
+      const serialized = serializeSupplierAuditValue(entry);
+      return serialized === undefined ? [] : [[key, serialized]];
+    }));
+  }
+  return value;
+};
+
 export interface SupplierOfferStateExpectation {
   exists: boolean;
   stateVersion: number;
@@ -483,16 +501,24 @@ export function buildSupplierOfferPublicProjection(
     offer.stock,
     true,
   );
-  const catalogPayload = asRecord(offer.catalogPayload);
-  const candidateComparePrice = money(catalogPayload.originalPrice ?? catalogPayload.comparePrice ?? currentProduct.originalPrice);
-  const originalPrice = candidateComparePrice >= offer.price ? candidateComparePrice : offer.price;
-  const discount = originalPrice > offer.price
-    ? Math.round(((originalPrice - offer.price) / originalPrice) * 100)
-    : 0;
+  const currentPrice = money(currentProduct.price);
+  const currentOriginalPrice = money(currentProduct.originalPrice);
+  const hasExistingPromotion = currentOriginalPrice > 0
+    && currentPrice > 0
+    && currentOriginalPrice > currentPrice;
+  // A public promotion's regular price is admin-owned. Supplier offer
+  // payloads may contain legacy reference pricing, but it must not replace or
+  // increase the customer-facing regular price.
+  const candidateComparePrice = hasExistingPromotion ? currentOriginalPrice : 0;
+  const hasPromotion = candidateComparePrice > offer.price;
+  const discount = hasPromotion
+    ? Math.round(((candidateComparePrice - offer.price) / candidateComparePrice) * 100)
+    : undefined;
   return {
     price: offer.price,
-    originalPrice,
-    discount,
+    ...(hasPromotion
+      ? { originalPrice: candidateComparePrice, discount }
+      : { originalPrice: FieldValue.delete(), discount: FieldValue.delete() }),
     stock: projectedStock,
     availability: offer.availability === "unavailable"
       ? "unavailable"
@@ -974,7 +1000,7 @@ export async function reconcileSupplierProductOfferFailover(
       adminUserId: "system",
       adminEmail: "",
       reason,
-      before: {
+      before: serializeSupplierAuditValue({
         selection: previousSelection,
         publicCommerce: Object.fromEntries(Object.entries({
           price: productSnapshot.data()?.price,
@@ -983,8 +1009,8 @@ export async function reconcileSupplierProductOfferFailover(
           stock: productSnapshot.data()?.stock,
           availability: productSnapshot.data()?.availability,
         }).filter(([, value]) => value !== undefined)),
-      },
-      after: { selection: nextSelection, publicCommerce: publicProjection },
+      }),
+      after: serializeSupplierAuditValue({ selection: nextSelection, publicCommerce: publicProjection }),
       timestamp: FieldValue.serverTimestamp(),
     });
     return {
@@ -1018,8 +1044,8 @@ const writeOfferAdministrationAudit = (
     offerId: input.offerId,
     adminUserId: input.actor.uid,
     adminEmail: input.actor.email,
-    before: input.before,
-    after: input.after,
+    before: serializeSupplierAuditValue(input.before),
+    after: serializeSupplierAuditValue(input.after),
     timestamp: FieldValue.serverTimestamp(),
   });
 };

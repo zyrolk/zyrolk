@@ -281,6 +281,13 @@ export default function SupplierReviewEditorModal({
     setDraft((current) => updateSupplierReviewDraftField(current, ownershipField, { [field]: value === '' ? Number.NaN : Number(value) }));
   };
 
+  const setPromotionEnabled = (enabled: boolean) => {
+    setDraft((current) => updateSupplierReviewDraftField(current, 'originalPrice', {
+      promotionEnabled: enabled,
+      comparePrice: enabled ? current.comparePrice : 0,
+    }));
+  };
+
   const editDraft = (field: SupplierReviewEditableField, patch: Partial<SupplierReviewDraft>) => {
     setDraft((current) => updateSupplierReviewDraftField(current, field, patch));
   };
@@ -545,11 +552,26 @@ export default function SupplierReviewEditorModal({
               {errorFor('sellingPrice') && <span className="text-[10px] font-semibold text-red-500">{errorFor('sellingPrice')}</span>}
             </label>
 
-            <label className="space-y-1.5 text-xs">
-              <span className="font-bold text-slate-600 dark:text-slate-300">Compare Price <span className="font-normal text-slate-400">(Customer visible)</span></span>
-              <input type="number" min="0" step="0.01" value={Number.isFinite(draft.comparePrice) ? draft.comparePrice : ''} onChange={(event) => setNumber('comparePrice', event.target.value)} aria-invalid={Boolean(errorFor('comparePrice'))} className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 dark:border-slate-700 dark:bg-slate-900" />
-              {errorFor('comparePrice') && <span className="text-[10px] font-semibold text-red-500">{errorFor('comparePrice')}</span>}
-            </label>
+            <div className="space-y-2 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs dark:border-slate-700 dark:bg-slate-900/50">
+              <label className="flex min-h-11 items-center gap-3 font-bold text-slate-600 dark:text-slate-300">
+                <input
+                  type="checkbox"
+                  checked={draft.promotionEnabled === true}
+                  onChange={(event) => setPromotionEnabled(event.target.checked)}
+                />
+                <span>Promotion <span className="font-normal text-slate-400">(Customer visible)</span></span>
+              </label>
+              {draft.promotionEnabled === true ? (
+                <label className="block space-y-1.5">
+                  <span className="font-bold text-slate-600 dark:text-slate-300">Regular / Compare Price</span>
+                  <input type="number" min="0.01" step="0.01" value={Number.isFinite(draft.comparePrice) ? draft.comparePrice : ''} onChange={(event) => setNumber('comparePrice', event.target.value)} aria-invalid={Boolean(errorFor('comparePrice'))} className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 dark:border-slate-700 dark:bg-slate-900" />
+                  {errorFor('comparePrice') && <span className="text-[10px] font-semibold text-red-500">{errorFor('comparePrice')}</span>}
+                  <span className="block text-[10px] text-slate-400">Discount percentage is calculated automatically.</span>
+                </label>
+              ) : (
+                <p className="text-[10px] text-slate-400">No customer promotion. Market Price remains admin reference data only.</p>
+              )}
+            </div>
 
             <label className="space-y-1.5 text-xs">
               <span className="font-bold text-slate-600 dark:text-slate-300">Cost Price <span className="font-normal text-slate-400">(Admin only)</span></span>
@@ -626,7 +648,7 @@ export default function SupplierReviewEditorModal({
           <div className="mt-4 grid gap-4 sm:grid-cols-2">
             <div className="space-y-1.5 text-xs sm:col-span-2"><span className="font-bold text-slate-600 dark:text-slate-300">Product Name</span><ReadOnlyValue>{draft.productName || 'Not supplied'}</ReadOnlyValue></div>
             <div className="space-y-1.5 text-xs"><span className="font-bold text-slate-600 dark:text-slate-300">Selling Price</span><ReadOnlyValue>{money(draft.sellingPrice)}</ReadOnlyValue></div>
-            <div className="space-y-1.5 text-xs"><span className="font-bold text-slate-600 dark:text-slate-300">Compare Price</span><ReadOnlyValue>{money(draft.comparePrice)}</ReadOnlyValue></div>
+            <div className="space-y-1.5 text-xs"><span className="font-bold text-slate-600 dark:text-slate-300">Promotion</span><ReadOnlyValue>{draft.promotionEnabled === true ? `On · ${money(draft.comparePrice)} regular price` : 'Off'}</ReadOnlyValue></div>
             <div className="space-y-1.5 text-xs"><span className="font-bold text-slate-600 dark:text-slate-300">Cost Price</span><ReadOnlyValue>{formatSupplierCostLabel(draft.costPrice, draft.supplierCostAvailable)}</ReadOnlyValue></div>
             <div className="space-y-1.5 text-xs"><span className="font-bold text-slate-600 dark:text-slate-300">Stock</span><ReadOnlyValue>{formatSupplierStockLabel(draft.stock, draft.supplierStockAvailable)}</ReadOnlyValue></div>
             <div className="space-y-1.5 text-xs"><span className="font-bold text-slate-600 dark:text-slate-300">Category</span><ReadOnlyValue>{selectedCategory?.name || draft.category || 'Not selected'}</ReadOnlyValue></div>

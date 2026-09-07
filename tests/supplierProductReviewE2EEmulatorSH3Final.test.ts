@@ -411,7 +411,8 @@ test("SH-3 new and updated products use the real review worker and approval tran
     assert.equal(product.name, `${identity} admin product name`);
     assert.equal(product.description, "Admin-owned product description.");
     assert.equal(product.price, 175);
-    assert.equal(product.originalPrice, 200);
+    assert.equal(Object.hasOwn(product, "originalPrice"), false);
+    assert.equal(Object.hasOwn(product, "discount"), false);
     assert.equal(product.category, "electronics");
     assert.equal(product.brand, "test-brand");
     assert.equal(product.metaDescription, "Admin SEO description for the approved product.");

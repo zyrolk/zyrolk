@@ -97,6 +97,7 @@ export const createProductDraft = (
   shortDescription: '',
   price: 0,
   originalPrice: 0,
+  promotionEnabled: false,
   imageUrl: '',
   imageUrls: [],
   category: categoryId,
@@ -126,8 +127,13 @@ export const normalizeProductForEditor = (
   categories: readonly Readonly<Category>[],
 ): Partial<Product> => {
   const category = getSelectedCategory(categories, product.category);
+  const legacyPromotionEnabled = product.originalPrice !== undefined
+    && Number(product.originalPrice) > Number(product.price);
   return {
     ...product,
+    promotionEnabled: typeof product.promotionEnabled === 'boolean'
+      ? product.promotionEnabled
+      : legacyPromotionEnabled,
     brand: resolveRegisteredBrandId(product, brands),
     subcategory: getActiveSubcategories(category).some((item) => item.id === product.subcategory)
       ? product.subcategory
@@ -154,7 +160,11 @@ export const buildProductSavePayload = ({
   now,
 }: ProductSavePayloadInput): Partial<Product> => {
   const sellingPrice = Number(draft.price);
-  const originalPrice = draft.originalPrice ? Number(draft.originalPrice) : undefined;
+  const legacyPromotionEnabled = draft.promotionEnabled === undefined
+    && storedProduct?.originalPrice !== undefined
+    && Number(storedProduct.originalPrice) > Number(storedProduct.price);
+  const promotionEnabled = draft.promotionEnabled === true || legacyPromotionEnabled;
+  const originalPrice = promotionEnabled && draft.originalPrice ? Number(draft.originalPrice) : undefined;
   const discount = originalPrice && originalPrice > sellingPrice
     ? Math.round(((originalPrice - sellingPrice) / originalPrice) * 100)
     : undefined;
@@ -181,6 +191,7 @@ export const buildProductSavePayload = ({
     keyFeatures: normalizeTextList(draft.keyFeatures),
     whatsIncluded: normalizeTextList(draft.whatsIncluded),
     price: sellingPrice,
+    promotionEnabled,
     originalPrice,
     discount,
     stock: Number(draft.stock),

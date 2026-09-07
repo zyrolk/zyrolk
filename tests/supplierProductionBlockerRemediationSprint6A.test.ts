@@ -108,8 +108,8 @@ test('Sprint 6A product removal projects a healthy replacement or safely deactiv
 
   assert.deepEqual(fallbackProjection, {
     price: 150,
-    originalPrice: 200,
-    discount: 25,
+    originalPrice: 180,
+    discount: 17,
     stock: 18,
     availability: 'in_stock',
   });
@@ -184,7 +184,8 @@ test('Sprint 6A supplier selection atomically projects approved offer commerce f
   assert.equal(result.selection.activeOfferId, selected.id);
   const publicWrite = writes.find((write) => write.collection === 'products' && write.id === 'product-1');
   assert.equal(publicWrite?.data.price, 150);
-  assert.equal(publicWrite?.data.originalPrice, 200);
+  assert.equal(publicWrite?.data.originalPrice, 180);
+  assert.equal(publicWrite?.data.discount, 17);
   assert.equal(publicWrite?.data.stock, 18);
   assert.equal(publicWrite?.data.availability, 'in_stock');
   const privateWrite = writes.find((write) => write.collection === 'product_private' && write.id === 'product-1');

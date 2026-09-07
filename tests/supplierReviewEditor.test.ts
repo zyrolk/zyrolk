@@ -59,6 +59,7 @@ test('supplier review draft projects editable product values with safe defaults'
     keywords: [],
     sellingPrice: 1500,
     comparePrice: 1700,
+    promotionEnabled: true,
     costPrice: 1000,
     marketPrice: 1500,
     stock: 5,
