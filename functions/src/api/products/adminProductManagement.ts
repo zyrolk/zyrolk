@@ -98,6 +98,13 @@ const cleanUrl = (value: unknown, label: string, required = false): string => {
   }
 };
 
+const cleanUrlList = (value: unknown, label: string, maximumItems = MAX_TEXT_LIST_ITEMS): string[] => {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value) || value.length > maximumItems) throw new ApiError(`${label} is invalid.`, 400);
+  const values = value.map((entry) => cleanUrl(entry, "Gallery image")).filter(Boolean);
+  return [...new Set(values)];
+};
+
 const cleanTextList = (value: unknown, label: string, maximumItems = MAX_TEXT_LIST_ITEMS): string[] => {
   if (value === undefined || value === null) return [];
   if (!Array.isArray(value) || value.length > maximumItems) throw new ApiError(`${label} is invalid.`, 400);
@@ -217,8 +224,7 @@ export function parseAdminProductDraft(value: unknown): AdminProductDraft {
     ...(originalPrice !== undefined ? { originalPrice } : {}),
     ...(promotionEnabled !== undefined ? { promotionEnabled } : {}),
     imageUrl: cleanUrl(input.imageUrl, "Primary product image", true),
-    imageUrls: cleanTextList(input.imageUrls, "Product gallery", MAX_GALLERY_ITEMS)
-      .map((entry) => cleanUrl(entry, "Gallery image")),
+    imageUrls: cleanUrlList(input.imageUrls, "Product gallery", MAX_GALLERY_ITEMS),
     category: cleanDocumentId(input.category, "Product category"),
     subcategory: cleanDocumentId(input.subcategory, "Product subcategory", false),
     brand: cleanDocumentId(input.brand, "Product brand"),
