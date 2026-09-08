@@ -7,18 +7,19 @@ import { DEFAULT_WEBSITE_SETTINGS, normalizeWebsiteSettings } from '../src/servi
 
 const contact = readFileSync('src/components/ContactPage.tsx', 'utf8');
 const cms = readFileSync('src/components/CmsPage.tsx', 'utf8');
+const admin = readFileSync('src/components/AdminDashboard.tsx', 'utf8');
 
-test('Contact renders configured business hours instead of CMS hours', () => {
+test('Contact renders configured daily business hours instead of CMS hours', () => {
   assert.deepEqual(getCanonicalBusinessHours({
     businessHours: {
-      weekdays: '10:00 AM - 4:00 PM',
-      saturday: '10:00 AM - 1:00 PM',
-      sunday: 'Closed',
+      weekdays: '8:00 AM - 10:00 PM',
+      saturday: '8:00 AM - 10:00 PM',
+      sunday: '8:00 AM - 10:00 PM',
     },
   }), [
-    { label: 'Weekdays', value: '10:00 AM - 4:00 PM' },
-    { label: 'Saturday', value: '10:00 AM - 1:00 PM' },
-    { label: 'Sunday', value: 'Closed' },
+    { label: 'Weekdays', value: '8:00 AM - 10:00 PM' },
+    { label: 'Saturday', value: '8:00 AM - 10:00 PM' },
+    { label: 'Sunday', value: '8:00 AM - 10:00 PM' },
   ]);
   assert.match(contact, /const hoursItems = getCanonicalBusinessHours\(settings\)/);
   assert.doesNotMatch(contact, /hoursItems = parsed\.hoursItems/);
@@ -26,22 +27,29 @@ test('Contact renders configured business hours instead of CMS hours', () => {
 
 test('Contact uses one safe production-default business-hours fallback', () => {
   assert.deepEqual(getCanonicalBusinessHours(null), [
-    { label: 'Weekdays', value: '9:00 AM - 6:00 PM' },
-    { label: 'Saturday', value: '9:00 AM - 5:00 PM' },
-    { label: 'Sunday', value: 'Closed' },
+    { label: 'Weekdays', value: '8:00 AM - 10:00 PM' },
+    { label: 'Saturday', value: '8:00 AM - 10:00 PM' },
+    { label: 'Sunday', value: '8:00 AM - 10:00 PM' },
   ]);
   assert.deepEqual(getCanonicalBusinessHours({
-    businessHours: { weekdays: ' ', saturday: '', sunday: 'Closed' },
+    businessHours: { weekdays: ' ', saturday: '', sunday: '' },
   }), [
-    { label: 'Weekdays', value: '9:00 AM - 6:00 PM' },
-    { label: 'Saturday', value: '9:00 AM - 5:00 PM' },
-    { label: 'Sunday', value: 'Closed' },
+    { label: 'Weekdays', value: '8:00 AM - 10:00 PM' },
+    { label: 'Saturday', value: '8:00 AM - 10:00 PM' },
+    { label: 'Sunday', value: '8:00 AM - 10:00 PM' },
   ]);
   assert.deepEqual(DEFAULT_WEBSITE_SETTINGS.businessHours, {
-    weekdays: '9:00 AM - 6:00 PM',
-    saturday: '9:00 AM - 5:00 PM',
-    sunday: 'Closed',
+    weekdays: '8:00 AM - 10:00 PM',
+    saturday: '8:00 AM - 10:00 PM',
+    sunday: '8:00 AM - 10:00 PM',
   });
+});
+
+test('Customer fallback copy contains only the canonical daily hours', () => {
+  for (const source of [contact, cms, admin]) {
+    assert.match(source, /Business Hours: Daily, 8:00 AM - 10:00 PM/);
+    assert.doesNotMatch(source, /Sunday: Closed|Saturday: 9:00 AM - 5:00 PM|Weekdays: 9:00 AM - 6:00 PM|Monday[ -]Sunday[\s\S]{0,20}8:30 AM - 6:00 PM/);
+  }
 });
 
 test('Fallback shipping copy matches the flat fee and inclusive threshold', () => {

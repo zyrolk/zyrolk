@@ -135,10 +135,7 @@ Have questions about brand warranties, solar solutions, or custom product orderi
 Customer Support
 Send your enquiry with the details available to you and our team will respond through an available contact channel.
 
-Operating Hours
-- Weekdays: 9:00 AM - 6:00 PM
-- Saturday: 9:00 AM - 5:00 PM
-- Sunday: Closed
+Business Hours: Daily, 8:00 AM - 10:00 PM
 
 Instant Help
 Want the fastest response? Skip forms entirely and talk to our support team on WhatsApp right now.

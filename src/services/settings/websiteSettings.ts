@@ -59,7 +59,7 @@ export const DEFAULT_WEBSITE_SETTINGS: WebsiteSettings = {
   freeDeliveryMin: 150000,
   deliveryAreas: [],
   currency: 'LKR',
-  businessHours: { weekdays: '9:00 AM - 6:00 PM', saturday: '9:00 AM - 5:00 PM', sunday: 'Closed' },
+  businessHours: { weekdays: '8:00 AM - 10:00 PM', saturday: '8:00 AM - 10:00 PM', sunday: '8:00 AM - 10:00 PM' },
   storeStatus: 'open',
   storeStatusMessage: '',
   codPendingOrderTtlHours: 24,
