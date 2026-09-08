@@ -66,14 +66,15 @@ You have the right to request access to your stored personal data, request corre
 • We reserve the right to modify these terms or update website pricing at any time without prior notice.
 
 2. Ordering & Payment
-• Orders placed through the website represent an offer to purchase.
-• We offer secure payment methods including Cash on Delivery (COD) and direct WhatsApp payment confirmations.
-• For high-value orders, we may request a partial advance payment to secure shipping and dispatch.
+- Orders placed through the website represent an offer to purchase.
+- We currently support Cash on Delivery (COD). Available payment options are shown during checkout.
+- WhatsApp is available for customer support and order assistance only; it is not a separate payment method.
 
 3. Deliveries & Shipments
-• Islandwide shipping charges and free delivery thresholds are dynamically calculated at checkout.
-• Delivery times typically range from 1 to 3 business days in Colombo/suburbs, and 3 to 5 business days for outstation districts.
-• While we make every effort to meet estimated delivery times, external factors such as weather or courier delays are beyond our control.
+- Delivery fee is LKR 350 for orders below LKR 5,000.
+- Free delivery is available on orders of LKR 5,000 or more.
+- Delivery times may vary by location. Estimated delivery information will be provided where available.
+- While we make every effort to meet estimated delivery times, external factors such as weather or courier delays are beyond our control.
 
 4. Electronic Specifications & Product Information
 • We attempt to provide accurate pictures and technical specifications for every product.
@@ -110,7 +111,10 @@ Q: Do you deliver islandwide in Sri Lanka?
 A: Yes! We deliver to any address across all 25 districts in Sri Lanka. Packages are handled by professional courier networks to ensure secure handling.
 
 Q: What are your shipping rates?
-A: Shipping costs vary based on your district and the items in your cart. You can see the exact delivery charge during checkout. We offer free delivery on orders that exceed our minimum threshold.
+A: Delivery fee is LKR 350 for orders below LKR 5,000. Free delivery is available on orders of LKR 5,000 or more.
+
+Q: How long does delivery take?
+A: Delivery times may vary by location. Estimated delivery information will be provided where available.
 
 Q: Can I pay with Cash on Delivery (COD)?
 A: Yes, Cash on Delivery is supported for most locations and standard items. You can select COD at checkout and pay the courier when your package is delivered.
@@ -129,18 +133,18 @@ A: Once your order is dispatched, we can share tracking details with you. You ca
 Have questions about brand warranties, solar solutions, or custom product ordering? Our professional sales team is standing by to assist you.
 
 Customer Support
-Our back-office representative will respond with pricing, quotation invoices, or warranty details within 2 hours.
+Send your enquiry with the details available to you and our team will respond through an available contact channel.
 
 Operating Hours
-• Weekdays: 9:00 AM - 7:00 PM
-• Saturday: 9:00 AM - 5:00 PM
-• Sunday & Poya Days: Closed
+- Weekdays: 9:00 AM - 6:00 PM
+- Saturday: 9:00 AM - 5:00 PM
+- Sunday: Closed
 
 Instant Help
 Want the fastest response? Skip forms entirely and talk to our support team on WhatsApp right now.
 
 Inquiry Feedback
-Thank you for contacting us. One of our specialists will reach out to you via phone or email very shortly.`
+Thank you for contacting us. Our support team will review your enquiry and respond through an available contact channel.`
   }
 ];
 

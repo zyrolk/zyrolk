@@ -5,6 +5,7 @@ import { db } from '../firebase';
 import { doc, getDoc } from 'firebase/firestore';
 import { reportClientIssue } from '../services/observability/clientDiagnostics';
 import { fetchJson } from '../services/network/fetchJson';
+import { DEFAULT_WEBSITE_SETTINGS } from '../services/settings/websiteSettings';
 
 interface ContactPageProps {
   settings?: WebsiteSettings | null;
@@ -20,15 +21,25 @@ Customer Support
 Send your enquiry with the details available to you and our team will respond through your preferred contact channel.
 
 Operating Hours
-• Weekdays: 9:00 AM - 7:00 PM
-• Saturday: 9:00 AM - 5:00 PM
-• Sunday & Poya Days: Closed
+- Weekdays: 9:00 AM - 6:00 PM
+- Saturday: 9:00 AM - 5:00 PM
+- Sunday: Closed
 
 Instant Help
 Want the fastest response? Skip forms entirely and talk to our support team on WhatsApp right now.
 
 Inquiry Feedback
-Thank you for contacting us. One of our specialists will reach out to you via phone or email very shortly.`;
+Thank you for contacting us. Our support team will review your enquiry and respond through an available contact channel.`;
+
+export function getCanonicalBusinessHours(settings?: Pick<WebsiteSettings, 'businessHours'> | null) {
+  const fallback = DEFAULT_WEBSITE_SETTINGS.businessHours!;
+  const configured = settings?.businessHours;
+  return [
+    { label: 'Weekdays', value: configured?.weekdays?.trim() || fallback.weekdays },
+    { label: 'Saturday', value: configured?.saturday?.trim() || fallback.saturday },
+    { label: 'Sunday', value: configured?.sunday?.trim() || fallback.sunday },
+  ];
+}
 
 function parseContactContent(content: string) {
   const result: {
@@ -227,14 +238,10 @@ export default function ContactPage({ settings, isAdmin, onEdit }: ContactPagePr
   let intro = "Have a question about a product, stock availability, delivery, or an existing order? Our customer care team is ready to help.";
   let supportDesc = "Send your enquiry with the details available to you and our team will respond through your preferred contact channel.";
   let hoursTitle = "Operating Hours";
-  let hoursItems = [
-    { label: "Weekdays", value: "9:00 AM - 7:00 PM" },
-    { label: "Saturday", value: "9:00 AM - 5:00 PM" },
-    { label: "Sunday & Poya Days", value: "Closed" }
-  ];
+  const hoursItems = getCanonicalBusinessHours(settings);
   let helpTitle = "Instant WhatsApp Reply";
   let helpDesc = "Want the fastest response? Skip forms entirely and talk to our support team on WhatsApp right now.";
-  let closingMessage = "Thank you for contacting us. One of our specialists will reach out to you via phone or email very shortly.";
+  let closingMessage = "Thank you for contacting us. Our support team will review your enquiry and respond through an available contact channel.";
 
   const activeContent = cmsPage?.content || DEFAULT_CONTACT_CONTENT;
   if (cmsPage?.title) {
@@ -244,9 +251,6 @@ export default function ContactPage({ settings, isAdmin, onEdit }: ContactPagePr
   const parsed = parseContactContent(activeContent);
   if (parsed.intro) intro = parsed.intro;
   if (parsed.supportDesc) supportDesc = parsed.supportDesc;
-  if (parsed.hoursItems && parsed.hoursItems.length > 0) {
-    hoursItems = parsed.hoursItems;
-  }
   if (parsed.hoursTitle) hoursTitle = parsed.hoursTitle;
   if (parsed.helpTitle) helpTitle = parsed.helpTitle;
   if (parsed.helpDesc) helpDesc = parsed.helpDesc;
