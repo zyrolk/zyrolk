@@ -898,7 +898,7 @@ export default function App() {
     }));
   }, []);
 
-  const finishPaymentReturn = useCallback((destination: 'home' | 'account-orders') => {
+  const finishPaymentReturn = useCallback((destination: 'home' | 'account-orders' | 'contact') => {
     window.history.replaceState({}, document.title, window.location.pathname);
     setPaymentReturnContext(null);
     setCurrentPage(destination);
@@ -1232,12 +1232,9 @@ export default function App() {
             <Suspense fallback={<LazyBlockFallback className="mx-auto my-12 min-h-96 max-w-3xl" label="Verifying payment" />}>
               <PaymentReturnPage
                 user={user}
-                outcome={paymentReturnContext.outcome}
-                orderId={paymentReturnContext.orderId}
-                accessToken={paymentReturnContext.accessToken}
-                onPaymentConfirmed={handleClearCart}
                 onContinue={() => finishPaymentReturn('home')}
                 onOrders={() => finishPaymentReturn('account-orders')}
+                onSupport={() => finishPaymentReturn('contact')}
               />
             </Suspense>
           )}

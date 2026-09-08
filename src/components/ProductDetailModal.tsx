@@ -279,16 +279,16 @@ export default function ProductDetailModal({
     feedbackTimerRef.current = window.setTimeout(() => setAddedMessage(false), 2000);
   };
 
-  const handleWhatsAppCheckout = () => {
+  const handleWhatsAppOrderAssistance = () => {
     const totalPrice = formatPrice(product.price * quantity);
     const message = encodeURIComponent(
-      `Hello Zyro.lk! I want to order the following product:\n\n*Product:* ${product.name}\n*Quantity:* ${quantity}\n*Unit Price:* ${formatPrice(product.price)}\n*Total Price:* ${totalPrice}\n\nPlease proceed with my COD islandwide delivery confirmation details.`
+      `Hello Zyro.lk! I need help ordering the following product through the official Zyro.lk checkout:\n\n*Product:* ${product.name}\n*Quantity:* ${quantity}\n*Unit Price:* ${formatPrice(product.price)}\n*Total Price:* ${totalPrice}\n\nPlease help me complete the Cash on Delivery checkout. This WhatsApp message is not an order confirmation.`
     );
     const whatsappNum = settings?.whatsappNumber 
       ? settings.whatsappNumber.replace(/[^0-9+]/g, "") 
       : "";
     if (!whatsappNum) {
-      alert("WhatsApp checkout is currently being configured by the store administrator. Please try again soon or contact support!");
+      alert("WhatsApp support is currently being configured by the store administrator. Please try again soon or contact support!");
       return;
     }
     window.open(`https://wa.me/${whatsappNum.replace("+", "")}?text=${message}`, '_blank', 'noopener,noreferrer');
@@ -823,16 +823,16 @@ export default function ProductDetailModal({
 
                         </div>
 
-                        {/* WhatsApp Quick Checkout Order Action */}
+                        {/* WhatsApp order assistance */}
                         <motion.button
                           type="button"
                           whileTap={{ scale: 0.97 }}
-                          onClick={handleWhatsAppCheckout}
+                          onClick={handleWhatsAppOrderAssistance}
                           className="w-full flex min-h-12 items-center justify-center py-3.5 px-6 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-2xl text-sm font-black cursor-pointer transition-all gap-2.5 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-emerald-500/20"
-                          aria-label={`Order ${product.name} through WhatsApp`}
+                          aria-label={`Get help ordering ${product.name} on WhatsApp`}
                         >
                           <Phone className="h-4 w-4" aria-hidden="true" />
-                          Prefer assistance? Order on WhatsApp
+                          Need help ordering? Chat on WhatsApp
                         </motion.button>
                       </>
                     ) : (

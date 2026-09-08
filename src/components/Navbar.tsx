@@ -262,7 +262,7 @@ export default function Navbar({
   const navigateToDeals = () => {
     navigateToPage('home');
     window.setTimeout(() => {
-      document.getElementById('phase-one-deals-title')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      document.getElementById('homepage-flash-deals')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }, 0);
   };
 

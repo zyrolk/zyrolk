@@ -205,13 +205,15 @@ test('App Check, rate limits, safe telemetry and launch SEO are connected withou
   assert.match(readFileSync('src/services/supplierHubApi.ts', 'utf8'), /getAppCheckRequestHeaders/);
 });
 
-test('payment return UI includes polling, focus, screen-reader status and reduced-motion support', () => {
+test('payment return UI keeps focus and screen-reader accessibility while remaining a safe COD-only fallback', () => {
   const page = readFileSync('src/features/checkout/PaymentReturnPage.tsx', 'utf8');
   const styles = readFileSync('src/features/checkout/paymentReturn.css', 'utf8');
   assert.match(page, /aria-live="polite"/);
   assert.match(page, /role="status"/);
   assert.match(page, /current\?\.focus\(\)/);
   assert.match(page, /setTimeout/);
+  assert.match(page, /Cash on Delivery only/);
+  assert.doesNotMatch(page, /PayHere|\/api\/payments\/|fetchJson|submitPayHerePayment/iu);
   assert.match(styles, /@media \(prefers-reduced-motion: reduce\)/);
   assert.match(styles, /@media \(max-width:/);
 });

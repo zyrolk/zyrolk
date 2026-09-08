@@ -57,9 +57,9 @@ test('premium purchase section retains delivery, secure shopping, WhatsApp, cart
   assert.match(modal, /Secure Checkout/);
   assert.match(modal, /Customer Support/);
   assert.match(modal, /settings\?\.freeDeliveryMin/);
-  assert.match(modal, /handleWhatsAppCheckout/);
+  assert.match(modal, /handleWhatsAppOrderAssistance/);
   assert.match(modal, /handleWhatsAppEnquiry/);
-  assert.match(modal, /Order on WhatsApp/);
+  assert.match(modal, /Need help ordering\? Chat on WhatsApp/);
   assert.match(modal, /Add to Cart/);
   assert.match(modal, /Buy Now/);
 });
