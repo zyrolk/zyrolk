@@ -21,16 +21,16 @@ const DEFAULT_PAGES = [
   {
     id: "about-us",
     title: "About Us",
-    content: `Welcome to Zyro.lk, Sri Lanka's premier destination for high-end digital solutions, smart energy solar systems, kitchen appliances, and lifestyle audio components.
+    content: `Welcome to Zyro.lk, a Sri Lankan marketplace for technology, energy, kitchen, and lifestyle essentials.
 
 Our Journey
-Established with a vision to bring cutting-edge global technology to local consumers, Zyro.lk has grown to become a trusted brand synonym with authenticity and unparalleled customer service. We direct-import genuine products from world-renowned manufacturers, ensuring that every purchase you make meets international quality standards.
+Established to make technology and everyday essentials easier to explore in Sri Lanka, Zyro.lk presents a curated range of products for home, work, and lifestyle.
 
 Our Promise
-• 100% Genuine Products: No refurbished or counterfeit units. Only authentic global hardware.
-• Islandwide Safe Shipping: Secure courier delivery with live tracking straight to your doorstep.
-• Customer-First Philosophy: A dedicated 7-day direct product replacement policy for manufacturing faults, backed by active local service centers across Sri Lanka.
-• Future-Ready Solar Solutions: Empowering Sri Lankan homes and businesses with clean, sustainable, and highly efficient solar and backup power.
+• Curated Marketplace: Explore products presented through Zyro.lk with clear product information.
+• Islandwide Delivery: Delivery is available across Sri Lanka, with availability and timing varying by location.
+• Customer Support: Contact our support team for help with products, orders, and eligible order issues.
+• Technology and Essentials: Explore technology, energy, and lifestyle products selected for the marketplace.
 
 Thank you for choosing Zyro.lk. We are committed to powering your lifestyle and engineering your digital future.`
   },
@@ -83,19 +83,18 @@ You have the right to request access to your stored personal data, request corre
   {
     id: "return-policy",
     title: "Return Policy",
-    content: `We want you to be entirely satisfied with your purchase from Zyro.lk. If something isn't right, we are here to help.
+    content: `If you need help with an order or product issue, contact Zyro.lk customer support with your order reference and details. Eligibility and next steps may vary by product and issue.
 
-1. 7-Day Priority Replacement
-• If you discover any manufacturing defect or functional fault within 7 days of receiving your item, you are eligible for an immediate direct replacement.
-• To claim a priority replacement, please contact us with proof of purchase and a short description/video of the issue via our Hotline or WhatsApp.
+1. Product Issues
+• Return or replacement availability may vary by product, order status, and documented terms.
+• Contact customer support with your order reference and a description of the issue so the applicable next steps can be confirmed.
 
 2. Return Conditions
-• The item must be unused, in the same brand-new condition that you received it, and in its original, undamaged retail packaging.
-• All accessories, user manuals, warranty cards, and promotional gifts included in the box must be returned.
+• Any product-specific return conditions will be confirmed by customer support where applicable.
 
 3. Warranty Claims
-• Beyond the initial 7-day replacement period, products are covered by their respective manufacturer or store warranties as specified on the product page.
-• Warranty repairs and servicing will be handled through authorized local service centers in Sri Lanka.`
+• Warranty coverage, duration, provider, and service arrangements vary by product and are available where stated in the product information or order documents.
+• Contact Zyro.lk with your order reference and issue details so the applicable terms can be confirmed.`
   },
   {
     id: "warranty-policy",
@@ -108,7 +107,7 @@ You have the right to request access to your stored personal data, request corre
     content: `Find answers to some of our customers' most common questions regarding shipping, warranties, and orders.
 
 Q: Do you deliver islandwide in Sri Lanka?
-A: Yes! We deliver to any address across all 25 districts in Sri Lanka. Packages are handled by professional courier networks to ensure secure handling.
+A: Islandwide delivery is available across Sri Lanka. Delivery availability and timing may vary by location.
 
 Q: What are your shipping rates?
 A: Delivery fee is LKR 350 for orders below LKR 5,000. Free delivery is available on orders of LKR 5,000 or more.
@@ -119,18 +118,18 @@ A: Delivery times may vary by location. Estimated delivery information will be p
 Q: Can I pay with Cash on Delivery (COD)?
 A: Yes, Cash on Delivery is supported for most locations and standard items. You can select COD at checkout and pay the courier when your package is delivered.
 
-Q: Are your products genuine and covered by warranty?
-A: Absolutely. We only source direct-import genuine items from original brands. All products come with local or international warranties which are honored at active service centers in Sri Lanka.
+Q: What product support is available?
+A: Product support and warranty availability may vary by product. Contact customer support with your order reference and product details so the applicable information can be confirmed.
 
-Q: How can I track my order or request custom support?
-A: Once your order is dispatched, we can share tracking details with you. You can also click the WhatsApp button on your order confirmation page to chat with us in real-time.`
+Q: How can I track my order or request support?
+A: Once your order is dispatched, tracking details will be shared where available. You can also contact customer support through WhatsApp for order assistance.`
   },
   {
     id: "contact-us",
     title: "Contact Us",
     content: `Get In Touch
 
-Have questions about brand warranties, solar solutions, or custom product ordering? Our professional sales team is standing by to assist you.
+Have questions about a product, stock availability, delivery, or an existing order? Our customer care team is ready to help.
 
 Customer Support
 Send your enquiry with the details available to you and our team will respond through an available contact channel.
@@ -138,7 +137,7 @@ Send your enquiry with the details available to you and our team will respond th
 Business Hours: Daily, 8:00 AM - 10:00 PM
 
 Instant Help
-Want the fastest response? Skip forms entirely and talk to our support team on WhatsApp right now.
+Need help with an order or product? Contact our support team on WhatsApp for assistance.
 
 Inquiry Feedback
 Thank you for contacting us. Our support team will review your enquiry and respond through an available contact channel.`
