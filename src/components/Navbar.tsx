@@ -3,7 +3,7 @@ import {
   Menu, X, Search, Heart, ShoppingBag, User, 
   LayoutDashboard, LogIn, LogOut, ChevronDown,
   ArrowUpRight, Clock3, LoaderCircle, PackageSearch, Tag,
-  ShieldCheck, Grid3X3, MessageCircle, MapPin,
+  Grid3X3, MessageCircle, MapPin,
   Settings, Headphones, ReceiptText, Home, BarChart3, Sparkles,
   Banknote, LockKeyhole, Truck
 } from 'lucide-react';
@@ -207,12 +207,6 @@ export default function Navbar({
     setIsMegaMenuOpen(false);
   };
 
-  const focusSearch = () => {
-    const input = searchInputRefs.current.desktop ?? searchInputRefs.current.mobile;
-    input?.focus();
-    setIsSearchOpen(true);
-  };
-
   const clearSearch = () => {
     setTempSearch('');
     setSearchQuery('');
@@ -266,13 +260,13 @@ export default function Navbar({
     }, 0);
   };
 
+  const supportNavLink = { label: 'Support', icon: MessageCircle, action: () => navigateToPage('contact') };
+
   const navLinks = [
     { id: 'deals', label: 'Deals', icon: Tag, action: navigateToDeals },
     { id: 'new-arrivals', label: 'New Arrivals', icon: Sparkles, action: () => navigateToPage('products') },
     { id: 'best-sellers', label: 'Best Sellers', icon: BarChart3, action: () => navigateToPage('products') },
-    { id: 'brands', label: 'Brands', icon: ShieldCheck, action: () => navigateToPage('products') },
-    { id: 'today-offers', label: "Today's Offers", icon: Tag, action: navigateToDeals },
-    { id: 'support', label: 'Support', icon: MessageCircle, action: () => navigateToPage('contact') }
+    { id: 'today-offers', label: "Today's Offers", icon: Tag, action: navigateToDeals }
   ];
 
   const accountItems = [
@@ -282,7 +276,6 @@ export default function Navbar({
     { label: 'Recently Viewed', icon: Clock3, action: () => navigateToPage('recently-viewed') },
     { label: 'Compare Products', icon: BarChart3, action: () => navigateToPage('compare') },
     { label: 'Addresses', icon: MapPin, action: user ? () => navigateToPage('account-addresses') : () => { onOpenAuthModal(); setIsProfileOpen(false); } },
-    { label: 'Support', icon: Headphones, action: () => navigateToPage('contact') },
     { label: 'Settings', icon: Settings, action: user ? () => navigateToPage('account-settings') : () => { onOpenAuthModal(); setIsProfileOpen(false); } }
   ];
 
@@ -483,10 +476,10 @@ export default function Navbar({
             <span><Banknote aria-hidden="true" />Cash on Delivery</span>
             <span><Truck aria-hidden="true" />Islandwide Delivery</span>
             <span><LockKeyhole aria-hidden="true" />Secure Checkout</span>
-            <button type="button" onClick={focusSearch}><Search aria-hidden="true" />Product Search</button>
+            <button type="button" onClick={supportNavLink.action}><MessageCircle aria-hidden="true" />{supportNavLink.label}</button>
           </div>
           <div className="zy-announcement-contact">
-            {settings?.contactPhone && <a href={`tel:${settings.contactPhone}`}>{settings.contactPhone}</a>}
+            {settings?.contactPhone && <a href={`tel:${settings.contactPhone}`} aria-label={`Call Zyro.lk hotline at ${settings.contactPhone}`}>Hotline {settings.contactPhone}</a>}
           </div>
         </div>
       </div>
@@ -604,11 +597,11 @@ export default function Navbar({
       <div className="zy-desktop-navigation" data-mega-menu>
         <div className="zy-header-container">
           <button type="button" className={`zy-navbar-link zy-navigation-categories ${isMegaMenuOpen ? 'is-active' : ''}`} onClick={() => setIsMegaMenuOpen((open) => !open)} aria-expanded={isMegaMenuOpen} aria-controls="desktop-mega-menu">
-            <Grid3X3 aria-hidden="true" />Categories<ChevronDown aria-hidden="true" />
+            <Grid3X3 aria-hidden="true" />All Categories<ChevronDown aria-hidden="true" />
           </button>
           <nav aria-label="Primary storefront navigation">
             {navLinks.map((link) => (
-              <button key={link.id} type="button" onClick={link.action} className={`zy-navbar-link ${currentPage === link.id && !isAdminMode ? 'is-active' : ''}`}>{link.label}</button>
+              <button key={link.id} type="button" onClick={link.action} className={`zy-navbar-link ${link.id !== 'today-offers' && currentPage === link.id && !isAdminMode ? 'is-active' : ''}`}>{link.label}</button>
             ))}
           </nav>
         </div>
@@ -649,6 +642,7 @@ export default function Navbar({
               <button type="button" onClick={() => navigateToPage('home')}><Home aria-hidden="true" />Home</button>
               <button type="button" onClick={() => navigateToPage('categories')}><Grid3X3 aria-hidden="true" />Categories</button>
               {navLinks.map(({ id, label, icon: Icon, action }) => <button key={id} type="button" onClick={action}><Icon aria-hidden="true" />{label}</button>)}
+              <button type="button" onClick={supportNavLink.action}><MessageCircle aria-hidden="true" />{supportNavLink.label}</button>
             </nav>
             {categories.length > 0 && (
               <div className="zy-mobile-category-list">
@@ -657,7 +651,7 @@ export default function Navbar({
               </div>
             )}
             <div className="zy-mobile-menu-footer">
-              {settings?.contactPhone && <a href={`tel:${settings.contactPhone}`}><Headphones aria-hidden="true" />{settings.contactPhone}</a>}
+              {settings?.contactPhone && <a href={`tel:${settings.contactPhone}`} aria-label={`Call Zyro.lk hotline at ${settings.contactPhone}`}><Headphones aria-hidden="true" />Hotline {settings.contactPhone}</a>}
             </div>
           </motion.div>
         )}

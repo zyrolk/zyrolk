@@ -35,6 +35,7 @@ import {
   subscribeToStorefrontProductPage,
 } from './services/storefront/storefrontCatalog';
 import { isProductExplicitlyActive } from './services/storefront/productAvailability';
+import { canUseProductInCommerce, filterCommerceCartItems, filterCommerceProductIds, filterCommerceProducts } from './services/storefront/previewCommerceGuard';
 import { buildStorefrontUrl, parseStorefrontRoute } from './services/navigation/storefrontRoutes';
 
 // Components
@@ -188,10 +189,10 @@ export default function App() {
   const [catalogCategoryCounts, setCatalogCategoryCounts] = useState<Record<string, number>>({});
 
   // Shopping Cart & Wishlist States (Backed by LocalStorage)
-  const [cart, setCart] = useState<CartItem[]>(() => readStoredArray<CartItem>(getBrowserStorage('localStorage'), 'zyro_cart'));
-  const [wishlist, setWishlist] = useState<Product[]>(() => readStoredArray<Product>(getBrowserStorage('localStorage'), 'zyro_wishlist'));
+  const [cart, setCart] = useState<CartItem[]>(() => filterCommerceCartItems(readStoredArray<CartItem>(getBrowserStorage('localStorage'), 'zyro_cart')));
+  const [wishlist, setWishlist] = useState<Product[]>(() => filterCommerceProducts(readStoredArray<Product>(getBrowserStorage('localStorage'), 'zyro_wishlist')));
   const [recentlyViewedProductIds, setRecentlyViewedProductIds] = useState<string[]>(
-    () => readStoredArray<string>(getBrowserStorage('localStorage'), 'zyro_recently_viewed'),
+    () => filterCommerceProductIds(readStoredArray<string>(getBrowserStorage('localStorage'), 'zyro_recently_viewed')),
   );
   const [compareProductIds, setCompareProductIds] = useState<string[]>(
     () => readStoredArray<string>(getBrowserStorage('localStorage'), 'zyro_compare_products').slice(0, 4),
@@ -384,20 +385,20 @@ export default function App() {
               }
               setIsSupplierUser(false);
               if (userData && userData.wishlist && Array.isArray(userData.wishlist)) {
-                const cloudWishlist = userData.wishlist as Product[];
+                const cloudWishlist = filterCommerceProducts(userData.wishlist as Product[]);
                 const merged = [...cloudWishlist];
                 wishlistRef.current.forEach(localItem => {
                   if (!merged.some(cloudItem => cloudItem.id === localItem.id)) {
                     merged.push(localItem);
                   }
                 });
-                loadedWishlist = merged;
+                loadedWishlist = filterCommerceProducts(merged);
               } else {
                 loadedWishlist = wishlistRef.current;
               }
               // Sync user's cart from firestore and merge with current guest cart
               if (userData && userData.cart && Array.isArray(userData.cart)) {
-                const cloudCart = userData.cart as CartItem[];
+                const cloudCart = filterCommerceCartItems(userData.cart as CartItem[]);
                 const merged = [...cloudCart];
                 cartRef.current.forEach(localItem => {
                   const existing = merged.find(cloudItem => cloudItem.product.id === localItem.product.id);
@@ -407,15 +408,15 @@ export default function App() {
                     merged.push(localItem);
                   }
                 });
-                loadedCart = merged;
+                loadedCart = filterCommerceCartItems(merged);
               } else {
-                loadedCart = cartRef.current;
+                loadedCart = filterCommerceCartItems(cartRef.current);
               }
               if (userData && Array.isArray(userData.recentlyViewedProductIds)) {
-                loadedRecentlyViewedIds = mergeRecentlyViewedIds(
+                loadedRecentlyViewedIds = filterCommerceProductIds(mergeRecentlyViewedIds(
                   recentlyViewedIdsRef.current,
                   userData.recentlyViewedProductIds as string[],
-                );
+                ));
               }
             } else {
               setIsAdminMode(false);
@@ -457,7 +458,8 @@ export default function App() {
   // Sync state changes with localStorage and Firestore
   useEffect(() => {
     // TODO(security): persist minimal cart references after a dedicated checkout compatibility review.
-    writeStoredJson(getBrowserStorage('localStorage'), 'zyro_cart', cart);
+    const commerceCart = filterCommerceCartItems(cart);
+    writeStoredJson(getBrowserStorage('localStorage'), 'zyro_cart', commerceCart);
     
     const syncCartToFirestore = async () => {
       if (user && cartLoadedForUser === user.uid) {
@@ -465,7 +467,7 @@ export default function App() {
           const userRef = doc(db, "users", user.uid);
           const userDoc = await getDoc(userRef);
           if (userDoc.exists()) {
-            await updateDoc(userRef, { cart });
+            await updateDoc(userRef, { cart: commerceCart });
           } else {
             await setDoc(userRef, {
               uid: user.uid,
@@ -473,7 +475,7 @@ export default function App() {
               displayName: user.displayName || user.email?.split('@')[0] || '',
               role: 'customer',
               createdAt: new Date().toISOString(),
-              cart
+              cart: commerceCart
             });
           }
         } catch (e: any) {
@@ -485,7 +487,8 @@ export default function App() {
   }, [cart, user, cartLoadedForUser]);
 
   useEffect(() => {
-    writeStoredJson(getBrowserStorage('localStorage'), 'zyro_wishlist', wishlist);
+    const commerceWishlist = filterCommerceProducts(wishlist);
+    writeStoredJson(getBrowserStorage('localStorage'), 'zyro_wishlist', commerceWishlist);
     
     // Sync to Firestore for authenticated users
     const syncWishlistToFirestore = async () => {
@@ -494,7 +497,7 @@ export default function App() {
           const userRef = doc(db, "users", user.uid);
           const userDoc = await getDoc(userRef);
           if (userDoc.exists()) {
-            await updateDoc(userRef, { wishlist });
+            await updateDoc(userRef, { wishlist: commerceWishlist });
           } else {
             await setDoc(userRef, {
               uid: user.uid,
@@ -502,7 +505,7 @@ export default function App() {
               displayName: user.displayName || user.email?.split('@')[0] || '',
               role: 'customer',
               createdAt: new Date().toISOString(),
-              wishlist
+              wishlist: commerceWishlist
             });
           }
           setPersonalizationSyncError('');
@@ -517,14 +520,15 @@ export default function App() {
   }, [wishlist, user, wishlistLoadedForUser]);
 
   useEffect(() => {
-    writeStoredJson(getBrowserStorage('localStorage'), 'zyro_recently_viewed', recentlyViewedProductIds);
+    const commerceRecentlyViewedIds = filterCommerceProductIds(recentlyViewedProductIds);
+    writeStoredJson(getBrowserStorage('localStorage'), 'zyro_recently_viewed', commerceRecentlyViewedIds);
     const syncRecentlyViewed = async () => {
       if (!user || recentlyViewedLoadedForUser !== user.uid) return;
       try {
         const userRef = doc(db, 'users', user.uid);
         const userSnapshot = await getDoc(userRef);
         if (userSnapshot.exists()) {
-          await updateDoc(userRef, { recentlyViewedProductIds });
+          await updateDoc(userRef, { recentlyViewedProductIds: commerceRecentlyViewedIds });
         } else {
           await setDoc(userRef, {
             uid: user.uid,
@@ -532,7 +536,7 @@ export default function App() {
             displayName: user.displayName || user.email?.split('@')[0] || '',
             role: 'customer',
             createdAt: new Date().toISOString(),
-            recentlyViewedProductIds,
+            recentlyViewedProductIds: commerceRecentlyViewedIds,
           });
         }
         setPersonalizationSyncError('');
@@ -819,7 +823,7 @@ export default function App() {
 
   // --- CART FUNCTIONS ---
   const handleAddToCart = useCallback((product: Product, qty: number = 1) => {
-    if (product.stock <= 0) return;
+    if (!canUseProductInCommerce(product) || product.stock <= 0) return;
     void trackCommerceEvent('add_to_cart', {
       currency: 'LKR',
       value: product.price * qty,
@@ -841,7 +845,7 @@ export default function App() {
   }, []);
 
   const handleBuyNow = useCallback((product: Product, quantity: number) => {
-    if (product.stock <= 0) return;
+    if (!canUseProductInCommerce(product) || product.stock <= 0) return;
     const qtyToUse = Math.min(product.stock, quantity);
     setCart(prev => {
       const existing = prev.find(item => item.product.id === product.id);
@@ -884,7 +888,9 @@ export default function App() {
   }, []);
 
   const handleRefreshCartProducts = useCallback(async (productIds: string[]) => {
-    const refreshedProducts = await loadStorefrontProductsByIds(db, productIds);
+    const commerceProductIds = filterCommerceProductIds(productIds);
+    if (!commerceProductIds.length) return;
+    const refreshedProducts = await loadStorefrontProductsByIds(db, commerceProductIds);
     const refreshedById = new Map(refreshedProducts.map((product) => [product.id, product]));
     setCart((current) => current.flatMap((item) => {
       if (!productIds.includes(item.product.id)) return [item];
@@ -906,6 +912,7 @@ export default function App() {
 
   // --- WISHLIST FUNCTIONS ---
   const handleToggleWishlist = useCallback((product: Product) => {
+    if (!canUseProductInCommerce(product)) return;
     const isRemoving = wishlist.some(item => item.id === product.id);
     if (!isRemoving) void trackCommerceEvent('add_to_wishlist', {
       currency: 'LKR',
@@ -947,6 +954,7 @@ export default function App() {
   }, []);
 
   const handleViewProduct = useCallback((product: Product) => {
+    if (!canUseProductInCommerce(product)) return;
     setRecentlyViewedProductIds(previous => addRecentlyViewedProduct(previous, product.id));
     resolvedRoutedProductRef.current = product.id;
     setRoutedProductId(product.id);
@@ -955,7 +963,7 @@ export default function App() {
 
   // Ratings are maintained as product aggregates by the review backend. A
   // bounded testimonial query must not replace complete rating statistics.
-  const storefrontProducts = products;
+  const storefrontProducts = useMemo(() => filterCommerceProducts(products), [products]);
 
   const customerProducts = useMemo(
     () => projectCustomerProducts(storefrontProducts.filter((product) => isProductExplicitlyActive(product.isActive))),

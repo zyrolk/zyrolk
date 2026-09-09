@@ -11,12 +11,14 @@ const productCard = readFileSync('src/components/ProductCard.tsx', 'utf8');
 const styles = readFileSync('src/index.css', 'utf8');
 const catalog = readFileSync('src/services/storefront/storefrontCatalog.ts', 'utf8');
 
-test('Sprint 75B composes Why Choose below trust and reviews after live product shelves', () => {
-  assert.match(homepage, /import HomepageWhyChoose from '\.\/HomepageWhyChoose'/);
+test('Sprint 75B keeps the active homepage focused on shopping discovery and live reviews', () => {
+  assert.doesNotMatch(homepage, /import HomepageWhyChoose from '\.\/HomepageWhyChoose'/);
   assert.match(homepage, /import HomepageCustomerReviews/);
-  assert.ok(homepage.indexOf('<HomepageTrustStrip />') < homepage.indexOf('<HomepageWhyChoose />'));
-  assert.ok(homepage.indexOf('<HomepageWhyChoose />') < homepage.indexOf('<StorefrontProductShelf'));
-  assert.ok(homepage.lastIndexOf('<StorefrontProductShelf') < homepage.indexOf('<HomepageCustomerReviews'));
+  assert.doesNotMatch(homepage, /<HomepageWhyChoose \/>/);
+  assert.ok(homepage.indexOf('<HomepageTrustStrip />') < homepage.indexOf('zy-home-category-promos'));
+  assert.ok(homepage.indexOf('zy-home-category-promos') < homepage.indexOf('zy-foundation-shelf-stack'));
+  assert.ok(homepage.indexOf('zy-foundation-shelf-stack') < homepage.indexOf('<HomepageCustomerReviews'));
+  assert.match(homepage, /reviews\.length > 0/);
   assert.match(homepage, /enabled=\{settings\?\.enableReviews !== false\}/);
 });
 

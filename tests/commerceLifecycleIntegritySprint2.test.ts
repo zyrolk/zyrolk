@@ -72,7 +72,7 @@ test('Sprint 2 checkout remains live-price, atomic, idempotent and identity awar
   assert.match(checkout, /resolveCouponDiscount/);
   assert.match(checkout, /resolveCheckoutCustomerUid/);
   assert.match(checkout, /customer identity does not match/);
-  assert.match(client, /if \(!cartItems\.length \|\| isSubmitting\) return/);
+  assert.match(client, /if \(!commerceCartItems\.length \|\| isSubmitting\) return/);
   assert.match(client, /'Idempotency-Key': idempotencyKey/);
   assert.match(client, /user \? await user\.getIdToken\(\) : ''/);
 });

@@ -1,0 +1,1048 @@
+/* Reference-led homepage presentation. Live commerce data and handlers remain unchanged. */
+.zy-launch-home {
+  --preview-blue: #0b67d8;
+  --preview-ink: #102552;
+  --preview-orange: #ff9e1b;
+}
+
+.zy-reference-preview .zy-ai-hero-stage.is-reference-preview {
+  min-height: 31rem;
+  border: 0;
+  border-radius: 1.35rem;
+  background:
+    radial-gradient(circle at 76% 18%, rgba(255, 240, 111, 0.72), transparent 22%),
+    radial-gradient(circle at 62% 100%, rgba(103, 158, 255, 0.52), transparent 24%),
+    linear-gradient(116deg, #ffd333 0%, #ffad19 42%, #ffc638 72%, #ffdb61 100%);
+  box-shadow: 0 18px 42px rgba(49, 67, 117, 0.14);
+}
+
+.zy-reference-preview .zy-ai-hero-stage.is-reference-preview::before {
+  background-image:
+    radial-gradient(circle at 71% 27%, rgba(255, 255, 255, 0.45) 0 2px, transparent 3px),
+    radial-gradient(circle at 86% 68%, rgba(255, 255, 255, 0.32) 0 3px, transparent 4px);
+  background-size: 88px 88px, 120px 120px;
+  mask-image: none;
+}
+
+.zy-reference-preview .zy-ai-hero-slide {
+  min-height: 31rem;
+  grid-template-columns: minmax(0, 0.86fr) minmax(22rem, 1.14fr);
+  gap: clamp(1rem, 4vw, 4rem);
+  padding: clamp(1.6rem, 4vw, 3.5rem);
+}
+
+.zy-reference-preview .zy-ai-hero-copy h1 {
+  max-width: 31rem;
+  font-size: clamp(2.75rem, 5.2vw, 5rem) !important;
+  letter-spacing: -0.075em;
+}
+
+.zy-reference-preview .zy-ai-hero-copy h1 span {
+  color: var(--preview-blue) !important;
+  background: none;
+}
+
+.zy-reference-preview .zy-ai-hero-kicker {
+  border-color: rgba(255, 255, 255, 0.76);
+  background: rgba(255, 255, 255, 0.86);
+  color: #d05f0c;
+}
+
+.zy-reference-preview .zy-ai-hero-subtitle {
+  max-width: 25rem !important;
+  color: #503b19 !important;
+  font-size: 0.95rem !important;
+  line-height: 1.55 !important;
+}
+
+.zy-reference-preview .zy-ai-hero-search-shell {
+  display: none;
+}
+
+.zy-reference-preview .zy-ai-hero-actions {
+  margin-top: 1.35rem !important;
+}
+
+.zy-reference-preview .zy-ai-hero-primary {
+  background: var(--preview-blue) !important;
+  border-color: var(--preview-blue) !important;
+  box-shadow: 0 10px 20px rgba(11, 103, 216, 0.26) !important;
+}
+
+.zy-reference-preview .zy-ai-hero-secondary {
+  border-color: rgba(255, 255, 255, 0.7) !important;
+  background: rgba(255, 255, 255, 0.66) !important;
+  color: var(--preview-ink) !important;
+}
+
+.zy-reference-preview .zy-ai-hero-visual {
+  height: 100%;
+  min-height: 0;
+}
+
+.zy-reference-hero-art {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.zy-reference-hero-art::before {
+  position: absolute;
+  inset: 8% 4% 4% 10%;
+  border-radius: 44% 56% 36% 64%;
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.54), rgba(255, 183, 44, 0.15));
+  content: '';
+  transform: rotate(-8deg);
+}
+
+.zy-reference-hero-art-orb {
+  position: absolute;
+  border-radius: 999px;
+  pointer-events: none;
+}
+
+.zy-reference-hero-art-orb.is-large {
+  top: -2rem;
+  right: 6%;
+  width: 14rem;
+  height: 14rem;
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.zy-reference-hero-art-orb.is-small {
+  bottom: -2.5rem;
+  left: 6%;
+  width: 10rem;
+  height: 10rem;
+  background: rgba(66, 106, 229, 0.22);
+}
+
+.zy-reference-hero-device {
+  position: absolute;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  filter: drop-shadow(0 1.5rem 1.35rem rgba(70, 56, 17, 0.2));
+}
+
+.zy-reference-hero-device .zy-home-preview-art {
+  width: 100%;
+  height: 100%;
+  border: 0.55rem solid rgba(13, 31, 68, 0.92);
+  border-radius: 1.7rem;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.34);
+}
+
+.zy-reference-hero-device .zy-home-preview-art svg {
+  width: 34%;
+  height: 34%;
+  filter: drop-shadow(0 0.25rem 0.35rem rgba(14, 36, 91, 0.28));
+}
+
+.zy-reference-hero-device.is-mobile {
+  top: 12%;
+  right: 36%;
+  width: 9.5rem;
+  height: 14.5rem;
+  transform: rotate(10deg);
+}
+
+.zy-reference-hero-device.is-mobile .zy-home-preview-art {
+  background: linear-gradient(145deg, #8ebcff, #2765d6 58%, #091d42);
+}
+
+.zy-reference-hero-device.is-audio {
+  right: 11%;
+  bottom: 18%;
+  width: 8.2rem;
+  height: 6.5rem;
+  transform: rotate(-7deg);
+}
+
+.zy-reference-hero-device.is-audio .zy-home-preview-art {
+  border-width: 0.4rem;
+  border-radius: 1.35rem;
+  background: linear-gradient(145deg, #f9fbff, #b7d4ff);
+  color: #1d5dcc;
+}
+
+.zy-reference-hero-device.is-watch {
+  right: 45%;
+  bottom: 8%;
+  width: 6.2rem;
+  height: 6.2rem;
+  transform: rotate(-12deg);
+}
+
+.zy-reference-hero-device.is-watch .zy-home-preview-art {
+  border-width: 0.42rem;
+  border-radius: 1.35rem;
+  background: linear-gradient(145deg, #2b3656, #101a33);
+}
+
+.zy-reference-hero-art.is-live::before {
+  inset: 10% 3% 5% 5%;
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.48), rgba(255, 190, 64, 0.12));
+}
+
+.zy-reference-hero-cms-media {
+  position: absolute;
+  inset: 4% 2% 4% 8%;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+}
+
+.zy-reference-hero-cms-media img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: center;
+  filter: drop-shadow(0 1.4rem 1.1rem rgba(70, 56, 17, 0.16));
+}
+
+.zy-reference-hero-live-product {
+  position: absolute;
+  z-index: 2;
+  display: grid;
+  width: 9rem;
+  height: 10rem;
+  place-items: center;
+  overflow: hidden;
+  border: 0.55rem solid rgba(13, 31, 68, 0.92);
+  border-radius: 1.55rem;
+  background: linear-gradient(145deg, #eef6ff, #a7c8ff);
+  box-shadow: 0 1.5rem 1.35rem rgba(70, 56, 17, 0.2);
+  cursor: pointer;
+  pointer-events: auto;
+  transform: rotate(8deg);
+}
+
+.zy-reference-hero-live-product img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.zy-reference-hero-live-product.is-1 {
+  top: 13%;
+  right: 28%;
+}
+
+.zy-reference-hero-live-product.is-2 {
+  right: 9%;
+  bottom: 14%;
+  width: 7.8rem;
+  height: 8.5rem;
+  transform: rotate(-8deg);
+}
+
+.zy-reference-hero-live-empty {
+  position: absolute;
+  z-index: 2;
+  top: 28%;
+  right: 14%;
+  display: grid;
+  place-items: center;
+  gap: 0.55rem;
+  color: #1d4ed8;
+  text-align: center;
+}
+
+.zy-reference-hero-live-empty svg {
+  width: 4rem;
+  height: 4rem;
+  padding: 0.85rem;
+  border-radius: 1.1rem;
+  background: rgba(255, 255, 255, 0.66);
+}
+
+.zy-reference-hero-live-empty strong,
+.zy-reference-hero-live-empty small {
+  display: block;
+}
+
+.zy-reference-hero-live-empty strong { font-size: 0.8rem; }
+.zy-reference-hero-live-empty small { color: #6b5632; font-size: 0.61rem; }
+
+.zy-reference-hero-live-categories {
+  position: absolute;
+  right: 1rem;
+  bottom: 0.9rem;
+  left: 1rem;
+  z-index: 3;
+  display: flex;
+  gap: 0.4rem;
+  justify-content: flex-end;
+}
+
+.zy-reference-hero-live-categories button {
+  display: inline-flex;
+  min-height: 2rem;
+  align-items: center;
+  gap: 0.3rem;
+  max-width: 8rem;
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  border-radius: 999px;
+  padding: 0.25rem 0.55rem;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.76);
+  color: #1e3a68;
+  font-size: 0.58rem;
+  font-weight: 850;
+  pointer-events: auto;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.zy-reference-hero-live-categories img,
+.zy-reference-hero-live-categories svg {
+  width: 1.1rem;
+  height: 1.1rem;
+  flex: none;
+  object-fit: contain;
+  border-radius: 50%;
+}
+
+.zy-reference-preview .zy-foundation-category-dock {
+  margin-top: 1rem;
+  padding-block: 0.9rem 0.5rem;
+  border: 0;
+  background: #fff;
+  box-shadow: none;
+}
+
+.zy-reference-preview .zy-foundation-dock-header {
+  display: none;
+}
+
+.zy-reference-preview .zy-foundation-category-rail {
+  display: flex;
+  gap: clamp(0.7rem, 1.7vw, 1.35rem);
+  padding: 0.2rem 0.25rem 0.7rem;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.zy-reference-preview .zy-foundation-category-rail::-webkit-scrollbar {
+  display: none;
+}
+
+.zy-reference-preview .zy-foundation-category-all {
+  display: none;
+}
+
+.zy-reference-preview .zy-home-category-promos {
+  margin-top: 0.8rem;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.zy-reference-preview .zy-home-category-promos-header {
+  display: none;
+}
+
+.zy-reference-preview .zy-home-category-promo-grid {
+  gap: 0.75rem;
+}
+
+.zy-reference-preview .zy-home-category-promo {
+  min-height: 8rem;
+  border-radius: 1rem;
+}
+
+.zy-reference-preview .zy-home-category-promo-copy {
+  max-width: 65%;
+}
+
+.zy-reference-preview .zy-home-category-promo-copy small {
+  display: block;
+  max-width: 13rem;
+  color: inherit;
+  font-size: 0.57rem;
+  line-height: 1.25;
+}
+
+.zy-reference-preview .zy-home-category-promo-copy strong {
+  font-size: 1rem;
+  line-height: 1.08;
+}
+
+.zy-reference-preview .zy-home-category-promo-media .zy-home-preview-art {
+  width: 7rem;
+  height: 6rem;
+  border-radius: 1.2rem;
+  background: rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 0.92);
+  transform: rotate(6deg);
+}
+
+.zy-reference-preview .zy-home-category-promo-media .zy-home-preview-art svg {
+  width: 3rem;
+  height: 3rem;
+}
+
+.zy-reference-preview .zy-home-secondary-promos {
+  margin-top: 0;
+}
+
+.zy-reference-preview .zy-home-secondary-promo {
+  min-height: 8.2rem;
+  border-radius: 1rem;
+}
+
+.zy-reference-preview .zy-home-secondary-promo-media .zy-home-preview-art {
+  width: 10rem;
+  height: 7rem;
+  border-radius: 1.3rem;
+  background: rgba(255, 255, 255, 0.23);
+  color: rgba(255, 255, 255, 0.92);
+  transform: rotate(-6deg);
+}
+
+.zy-reference-preview .zy-home-preview-shelf {
+  position: relative;
+  margin-top: 1rem;
+  padding: clamp(1rem, 2vw, 1.5rem);
+  overflow: hidden;
+  border-radius: 1.1rem;
+  background: #fff;
+  box-shadow: 0 10px 28px rgba(44, 74, 126, 0.06);
+}
+
+.zy-reference-preview .zy-home-preview-shelf-header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.85rem;
+}
+
+.zy-reference-preview .zy-home-preview-shelf-eyebrow {
+  color: #ec6b18;
+  font-size: 0.63rem;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.zy-reference-preview .zy-home-preview-shelf h2 {
+  margin: 0.2rem 0 0;
+  color: var(--preview-ink);
+  font-size: clamp(1.25rem, 2.2vw, 1.7rem);
+  font-weight: 900;
+  letter-spacing: -0.04em;
+}
+
+.zy-reference-preview .zy-home-preview-shelf p {
+  margin: 0.2rem 0 0;
+  color: #73829a;
+  font-size: 0.72rem;
+}
+
+.zy-reference-preview .zy-home-preview-shelf-action {
+  display: inline-flex;
+  min-height: 2.2rem;
+  align-items: center;
+  gap: 0.35rem;
+  border: 0;
+  background: transparent;
+  color: var(--preview-blue);
+  font-size: 0.7rem;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.zy-reference-preview .zy-home-preview-shelf-action svg {
+  width: 0.85rem;
+}
+
+.zy-reference-preview .zy-home-preview-shelf-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.zy-reference-preview .zy-home-preview-product-card {
+  min-width: 0;
+  padding: 0.45rem;
+  border: 1px solid #edf1f7;
+  border-radius: 0.85rem;
+  background: #fff;
+}
+
+.zy-reference-preview .zy-home-preview-product-image {
+  position: relative;
+  aspect-ratio: 1 / 0.95;
+  overflow: hidden;
+  border-radius: 0.65rem;
+  background: #f6f8fc;
+}
+
+.zy-reference-preview .zy-home-preview-product-image .zy-home-preview-art {
+  width: 100%;
+  height: 100%;
+}
+
+.zy-reference-preview .zy-home-preview-product-copy {
+  display: flex;
+  min-height: 4rem;
+  flex-direction: column;
+  gap: 0.22rem;
+  padding: 0.55rem 0.25rem 0.15rem;
+}
+
+.zy-reference-preview .zy-home-preview-product-copy small {
+  overflow: hidden;
+  color: #71819c;
+  font-size: 0.52rem;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.zy-reference-preview .zy-home-preview-product-copy strong {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--preview-ink);
+  font-size: 0.68rem;
+  line-height: 1.2;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.zy-reference-preview .zy-home-preview-product-copy span {
+  color: #98a4b7;
+  font-size: 0.53rem;
+  line-height: 1.2;
+}
+
+.zy-reference-preview .zy-home-preview-art {
+  display: grid;
+  position: relative;
+  place-items: center;
+  overflow: hidden;
+  color: #276bd3;
+}
+
+.zy-reference-preview .zy-home-preview-art svg {
+  position: relative;
+  z-index: 1;
+  width: 2rem;
+  height: 2rem;
+}
+
+.zy-reference-preview .zy-home-preview-art-orb {
+  position: absolute;
+  width: 65%;
+  height: 65%;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.48);
+}
+
+.zy-reference-preview .zy-home-preview-art-orange { background: linear-gradient(145deg, #ffbd43, #f26a2d); color: #fff; }
+.zy-reference-preview .zy-home-preview-art-blue { background: linear-gradient(145deg, #71c9ef, #2865dc); color: #fff; }
+.zy-reference-preview .zy-home-preview-art-green { background: linear-gradient(145deg, #9be768, #43ae69); color: #fff; }
+.zy-reference-preview .zy-home-preview-art-pink { background: linear-gradient(145deg, #ff9bb6, #e85076); color: #fff; }
+.zy-reference-preview .zy-home-preview-art-yellow { background: linear-gradient(145deg, #ffe897, #f6a52a); color: #6b4210; }
+
+@media (max-width: 900px) {
+  .zy-reference-preview .zy-ai-hero-slide {
+    grid-template-columns: minmax(0, 0.95fr) minmax(18rem, 1.05fr);
+    padding: 2rem;
+  }
+
+  .zy-reference-preview .zy-home-preview-shelf-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 767px) {
+  .zy-reference-preview .zy-ai-hero-stage.is-reference-preview {
+    min-height: 30rem;
+  }
+
+  .zy-reference-preview .zy-ai-hero-slide {
+    display: block !important;
+    min-height: 30rem;
+    padding: 1.55rem 1.15rem 3.9rem;
+  }
+
+  .zy-reference-preview .zy-ai-hero-copy h1 {
+    max-width: 18rem;
+    font-size: clamp(2.55rem, 13vw, 3.65rem) !important;
+  }
+
+  .zy-reference-preview .zy-ai-hero-subtitle {
+    max-width: 18rem !important;
+  }
+
+  .zy-reference-preview .zy-ai-hero-actions {
+    position: relative;
+    z-index: 12;
+  }
+
+  .zy-reference-preview .zy-home-category-promo-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .zy-reference-preview .zy-home-category-promo {
+    min-height: 8.5rem;
+  }
+
+  .zy-reference-preview .zy-home-category-promo-copy {
+    max-width: 75%;
+  }
+
+  .zy-reference-preview .zy-home-category-promo-copy strong {
+    font-size: 0.88rem;
+  }
+
+  .zy-reference-preview .zy-home-category-promo-media {
+    right: -1.6rem;
+  }
+
+  .zy-reference-preview .zy-home-secondary-promo-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .zy-reference-preview .zy-home-preview-shelf-header {
+    align-items: flex-start;
+  }
+
+  .zy-reference-preview .zy-home-preview-shelf-action {
+    flex: 0 0 auto;
+    font-size: 0.64rem;
+  }
+
+  .zy-reference-preview .zy-home-preview-shelf-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.55rem;
+  }
+}
+
+@media (max-width: 389px) {
+  .zy-reference-preview .zy-ai-hero-stage.is-reference-preview,
+  .zy-reference-preview .zy-ai-hero-slide {
+    min-height: 28rem;
+  }
+
+  .zy-reference-preview .zy-ai-hero-slide {
+    padding-inline: 0.95rem;
+  }
+
+  .zy-reference-preview .zy-ai-hero-copy h1 {
+    font-size: 2.35rem !important;
+  }
+
+}
+
+/* Final reference-match pass: compact proportions and safe mobile clearance. */
+.zy-launch-home {
+  min-width: 0;
+  overflow-x: clip;
+}
+
+.zy-reference-preview .zy-ai-hero-stage.is-reference-preview {
+  height: 22rem !important;
+  min-height: 22rem !important;
+}
+
+.zy-reference-preview .zy-ai-hero-slide {
+  min-height: 100% !important;
+  padding-block: 1.35rem 2.65rem;
+}
+
+.zy-reference-preview .zy-ai-hero-copy h1 {
+  max-width: 26rem;
+  font-size: clamp(2.35rem, 4.3vw, 3.85rem) !important;
+}
+
+.zy-reference-preview .zy-ai-hero-secondary {
+  display: none !important;
+}
+
+.zy-reference-preview .zy-ai-hero-primary {
+  min-width: 8.5rem;
+}
+
+.zy-penpot-storefront .zy-market-header-row {
+  gap: 0.75rem;
+}
+
+.zy-penpot-storefront .zy-brand-button img {
+  object-fit: contain;
+}
+
+.zy-penpot-storefront .zy-desktop-navigation nav button:nth-last-child(2) {
+  border: 0;
+  border-radius: 0.65rem;
+  color: #475569;
+  background: transparent;
+}
+
+.zy-penpot-storefront .zy-desktop-navigation nav button:last-child {
+  border: 1px solid #fed7aa;
+  border-radius: 999px;
+  color: #c2410c;
+  background: #fff7ed;
+}
+
+.zy-penpot-storefront .zy-desktop-navigation nav button:last-child:hover,
+.zy-penpot-storefront .zy-desktop-navigation nav button:last-child:focus-visible {
+  color: #9a3412;
+  background: #ffedd5;
+}
+
+.zy-penpot-storefront #floating-whatsapp-btn {
+  z-index: 35 !important;
+}
+
+@media (min-width: 768px) {
+  .zy-penpot-storefront .zy-market-header-row {
+    height: 64px;
+  }
+
+  .zy-penpot-storefront .zy-brand-button {
+    min-width: 10rem;
+  }
+
+  .zy-penpot-storefront .zy-brand-button img {
+    max-width: 10.5rem;
+    height: 2.55rem;
+  }
+
+  .zy-penpot-storefront .zy-header-actions {
+    gap: 0.1rem;
+  }
+
+  .zy-penpot-storefront .zy-header-action {
+    padding-inline: 0.45rem;
+    font-size: 0.65rem;
+  }
+
+  .zy-penpot-storefront .zy-desktop-navigation > .zy-header-container {
+    min-height: 46px;
+  }
+}
+
+@media (max-width: 767px) {
+  .zy-penpot-storefront .zy-l6-main {
+    padding-bottom: calc(6rem + env(safe-area-inset-bottom));
+  }
+
+  .zy-penpot-storefront .zy-market-header-shell {
+    padding: 0.3rem 0.75rem 0.4rem;
+  }
+
+  .zy-penpot-storefront .zy-market-header-row {
+    min-height: 2.55rem;
+    gap: 0.3rem;
+  }
+
+  .zy-penpot-storefront .zy-mobile-menu-trigger,
+  .zy-penpot-storefront .zy-cart-action {
+    min-width: 42px;
+    min-height: 42px;
+  }
+
+  .zy-penpot-storefront .zy-brand-button img {
+    max-width: 7.75rem;
+    height: 2.1rem;
+  }
+
+  .zy-penpot-storefront .zy-mobile-delivery-context {
+    min-height: 2.55rem;
+    gap: 0.25rem;
+  }
+
+  .zy-penpot-storefront .zy-mobile-delivery-context small {
+    font-size: 0.56rem;
+  }
+
+  .zy-penpot-storefront .zy-mobile-delivery-context strong {
+    font-size: 0.68rem;
+  }
+
+  .zy-penpot-storefront .zy-navbar-mobile-search {
+    margin-top: 0.25rem;
+  }
+
+  .zy-penpot-storefront .zy-market-search {
+    min-height: 2.7rem;
+  }
+
+  .zy-penpot-storefront #floating-whatsapp-btn {
+    width: 3.25rem !important;
+    height: 3.25rem !important;
+  }
+
+  .zy-reference-preview .zy-ai-hero-stage.is-reference-preview {
+    height: 20rem !important;
+    min-height: 20rem !important;
+  }
+
+  .zy-reference-preview .zy-ai-hero-slide {
+    min-height: 20rem !important;
+    padding: 1.1rem 1rem 3rem !important;
+  }
+
+  .zy-reference-preview .zy-ai-hero-copy h1 {
+    max-width: 15rem;
+    font-size: clamp(2.15rem, 11vw, 3.1rem) !important;
+  }
+
+  .zy-reference-preview .zy-ai-hero-subtitle {
+    max-width: 15rem !important;
+    font-size: 0.72rem !important;
+  }
+
+  .zy-reference-preview .zy-ai-hero-actions {
+    width: min(100%, 10rem);
+    grid-template-columns: 1fr !important;
+    margin-top: 0.85rem !important;
+  }
+
+  .zy-reference-preview .zy-ai-hero-primary {
+    min-height: 2.65rem !important;
+    padding-inline: 0.85rem !important;
+    font-size: 0.7rem !important;
+  }
+
+  .zy-reference-preview .zy-ai-hero-visual {
+    position: absolute !important;
+    right: 0;
+    bottom: 0.65rem;
+    left: 34%;
+    width: 66%;
+    height: 11.5rem;
+    pointer-events: none;
+  }
+
+  .zy-reference-hero-device.is-mobile {
+    top: 7%;
+    right: 32%;
+    width: 5.3rem;
+    height: 8.2rem;
+  }
+
+  .zy-reference-hero-device.is-audio {
+    right: 4%;
+    bottom: 9%;
+    width: 4.75rem;
+    height: 3.8rem;
+  }
+
+  .zy-reference-hero-device.is-watch {
+    right: 40%;
+    bottom: 1%;
+    width: 3.7rem;
+    height: 3.7rem;
+  }
+
+  .zy-reference-preview .zy-home-preview-shelf {
+    margin-top: 0.75rem;
+  }
+}
+
+@media (max-width: 389px) {
+  .zy-penpot-storefront .zy-market-header-shell {
+    padding-inline: 0.6rem;
+  }
+
+  .zy-penpot-storefront .zy-brand-button img {
+    max-width: 7.15rem;
+  }
+
+  .zy-reference-preview .zy-ai-hero-stage.is-reference-preview,
+  .zy-reference-preview .zy-ai-hero-slide {
+    height: 18.75rem !important;
+    min-height: 18.75rem !important;
+  }
+
+  .zy-reference-preview .zy-ai-hero-slide {
+    padding-inline: 0.85rem !important;
+  }
+
+  .zy-reference-preview .zy-ai-hero-copy h1 {
+    max-width: 13rem;
+    font-size: 2.05rem !important;
+  }
+
+  .zy-reference-preview .zy-ai-hero-subtitle {
+    max-width: 13rem !important;
+    font-size: 0.67rem !important;
+  }
+
+  .zy-reference-preview .zy-ai-hero-visual {
+    height: 10.5rem;
+  }
+
+  .zy-reference-hero-device.is-mobile {
+    width: 4.7rem;
+    height: 7.2rem;
+  }
+
+  .zy-reference-hero-device.is-audio {
+    width: 4.1rem;
+    height: 3.2rem;
+  }
+
+  .zy-reference-hero-device.is-watch {
+    width: 3.2rem;
+    height: 3.2rem;
+  }
+}
+
+/* Final presentation tokens shared by live and development-only homepage cards. */
+.zy-reference-preview {
+  --zy-home-card-radius: 1rem;
+  --zy-home-card-border: #e9eef6;
+  --zy-home-card-shadow: 0 0.65rem 1.5rem rgba(44, 74, 126, 0.08);
+  --zy-home-shelf-gap: 0.75rem;
+  --zy-home-image-radius: 0.85rem;
+}
+
+.zy-penpot-storefront .zy-launch-home .zy-storefront-product-shelf-grid {
+  gap: var(--zy-home-shelf-gap);
+}
+
+.zy-penpot-storefront .zy-launch-home :is(.zy-product-card, .zy-home-preview-product-card) {
+  border-color: var(--zy-home-card-border);
+  border-radius: var(--zy-home-card-radius);
+  box-shadow: var(--zy-home-card-shadow);
+}
+
+.zy-penpot-storefront .zy-launch-home .zy-product-image-stage,
+.zy-launch-home .zy-home-preview-product-image {
+  border-radius: var(--zy-home-image-radius);
+}
+
+.zy-reference-preview .zy-foundation-category-tile {
+  width: clamp(4.9rem, 7.3vw, 6.1rem);
+  min-width: clamp(4.9rem, 7.3vw, 6.1rem);
+  gap: 0.38rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.zy-reference-preview .zy-foundation-category-image {
+  display: grid;
+  width: clamp(3.6rem, 5.5vw, 4.7rem);
+  height: clamp(3.6rem, 5.5vw, 4.7rem);
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 50%;
+  background: linear-gradient(145deg, #f0f7ff, #fff7df);
+  box-shadow: 0 5px 16px rgba(54, 88, 143, 0.08);
+}
+
+.zy-reference-preview .zy-foundation-category-image img {
+  width: 78%;
+  height: 78%;
+  object-fit: contain;
+  border-radius: 50%;
+}
+
+.zy-reference-preview .zy-foundation-category-preview .zy-home-preview-art {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  border-radius: 50%;
+}
+
+.zy-reference-preview .zy-foundation-category-tile strong {
+  display: -webkit-box;
+  overflow: hidden;
+  color: #1c2e4f;
+  font-size: 0.66rem;
+  line-height: 1.15;
+  text-align: center;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.zy-reference-preview .zy-foundation-category-tile small {
+  display: none;
+}
+
+.zy-reference-preview .zy-home-category-promo-grid {
+  align-items: stretch;
+}
+
+.zy-reference-preview .zy-home-category-promo {
+  min-height: 8.3rem;
+  height: 100%;
+}
+
+.zy-reference-preview .zy-home-category-promo-copy,
+.zy-reference-preview .zy-home-secondary-promo-copy {
+  justify-content: space-between;
+  min-height: 100%;
+}
+
+@media (max-width: 767px) {
+  .zy-penpot-storefront .zy-mobile-menu-trigger,
+  .zy-penpot-storefront .zy-cart-action {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .zy-penpot-storefront .zy-market-search {
+    min-height: 2.6rem;
+  }
+
+  .zy-launch-home .zy-home-preview-product-card,
+  .zy-penpot-storefront .zy-launch-home .zy-product-card {
+    border-radius: 0.85rem;
+  }
+
+  .zy-reference-hero-art.is-live .zy-reference-hero-cms-media {
+    inset: 8% -8% 4% 28%;
+  }
+
+  .zy-reference-hero-art.is-live .zy-reference-hero-live-product {
+    width: 5.7rem;
+    height: 7rem;
+    border-width: 0.36rem;
+  }
+
+  .zy-reference-hero-art.is-live .zy-reference-hero-live-product.is-1 {
+    top: 10%;
+    right: 26%;
+  }
+
+  .zy-reference-hero-art.is-live .zy-reference-hero-live-product.is-2 {
+    right: 2%;
+    bottom: 12%;
+    width: 4.8rem;
+    height: 5.7rem;
+  }
+
+  .zy-reference-hero-live-empty {
+    top: 22%;
+    right: 8%;
+  }
+
+  .zy-reference-hero-live-categories {
+    right: 0.2rem;
+    bottom: 0.35rem;
+    left: 24%;
+    justify-content: flex-end;
+  }
+
+  .zy-reference-hero-live-categories button {
+    max-width: 5.25rem;
+    min-height: 1.8rem;
+    padding-inline: 0.35rem;
+    font-size: 0.5rem;
+  }
+}

@@ -121,10 +121,10 @@ test('recommendations never fabricate best-seller or co-purchase results', () =>
 });
 
 test('App preserves the existing wishlist document contract and adds bounded recent-ID account sync', () => {
-  assert.match(app, /updateDoc\(userRef, \{ wishlist \}\)/);
+  assert.match(app, /updateDoc\(userRef, \{ wishlist: commerceWishlist \}\)/);
   assert.match(app, /userData\.wishlist/);
   assert.match(app, /userData\.recentlyViewedProductIds/);
-  assert.match(app, /updateDoc\(userRef, \{ recentlyViewedProductIds \}\)/);
+  assert.match(app, /updateDoc\(userRef, \{ recentlyViewedProductIds: commerceRecentlyViewedIds \}\)/);
   assert.match(app, /mergeRecentlyViewedIds/);
   assert.match(app, /cleanRecentlyViewedIds/);
   assert.match(app, /'zyro_recently_viewed'/);

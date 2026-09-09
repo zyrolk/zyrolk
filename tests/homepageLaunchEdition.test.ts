@@ -14,7 +14,8 @@ test('Sprint 75A retains all four premium homepage surfaces', () => {
   assert.match(homepage, /zy-launch-home/);
   assert.match(homepage, /<HeroBanner/);
   assert.match(homepage, /zy-foundation-category-dock/);
-  assert.equal((homepage.match(/<StorefrontProductShelf/g) || []).length, 5);
+  assert.equal((homepage.match(/renderShelf\(\{/g) || []).length, 5);
+  assert.match(homepage, /<StorefrontProductShelf/);
   assert.match(homepage, /<HomepageTrustStrip \/>/);
   assert.doesNotMatch(homepage, /<Footer/iu);
 });
@@ -27,7 +28,7 @@ test('premium shelf treatments retain every live App-level product projection', 
     'bestSellerProducts',
     'recommendedProducts',
   ]) {
-    assert.match(homepage, new RegExp(`products=\\{${products}\\}`));
+    assert.match(homepage, new RegExp(`products: ${products}`));
   }
 
   assert.match(app, /subscribeToStorefrontProductPage\(db/);
@@ -62,7 +63,7 @@ test('trust strip uses factual service messages without changing a data contract
     'Cash on Delivery',
     'Islandwide Delivery',
     'Secure Checkout',
-    'Local Support',
+    'Customer Support',
   ]) {
     assert.match(trustStrip, new RegExp(message));
   }

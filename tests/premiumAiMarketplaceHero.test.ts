@@ -8,9 +8,8 @@ const homepage = readFileSync('src/components/MarketplaceHomePhase1.tsx', 'utf8'
 const styles = readFileSync('src/styles/storefrontHero.css', 'utf8');
 
 test('premium hero communicates the marketplace without fabricated intelligence or commerce data', () => {
-  assert.match(hero, /Sri Lankan Marketplace/);
-  assert.match(hero, /Shop Sri Lanka Online\./);
-  assert.match(hero, /Cash on Delivery available\./);
+  assert.match(hero, /Sri Lankan marketplace/);
+  assert.match(hero, /REFERENCE_HERO_TITLE/);
   assert.match(hero, /pay with Cash on Delivery when your order arrives/);
   assert.doesNotMatch(hero, /AI-Powered Marketplace|AI-assisted search/);
   assert.doesNotMatch(hero, /\b(?:1,000,000|five-star reviews|number one marketplace|guaranteed savings)\b/iu);
@@ -50,18 +49,10 @@ test('voice and image-search controls stay hidden for launch while search remain
 });
 
 test('hero trust and category surfaces use factual labels and live category actions', () => {
-  for (const label of [
-    'Cash on Delivery',
-    'Verified Suppliers',
-    'Islandwide Delivery',
-    'Secure Checkout',
-    'Customer Support',
-  ]) {
-    assert.match(hero, new RegExp(label));
-  }
+  assert.doesNotMatch(hero, /zy-ai-hero-trust|Verified Suppliers/);
   assert.doesNotMatch(hero, /24\/7 Support|Relevant Recommendations|Easy Returns/);
   assert.match(hero, /popularCategories\.map/);
-  assert.match(hero, /visualCategories\.map/);
+  assert.match(hero, /visualCategories\.slice\(0, 3\)\.map/);
 });
 
 test('isolated hero styling is responsive, touch-safe, and reduced-motion aware', () => {

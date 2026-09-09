@@ -38,16 +38,16 @@ test('the customer home route renders the isolated Phase 1 presentation with exi
 test('Phase 1 uses live category visuals and prop-driven live product shelves', () => {
   assert.match(app, /if \(itemsCount === 0\) return \[\]/);
   assert.match(app, /storedImage \|\| productImage/);
-  assert.match(phaseOneHome, /const hasCategories = categoryVisuals\.length > 0/);
+  assert.match(phaseOneHome, /const liveCategoryRailItems: HomepageCategoryRailItem\[\] = categoryVisuals\.map/);
   assert.match(phaseOneHome, /categoryVisuals\.map/);
   assert.match(phaseOneHome, /PLACEHOLDER_TILES/);
-  assert.match(phaseOneHome, /Categories are being prepared/);
+  assert.match(phaseOneHome, /Categories could not be loaded/);
   assert.match(phaseOneHome, /import StorefrontProductShelf from '\.\/StorefrontProductShelf'/);
-  assert.match(phaseOneHome, /products=\{discountedProducts\}/);
-  assert.match(phaseOneHome, /products=\{featuredProducts\}/);
-  assert.match(phaseOneHome, /products=\{newArrivalProducts\}/);
-  assert.match(phaseOneHome, /products=\{bestSellerProducts\}/);
-  assert.match(phaseOneHome, /products=\{recommendedProducts\}/);
+  assert.match(phaseOneHome, /products: discountedProducts/);
+  assert.match(phaseOneHome, /products: featuredProducts/);
+  assert.match(phaseOneHome, /products: newArrivalProducts/);
+  assert.match(phaseOneHome, /products: bestSellerProducts/);
+  assert.match(phaseOneHome, /products: recommendedProducts/);
   assert.match(productShelf, /products\.map/);
   assert.match(productShelf, /<ProductCard/);
   assert.doesNotMatch(phaseOneHome, /countdown|placeholder product|demo product/iu);
@@ -60,10 +60,8 @@ test('CMS hero keeps campaign behavior and marketplace-safe messaging', () => {
   assert.match(hero, /normalizeSlideSpeed\(settings\?\.autoSlideSpeed\)/);
   assert.match(hero, /onTouchStart=\{handleTouchStart\}/);
   assert.match(hero, /onTouchEnd=\{handleTouchEnd\}/);
-  assert.match(hero, /Everything you need\./);
-  assert.match(hero, /One trusted marketplace\./);
-  assert.match(hero, /Shop fashion, home, beauty, electronics, lifestyle, accessories and thousands of products in one trusted Sri Lankan marketplace\./);
-  assert.match(hero, /const displaySubtitle = activeSlide\.subtitle \|\| MARKETPLACE_MESSAGE/);
+  assert.match(hero, /Browse products from trusted Sri Lankan suppliers, add to cart, and pay with Cash on Delivery when your order arrives\./);
+  assert.match(hero, /const displaySubtitle = normalizeHeroPresentationText/);
   assert.match(hero, /replacePremiumElectronics/);
   assert.doesNotMatch(hero, /PREMIUM_DEFAULT_SLIDES/);
 });

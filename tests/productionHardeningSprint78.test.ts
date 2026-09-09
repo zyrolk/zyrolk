@@ -115,7 +115,7 @@ test('storefront listeners recover from failures instead of leaving an endless l
   assert.match(app, /if \(blocksProducts\) setLoading\(false\)/);
   assert.match(app, /zy-storefront-connection-state/);
   assert.match(app, /Retry connection/);
-  assert.match(app, /writeStoredJson\(getBrowserStorage\('localStorage'\), 'zyro_cart', cart\)/);
+  assert.match(app, /writeStoredJson\(getBrowserStorage\('localStorage'\), 'zyro_cart', commerceCart\)/);
   assert.match(styles, /Sprint 78: production recovery and connectivity states/);
 });
 

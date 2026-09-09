@@ -14,7 +14,7 @@ test('hero uses immediate reveal so fallback content is never permanently hidden
   assert.match(hero, /data-zy-reveal="immediate"/);
   assert.match(motion, /IMMEDIATE_REVEAL_SELECTOR/);
   assert.match(motion, /REVEAL_FAILSAFE_MS/);
-  assert.match(hero, /Shop Sri Lanka Online/);
+  assert.match(hero, /REFERENCE_HERO_TITLE/);
   assert.match(hero, /MARKETPLACE_MESSAGE/);
 });
 
@@ -23,9 +23,9 @@ test('homepage category section uses independent loading and exits skeleton stat
   assert.match(app, /categoriesError=\{categoriesLoadError\}/);
   assert.match(app, /setCategoriesLoading\(false\)/);
   assert.match(app, /handleCategoryFailure/);
-  assert.match(homepage, /categoriesLoading \? \(/);
-  assert.match(homepage, /categoriesError \? \(/);
-  assert.match(homepage, /Categories are being prepared/);
+  assert.match(homepage, /categoriesLoading && !previewPresentation \? \(/);
+  assert.match(homepage, /categoriesError && !previewPresentation \? \(/);
+  assert.match(homepage, /Categories could not be loaded/);
   assert.doesNotMatch(homepage, /zy-foundation-category-skeleton is-empty/);
 });
 

@@ -70,7 +70,8 @@ test('checkout drafts survive closure and are removed only after a successful or
   clearCheckoutDraft(storage);
   assert.deepEqual(readCheckoutDraft(storage), EMPTY_CHECKOUT_FORM);
   assert.match(app, /readStoredArray<CartItem>\(getBrowserStorage\('localStorage'\), 'zyro_cart'\)/);
-  assert.match(app, /writeStoredJson\(getBrowserStorage\('localStorage'\), 'zyro_cart', cart\)/);
+  assert.match(app, /const commerceCart = filterCommerceCartItems\(cart\)/);
+  assert.match(app, /writeStoredJson\(getBrowserStorage\('localStorage'\), 'zyro_cart', commerceCart\)/);
   assert.match(checkout, /setPlacedOrder\(result\.order\)[\s\S]*clearCheckoutDraft[\s\S]*onClearCart\(\)/);
 });
 

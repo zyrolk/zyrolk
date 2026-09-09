@@ -9,9 +9,14 @@ const styles = readFileSync('src/index.css', 'utf8');
 const catalog = readFileSync('src/services/storefront/storefrontCatalog.ts', 'utf8');
 
 test('Sprint 74 composes all five homepage sections from the generic storefront shelf', () => {
-  assert.equal((homepage.match(/<StorefrontProductShelf/g) || []).length, 5);
+  assert.equal((homepage.match(/renderShelf\(\{/g) || []).length, 5);
+  assert.match(homepage, /<StorefrontProductShelf/);
+  assert.match(homepage, /<HomepagePreviewProductShelf/);
   for (const key of ['flashDeals', 'featured', 'newArrivals', 'bestSellers', 'recommended']) {
-    assert.match(homepage, new RegExp(`title=\\{homepageSections\\.${key}\\.title\\}`));
+    const titleProp = key === 'recommended'
+      ? /title: recommendedShelfTitle/
+      : new RegExp('title: homepageSections\\.' + key + '\\.title');
+    assert.match(homepage, titleProp);
     assert.match(homepage, new RegExp(`homepageSections\\.${key}\\.enabled`));
   }
   assert.doesNotMatch(homepage, /<ProductCard/);

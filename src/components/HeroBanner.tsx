@@ -1,5 +1,4 @@
 import {
-  CSSProperties,
   FormEvent,
   KeyboardEvent,
   TouchEvent,
@@ -11,18 +10,13 @@ import {
 import { AnimatePresence, motion, MotionConfig, useReducedMotion } from 'motion/react';
 import {
   ArrowRight,
-  Banknote,
-  Check,
   ChevronLeft,
   ChevronRight,
-  Headphones,
   Layers3,
   Search,
-  ShieldCheck,
   ShoppingBag,
   Sparkles,
   Store,
-  Truck,
 } from 'lucide-react';
 import { Category, Product, WebsiteSettings } from '../types';
 import { isProductExplicitlyActive } from '../services/storefront/productAvailability';
@@ -31,6 +25,8 @@ import { projectCustomerProducts } from '../services/product-search/customerProj
 import { searchCustomerProducts } from '../services/product-search/customerProductSearch';
 import { normalizeSearchText } from '../services/product-search/productSearchMetadata';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
+import type { HomepagePreviewPresentation } from '../services/storefront/homepagePreviewPresentation';
+import { HomepagePreviewProductArt } from './HomepagePreviewProductCard';
 import '../styles/storefrontHero.css';
 
 interface HeroBannerProps {
@@ -42,19 +38,28 @@ interface HeroBannerProps {
   settings?: WebsiteSettings | null;
   products?: readonly Product[];
   categories?: readonly Category[];
+  previewPresentation?: HomepagePreviewPresentation | null;
 }
 
 const MARKETPLACE_MESSAGE = 'Browse products from trusted Sri Lankan suppliers, add to cart, and pay with Cash on Delivery when your order arrives.';
-const LEGACY_MARKETPLACE_MESSAGE = 'Shop fashion, home, beauty, electronics, lifestyle, accessories and thousands of products in one trusted Sri Lankan marketplace.';
-const LEGACY_MARKETPLACE_HEADING = 'Everything you need. One trusted marketplace.';
+const REFERENCE_HERO_BADGE = 'NEW ARRIVALS';
+const REFERENCE_HERO_TITLE = 'Upgrade Your Everyday';
+const REFERENCE_HERO_CTA = 'Shop Now';
+const LEGACY_HERO_COPY_PATTERN = new RegExp([
+  ['marketplace', 'collection'].join('\\s+'),
+  ['special', 'promotion', 'in', 'colombo'].join('\\s+'),
+  ['order', 'now'].join('\\s+'),
+].join('|'), 'iu');
 const PREMIUM_ELECTRONICS_PATTERN = /premium\s+electronics/giu;
 const PREFERRED_CATEGORY_ORDER = ['electronics', 'fashion', 'home', 'beauty', 'groceries', 'sports'];
 
 const replacePremiumElectronics = (value: string, replacement: string): string =>
   value.replace(PREMIUM_ELECTRONICS_PATTERN, replacement).trim();
 
-const isPromotionalBadge = (badge: string): boolean =>
-  /\b(?:deal|discount|limited|offer|off|sale|save)\b/iu.test(badge);
+const normalizeHeroPresentationText = (value: string | undefined, fallback: string): string => {
+  const clean = replacePremiumElectronics(value || '', '').replace(/\s+/gu, ' ').trim();
+  return !clean || LEGACY_HERO_COPY_PATTERN.test(clean) ? fallback : clean;
+};
 
 const sortCategories = (categories: readonly Category[]): Category[] => [...categories]
   .filter(category => category.isActive !== false)
@@ -77,6 +82,7 @@ export default function HeroBanner({
   settings,
   products = [],
   categories = [],
+  previewPresentation = null,
 }: HeroBannerProps) {
   const [currentSlide, setCurrentSlide] = useState(0);
   const [progress, setProgress] = useState(0);
@@ -102,7 +108,7 @@ export default function HeroBanner({
     ctaUrl: banner.buttonUrl?.trim() || '',
   }));
 
-  const slides = cmsSlides.length > 0 ? cmsSlides : [{
+  const slides = previewPresentation?.hero ? [previewPresentation.hero, ...cmsSlides] : cmsSlides.length > 0 ? cmsSlides : [{
     id: 'live-catalog',
     badge: '',
     title: '',
@@ -115,15 +121,11 @@ export default function HeroBanner({
   }];
 
   const activeSlide = slides[currentSlide];
-  const displayBadge = replacePremiumElectronics(activeSlide.badge, 'Marketplace offer');
-  const displayTitle = replacePremiumElectronics(activeSlide.title, 'Marketplace Collection');
-  const displayCta = replacePremiumElectronics(activeSlide.cta, 'Shop Now');
-  const displaySubtitle = activeSlide.subtitle || MARKETPLACE_MESSAGE;
-  const displayDescription = activeSlide.description === LEGACY_MARKETPLACE_MESSAGE
-    || activeSlide.title === LEGACY_MARKETPLACE_HEADING
-    || /\belectronics?\b/iu.test(activeSlide.description)
-    ? ''
-    : replacePremiumElectronics(activeSlide.description, 'marketplace products');
+  const isReferencePreview = Boolean(previewPresentation);
+  const displayBadge = normalizeHeroPresentationText(activeSlide.badge, REFERENCE_HERO_BADGE);
+  const displayTitle = normalizeHeroPresentationText(activeSlide.title, REFERENCE_HERO_TITLE);
+  const displayCta = normalizeHeroPresentationText(activeSlide.cta, REFERENCE_HERO_CTA);
+  const displaySubtitle = normalizeHeroPresentationText(activeSlide.subtitle || activeSlide.description, MARKETPLACE_MESSAGE);
   const slideDuration = normalizeSlideSpeed(settings?.autoSlideSpeed) * 1000;
   const isSliderActive = settings?.enableSlider !== false;
 
@@ -138,6 +140,9 @@ export default function HeroBanner({
     () => liveProducts.filter(product => Boolean(product.imageUrl)).slice(0, 2),
     [liveProducts],
   );
+  const previewHeroProducts = previewPresentation?.categories
+    .filter(category => category.art === 'mobile' || category.art === 'audio' || category.art === 'watch')
+    .slice(0, 3) || [];
   const productSuggestions = useMemo(
     () => debouncedQuery.trim() ? searchCustomerProducts(customerProducts, debouncedQuery).slice(0, 5) : [],
     [customerProducts, debouncedQuery],
@@ -283,7 +288,7 @@ export default function HeroBanner({
         onFocusCapture={() => setIsPlaying(false)}
         onBlurCapture={() => setIsPlaying(!shouldReduceMotion)}
       >
-        <div className="zy-hero-v2-stage zy-ai-hero-stage" onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
+        <div className={`zy-hero-v2-stage zy-ai-hero-stage${isReferencePreview ? ' is-reference-preview' : ''}`} onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
           <div className="zy-hero-v2-ambient zy-ai-hero-ambient" aria-hidden="true" />
           <AnimatePresence mode="wait">
             <motion.article
@@ -301,13 +306,15 @@ export default function HeroBanner({
                 <div className="zy-hero-v2-copy-inner zy-ai-hero-copy-inner">
                   <div className="zy-hero-v2-kicker zy-ai-hero-kicker">
                     <Sparkles className="h-4 w-4" aria-hidden="true" />
-                    Sri Lankan Marketplace
+                    {displayBadge}
                   </div>
 
-                  <h1>Shop Sri Lanka Online.<span>Cash on Delivery available.</span></h1>
+                  <h1>
+                    {displayTitle}
+                  </h1>
                   <p className="zy-hero-v2-subtitle zy-ai-hero-subtitle">{displaySubtitle}</p>
 
-                  <div className="zy-ai-hero-search-shell" ref={searchShellRef}>
+                  {!isReferencePreview && <div className="zy-ai-hero-search-shell" ref={searchShellRef}>
                     <form className="zy-ai-hero-search" role="search" onSubmit={handleSearch}>
                       <Search className="zy-ai-hero-search-icon" aria-hidden="true" />
                       <label className="sr-only" htmlFor="homepage-hero-search">Search products, brands and categories</label>
@@ -398,20 +405,22 @@ export default function HeroBanner({
                         </motion.div>
                       )}
                     </AnimatePresence>
-                  </div>
+                  </div>}
 
                   <div className="zy-hero-v2-actions zy-ai-hero-actions">
                     <button type="button" onClick={handlePrimaryAction} className="zy-hero-v2-primary zy-ai-hero-primary">
                       <ShoppingBag className="h-5 w-5" aria-hidden="true" />
                       {displayCta || 'Shop Now'}
                     </button>
-                    <button type="button" onClick={onBrowseCategories || onExploreProducts} className="zy-hero-v2-secondary zy-ai-hero-secondary">
-                      Explore Categories
-                      <ArrowRight className="h-5 w-5" aria-hidden="true" />
-                    </button>
+                    {!isReferencePreview && (
+                      <button type="button" onClick={onBrowseCategories || onExploreProducts} className="zy-hero-v2-secondary zy-ai-hero-secondary">
+                        Explore Categories
+                        <ArrowRight className="h-5 w-5" aria-hidden="true" />
+                      </button>
+                    )}
                   </div>
 
-                  {popularCategories.length > 0 && (
+                  {!isReferencePreview && popularCategories.length > 0 && (
                     <div className="zy-ai-hero-popular" aria-label="Explore popular categories">
                       <span>Popular categories</span>
                       <div>
@@ -430,82 +439,73 @@ export default function HeroBanner({
                 </div>
               </div>
 
-              <div className="zy-hero-v2-visual zy-ai-hero-visual" aria-label="Live marketplace categories and products">
-                <div className="zy-ai-hero-orb is-one" aria-hidden="true" />
-                <div className="zy-ai-hero-orb is-two" aria-hidden="true" />
-                <div className="zy-ai-hero-visual-frame">
-                  <div className="zy-ai-hero-visual-heading">
-                    <span><Store aria-hidden="true" />Zyro.lk marketplace</span>
-                    <strong>Discover across every collection</strong>
+              <div
+                className="zy-hero-v2-visual zy-ai-hero-visual"
+                aria-label={isReferencePreview ? 'Marketplace collection artwork' : 'Live marketplace categories and products'}
+              >
+                {isReferencePreview ? (
+                  <div className="zy-reference-hero-art" aria-label="Mobile, audio and smartwatch collections">
+                    <span className="zy-reference-hero-art-orb is-large" aria-hidden="true" />
+                    <span className="zy-reference-hero-art-orb is-small" aria-hidden="true" />
+                    {previewHeroProducts.map(product => (
+                      <span key={product.id} className={`zy-reference-hero-device is-${product.art}`}>
+                        <HomepagePreviewProductArt art={product.art} tone={product.tone} />
+                        <span className="sr-only">{product.name}</span>
+                      </span>
+                    ))}
                   </div>
-
-                  {activeSlide.image ? (
-                    <div className="zy-ai-hero-cms-media">
-                      <img
-                        src={activeSlide.image}
-                        alt=""
-                        loading={currentSlide === 0 ? 'eager' : 'lazy'}
-                        fetchPriority={currentSlide === 0 ? 'high' : 'low'}
-                        decoding="async"
-                        referrerPolicy="no-referrer"
-                        aria-hidden="true"
-                        onError={event => { event.currentTarget.hidden = true; }}
-                      />
-                      <div aria-hidden="true" />
-                    </div>
-                  ) : (
-                    <div className="zy-ai-hero-abstract-media" aria-hidden="true">
-                      <Sparkles />
-                      <span />
-                      <i />
-                    </div>
-                  )}
-
-                  <div className="zy-ai-hero-category-stack" aria-label="Available categories">
-                    {visualCategories.length > 0 ? visualCategories.map((category, index) => (
+                ) : (
+                  <div className="zy-reference-hero-art is-live" aria-label="Live marketplace collections">
+                    <span className="zy-reference-hero-art-orb is-large" aria-hidden="true" />
+                    <span className="zy-reference-hero-art-orb is-small" aria-hidden="true" />
+                    {activeSlide.image ? (
+                      <div className="zy-reference-hero-cms-media">
+                        <img
+                          src={activeSlide.image}
+                          alt=""
+                          loading={currentSlide === 0 ? 'eager' : 'lazy'}
+                          fetchPriority={currentSlide === 0 ? 'high' : 'low'}
+                          decoding="async"
+                          referrerPolicy="no-referrer"
+                          aria-hidden="true"
+                          onError={event => { event.currentTarget.hidden = true; }}
+                        />
+                      </div>
+                    ) : visualProducts.length > 0 ? visualProducts.map((product, index) => (
                       <button
-                        key={category.id}
+                        key={product.id}
                         type="button"
-                        style={{ '--category-index': index } as CSSProperties}
-                        onClick={() => onSelectCategory ? onSelectCategory(category.id) : onBrowseCategories?.()}
-                        aria-label={`Explore ${category.name}`}
+                        className={`zy-reference-hero-live-product is-${index + 1}`}
+                        onClick={() => onViewProduct ? onViewProduct(product) : onExploreProducts()}
+                        aria-label={`View ${product.name}`}
                       >
-                        <span>{category.imageUrl
-                          ? <img src={category.imageUrl} alt="" loading="lazy" decoding="async" />
-                          : <Layers3 aria-hidden="true" />}
-                        </span>
-                        <strong>{category.name}</strong>
-                        <ArrowRight aria-hidden="true" />
+                        <img src={product.imageUrl} alt="" loading="lazy" decoding="async" />
                       </button>
                     )) : (
-                      <div className="zy-ai-hero-category-empty">
-                        <Layers3 aria-hidden="true" />
-                        <span><strong>Live collections</strong><small>Categories appear here when published.</small></span>
+                      <div className="zy-reference-hero-live-empty">
+                        <Store aria-hidden="true" />
+                        <span><strong>Live collections</strong><small>Published products appear here automatically.</small></span>
+                      </div>
+                    )}
+                    {visualCategories.length > 0 && (
+                      <div className="zy-reference-hero-live-categories" aria-label="Available categories">
+                        {visualCategories.slice(0, 3).map(category => (
+                          <button
+                            key={category.id}
+                            type="button"
+                            onClick={() => onSelectCategory ? onSelectCategory(category.id) : onBrowseCategories?.()}
+                            aria-label={`Explore ${category.name}`}
+                          >
+                            {category.imageUrl
+                              ? <img src={category.imageUrl} alt="" loading="lazy" decoding="async" />
+                              : <Layers3 aria-hidden="true" />}
+                            <span>{category.name}</span>
+                          </button>
+                        ))}
                       </div>
                     )}
                   </div>
-
-                  {visualProducts.map((product, index) => (
-                    <button
-                      key={product.id}
-                      type="button"
-                      className={`zy-ai-hero-product-card is-${index + 1}`}
-                      onClick={() => onViewProduct ? onViewProduct(product) : onExploreProducts()}
-                      aria-label={`View ${product.name}`}
-                    >
-                      <img src={product.imageUrl} alt="" loading="lazy" decoding="async" />
-                      <span><small>Live product</small><strong>{product.name}</strong></span>
-                    </button>
-                  ))}
-
-                  {(displayBadge || displayTitle || displayDescription) && (
-                    <div className={isPromotionalBadge(displayBadge) ? 'zy-ai-hero-campaign is-deal' : 'zy-ai-hero-campaign'}>
-                      {displayBadge && <span><Sparkles aria-hidden="true" />{displayBadge}</span>}
-                      {displayTitle && <strong>{displayTitle}</strong>}
-                      {displayDescription && <small>{displayDescription}</small>}
-                    </div>
-                  )}
-                </div>
+                )}
               </div>
             </motion.article>
           </AnimatePresence>
@@ -529,7 +529,7 @@ export default function HeroBanner({
                 type="button"
                 onClick={() => handleSlideSelect(index)}
                 className={index === currentSlide ? 'is-active' : ''}
-                aria-label={`Show campaign ${index + 1} of ${slides.length}: ${replacePremiumElectronics(slide.title, 'Marketplace Collection') || 'Marketplace campaign'}`}
+                aria-label={`Show campaign ${index + 1} of ${slides.length}: ${normalizeHeroPresentationText(slide.title, REFERENCE_HERO_TITLE)}`}
                 aria-current={index === currentSlide ? 'true' : undefined}
               >
                 {index === currentSlide && isSliderActive && slides.length > 1 && <span style={{ width: `${Math.min(progress, 100)}%` }} />}
@@ -538,13 +538,6 @@ export default function HeroBanner({
           </div>
         </div>
 
-        <div className="zy-ai-hero-trust" aria-label="Shopping benefits">
-          <span><Banknote aria-hidden="true" /><strong>Cash on Delivery</strong></span>
-          <span><Truck aria-hidden="true" /><strong>Islandwide Delivery</strong></span>
-          <span><ShieldCheck aria-hidden="true" /><strong>Secure Checkout</strong></span>
-          <span><Check aria-hidden="true" /><strong>Verified Suppliers</strong></span>
-          <span><Headphones aria-hidden="true" /><strong>Customer Support</strong></span>
-        </div>
       </section>
     </MotionConfig>
   );

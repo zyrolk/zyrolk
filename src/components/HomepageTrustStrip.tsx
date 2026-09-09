@@ -14,12 +14,12 @@ const TRUST_ITEMS = [
   {
     icon: ShieldCheck,
     title: 'Secure Checkout',
-    description: 'Server-validated order processing.',
+    description: 'Your order is securely processed.',
   },
   {
     icon: Headphones,
-    title: 'Local Support',
-    description: 'Help before and after ordering.',
+    title: 'Customer Support',
+    description: 'Daily, 8:00 AM - 10:00 PM.',
   },
 ] as const;
 

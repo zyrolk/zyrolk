@@ -11,7 +11,8 @@ test('premium header presents marketplace assurance and search-first discovery',
   assert.match(navbar, /Cash on Delivery/);
   assert.match(navbar, /Islandwide Delivery/);
   assert.match(navbar, /Secure Checkout/);
-  assert.match(navbar, /Product Search/);
+  assert.match(navbar, /Support/);
+  assert.doesNotMatch(navbar, />Product Search</);
   assert.match(navbar, /Search products, brands and categories\.\.\./);
   assert.doesNotMatch(navbar, /handleVoiceSearch|SpeechRecognition|AI Shopping Assistant/);
   assert.doesNotMatch(navbar, /Voice search is unavailable in this launch version/);
@@ -20,9 +21,10 @@ test('premium header presents marketplace assurance and search-first discovery',
 });
 
 test('desktop and tablet navigation retain every requested customer destination', () => {
-  for (const destination of ['Categories', 'Deals', 'New Arrivals', 'Best Sellers', 'Brands', "Today's Offers", 'Support']) {
+  for (const destination of ['Categories', 'Deals', 'New Arrivals', 'Best Sellers', "Today's Offers", 'Support']) {
     assert.match(navbar, new RegExp(destination.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')));
   }
+  assert.doesNotMatch(navbar, /id: ['"]brands['"]/i);
   for (const action of ['Orders', 'Wishlist', 'Cart', 'Account']) {
     assert.match(navbar, new RegExp(`>${action}<`));
   }
