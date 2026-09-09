@@ -9,6 +9,8 @@ export const CHECKOUT_ABUSE_COLLECTION = "checkout_abuse_limits";
 export const OFFLINE_CHECKOUT_LIMIT_WINDOW_MS = 60 * 60 * 1000;
 export const OFFLINE_CHECKOUT_PHONE_LIMIT = 3;
 export const OFFLINE_CHECKOUT_NETWORK_LIMIT = 12;
+export const DEFAULT_DELIVERY_CHARGE = 350;
+export const DEFAULT_FREE_DELIVERY_MIN = 5000;
 export {
   COD_CONFIRMATION_WINDOW_MS,
   DEFAULT_COD_PENDING_ORDER_TTL_MS,
@@ -346,23 +348,6 @@ export function validateCheckoutCartItems(
   return Array.from(consolidated.values());
 }
 
-const DISTRICT_DELIVERY: Record<string, number> = {
-  Colombo: 350,
-  Gampaha: 450,
-  Kalutara: 450,
-  Kandy: 550,
-  Galle: 550,
-  Matara: 550,
-  Jaffna: 650,
-  Kurunegala: 500,
-  Anuradhapura: 600,
-  Badulla: 600,
-  Ratnapura: 500,
-  Batticaloa: 650,
-  Trincomalee: 650,
-  Other: 600,
-};
-
 export function calculateCheckoutTotals(
   itemsSubtotal: number,
   district: string,
@@ -381,11 +366,11 @@ export function calculateCheckoutTotals(
   const parsedDeliveryCharge = Number(configuredDeliveryCharge);
   const baseDeliveryCharge = configuredDeliveryCharge !== undefined && Number.isFinite(parsedDeliveryCharge) && parsedDeliveryCharge >= 0
     ? parsedDeliveryCharge
-    : (DISTRICT_DELIVERY[district] || 500);
+    : DEFAULT_DELIVERY_CHARGE;
 
   const freeDeliveryThreshold = (settings && settings.freeDeliveryMin !== undefined)
     ? Number(settings.freeDeliveryMin)
-    : 5000;
+    : DEFAULT_FREE_DELIVERY_MIN;
 
   const isEligibleForFreeDelivery = itemsSubtotal >= freeDeliveryThreshold;
   const deliveryFee = itemsSubtotal > 0

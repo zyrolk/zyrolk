@@ -1,5 +1,8 @@
 import type { WebsiteSettings } from '../../types';
 
+export const DEFAULT_DELIVERY_CHARGE = 350;
+export const DEFAULT_FREE_DELIVERY_MIN = 5000;
+
 export const DEFAULT_HOMEPAGE_SECTIONS: NonNullable<WebsiteSettings['homepageSections']> = {
   flashDeals: {
     enabled: true,
@@ -55,8 +58,8 @@ export const DEFAULT_WEBSITE_SETTINGS: WebsiteSettings = {
   seoDescription: 'Shop the live Zyro.lk marketplace catalog.',
   seoKeywords: '',
   ogImageUrl: '',
-  deliveryCharge: 500,
-  freeDeliveryMin: 150000,
+  deliveryCharge: DEFAULT_DELIVERY_CHARGE,
+  freeDeliveryMin: DEFAULT_FREE_DELIVERY_MIN,
   deliveryAreas: [],
   currency: 'LKR',
   businessHours: { weekdays: '8:00 AM - 10:00 PM', saturday: '8:00 AM - 10:00 PM', sunday: '8:00 AM - 10:00 PM' },

@@ -16,18 +16,16 @@ import {
 } from './checkoutModel';
 import { Order } from '../../types';
 import { commerceAnalyticsItem, trackCommerceEvent, trackPurchaseOnce } from '../../services/observability/commerceAnalytics';
+import {
+  DEFAULT_DELIVERY_CHARGE,
+  DEFAULT_FREE_DELIVERY_MIN,
+} from '../../services/settings/websiteSettings';
 import { resolveDeliveryCharge } from '../../services/settings/shippingSettings';
 import { filterCommerceCartItems } from '../../services/storefront/previewCommerceGuard';
 import './premiumCheckout.css';
 
 const IDEMPOTENCY_KEY = 'zyro.checkout.idempotency';
 const CHECKOUT_ADDRESS_READ_LIMIT = 25;
-const DISTRICT_DELIVERY: Record<string, number> = {
-  Colombo: 350, Gampaha: 450, Kalutara: 450, Kandy: 550, Galle: 550, Matara: 550,
-  Jaffna: 650, Kurunegala: 500, Anuradhapura: 600, Badulla: 600, Ratnapura: 500,
-  Batticaloa: 650, Trincomalee: 650,
-};
-
 const formatPrice = (amount: number) => new Intl.NumberFormat('en-LK', {
   style: 'currency', currency: 'LKR', minimumFractionDigits: 0, maximumFractionDigits: 0,
 }).format(amount);
@@ -86,8 +84,8 @@ export default function PremiumCheckoutDrawer({
   const commerceCartItems = useMemo(() => filterCommerceCartItems(cartItems), [cartItems]);
   const itemsSubtotal = useMemo(() => commerceCartItems.reduce((sum, item) => sum + item.product.price * item.quantity, 0), [commerceCartItems]);
   const cartSignature = useMemo(() => getCheckoutCartSignature(commerceCartItems), [commerceCartItems]);
-  const baseDelivery = resolveDeliveryCharge(settings, form.district, DISTRICT_DELIVERY[form.district] ?? 500);
-  const freeDeliveryThreshold = Math.max(0, settings?.freeDeliveryMin ?? 5000);
+  const baseDelivery = resolveDeliveryCharge(settings, form.district, DEFAULT_DELIVERY_CHARGE);
+  const freeDeliveryThreshold = Math.max(0, settings?.freeDeliveryMin ?? DEFAULT_FREE_DELIVERY_MIN);
   const deliveryFee = itemsSubtotal > 0 && itemsSubtotal < freeDeliveryThreshold ? baseDelivery : 0;
   const discountAmount = couponQuote?.cartSignature === cartSignature ? couponQuote.discountAmount : 0;
   const grandTotal = Math.max(0, itemsSubtotal - discountAmount + deliveryFee);

@@ -69,7 +69,11 @@ import {
 } from '../services/admin/orderFulfilmentApi';
 import { isHttpUrl, validateStoreSettings } from '../services/settings/storeSettingsValidation';
 import { getAppCheckRequestHeaders } from '../services/security/appCheck';
-import { normalizeWebsiteSettings } from '../services/settings/websiteSettings';
+import {
+  DEFAULT_DELIVERY_CHARGE,
+  DEFAULT_FREE_DELIVERY_MIN,
+  normalizeWebsiteSettings,
+} from '../services/settings/websiteSettings';
 import { reportClientIssue } from '../services/observability/clientDiagnostics';
 import {
   hasBrandProductReference,
@@ -181,8 +185,8 @@ const DEFAULT_WEBSITE_SETTINGS: WebsiteSettings = normalizeWebsiteSettings({
   seoDescription: "Browse premium consumer electronics, solar hybrid smart inverters, flagship audio systems, and high-end smart kitchen appliances in Sri Lanka with Islandwide Cash on Delivery.",
   seoKeywords: "electronics Sri Lanka, solar inverters Colombo, smart home Colombo, buy monitors Sri Lanka, premium tech, Zyro.lk",
   ogImageUrl: "",
-  deliveryCharge: 500,
-  freeDeliveryMin: 150000,
+  deliveryCharge: DEFAULT_DELIVERY_CHARGE,
+  freeDeliveryMin: DEFAULT_FREE_DELIVERY_MIN,
   enableCOD: true,
   enableWishlist: true,
   enableReviews: true,
