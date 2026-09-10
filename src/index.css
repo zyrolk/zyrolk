@@ -3214,18 +3214,25 @@ textarea {
   .zy-launch-review-card { width: min(82vw, 19rem); min-width: min(82vw, 19rem); scroll-snap-align: start; }
   .zy-launch-reviews-empty { min-height: 13rem; align-items: flex-start; flex-direction: column; }
 
-  .zy-launch-footer { padding-top: 1rem; }
+  .zy-launch-footer { padding: 0.8rem 0 0.75rem; }
   .zy-launch-footer-container { width: min(100% - 1rem, 86rem); }
-  .zy-launch-footer-cta { grid-template-columns: 1fr; border-radius: 1.4rem; padding: 1.1rem; }
-  .zy-launch-footer-cta-icon { width: 3rem; height: 3rem; }
+  .zy-launch-footer-cta { grid-template-columns: 1fr; gap: 0.7rem; border-radius: 1.15rem; padding: 0.85rem; }
+  .zy-launch-footer-cta-icon { width: 2.65rem; height: 2.65rem; border-radius: 0.85rem; }
+  .zy-launch-footer-cta-copy h2 { font-size: 1.05rem; }
+  .zy-launch-footer-cta-copy p { font-size: 0.65rem; }
   .zy-launch-footer-cta-actions { grid-column: auto; flex-wrap: wrap; }
   .zy-launch-footer-primary,
-  .zy-launch-footer-secondary { flex: 1 1 9rem; }
-  .zy-launch-footer-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2.4rem 1rem; padding-block: 3rem; }
+  .zy-launch-footer-secondary { flex: 1 1 8rem; min-height: 2.5rem; }
+  .zy-launch-footer-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1.35rem 0.8rem; padding-block: 1.65rem; }
   .zy-launch-footer-brand { grid-column: 1 / -1; }
   .zy-launch-footer-links:last-child { grid-column: 1 / -1; }
-  .zy-launch-footer-contact { align-items: flex-start; flex-direction: column; gap: 0.15rem; }
-  .zy-launch-footer-bottom { align-items: flex-start; flex-direction: column; }
+  .zy-launch-footer-brand > p { margin-top: 0.65rem; line-height: 1.5; }
+  .zy-launch-footer-socials { margin-top: 0.75rem; }
+  .zy-launch-footer-links h2 { margin-bottom: 0.45rem; }
+  .zy-launch-footer-links button,
+  .zy-launch-footer-empty-link { min-height: 2rem; }
+  .zy-launch-footer-contact { align-items: flex-start; flex-direction: column; gap: 0; padding-block: 0.75rem; }
+  .zy-launch-footer-bottom { align-items: flex-start; flex-direction: column; gap: 0.45rem; padding-top: 0.8rem; }
 }
 
 @media (max-width: 389px) {
