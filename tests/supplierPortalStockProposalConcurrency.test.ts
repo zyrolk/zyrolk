@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import { ApiError } from '../functions/src/api/errors';
 import {
   buildSupplierOfferPendingObservation,
   buildSupplierProductOffer,
@@ -49,6 +48,30 @@ const pendingStockObservation = (queueId = 'portal-request-1', stock = 8) => {
   });
 };
 
+type PendingStockProposalConflict = {
+  statusCode: number;
+  message: string;
+  publicMessage: string;
+  details: {
+    code: string;
+    reviewQueueItemId?: string | null;
+    pendingRevision?: string | null;
+  };
+};
+
+const isPendingStockProposalConflict = (error: unknown): error is PendingStockProposalConflict => {
+  if (typeof error !== 'object' || error === null) return false;
+  const candidate = error as Record<string, unknown>;
+  const details = candidate.details;
+  return candidate.statusCode === 409
+    && candidate.message === SUPPLIER_STOCK_PROPOSAL_PENDING_MESSAGE
+    && candidate.publicMessage === SUPPLIER_STOCK_PROPOSAL_PENDING_MESSAGE
+    && typeof details === 'object'
+    && details !== null
+    && !Array.isArray(details)
+    && (details as Record<string, unknown>).code === SUPPLIER_STOCK_PROPOSAL_PENDING_CODE;
+};
+
 test('A: first stock proposal has no unresolved pending observation to block', () => {
   assert.doesNotThrow(() => assertNoUnresolvedSupplierStockProposal(null));
   assert.doesNotThrow(() => assertNoUnresolvedSupplierStockProposal(undefined));
@@ -62,8 +85,9 @@ test('B: duplicate unresolved stock proposal is rejected without mutating the fi
   assert.throws(
     () => assertNoUnresolvedSupplierStockProposal(firstPending),
     (error: unknown) => {
-      assert.ok(error instanceof ApiError);
+      assert.ok(isPendingStockProposalConflict(error));
       assert.equal(error.statusCode, 409);
+      assert.equal(error.message, SUPPLIER_STOCK_PROPOSAL_PENDING_MESSAGE);
       assert.equal(error.publicMessage, SUPPLIER_STOCK_PROPOSAL_PENDING_MESSAGE);
       assert.deepEqual(error.details, {
         code: SUPPLIER_STOCK_PROPOSAL_PENDING_CODE,
@@ -103,7 +127,7 @@ test('E: concurrent submissions serialize to exactly one accepted pending propos
     () => attempt('portal-concurrent-b', 12),
     (error: unknown) => {
       rejected += 1;
-      return error instanceof ApiError && error.statusCode === 409;
+      return isPendingStockProposalConflict(error);
     },
   );
 
@@ -121,9 +145,9 @@ test('fail-closed: a non-null pending blob still blocks even when strict parse f
       // Missing required revision/effective fields → parse returns null,
       // but the raw blob must still fail closed.
     }),
-    (error: unknown) => error instanceof ApiError
-      && error.statusCode === 409
-      && (error.details as { reviewQueueItemId?: string | null })?.reviewQueueItemId === 'portal-corrupt',
+    (error: unknown) => isPendingStockProposalConflict(error)
+      && error.details.reviewQueueItemId === 'portal-corrupt'
+      && error.details.pendingRevision === null,
   );
 });
 
