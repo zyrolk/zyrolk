@@ -87,11 +87,25 @@ test('Hosting and local production CSP allow only the exact Cloudinary upload or
     entry.headers.some(({ key }) => key === 'Content-Security-Policy')
   ));
   const csp = catchAllHeaders?.headers.find(({ key }) => key === 'Content-Security-Policy')?.value || '';
+  const scriptSource = csp.split(';').map((part) => part.trim()).find((part) => part.startsWith('script-src ')) || '';
+  const frameSource = csp.split(';').map((part) => part.trim()).find((part) => part.startsWith('frame-src ')) || '';
+  assert.match(scriptSource, /(?:^|\s)https:\/\/apis\.google\.com(?:\s|$)/);
+  assert.match(frameSource, /(?:^|\s)https:\/\/zyrolk-e0164\.firebaseapp\.com(?:\s|$)/);
+  assert.doesNotMatch(scriptSource, /\*/);
+  assert.doesNotMatch(frameSource, /\*/);
+  assert.doesNotMatch(`${scriptSource} ${frameSource}`, /unsafe-eval/);
   const connectSource = csp.split(';').map((part) => part.trim()).find((part) => part.startsWith('connect-src ')) || '';
   assert.match(connectSource, /(?:^|\s)https:\/\/api\.cloudinary\.com(?:\s|$)/);
   assert.doesNotMatch(connectSource, /\*\.cloudinary\.com/);
 
   const server = readFileSync('server.ts', 'utf8');
+  const serverScriptSource = server.match(/script-src ([^;]+)/)?.[1] || '';
+  const serverFrameSource = server.match(/frame-src ([^;]+)/)?.[1] || '';
+  assert.match(serverScriptSource, /(?:^|\s)https:\/\/apis\.google\.com(?:\s|$)/);
+  assert.match(serverFrameSource, /(?:^|\s)https:\/\/zyrolk-e0164\.firebaseapp\.com(?:\s|$)/);
+  assert.doesNotMatch(serverScriptSource, /\*/);
+  assert.doesNotMatch(serverFrameSource, /\*/);
+  assert.doesNotMatch(`${serverScriptSource} ${serverFrameSource}`, /unsafe-eval/);
   assert.match(server, /connect-src 'self' https:\/\/api\.cloudinary\.com/);
   assert.doesNotMatch(server, /https:\/\/\*\.cloudinary\.com/);
 
