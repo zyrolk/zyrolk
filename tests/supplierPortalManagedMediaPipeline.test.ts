@@ -201,7 +201,16 @@ test("Supplier Portal media failures persist diagnostics and cannot become revie
   } catch (error) {
     failure = error;
   }
-  assert.equal(failure instanceof SupplierMediaRetryableError, true);
+  assert.ok(failure && typeof failure === "object");
+  const failureRecord = failure as {
+    name?: unknown;
+    message?: unknown;
+    failures?: unknown;
+  };
+  assert.equal(failureRecord.name, "SupplierMediaRetryableError");
+  assert.match(String(failureRecord.message), /Supplier media acquisition failed for 1 image\(s\) and will be retried\./u);
+  assert.ok(Array.isArray(failureRecord.failures));
+  assert.equal((failureRecord.failures as Array<StoredDocument>)[0]?.retryable, true);
   const failed = documents.get("supplier_review_queue/portal-failure")!;
   assert.equal(failed.queueState, "queued");
   assert.equal(failed.mediaStatus, "failed");
