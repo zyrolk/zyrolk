@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { ApiError } from "../functions/src/api/errors";
 import {
   resolveSupplierPortalSkuClaim,
   shouldReleaseSupplierPortalSkuClaim,
@@ -39,7 +38,14 @@ test("an approved canonical SKU claim permits only a same-supplier same-product 
         requestType: "product_change",
         supplierId,
       }),
-      (error: unknown) => error instanceof ApiError && error.statusCode === 409,
+      (error: unknown) => (
+        typeof error === "object"
+        && error !== null
+        && "statusCode" in error
+        && "message" in error
+        && error.statusCode === 409
+        && error.message === "Supplier SKU is already in use"
+      ),
     );
   }
 });
