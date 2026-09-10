@@ -116,7 +116,19 @@ test('A2Z connector surfaces rate limits as retryable errors after bounded attem
       username: 'supplier-user',
       password: 'supplier-pass',
     }, outboundPolicy, { pageSize: 100, cursor: null, mode: 'full' }),
-    (error: unknown) => error instanceof A2ZHttpError && error.status === 429 && error.retryable === true,
+    (error: unknown) => {
+      if (!error || typeof error !== 'object') return false;
+      const candidate = error as {
+        status?: unknown;
+        retryable?: unknown;
+        retryAfterMs?: unknown;
+        message?: unknown;
+      };
+      return candidate.status === 429
+        && candidate.retryable === true
+        && candidate.retryAfterMs === 1_000
+        && candidate.message === 'A2Z catalogue request was rate limited (HTTP 429).';
+    },
   );
   assert.equal(catalogAttempts, A2Z_TRANSIENT_HTTP_MAX_ATTEMPTS);
 });
