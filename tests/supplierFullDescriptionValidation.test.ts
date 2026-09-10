@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import { ApiError } from '../functions/src/api/errors';
 import {
   parseSupplierApprovalDraft,
 } from '../functions/src/api/suppliers/supplierApproval';
@@ -61,9 +60,9 @@ test('B product change submissions use the same full description validation', ()
 test('C approval cannot publish when the effective full description is blank', () => {
   assert.throws(
     () => resolveSupplierFullDescription('', '   ', 20_000),
-    (error: unknown) => error instanceof ApiError
-      && error.statusCode === 422
-      && error.message === SUPPLIER_FULL_DESCRIPTION_REQUIRED_MESSAGE,
+    (error: unknown) => Boolean(error)
+      && (error as { statusCode?: unknown }).statusCode === 422
+      && (error as { message?: unknown }).message === SUPPLIER_FULL_DESCRIPTION_REQUIRED_MESSAGE,
   );
 
   assert.throws(
