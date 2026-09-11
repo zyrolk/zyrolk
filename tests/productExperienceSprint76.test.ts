@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
+import { transformSync } from 'esbuild';
 
 const app = readFileSync('src/App.tsx', 'utf8');
 const modal = readFileSync('src/components/ProductDetailModal.tsx', 'utf8');
@@ -9,9 +10,59 @@ const related = readFileSync('src/features/product-experience/RelatedProductsRai
 const specifications = readFileSync('src/features/product-experience/ProductSpecificationsPanel.tsx', 'utf8');
 const productCard = readFileSync('src/components/ProductCard.tsx', 'utf8');
 const styles = readFileSync('src/index.css', 'utf8');
+const resolverStart = app.indexOf('export function resolveSelectedProduct');
+const resolverEnd = app.indexOf('const selectFilteredStorefrontProducts');
+assert.ok(resolverStart >= 0 && resolverEnd > resolverStart, 'selected-product resolver must remain available');
+const resolverModule = { exports: {} as {
+  resolveSelectedProduct: (selectedProduct: ProductFixture | null, activeProducts: readonly ProductFixture[], readiness: ReadinessFixture) => {
+    product: ProductFixture | null;
+    shouldClose: boolean;
+  };
+} };
+const resolverSource = `
+const isProductExplicitlyActive = (value) => value === true;
+${app.slice(resolverStart, resolverEnd)}
+`;
+const resolverCode = transformSync(resolverSource, { loader: 'tsx', format: 'cjs' }).code;
+new Function('module', 'exports', resolverCode)(resolverModule, resolverModule.exports);
+const { resolveSelectedProduct } = resolverModule.exports;
+
+type ProductFixture = {
+  id: string;
+  isActive: boolean;
+  price: number;
+  stock: number;
+};
+
+type ReadinessFixture = {
+  catalogFullyLoaded: boolean;
+  loading: boolean;
+  loadingMoreProducts: boolean;
+  isResolvingRoutedProduct: boolean;
+  storefrontDataError: string | null;
+};
+
+const productFixture = (id: string, overrides: Partial<ProductFixture> = {}): ProductFixture => ({
+  id,
+  isActive: true,
+  price: 100,
+  stock: 5,
+  ...overrides,
+});
+
+const completeCatalogue = (): ReadinessFixture => ({
+  catalogFullyLoaded: true,
+  loading: false,
+  loadingMoreProducts: false,
+  isResolvingRoutedProduct: false,
+  storefrontDataError: null,
+});
 
 test('Sprint 76 preserves the App-level product and commerce contracts', () => {
-  assert.match(app, /const liveSelectedProduct = selectedProduct \? \(storefrontProducts\.find/);
+  assert.match(app, /resolveSelectedProduct\(selectedProduct, activeProducts/);
+  assert.match(app, /if \(!selectedProductResolution\.shouldClose\) return;/);
+  assert.match(app, /closeProductDetail\(\);/);
+  assert.match(app, /if \(blocksProducts\) setCatalogFullyLoaded\(false\);[\s\S]*if \(blocksProducts\) setLoading\(false\);/);
   assert.match(app, /product=\{liveSelectedProduct\}/);
   assert.match(app, /allProducts=\{activeProducts\}/);
   assert.match(app, /onAddToCart=\{handleAddToCart\}/);
@@ -21,6 +72,74 @@ test('Sprint 76 preserves the App-level product and commerce contracts', () => {
   assert.match(modal, /onBuyNow\(product, quantity\)/);
   assert.match(modal, /onAddToCart\(product, quantity\)/);
   assert.match(modal, /onToggleWishlist\(product\)/);
+});
+
+test('selected-product reconciliation is readiness-gated, live-first, and closes only on authoritative absence', () => {
+  const stale = productFixture('p1', { price: 100, stock: 5 });
+  const live = productFixture('p1', { price: 125, stock: 2 });
+
+  const incomplete = resolveSelectedProduct(stale, [], {
+    ...completeCatalogue(),
+    catalogFullyLoaded: false,
+  });
+  assert.equal(incomplete.product, stale);
+  assert.equal(incomplete.shouldClose, false);
+
+  const loading = resolveSelectedProduct(stale, [], {
+    ...completeCatalogue(),
+    loading: true,
+  });
+  assert.equal(loading.product, stale);
+  assert.equal(loading.shouldClose, false);
+
+  const paginating = resolveSelectedProduct(stale, [], {
+    ...completeCatalogue(),
+    loadingMoreProducts: true,
+  });
+  assert.equal(paginating.product, stale);
+  assert.equal(paginating.shouldClose, false);
+
+  const hydrating = resolveSelectedProduct(stale, [], {
+    ...completeCatalogue(),
+    isResolvingRoutedProduct: true,
+  });
+  assert.equal(hydrating.product, stale);
+  assert.equal(hydrating.shouldClose, false);
+
+  const listenerError = resolveSelectedProduct(stale, [], {
+    ...completeCatalogue(),
+    storefrontDataError: 'catalogue refresh failed',
+  });
+  assert.equal(listenerError.product, stale);
+  assert.equal(listenerError.shouldClose, false);
+
+  const refreshed = resolveSelectedProduct(stale, [live], completeCatalogue());
+  assert.equal(refreshed.product, live);
+  assert.equal(refreshed.product?.price, 125);
+  assert.equal(refreshed.product?.stock, 2);
+  assert.equal(refreshed.shouldClose, false);
+
+  const absent = resolveSelectedProduct(stale, [], completeCatalogue());
+  assert.equal(absent.product, null);
+  assert.equal(absent.shouldClose, true);
+
+  const inactive = resolveSelectedProduct(stale, [productFixture('p1', { isActive: false })], completeCatalogue());
+  assert.equal(inactive.product, null);
+  assert.equal(inactive.shouldClose, true);
+
+  const recoveredLive = resolveSelectedProduct(stale, [live], {
+    ...completeCatalogue(),
+    storefrontDataError: null,
+  });
+  assert.equal(recoveredLive.product, live);
+  assert.equal(recoveredLive.shouldClose, false);
+
+  const recoveredAbsent = resolveSelectedProduct(stale, [], {
+    ...completeCatalogue(),
+    storefrontDataError: null,
+  });
+  assert.equal(recoveredAbsent.product, null);
+  assert.equal(recoveredAbsent.shouldClose, true);
 });
 
 test('premium gallery retains live images while improving load, zoom, keyboard, and swipe behavior', () => {

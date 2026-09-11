@@ -220,6 +220,38 @@ export function reconcileCartSnapshot(
   return { nextCart, removedCount, updatedCount };
 }
 
+export type SelectedProductResolution = Readonly<{
+  product: Product | null;
+  shouldClose: boolean;
+}>;
+
+export function resolveSelectedProduct(
+  selectedProduct: Product | null,
+  activeProducts: readonly Product[],
+  readiness: Readonly<{
+    catalogFullyLoaded: boolean;
+    loading: boolean;
+    loadingMoreProducts: boolean;
+    isResolvingRoutedProduct: boolean;
+    storefrontDataError: string | null;
+  }>,
+): SelectedProductResolution {
+  if (!selectedProduct) return { product: null, shouldClose: false };
+  const liveProduct = activeProducts.find((product) => (
+    product.id === selectedProduct.id && isProductExplicitlyActive(product.isActive)
+  ));
+  if (liveProduct) return { product: liveProduct, shouldClose: false };
+
+  const catalogueAuthorityIsComplete = readiness.catalogFullyLoaded
+    && !readiness.loading
+    && !readiness.loadingMoreProducts
+    && !readiness.isResolvingRoutedProduct
+    && readiness.storefrontDataError === null;
+  return catalogueAuthorityIsComplete
+    ? { product: null, shouldClose: true }
+    : { product: selectedProduct, shouldClose: false };
+}
+
 const selectFilteredStorefrontProducts = (
   sourceProducts: readonly Product[],
   searchQuery: string,
@@ -766,6 +798,7 @@ export default function App() {
         if (!isMounted) return;
         reportClientIssue(`storefront-${area}-listener`, error, 'warning');
         setStorefrontDataError('Some live marketplace information could not be refreshed. You can retry without losing your cart.');
+        if (blocksProducts) setCatalogFullyLoaded(false);
         if (blocksProducts) setLoading(false);
       };
 
@@ -1328,7 +1361,22 @@ export default function App() {
     setSortBy('featured');
   }, []);
 
-  const liveSelectedProduct = selectedProduct ? (storefrontProducts.find(product => product.id === selectedProduct.id) || selectedProduct) : null;
+  const selectedProductResolution = useMemo(
+    () => resolveSelectedProduct(selectedProduct, activeProducts, {
+      catalogFullyLoaded,
+      loading,
+      loadingMoreProducts,
+      isResolvingRoutedProduct,
+      storefrontDataError,
+    }),
+    [activeProducts, catalogFullyLoaded, isResolvingRoutedProduct, loading, loadingMoreProducts, selectedProduct, storefrontDataError],
+  );
+  const liveSelectedProduct = selectedProductResolution.product;
+
+  useEffect(() => {
+    if (!selectedProductResolution.shouldClose) return;
+    closeProductDetail();
+  }, [closeProductDetail, selectedProductResolution.shouldClose]);
 
   useEffect(() => {
     if (!liveSelectedProduct || lastTrackedProductViewRef.current === liveSelectedProduct.id) return;

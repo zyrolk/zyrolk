@@ -53,6 +53,9 @@ test('B direct product load: only explicit true is treated as loadable in storef
   assert.match(catalog, /STOREFRONT_TARGETED_READ_CONCURRENCY = 8/);
   assert.match(app, /isProductExplicitlyActive\(candidate\.isActive\)/);
   assert.match(app, /setCurrentPage\('not-found'\)/);
+  assert.match(app, /resolveSelectedProduct\(selectedProduct, activeProducts/);
+  assert.match(app, /catalogFullyLoaded/);
+  assert.match(app, /if \(!selectedProductResolution\.shouldClose\) return;[\s\S]*closeProductDetail\(\);/);
 
   const loadable = projectStorefrontProduct('p1', { ...baseProductFields, isActive: true });
   const unavailable = projectStorefrontProduct('p2', { ...baseProductFields, isActive: false });
