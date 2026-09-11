@@ -55,7 +55,8 @@ function Field({ field, label, error, children }: { field: CheckoutField; label:
 }
 
 export default function PremiumCheckoutDrawer({
-  isOpen, user, onClose, cartItems, onUpdateQuantity, onRemoveItem, onClearCart, onRefreshCartProducts, settings, setCurrentPage,
+  isOpen, user, onClose, cartItems, onUpdateQuantity, onRemoveItem, onClearCart, onRefreshCartProducts,
+  isCartReconciliationPending = false, cartReconciliationNotice = '', settings, setCurrentPage,
 }: CartDrawerProps) {
   const [form, setForm] = useState<CheckoutFormValues>(() => typeof window === 'undefined' ? EMPTY_CHECKOUT_FORM : readCheckoutDraft(window.sessionStorage));
   const [errors, setErrors] = useState<CheckoutErrors>({});
@@ -206,7 +207,7 @@ export default function PremiumCheckoutDrawer({
 
   const handleCheckout = async (event: FormEvent) => {
     event.preventDefault();
-    if (!commerceCartItems.length || isSubmitting) return;
+    if (!commerceCartItems.length || isSubmitting || isCartReconciliationPending) return;
     const normalized = normalizeCheckoutForm(form);
     const nextErrors = validateCheckoutForm(normalized);
     setForm(normalized); setErrors(nextErrors); setCheckoutError('');
@@ -312,7 +313,7 @@ export default function PremiumCheckoutDrawer({
           <section className="zy-confirmation-totals"><h3><CircleDollarSign aria-hidden="true" />Payment summary</h3><div><span>Subtotal</span><b>{formatPrice(orderSubtotal)}</b></div>{orderDiscount > 0 && <div className="is-discount"><span>Coupon {placedOrder.couponCode ? `(${placedOrder.couponCode})` : ''}</span><b>−{formatPrice(orderDiscount)}</b></div>}<div><span>Delivery</span><b>{orderDelivery === 0 ? 'Free' : formatPrice(orderDelivery)}</b></div><div className="is-total"><span>Cash on Delivery total</span><b>{formatPrice(placedOrder.totalPrice)}</b></div></section>
         </div>
         <div className="zy-confirmation-actions">{user && <button type="button" onClick={() => { setPlacedOrder(null); onClose(); setCurrentPage?.('account-orders'); }}><PackageCheck aria-hidden="true" />View My Orders</button>}{settings?.whatsappNumber && <button type="button" onClick={() => sendWhatsApp(placedOrder)}><Phone aria-hidden="true" />WhatsApp confirmation</button>}<button type="button" onClick={() => { setPlacedOrder(null); onClose(); }}><ShoppingBag aria-hidden="true" />Continue shopping</button></div>
-      </main> : <form className="zy-checkout-layout" onSubmit={handleCheckout} noValidate>
+      </main> : <form className="zy-checkout-layout" onSubmit={handleCheckout} noValidate><fieldset disabled={isCartReconciliationPending} style={{ border: 0, margin: 0, padding: 0, minInlineSize: 0 }}>
         <section className="zy-checkout-cart-column" aria-labelledby="checkout-cart-heading">
           <div className="zy-checkout-section-heading"><div><small>Step 1</small><h3 id="checkout-cart-heading">Your cart</h3></div><span>{commerceCartItems.length} {commerceCartItems.length === 1 ? 'item' : 'items'}</span></div>
           {commerceCartItems.length === 0 ? <div className="zy-checkout-empty"><ShoppingBag aria-hidden="true" /><strong>Your cart is empty</strong><p>Add a product before starting checkout.</p><button type="button" onClick={onClose}>Continue shopping</button></div> : <div className="zy-checkout-items">{commerceCartItems.map(item => <article key={item.product.id}><img src={item.product.imageUrl} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" /><div><strong>{item.product.name}</strong><small>{formatPrice(item.product.price)} each</small><span><button type="button" onClick={() => onUpdateQuantity(item.product.id, Math.max(1, item.quantity - 1))} disabled={item.quantity <= 1} aria-label={`Decrease ${item.product.name}`}><Minus /></button><b aria-live="polite">{item.quantity}</b><button type="button" onClick={() => onUpdateQuantity(item.product.id, Math.min(item.product.stock, item.quantity + 1))} disabled={item.quantity >= item.product.stock} aria-label={`Increase ${item.product.name}`}><Plus /></button></span></div><aside><b>{formatPrice(item.product.price * item.quantity)}</b><button type="button" onClick={() => onRemoveItem(item.product.id)} aria-label={`Remove ${item.product.name}`}><Trash2 /></button></aside></article>)}</div>}
@@ -337,11 +338,12 @@ export default function PremiumCheckoutDrawer({
 
           <fieldset className="zy-payment-options"><legend>Payment method</legend><label className="is-selected"><input type="radio" name="paymentMethod" value="cod" checked readOnly /><ShieldCheck /><span><b>Cash on Delivery</b><small>Pay when your confirmed order arrives.</small></span><CheckCircle2 /></label></fieldset>
           <aside className="zy-checkout-summary" aria-labelledby="checkout-summary-title"><h3 id="checkout-summary-title">Order summary</h3><div><span>Items subtotal</span><b>{formatPrice(itemsSubtotal)}</b></div>{discountAmount > 0 && <div className="is-discount"><span>Coupon discount</span><b>−{formatPrice(discountAmount)}</b></div>}<div><span>Delivery to {form.district}</span><b>{deliveryFee === 0 ? 'Free' : formatPrice(deliveryFee)}</b></div><div className="is-total"><span>Total payable</span><b>{formatPrice(grandTotal)}</b></div></aside>
+          {cartReconciliationNotice && <div className="zy-checkout-error" role="status" aria-live="polite">{cartReconciliationNotice}</div>}
           {checkoutError && <div className="zy-checkout-error" role="alert">{checkoutError}<small>Your cart and delivery draft are still saved.</small></div>}
           <button className="zy-place-order" type="submit" disabled={isSubmitting || commerceCartItems.length === 0} aria-busy={isSubmitting}>{isSubmitting ? <><LoaderCircle className="is-spinning" />Placing your order securely…</> : <><LockKeyhole />{requiresPriceReconfirmation ? 'Confirm updated COD total' : 'Place COD order'} · {formatPrice(grandTotal)}<ChevronRight /></>}</button>
           <p className="zy-checkout-assurance"><LockKeyhole />Prices, coupons, stock, delivery, and totals are verified again by the secure checkout service.</p>
         </section>
-      </form>}
+      </fieldset></form>}
     </div>
   </div>;
 }

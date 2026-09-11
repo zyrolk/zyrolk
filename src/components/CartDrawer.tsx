@@ -11,6 +11,8 @@ export interface CartDrawerProps {
   onRemoveItem: (productId: string) => void;
   onClearCart: () => void;
   onRefreshCartProducts: (productIds: string[]) => Promise<void>;
+  isCartReconciliationPending?: boolean;
+  cartReconciliationNotice?: string;
   settings?: WebsiteSettings | null;
   setCurrentPage?: (page: string) => void;
 }

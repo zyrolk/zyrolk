@@ -78,6 +78,148 @@ const formatPrice = (amount: number) => new Intl.NumberFormat('en-LK', {
   maximumFractionDigits: 0
 }).format(amount);
 
+export type CartReconciliationRequest = Readonly<{
+  token: number;
+  sessionId: number;
+  contextKey: string;
+}>;
+
+export type CartPersistenceHoldRequest = Readonly<{
+  token: number;
+  sessionId: number;
+  contextKey: string;
+}>;
+
+export function createCartOpenReconciliationController() {
+  let isOpen = false;
+  let sessionId = 0;
+  let generation = 0;
+  let pendingToken: number | null = null;
+  let attemptedContextKey: string | null = null;
+  let persistenceHoldGeneration = 0;
+  let activePersistenceHold: CartPersistenceHoldRequest | null = null;
+
+  const invalidate = () => {
+    generation += 1;
+    pendingToken = null;
+  };
+
+  const open = () => {
+    if (!isOpen) {
+      isOpen = true;
+      sessionId += 1;
+      attemptedContextKey = null;
+      activePersistenceHold = null;
+      invalidate();
+    }
+    return sessionId;
+  };
+
+  const close = () => {
+    if (isOpen) {
+      isOpen = false;
+      sessionId += 1;
+      attemptedContextKey = null;
+      activePersistenceHold = null;
+      invalidate();
+    }
+  };
+
+  const invalidateForAuthContext = () => {
+    attemptedContextKey = null;
+    activePersistenceHold = null;
+    invalidate();
+  };
+
+  const beginPersistenceHold = (contextKey: string): CartPersistenceHoldRequest | null => {
+    if (!isOpen) return null;
+    persistenceHoldGeneration += 1;
+    const hold = { token: persistenceHoldGeneration, sessionId, contextKey } as const;
+    activePersistenceHold = hold;
+    return hold;
+  };
+
+  const isPersistenceHeld = () => activePersistenceHold !== null;
+
+  const canPersist = (authenticated: boolean) => !authenticated || activePersistenceHold === null;
+
+  const isPersistenceHoldFor = (request: CartReconciliationRequest) => (
+    activePersistenceHold !== null
+    && activePersistenceHold.sessionId === request.sessionId
+    && activePersistenceHold.contextKey === request.contextKey
+  );
+
+  const begin = (contextKey: string, ready = true): CartReconciliationRequest | null => {
+    if (!ready || !isOpen || attemptedContextKey === contextKey) return null;
+    attemptedContextKey = contextKey;
+    generation += 1;
+    const request = { token: generation, sessionId, contextKey } as const;
+    pendingToken = request.token;
+    return request;
+  };
+
+  const isCurrent = (request: CartReconciliationRequest) => (
+    isOpen
+    && pendingToken === request.token
+    && generation === request.token
+    && sessionId === request.sessionId
+    && attemptedContextKey === request.contextKey
+  );
+
+  const complete = (request: CartReconciliationRequest) => {
+    if (!isCurrent(request)) return false;
+    pendingToken = null;
+    if (isPersistenceHoldFor(request)) activePersistenceHold = null;
+    return true;
+  };
+
+  return {
+    open,
+    close,
+    invalidateForAuthContext,
+    beginPersistenceHold,
+    isPersistenceHeld,
+    canPersist,
+    isPersistenceHoldFor,
+    begin,
+    isCurrent,
+    complete,
+  };
+}
+
+export type CartReconciliationSnapshotResult = Readonly<{
+  nextCart: CartItem[];
+  removedCount: number;
+  updatedCount: number;
+}>;
+
+export function reconcileCartSnapshot(
+  currentCart: readonly CartItem[],
+  productIds: readonly string[],
+  refreshedProducts: readonly Product[],
+): CartReconciliationSnapshotResult {
+  const requestedIds = new Set(filterCommerceProductIds(productIds));
+  const refreshedById = new Map(refreshedProducts.map((product) => [product.id, product]));
+  let removedCount = 0;
+  let updatedCount = 0;
+  const nextCart = currentCart.flatMap((item) => {
+    if (!requestedIds.has(item.product.id)) return [item];
+    const refreshed = refreshedById.get(item.product.id);
+    if (!refreshed || !isProductExplicitlyActive(refreshed.isActive) || refreshed.stock <= 0) {
+      removedCount += 1;
+      return [];
+    }
+    const nextItem = {
+      ...item,
+      product: refreshed,
+      quantity: Math.min(item.quantity, refreshed.stock),
+    };
+    if (nextItem.product !== item.product || nextItem.quantity !== item.quantity) updatedCount += 1;
+    return [nextItem];
+  });
+  return { nextCart, removedCount, updatedCount };
+}
+
 const selectFilteredStorefrontProducts = (
   sourceProducts: readonly Product[],
   searchQuery: string,
@@ -212,13 +354,19 @@ export default function App() {
   const [hasOpenedCart, setHasOpenedCart] = useState<boolean>(false);
   const [hasOpenedAuth, setHasOpenedAuth] = useState<boolean>(false);
   const [isFilterDrawerOpen, setIsFilterDrawerOpen] = useState<boolean>(false);
+  const [isCartReconciliationPending, setIsCartReconciliationPending] = useState(false);
+  const [cartReconciliationNotice, setCartReconciliationNotice] = useState('');
+  const [cartPersistenceHoldVersion, setCartPersistenceHoldVersion] = useState(0);
   const [wishlistFeedback, setWishlistFeedback] = useState<{ productName: string; action: 'added' | 'removed' } | null>(null);
   const wishlistFeedbackTimerRef = useRef<number | null>(null);
   const lastTrackedSearchRef = useRef('');
   const wasCartOpenRef = useRef(false);
+  const cartOpenReconciliationControllerRef = useRef(createCartOpenReconciliationController());
   const lastTrackedProductViewRef = useRef('');
   const wishlistRef = useRef(wishlist);
   const cartRef = useRef(cart);
+  const isCartOpenRef = useRef(isCartOpen);
+  isCartOpenRef.current = isCartOpen;
   const recentlyViewedIdsRef = useRef(recentlyViewedProductIds);
   const storefrontContentRef = useRef<HTMLElement | null>(null);
   const previousPageRef = useRef(currentPage);
@@ -233,6 +381,9 @@ export default function App() {
   const [wishlistLoadedForUser, setWishlistLoadedForUser] = useState<string | null>(null);
   const [cartLoadedForUser, setCartLoadedForUser] = useState<string | null>(null);
   const [recentlyViewedLoadedForUser, setRecentlyViewedLoadedForUser] = useState<string | null>(null);
+  const [authStateResolved, setAuthStateResolved] = useState(false);
+  const [authContextVersion, setAuthContextVersion] = useState(0);
+  const authContextVersionRef = useRef(0);
   const [personalizationSyncError, setPersonalizationSyncError] = useState('');
   const [compareMessage, setCompareMessage] = useState('');
   const [isAdminUser, setIsAdminUser] = useState<boolean>(false);
@@ -358,6 +509,16 @@ export default function App() {
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      const nextAuthContextVersion = authContextVersionRef.current + 1;
+      authContextVersionRef.current = nextAuthContextVersion;
+      setAuthContextVersion(nextAuthContextVersion);
+      setAuthStateResolved(false);
+      const reconciliationController = cartOpenReconciliationControllerRef.current;
+      reconciliationController.invalidateForAuthContext();
+      if (isCartOpenRef.current) {
+        setIsCartReconciliationPending(true);
+        setCartReconciliationNotice('');
+      }
       if (currentUser) {
         try {
           let loadedWishlist = wishlistRef.current;
@@ -424,6 +585,11 @@ export default function App() {
               setIsSupplierUser(false);
             }
           }
+          if (isCartOpenRef.current) {
+            const contextKey = `${nextAuthContextVersion}:${currentUser.uid}:${currentUser.uid}`;
+            reconciliationController.open();
+            reconciliationController.beginPersistenceHold(contextKey);
+          }
           setWishlist(loadedWishlist);
           setCart(loadedCart);
           setRecentlyViewedProductIds(loadedRecentlyViewedIds);
@@ -436,10 +602,17 @@ export default function App() {
           setIsAdminMode(false);
           setIsAdminUser(false);
           setIsSupplierUser(false);
+          if (isCartOpenRef.current) {
+            const contextKey = `${nextAuthContextVersion}:${currentUser.uid}:${currentUser.uid}`;
+            reconciliationController.open();
+            reconciliationController.beginPersistenceHold(contextKey);
+          }
           setWishlistLoadedForUser(currentUser.uid);
           setCartLoadedForUser(currentUser.uid);
           setRecentlyViewedLoadedForUser(currentUser.uid);
           setUser(currentUser);
+        } finally {
+          setAuthStateResolved(true);
         }
       } else {
         setIsAdminMode(false);
@@ -450,6 +623,7 @@ export default function App() {
         setRecentlyViewedLoadedForUser(null);
         setPersonalizationSyncError('');
         setUser(null);
+        setAuthStateResolved(true);
       }
     });
     return () => unsubscribe();
@@ -457,12 +631,13 @@ export default function App() {
 
   // Sync state changes with localStorage and Firestore
   useEffect(() => {
+    const reconciliationController = cartOpenReconciliationControllerRef.current;
     // TODO(security): persist minimal cart references after a dedicated checkout compatibility review.
     const commerceCart = filterCommerceCartItems(cart);
     writeStoredJson(getBrowserStorage('localStorage'), 'zyro_cart', commerceCart);
     
     const syncCartToFirestore = async () => {
-      if (user && cartLoadedForUser === user.uid) {
+      if (user && reconciliationController.canPersist(true) && cartLoadedForUser === user.uid) {
         try {
           const userRef = doc(db, "users", user.uid);
           const userDoc = await getDoc(userRef);
@@ -484,7 +659,7 @@ export default function App() {
       }
     };
     syncCartToFirestore();
-  }, [cart, user, cartLoadedForUser]);
+  }, [cart, cartLoadedForUser, cartPersistenceHoldVersion, user]);
 
   useEffect(() => {
     const commerceWishlist = filterCommerceProducts(wishlist);
@@ -887,22 +1062,66 @@ export default function App() {
     setCart([]);
   }, []);
 
-  const handleRefreshCartProducts = useCallback(async (productIds: string[]) => {
+  const handleRefreshCartProducts = useCallback(async (
+    productIds: string[],
+    isCurrentRequest: () => boolean = () => true,
+  ) => {
+    const currentCart = cartRef.current;
     const commerceProductIds = filterCommerceProductIds(productIds);
-    if (!commerceProductIds.length) return;
+    if (!commerceProductIds.length) {
+      return { removedCount: 0, updatedCount: 0, applied: isCurrentRequest() };
+    }
     const refreshedProducts = await loadStorefrontProductsByIds(db, commerceProductIds);
-    const refreshedById = new Map(refreshedProducts.map((product) => [product.id, product]));
-    setCart((current) => current.flatMap((item) => {
-      if (!productIds.includes(item.product.id)) return [item];
-      const refreshed = refreshedById.get(item.product.id);
-      if (!refreshed || !isProductExplicitlyActive(refreshed.isActive) || refreshed.stock <= 0) return [];
-      return [{
-        ...item,
-        product: refreshed,
-        quantity: Math.min(item.quantity, refreshed.stock),
-      }];
-    }));
+    if (!isCurrentRequest()) return { removedCount: 0, updatedCount: 0, applied: false };
+    const { nextCart, removedCount, updatedCount } = reconcileCartSnapshot(
+      currentCart,
+      commerceProductIds,
+      refreshedProducts,
+    );
+    if (!isCurrentRequest()) return { removedCount: 0, updatedCount: 0, applied: false };
+    cartRef.current = nextCart;
+    setCart(nextCart);
+    return { removedCount, updatedCount, applied: true };
   }, []);
+
+  useEffect(() => {
+    const controller = cartOpenReconciliationControllerRef.current;
+    if (!isCartOpen) {
+      const hadPersistenceHold = controller.isPersistenceHeld();
+      controller.close();
+      if (hadPersistenceHold) setCartPersistenceHoldVersion(current => current + 1);
+      setIsCartReconciliationPending(false);
+      setCartReconciliationNotice('');
+      return;
+    }
+    controller.open();
+    if (!authStateResolved || (user && !isSupplierUser && cartLoadedForUser !== user.uid)) return;
+    const contextKey = `${authContextVersion}:${user?.uid || 'guest'}:${user && !isSupplierUser ? cartLoadedForUser : 'ready'}`;
+    const request = controller.begin(contextKey, true);
+    if (!request) return;
+    setIsCartReconciliationPending(true);
+    setCartReconciliationNotice('');
+    const productIds = cartRef.current.map((item) => item.product.id);
+    const isCurrentRequest = () => controller.isCurrent(request);
+    void handleRefreshCartProducts(productIds, isCurrentRequest)
+      .then(({ removedCount, applied }) => {
+        if (applied && isCurrentRequest() && removedCount > 0) {
+          setCartReconciliationNotice('Some unavailable cart items were removed or updated.');
+        }
+      })
+      .catch((error) => {
+        if (!isCurrentRequest()) return;
+        reportClientIssue('cart-open-reconciliation', error, 'warning');
+        setCartReconciliationNotice('Your cart could not be refreshed right now. It is unchanged.');
+      })
+      .finally(() => {
+        const releasesPersistenceHold = controller.isPersistenceHoldFor(request);
+        if (controller.complete(request)) {
+          setIsCartReconciliationPending(false);
+          if (releasesPersistenceHold) setCartPersistenceHoldVersion(current => current + 1);
+        }
+      });
+  }, [authContextVersion, authStateResolved, cartLoadedForUser, handleRefreshCartProducts, isCartOpen, isSupplierUser, user]);
 
   const finishPaymentReturn = useCallback((destination: 'home' | 'account-orders' | 'contact') => {
     window.history.replaceState({}, document.title, window.location.pathname);
@@ -2262,6 +2481,8 @@ export default function App() {
             onRemoveItem={handleRemoveFromCart}
             onClearCart={handleClearCart}
             onRefreshCartProducts={handleRefreshCartProducts}
+            isCartReconciliationPending={isCartReconciliationPending}
+            cartReconciliationNotice={cartReconciliationNotice}
             settings={settings}
             setCurrentPage={setCurrentPage}
           />
