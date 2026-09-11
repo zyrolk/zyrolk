@@ -1,8 +1,10 @@
 import {
   collection,
   documentId,
+  doc,
   Firestore,
   getCountFromServer,
+  getDoc,
   getDocs,
   limit,
   onSnapshot,
@@ -19,8 +21,6 @@ import { isProductExplicitlyActive } from './productAvailability';
 export const STOREFRONT_PRODUCT_PAGE_SIZE = 24;
 export const STOREFRONT_CATEGORY_LIMIT = 100;
 export const HOMEPAGE_REVIEW_LIMIT = 6;
-const FIRESTORE_IN_QUERY_LIMIT = 30;
-
 export interface StorefrontProductPage {
   products: Product[];
   cursor: QueryDocumentSnapshot | null;
@@ -58,6 +58,14 @@ const publicSpecifications = (value: unknown): Record<string, string> => {
   return Object.fromEntries(Object.entries(value)
     .map(([key, entry]) => [key.trim(), text(entry)] as const)
     .filter(([key, entry]) => Boolean(key && entry)));
+};
+
+const STOREFRONT_TARGETED_READ_CONCURRENCY = 8;
+
+const isFirestorePermissionDenied = (error: unknown): boolean => {
+  if (!error || typeof error !== 'object') return false;
+  const code = (error as { code?: unknown }).code;
+  return code === 'permission-denied' || code === 'firestore/permission-denied';
 };
 
 /**
@@ -139,23 +147,47 @@ export const loadNextStorefrontProductPage = async (
   return pageFromDocuments(snapshot.docs);
 };
 
+export const loadStorefrontProductsByIdsWithReader = async (
+  ids: readonly string[],
+  readProduct: (id: string) => Promise<Product | null>,
+): Promise<Product[]> => {
+  const uniqueIds = [...new Set(ids.map((id) => id.trim()).filter(Boolean))];
+  if (uniqueIds.length === 0) return [];
+
+  const results: Array<Product | null> = Array(uniqueIds.length).fill(null);
+  let nextIndex = 0;
+  const worker = async (): Promise<void> => {
+    while (nextIndex < uniqueIds.length) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      results[currentIndex] = await readProduct(uniqueIds[currentIndex]);
+    }
+  };
+
+  await Promise.all(
+    Array.from(
+      { length: Math.min(STOREFRONT_TARGETED_READ_CONCURRENCY, uniqueIds.length) },
+      () => worker(),
+    ),
+  );
+
+  return results.filter((product): product is Product => product !== null);
+};
+
 export const loadStorefrontProductsByIds = async (
   firestore: Firestore,
   ids: readonly string[],
-): Promise<Product[]> => {
-  const uniqueIds = [...new Set(ids.map((id) => id.trim()).filter(Boolean))];
-  const products: Product[] = [];
-  for (let index = 0; index < uniqueIds.length; index += FIRESTORE_IN_QUERY_LIMIT) {
-    const chunk = uniqueIds.slice(index, index + FIRESTORE_IN_QUERY_LIMIT);
-    const snapshot = await getDocs(query(
-      collection(firestore, 'products'),
-      where(documentId(), 'in', chunk),
-      limit(FIRESTORE_IN_QUERY_LIMIT),
-    ));
-    snapshot.docs.forEach((document) => products.push(projectStorefrontProduct(document.id, document.data())));
+): Promise<Product[]> => loadStorefrontProductsByIdsWithReader(ids, async (productId) => {
+  try {
+    const snapshot = await getDoc(doc(firestore, 'products', productId));
+    if (!snapshot.exists()) return null;
+    const product = projectStorefrontProduct(snapshot.id, snapshot.data());
+    return isProductExplicitlyActive(product.isActive) ? product : null;
+  } catch (error) {
+    if (isFirestorePermissionDenied(error)) return null;
+    throw error;
   }
-  return products;
-};
+});
 
 export const loadStorefrontHomepageProducts = async (firestore: Firestore): Promise<Product[]> => {
   const snapshots = await Promise.all([

@@ -4,7 +4,11 @@ import test from 'node:test';
 import { assertFails, assertSucceeds, initializeTestEnvironment } from '@firebase/rules-unit-testing';
 import { doc, getDoc, getDocs, collection, query, orderBy, limit, setDoc } from 'firebase/firestore';
 import { isProductExplicitlyActive } from '../src/services/storefront/productAvailability';
-import { projectStorefrontProduct } from '../src/services/storefront/storefrontCatalog';
+import {
+  loadStorefrontProductsByIds,
+  loadStorefrontProductsByIdsWithReader,
+  projectStorefrontProduct,
+} from '../src/services/storefront/storefrontCatalog';
 import { isProductExplicitlyActive as isProductExplicitlyActiveServer } from '../functions/src/api/products/productAvailability';
 import { parseSupplierApprovalDraft } from '../functions/src/api/suppliers/supplierApproval';
 import { createSupplierReviewDraft } from '../src/services/supplierReviewEditor';
@@ -44,6 +48,9 @@ test('B direct product load: only explicit true is treated as loadable in storef
   const catalog = read('src/services/storefront/storefrontCatalog.ts');
 
   assert.match(catalog, /isProductExplicitlyActive\(data\.isActive\)/);
+  assert.match(catalog, /getDoc\(doc\(firestore, 'products', productId\)\)/);
+  assert.doesNotMatch(catalog, /where\(documentId\(\), 'in'/);
+  assert.match(catalog, /STOREFRONT_TARGETED_READ_CONCURRENCY = 8/);
   assert.match(app, /isProductExplicitlyActive\(candidate\.isActive\)/);
   assert.match(app, /setCurrentPage\('not-found'\)/);
 
@@ -54,6 +61,56 @@ test('B direct product load: only explicit true is treated as loadable in storef
   assert.ok(isProductExplicitlyActive(loadable.isActive));
   assert.ok(!isProductExplicitlyActive(unavailable.isActive));
   assert.ok(!isProductExplicitlyActive(legacy.isActive));
+});
+
+test('targeted hydration deduplicates, ignores blanks, preserves order, and bounds reads', async () => {
+  const products = new Map([
+    ['first', projectStorefrontProduct('first', { ...baseProductFields, isActive: true })],
+    ['second', projectStorefrontProduct('second', { ...baseProductFields, isActive: true })],
+    ['third', projectStorefrontProduct('third', { ...baseProductFields, isActive: true })],
+  ]);
+  let activeReads = 0;
+  let maxActiveReads = 0;
+  const readProduct = async (id: string) => {
+    activeReads += 1;
+    maxActiveReads = Math.max(maxActiveReads, activeReads);
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    activeReads -= 1;
+    return products.get(id) || null;
+  };
+
+  const result = await loadStorefrontProductsByIdsWithReader(
+    ['', 'second', 'first', 'second', 'missing', 'third'],
+    readProduct,
+  );
+
+  assert.deepEqual(result.map((product) => product.id), ['second', 'first', 'third']);
+  assert.equal(maxActiveReads, 4);
+
+  const boundedResult = await loadStorefrontProductsByIdsWithReader(
+    Array.from({ length: 24 }, (_, index) => `item-${index}`),
+    async (id) => {
+      activeReads += 1;
+      maxActiveReads = Math.max(maxActiveReads, activeReads);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      activeReads -= 1;
+      return projectStorefrontProduct(id, { ...baseProductFields, isActive: true });
+    },
+  );
+
+  assert.equal(boundedResult.length, 24);
+  assert.ok(maxActiveReads <= 8);
+});
+
+test('targeted hydration propagates transient reader failures', async () => {
+  const transientError = new Error('temporary Firestore outage');
+  await assert.rejects(
+    loadStorefrontProductsByIdsWithReader(['healthy', 'transient'], async (id) => {
+      if (id === 'transient') throw transientError;
+      return projectStorefrontProduct(id, { ...baseProductFields, isActive: true });
+    }),
+    (error) => error === transientError,
+  );
 });
 
 test('C checkout rejects non-explicit active products before stock or order writes', () => {
@@ -114,6 +171,20 @@ test('E Firestore rules emulator: public reads fail closed unless isActive is ex
     const anonymousDb = environment.unauthenticatedContext().firestore();
     const customerDb = environment.authenticatedContext('customer-user').firestore();
     const adminDb = environment.authenticatedContext('admin-user', { admin: true }).firestore();
+
+    const publicClientDb = anonymousDb as unknown as Parameters<typeof loadStorefrontProductsByIds>[0];
+    const activeTargetedProducts = await assertSucceeds(loadStorefrontProductsByIds(publicClientDb, [
+      'active-product',
+      'inactive-product',
+      'missing-product',
+    ]));
+    assert.deepEqual(activeTargetedProducts.map((product) => product.id), ['active-product']);
+
+    const inactiveOnlyTargetedProducts = await assertSucceeds(loadStorefrontProductsByIds(publicClientDb, [
+      'inactive-product',
+      'missing-product',
+    ]));
+    assert.deepEqual(inactiveOnlyTargetedProducts, []);
 
     await assertSucceeds(getDoc(doc(anonymousDb, 'products', 'active-product')));
     await assertSucceeds(getDoc(doc(customerDb, 'products', 'active-product')));

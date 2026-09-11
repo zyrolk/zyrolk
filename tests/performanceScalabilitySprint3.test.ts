@@ -64,7 +64,13 @@ test('storefront catalog uses bounded indexed cursor queries and targeted person
   assert.equal(HOMEPAGE_REVIEW_LIMIT, 6);
   assert.match(catalog, /orderBy\(documentId\(\)\)[\s\S]*limit\(STOREFRONT_PRODUCT_PAGE_SIZE\)/);
   assert.match(catalog, /startAfter\(cursor\)/);
-  assert.match(catalog, /where\(documentId\(\), 'in', chunk\)/);
+  assert.match(catalog, /const STOREFRONT_TARGETED_READ_CONCURRENCY = 8/);
+  assert.match(catalog, /getDoc\(doc\(firestore, 'products', productId\)\)/);
+  assert.match(catalog, /new Set\(ids\.map\(\(id\) => id\.trim\(\)\)\.filter\(Boolean\)\)/);
+  assert.match(catalog, /Math\.min\(STOREFRONT_TARGETED_READ_CONCURRENCY, uniqueIds\.length\)/);
+  assert.doesNotMatch(catalog, /where\(documentId\(\), ['"]in['"]/);
+  assert.doesNotMatch(catalog, /Promise\.all\(uniqueIds\.map/);
+  assert.match(catalog, /isProductExplicitlyActive\(product\.isActive\) \? product : null/);
   assert.match(catalog, /where\('approved', '==', true\)[\s\S]*limit\(HOMEPAGE_REVIEW_LIMIT\)/);
   assert.doesNotMatch(app, /onSnapshot\(collection\(db, ["']products["']\)/);
   assert.match(app, /loadStorefrontProductsByIds\(db, missingIds\)/);
