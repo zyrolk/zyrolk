@@ -100,6 +100,10 @@ test('confirmation uses server-authoritative order values and coupon-aware order
   assert.match(checkout, /setPlacedOrder\(result\.order\)/);
   assert.match(checkout, /checkout-confirmation-title/);
   assert.match(checkout, /placedOrder\.totalPrice/);
+  assert.match(checkout, /placedOrder \? <main className="zy-order-confirmation">[\s\S]*Get order support on WhatsApp[\s\S]*<\/main> : <form/);
+  assert.doesNotMatch(checkout, /WhatsApp confirmation/);
+  assert.match(checkout, /const message = encodeURIComponent\(`Hello Zyro\.lk, I placed order \$\{reference\} for \$\{formatPrice\(order\.totalPrice\)\}\. Please confirm my Cash on Delivery order\.`\)/);
+  assert.match(checkout, /window\.open\(`https:\/\/wa\.me\/\$\{number\}\?text=\$\{message\}`, '_blank', 'noopener,noreferrer'\)/);
   const order = normalizeCustomerOrder('order-1', {
     items: [{ productId: 'p1', name: 'Product', price: 4000, quantity: 1, imageUrl: '' }],
     itemsSubtotal: 4000, discountAmount: 500, deliveryFee: 350, totalPrice: 3850,
