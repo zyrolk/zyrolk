@@ -31,7 +31,7 @@ function ProductCard({
     : product.stock <= 5
       ? `Only ${product.stock} left`
       : 'In stock';
-  const deliveryLabel = settings?.deliveryCharge === 0 ? 'Free delivery' : 'Delivery available';
+  const deliveryLabel = 'Delivery available';
   const isCodEnabled = settings?.enableCOD !== false;
 
   useEffect(() => () => {

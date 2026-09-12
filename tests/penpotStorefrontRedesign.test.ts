@@ -37,7 +37,9 @@ test('390px mobile product cards use a compact two-column grid without removing 
   assert.match(productCard, /onToggleWishlist\(product\)/);
   assert.match(productCard, /zy-product-card-trust/);
   assert.match(productCard, /settings\?\.enableCOD !== false/);
-  assert.match(productCard, /settings\?\.deliveryCharge === 0/);
+  assert.match(productCard, /const deliveryLabel = 'Delivery available';/);
+  assert.doesNotMatch(productCard, /settings\?\.deliveryCharge === 0|Free delivery/);
+  assert.doesNotMatch(productCard, /\b(?:deliveryCharge|freeDeliveryMin|district|estimatedDeliveryDays|shippingClass)\b|delivery (?:fee|charge|by)|shipping fee|\bETA\b|same-day|next-day/iu);
 });
 
 test('mobile P1 cascade wins over legacy horizontal shelves and oversized cards', () => {
