@@ -67,7 +67,7 @@ You have the right to request access to your stored personal data, request corre
 
 2. Ordering & Payment
 - Orders placed through the website represent an offer to purchase.
-- We currently support Cash on Delivery (COD). Available payment options are shown during checkout.
+- Cash on Delivery is currently the only payment option available at checkout.
 - WhatsApp is available for customer support and order assistance only; it is not a separate payment method.
 
 3. Deliveries & Shipments

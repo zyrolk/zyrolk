@@ -19,13 +19,23 @@ test('fallback copy preserves the verified launch claims', () => {
   assert.match(cms, /Delivery fee is LKR 350 for orders below LKR 5,000/);
   assert.match(cms, /Free delivery is available on orders of LKR 5,000 or more/);
   assert.match(cms, /Delivery times may vary by location\. Estimated delivery information will be provided where available\./);
-  assert.match(cms, /We currently support Cash on Delivery \(COD\)/);
+  assert.match(cms, /Cash on Delivery is currently the only payment option available at checkout\./);
   assert.match(cms, /WhatsApp is available for customer support and order assistance only; it is not a separate payment method\./);
   assert.match(cms, /Need help with an order or product\? Contact our support team on WhatsApp for assistance\./);
   assert.match(contact, /Business Hours: Daily, 8:00 AM - 10:00 PM/);
   assert.match(admin, /Delivery fee is LKR 350 for orders below LKR 5,000/);
   assert.match(admin, /Free delivery is available on orders of LKR 5,000 or more/);
   assert.match(admin, /Need help with an order or product\? Contact our support team on WhatsApp for assistance\./);
+});
+
+test('Terms fallback and Admin default use the same COD-only payment wording', () => {
+  const codOnlySentence = 'Cash on Delivery is currently the only payment option available at checkout.';
+  assert.match(cms, new RegExp(codOnlySentence));
+  assert.match(admin, new RegExp(codOnlySentence));
+  assert.doesNotMatch(cms, /Available payment options are shown during checkout\./);
+  assert.doesNotMatch(admin, /Available payment options are shown during checkout\./);
+  assert.doesNotMatch(cms, /PayHere|card payment|online payment/iu);
+  assert.doesNotMatch(admin, /PayHere|card payment|online payment/iu);
 });
 
 test('live CMS documents continue to override fallback content', () => {
