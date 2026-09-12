@@ -11,7 +11,7 @@ import { reportClientIssue } from './services/observability/clientDiagnostics';
 import { addRecentlyViewedProduct, buildRecentlyViewedProducts } from './features/account/accountData';
 import {
   buildPersonalizedRecommendations, cleanRecentlyViewedIds, mergeRecentlyViewedIds,
-  reconcileWishlistProducts, resolveComparedProducts, toggleCompareProduct,
+  reconcileWishlistProducts, resolveCompareIdsForCapacity, resolveComparedProducts, toggleCompareProduct,
 } from './features/personalization/personalization';
 import {
   buildCategoryProductCounts,
@@ -1193,7 +1193,13 @@ export default function App() {
 
   const handleToggleCompare = useCallback((product: Product) => {
     setCompareProductIds(current => {
-      const result = toggleCompareProduct(current, product.id);
+      const effectiveIds = resolveCompareIdsForCapacity(current, filterCommerceProducts(productsRef.current), {
+        catalogFullyLoaded,
+        loading,
+        loadingMoreProducts,
+        storefrontDataError,
+      });
+      const result = toggleCompareProduct(effectiveIds, product.id);
       setCompareMessage(result.outcome === 'limit-reached'
         ? 'You can compare up to four products. Remove one before adding another.'
         : result.outcome === 'added'
@@ -1203,7 +1209,7 @@ export default function App() {
             : 'This product could not be added to comparison.');
       return result.ids;
     });
-  }, []);
+  }, [catalogFullyLoaded, loading, loadingMoreProducts, storefrontDataError]);
 
   const handleViewProduct = useCallback((product: Product) => {
     if (!canUseProductInCommerce(product)) return;

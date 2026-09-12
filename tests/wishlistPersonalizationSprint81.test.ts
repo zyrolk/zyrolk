@@ -7,6 +7,7 @@ import {
   cleanRecentlyViewedIds,
   mergeRecentlyViewedIds,
   reconcileWishlistProducts,
+  resolveCompareIdsForCapacity,
   resolveComparedProducts,
   toggleCompareProduct,
 } from '../src/features/personalization/personalization';
@@ -72,6 +73,43 @@ test('compare selection toggles deterministically and enforces the four-product 
   assert.deepEqual(toggleCompareProduct(['one'], '  '), { ids: ['one'], outcome: 'invalid' });
 });
 
+test('compare capacity ignores stale IDs only after authoritative catalogue completion', () => {
+  const ready = {
+    catalogFullyLoaded: true,
+    loading: false,
+    loadingMoreProducts: false,
+    storefrontDataError: null,
+  };
+  const incomplete = { ...ready, catalogFullyLoaded: false };
+  const errored = { ...ready, storefrontDataError: 'catalogue refresh failed' };
+  const liveProducts = [product('one'), product('two'), product('three'), product('four'), product('five'), product('recovered')];
+
+  assert.deepEqual(resolveCompareIdsForCapacity(['stale-a', 'stale-b', 'stale-c', 'stale-d'], liveProducts, ready), []);
+  assert.deepEqual(toggleCompareProduct(
+    resolveCompareIdsForCapacity(['stale-a', 'stale-b', 'stale-c', 'stale-d'], liveProducts, ready),
+    'one',
+  ), { ids: ['one'], outcome: 'added' });
+
+  const threeLiveOneStale = resolveCompareIdsForCapacity(['one', 'two', 'stale', 'three'], liveProducts, ready);
+  assert.deepEqual(threeLiveOneStale, ['one', 'two', 'three']);
+  assert.deepEqual(toggleCompareProduct(threeLiveOneStale, 'four'), { ids: ['one', 'two', 'three', 'four'], outcome: 'added' });
+  assert.deepEqual(toggleCompareProduct(resolveCompareIdsForCapacity(['one', 'two', 'three', 'four'], liveProducts, ready), 'five'), {
+    ids: ['one', 'two', 'three', 'four'], outcome: 'limit-reached',
+  });
+
+  assert.deepEqual(resolveCompareIdsForCapacity(['stale-a', 'stale-b', 'stale-c', 'stale-d'], liveProducts, incomplete), [
+    'stale-a', 'stale-b', 'stale-c', 'stale-d',
+  ]);
+  assert.deepEqual(resolveCompareIdsForCapacity(['stale-a', 'stale-b', 'stale-c', 'stale-d'], liveProducts, errored), [
+    'stale-a', 'stale-b', 'stale-c', 'stale-d',
+  ]);
+  assert.deepEqual(resolveCompareIdsForCapacity(['recovered'], liveProducts, ready), ['recovered']);
+  assert.deepEqual(resolveCompareIdsForCapacity(['one'], liveProducts, ready), ['one']);
+  assert.deepEqual(toggleCompareProduct(resolveCompareIdsForCapacity(['one'], liveProducts, ready), 'one'), {
+    ids: [], outcome: 'removed',
+  });
+});
+
 test('compared products resolve only current active catalogue products in selected order', () => {
   const products = [product('two'), product('one'), product('inactive', { isActive: false })];
   assert.deepEqual(resolveComparedProducts(['one', 'inactive', 'two', 'missing'], products).map(item => item.id), ['one', 'two']);
@@ -129,6 +167,8 @@ test('App preserves the existing wishlist document contract and adds bounded rec
   assert.match(app, /cleanRecentlyViewedIds/);
   assert.match(app, /'zyro_recently_viewed'/);
   assert.match(app, /'zyro_compare_products'/);
+  assert.match(app, /resolveCompareIdsForCapacity/);
+  assert.match(app, /filterCommerceProducts\(productsRef\.current\)/);
 });
 
 test('Wishlist 2.0 includes account sync, bulk selection, move-to-cart, stock, price, and unavailable states', () => {

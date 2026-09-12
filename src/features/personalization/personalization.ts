@@ -17,6 +17,13 @@ export interface CompareToggleResult {
   outcome: 'added' | 'removed' | 'limit-reached' | 'invalid';
 }
 
+export interface CompareCapacityReadiness {
+  catalogFullyLoaded: boolean;
+  loading: boolean;
+  loadingMoreProducts: boolean;
+  storefrontDataError: string | null;
+}
+
 export interface ComparisonRow {
   key: string;
   label: string;
@@ -95,6 +102,22 @@ export function toggleCompareProduct(ids: readonly string[], productId: string, 
 export function resolveComparedProducts(ids: readonly string[], products: readonly Product[], limit = 4): Product[] {
   const liveById = new Map(activeProducts(products).map(product => [product.id, product]));
   return ids.map(id => liveById.get(id)).filter((product): product is Product => Boolean(product)).slice(0, Math.max(1, limit));
+}
+
+export function resolveCompareIdsForCapacity(
+  ids: readonly string[],
+  products: readonly Product[],
+  readiness: CompareCapacityReadiness,
+  limit = 4,
+): string[] {
+  const safeLimit = Math.max(1, limit);
+  const normalizedIds = Array.from(new Set(ids.map(cleanText).filter(Boolean))).slice(0, safeLimit);
+  const catalogueIsAuthoritative = readiness.catalogFullyLoaded
+    && !readiness.loading
+    && !readiness.loadingMoreProducts
+    && readiness.storefrontDataError === null;
+  if (!catalogueIsAuthoritative) return normalizedIds;
+  return resolveComparedProducts(normalizedIds, products, safeLimit).map(product => product.id);
 }
 
 const comparisonValue = (product: Product, key: string): string => {
