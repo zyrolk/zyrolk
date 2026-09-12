@@ -173,9 +173,14 @@ test('premium purchase section retains delivery, secure shopping, WhatsApp, cart
   assert.match(modal, /zy-product-experience-purchase/);
   assert.match(modal, /Cash on Delivery/);
   assert.match(modal, /Island-wide Delivery/);
+  assert.match(modal, /Courier delivery across Sri Lanka/);
+  assert.match(modal, /Cash on Delivery Eligible/);
   assert.match(modal, /Secure Checkout/);
   assert.match(modal, /Customer Support/);
-  assert.match(modal, /settings\?\.freeDeliveryMin/);
+  assert.match(modal, /Delivery available/);
+  assert.match(modal, /Final delivery details are confirmed at checkout\./);
+  assert.doesNotMatch(modal, /\b(?:freeDeliveryMin|freeDeliveryThreshold|isEligibleForFreeDelivery|deliveryCharge|deliveryFee|deliveryAreas?|district|cartItems|cartSubtotal|itemsSubtotal|estimatedDelivery(?:Days)?|shippingClass|supplierDelivery|ETA)\b/iu);
+  assert.doesNotMatch(modal, /Eligible for FREE Shipping|Add \{formatPrice\([^)]*\)\} more|current product total meets the configured threshold|islandwide Free Delivery/iu);
   assert.match(modal, /handleWhatsAppOrderAssistance/);
   assert.match(modal, /handleWhatsAppEnquiry/);
   assert.match(modal, /Need help ordering\? Chat on WhatsApp/);

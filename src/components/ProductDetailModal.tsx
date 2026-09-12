@@ -389,10 +389,6 @@ export default function ProductDetailModal({
 
   // Filter out current product for related items
 
-  // Delivery Threshold values
-  const freeDeliveryThreshold = settings?.freeDeliveryMin || 5000;
-  const isEligibleForFreeDelivery = product.price >= freeDeliveryThreshold;
-
   return (
     <div
       ref={modalRef}
@@ -681,7 +677,7 @@ export default function ProductDetailModal({
                       Read genuine customer reviews and product Q&amp;A
                     </button>
                   </div>
-                  {/* Price Conversions Box (Strikethrough, absolute savings, free delivery) */}
+                  {/* Price Conversions Box (Strikethrough, absolute savings, delivery information) */}
                   <div className="zy-product-experience-price bg-slate-50 p-6 rounded-3xl border border-slate-100/80 text-left space-y-4">
                     <div className="space-y-1">
                       <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">
@@ -706,23 +702,14 @@ export default function ProductDetailModal({
                       </div>
                     )}
 
-                    {/* Real-time Free Delivery Eligibility Indicator */}
+                    {/* Delivery information */}
                     <div className="border-t border-slate-200/50 pt-4 flex items-center space-x-3 text-slate-700">
                       <div className="p-2 bg-emerald-500/10 text-emerald-600 rounded-xl">
                         <Truck className="h-5 w-5" />
                       </div>
                       <div>
-                        {isEligibleForFreeDelivery ? (
-                          <>
-                            <span className="text-xs font-black text-emerald-600 block">Eligible for FREE Shipping</span>
-                            <span className="text-[10px] text-slate-400 block font-light">Your current product total meets the configured threshold</span>
-                          </>
-                        ) : (
-                          <>
-                            <span className="text-xs font-bold text-slate-800 block">Standard Courier Delivery</span>
-                            <span className="text-[10px] text-slate-400 block font-light">Add {formatPrice(freeDeliveryThreshold - product.price)} more for islandwide Free Delivery</span>
-                          </>
-                        )}
+                        <span className="text-xs font-bold text-slate-800 block">Delivery available</span>
+                        <span className="text-[10px] text-slate-400 block font-light">Final delivery details are confirmed at checkout.</span>
                       </div>
                     </div>
                   </div>
