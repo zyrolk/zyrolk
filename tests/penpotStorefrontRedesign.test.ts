@@ -64,7 +64,17 @@ test('mobile categories, listing and filters follow the Penpot composition', () 
 });
 
 test('mobile search, filter sheet, sort and five-destination dock keep existing navigation state', () => {
-  assert.match(navbar, /zy-mobile-delivery-context/);
+  const deliveryContextStart = navbar.indexOf('zy-mobile-delivery-context');
+  const deliveryContextEnd = navbar.indexOf('zy-navbar-mobile-search', deliveryContextStart);
+  assert.ok(deliveryContextStart >= 0 && deliveryContextEnd > deliveryContextStart, 'mobile delivery context must remain present');
+  const deliveryContext = navbar.slice(deliveryContextStart, deliveryContextEnd);
+  assert.match(deliveryContext, /Delivering across/);
+  assert.match(deliveryContext, /Sri Lanka/);
+  assert.match(deliveryContext, /<b>Delivery available<\/b>/);
+  assert.doesNotMatch(navbar, /settings\?\.deliveryCharge\s*===\s*0|Free delivery/iu);
+  assert.doesNotMatch(navbar, /\b(?:deliveryCharge|freeDeliveryMin|freeDeliveryThreshold|threshold|deliveryFee|deliveryAreas?|shippingAreas?|district|area|cartItems?|cartSubtotal|itemsSubtotal|orderSubtotal|subtotal|estimatedDelivery(?:Days)?|shippingClass|supplierDelivery|ETA)\b|delivery (?:fee|charge|cost)|shipping (?:fee|charge|cost)/iu);
+  assert.match(navbar, /Cash on Delivery/);
+  assert.match(navbar, /Islandwide Delivery/);
   assert.match(navbar, /role="combobox"/);
   assert.match(navbar, /zy-search-empty/);
   assert.match(navbar, /zy-search-empty-clear/);

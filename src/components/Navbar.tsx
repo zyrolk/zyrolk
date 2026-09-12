@@ -588,7 +588,7 @@ export default function Navbar({
               <small>Delivering across</small>
               <strong>Sri Lanka</strong>
             </span>
-            <b>{settings?.deliveryCharge === 0 ? 'Free delivery' : 'Islandwide'}</b>
+            <b>Delivery available</b>
           </div>
         </div>
         <div className="zy-navbar-mobile-search">{renderSearchBox('mobile')}</div>
