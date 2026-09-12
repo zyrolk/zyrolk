@@ -19,6 +19,8 @@ test('Deals navigation uses the live Flash Deals anchor in desktop and mobile me
 
 test('legacy payment-return routing is a safe COD-only fallback without payment API calls', () => {
   assert.match(app, /paymentReturnContext \? 'payment-return'/);
+  assert.match(app, /LazyBlockFallback[\s\S]{0,180}label="Loading order link"/);
+  assert.doesNotMatch(app, /label="Verifying payment"/);
   assert.match(app, /onSupport=\{\(\) => finishPaymentReturn\('contact'\)\}/);
   assert.match(paymentReturn, /Online payment is not currently available/);
   assert.match(paymentReturn, /Cash on Delivery only/);

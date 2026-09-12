@@ -1510,7 +1510,7 @@ export default function App() {
           {/* Main Content Pages */}
 
           {currentPage === 'payment-return' && paymentReturnContext && (
-            <Suspense fallback={<LazyBlockFallback className="mx-auto my-12 min-h-96 max-w-3xl" label="Verifying payment" />}>
+            <Suspense fallback={<LazyBlockFallback className="mx-auto my-12 min-h-96 max-w-3xl" label="Loading order link" />}>
               <PaymentReturnPage
                 user={user}
                 onContinue={() => finishPaymentReturn('home')}
