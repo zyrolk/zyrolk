@@ -8,6 +8,7 @@ import {
   getCouponDocumentId,
   getIdempotencyKeyFromValues,
   normalizeCouponCode,
+  nextCheckoutAbuseCounter,
   resolveCouponDiscount,
   resolveCheckoutIdempotency,
   validateCheckoutCartItems,
@@ -113,6 +114,18 @@ test("checkout rate limiter blocks rapid abuse and resets after the window", () 
   );
 
   assert.doesNotThrow(() => limiter("customer-ip", 2101));
+});
+
+test("COD abuse limit remains HTTP 429 with COD-neutral customer wording", () => {
+  assert.throws(
+    () => nextCheckoutAbuseCounter({ count: 3, windowStartedAt: 1_000 }, 3, 1_100, 60_000),
+    (error) => {
+      const candidate = error as { statusCode?: unknown; message?: unknown };
+      return candidate.statusCode === 429
+        && candidate.message === "Too many cash-on-delivery orders were placed recently. Please try again later."
+        && !String(candidate.message).toLowerCase().includes("online payment");
+    },
+  );
 });
 
 test("checkout request validation returns clear validation errors", () => {

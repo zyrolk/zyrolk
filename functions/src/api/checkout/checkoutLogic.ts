@@ -119,7 +119,7 @@ export function nextCheckoutAbuseCounter(
   const isCurrentWindow = Number.isFinite(windowStartedAt) && windowStartedAt > now - windowMs;
   const currentCount = isCurrentWindow && Number.isInteger(count) && count >= 0 ? count : 0;
   if (currentCount >= maximum) {
-    throw new CheckoutError("Too many cash-on-delivery orders were placed recently. Please try again later or use online payment.", 429);
+    throw new CheckoutError("Too many cash-on-delivery orders were placed recently. Please try again later.", 429);
   }
   const nextWindowStartedAt = isCurrentWindow ? windowStartedAt : now;
   return {
