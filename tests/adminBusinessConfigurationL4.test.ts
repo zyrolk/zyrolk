@@ -31,6 +31,18 @@ test('delivery area configuration is applied consistently with flat-charge fallb
   assert.equal(calculateCheckoutTotals(1000, 'Kandy', settings).deliveryFee, 500);
 });
 
+test('Admin delivery estimate copy is informational while field wiring remains intact', () => {
+  const admin = readFileSync(new URL('../src/components/AdminDashboard.tsx', import.meta.url), 'utf8');
+  const businessEditor = readFileSync(new URL('../src/components/admin/BusinessConfigurationEditor.tsx', import.meta.url), 'utf8');
+  assert.doesNotMatch(businessEditor, /Estimated delivery, e\.g\. 2-4 days/);
+  assert.match(businessEditor, /Estimated delivery wording \(informational only\)/);
+  assert.match(businessEditor, /Use an estimate only\. Do not enter a guaranteed delivery promise\./);
+  assert.match(businessEditor, /estimatedDelivery: areaDraft\.estimatedDelivery\.trim\(\)/);
+  assert.match(businessEditor, /update\(\{ deliveryAreas:/);
+  assert.match(admin, /validateStoreSettings\(/);
+  assert.match(admin, /setDoc\(doc\(db, "settings", "website"\), updatedSettings\)/);
+});
+
 test('business configuration validation rejects unsafe or ambiguous settings', () => {
   const settings = normalizeWebsiteSettings({
     ...DEFAULT_WEBSITE_SETTINGS,
