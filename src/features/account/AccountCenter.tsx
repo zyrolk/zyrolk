@@ -507,7 +507,7 @@ export default function AccountCenter({
 
         {section === 'profile' && (
           loadingProfile ? <Skeleton rows={5} /> : <div className="zy-account-form-card">
-            <div className="zy-account-profile-hero"><div className="zy-account-avatar is-large" aria-hidden="true">{user.photoURL ? <img src={user.photoURL} alt="" referrerPolicy="no-referrer" /> : (profileForm.displayName || user.email || 'Z').slice(0, 1).toUpperCase()}</div><div><strong>{profileForm.displayName || 'Zyro.lk Customer'}</strong><span>Avatar upload will be available in a future account phase.</span></div><span className="zy-account-foundation-badge">Avatar placeholder</span></div>
+            <div className="zy-account-profile-hero"><div className="zy-account-avatar is-large" aria-hidden="true">{user.photoURL ? <img src={user.photoURL} alt="" referrerPolicy="no-referrer" /> : (profileForm.displayName || user.email || 'Z').slice(0, 1).toUpperCase()}</div><div><strong>{profileForm.displayName || 'Zyro.lk Customer'}</strong></div></div>
             <form onSubmit={handleProfileSave} className="zy-account-form-grid">
               <Field label="Display name"><input value={profileForm.displayName} onChange={event => setProfileForm(current => ({ ...current, displayName: event.target.value }))} maxLength={120} autoComplete="name" required /></Field>
               <Field label="Phone number" hint="Used as a convenient account contact; checkout details remain unchanged."><input value={profileForm.phoneNumber} onChange={event => setProfileForm(current => ({ ...current, phoneNumber: event.target.value }))} maxLength={30} inputMode="tel" autoComplete="tel" /></Field>

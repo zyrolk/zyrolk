@@ -96,9 +96,13 @@ test('recently viewed products remain device-local, deduplicated, live, and acti
 
 test('profile management preserves Firebase Authentication and merges account fields', () => {
   assert.match(account, /await updateProfile\(user, \{ displayName \}\)/);
-  assert.match(account, /setDoc\(doc\(db, 'users', user\.uid\)[\s\S]*\{ merge: true \}/);
-  assert.match(account, /phoneNumber/);
-  assert.match(account, /Avatar upload will be available in a future account phase/);
+  assert.match(account, /await setDoc\(doc\(db, 'users', user\.uid\), \{ displayName, phoneNumber, updatedAt: serverTimestamp\(\) \}, \{ merge: true \}\)/);
+  const profileHero = account.match(/<div className="zy-account-profile-hero">[\s\S]*?<\/div>\s*<form onSubmit=\{handleProfileSave\}/)?.[0] || '';
+  assert.ok(profileHero, 'Profile hero markup should remain present');
+  assert.match(profileHero, /user\.photoURL \? <img src=\{user\.photoURL\}/);
+  assert.match(profileHero, /\(profileForm\.displayName \|\| user\.email \|\| 'Z'\)\.slice\(0, 1\)\.toUpperCase\(\)/);
+  assert.doesNotMatch(account, /Avatar upload will be available in a future account phase\./);
+  assert.doesNotMatch(account, /Avatar placeholder/);
   assert.match(account, /Member since/);
 });
 
