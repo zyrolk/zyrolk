@@ -22,7 +22,7 @@ Send your enquiry with the details available to you and our team will respond th
 
 Business Hours: Daily, 8:00 AM - 10:00 PM
 
-Instant Help
+Get help on WhatsApp
 Need help with an order or product? Contact our support team on WhatsApp for assistance.
 
 Inquiry Feedback
@@ -236,7 +236,7 @@ export default function ContactPage({ settings, isAdmin, onEdit }: ContactPagePr
   let supportDesc = "Send your enquiry with the details available to you and our team will respond through your preferred contact channel.";
   let hoursTitle = "Operating Hours";
   const hoursItems = getCanonicalBusinessHours(settings);
-  let helpTitle = "Instant WhatsApp Reply";
+  let helpTitle = "Get help on WhatsApp";
   let helpDesc = "Need help with an order or product? Contact our support team on WhatsApp for assistance.";
   let closingMessage = "Thank you for contacting us. Our support team will review your enquiry and respond through an available contact channel.";
 

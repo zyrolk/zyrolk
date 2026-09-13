@@ -74,6 +74,10 @@ test('Fallback ETA copy makes no unsupported numeric promise', () => {
 test('WhatsApp remains support and order assistance, not a payment method', () => {
   assert.match(cms, /WhatsApp is available for customer support and order assistance only; it is not a separate payment method\./);
   assert.doesNotMatch(cms, /WhatsApp payment confirmations/);
+  assert.match(contact, /Get help on WhatsApp\r?\nNeed help with an order or product\?/);
+  assert.match(contact, /let helpTitle = "Get help on WhatsApp";/);
+  assert.doesNotMatch(contact, /Instant Help|Instant WhatsApp Reply/);
+  assert.match(contact, /currentHeader\.includes\('instant'\)/);
   assert.match(contact, /Chat on WhatsApp/);
   assert.match(contact, /settings\.whatsappNumber/);
 });
