@@ -136,7 +136,7 @@ Send your enquiry with the details available to you and our team will respond th
 
 Business Hours: Daily, 8:00 AM - 10:00 PM
 
-Instant Help
+Get help on WhatsApp
 Need help with an order or product? Contact our support team on WhatsApp for assistance.
 
 Inquiry Feedback

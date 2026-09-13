@@ -9,6 +9,12 @@ const contact = readFileSync('src/components/ContactPage.tsx', 'utf8');
 const cms = readFileSync('src/components/CmsPage.tsx', 'utf8');
 const admin = readFileSync('src/components/AdminDashboard.tsx', 'utf8');
 
+function extractContactFallback(source: string): string {
+  const match = source.match(/id: "contact-us",\s+title: "Contact Us",\s+content: `([\s\S]*?)`\s+\}/);
+  assert.ok(match, 'Contact fallback content should retain its existing source shape');
+  return match[1];
+}
+
 test('Contact renders configured daily business hours instead of CMS hours', () => {
   assert.deepEqual(getCanonicalBusinessHours({
     businessHours: {
@@ -74,6 +80,12 @@ test('Fallback ETA copy makes no unsupported numeric promise', () => {
 test('WhatsApp remains support and order assistance, not a payment method', () => {
   assert.match(cms, /WhatsApp is available for customer support and order assistance only; it is not a separate payment method\./);
   assert.doesNotMatch(cms, /WhatsApp payment confirmations/);
+  for (const [sourceName, source] of [['CmsPage', cms], ['AdminDashboard', admin]] as const) {
+    const contactFallback = extractContactFallback(source);
+    assert.match(contactFallback, /Get help on WhatsApp\r?\nNeed help with an order or product\?/, `${sourceName} fallback should use the neutral WhatsApp heading`);
+    assert.doesNotMatch(contactFallback, /Instant Help/, `${sourceName} fallback should not expose the stale heading`);
+    assert.doesNotMatch(contactFallback, /Instant WhatsApp Reply/, `${sourceName} fallback should not expose instant-response wording`);
+  }
   assert.match(contact, /Get help on WhatsApp\r?\nNeed help with an order or product\?/);
   assert.match(contact, /let helpTitle = "Get help on WhatsApp";/);
   assert.doesNotMatch(contact, /Instant Help|Instant WhatsApp Reply/);
