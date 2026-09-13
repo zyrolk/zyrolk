@@ -100,6 +100,9 @@ test('signed-in checkout binds orders to verified authentication and keeps guest
 test('confirmation uses server-authoritative order values and coupon-aware order history remains accurate', () => {
   assert.match(checkout, /setPlacedOrder\(result\.order\)/);
   assert.match(checkout, /checkout-confirmation-title/);
+  assert.match(checkout, /<h2 id="premium-checkout-title">\{placedOrder \? 'Order received' : 'Complete your order'\}<\/h2>/);
+  assert.doesNotMatch(checkout, /Order confirmed/);
+  assert.match(checkout, /We’ll contact you to confirm the Cash on Delivery dispatch\./);
   assert.match(checkout, /placedOrder\.totalPrice/);
   assert.match(checkout, /placedOrder \? <main className="zy-order-confirmation">[\s\S]*Get order support on WhatsApp[\s\S]*<\/main> : <form/);
   assert.doesNotMatch(checkout, /WhatsApp confirmation/);

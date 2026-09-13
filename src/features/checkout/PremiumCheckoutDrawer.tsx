@@ -299,7 +299,7 @@ export default function PremiumCheckoutDrawer({
   return <div className="zy-checkout-overlay" role="dialog" aria-modal="true" aria-labelledby={placedOrder ? 'checkout-confirmation-title' : 'premium-checkout-title'}>
     <div ref={panelRef} className="zy-premium-checkout">
       <header className="zy-premium-checkout-header">
-        <div><span><ShieldCheck aria-hidden="true" /> Secure checkout</span><h2 id="premium-checkout-title">{placedOrder ? 'Order confirmed' : 'Complete your order'}</h2></div>
+        <div><span><ShieldCheck aria-hidden="true" /> Secure checkout</span><h2 id="premium-checkout-title">{placedOrder ? 'Order received' : 'Complete your order'}</h2></div>
         {!placedOrder && <ol aria-label="Checkout progress"><li className="is-active"><b>1</b>Cart</li><li className="is-active"><b>2</b>Delivery</li><li><b>3</b>Confirmation</li></ol>}
         <button ref={closeButtonRef} type="button" onClick={() => onCloseRef.current()} disabled={isSubmitting} aria-label="Close checkout"><X aria-hidden="true" /></button>
       </header>
