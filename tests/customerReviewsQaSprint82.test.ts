@@ -66,6 +66,15 @@ test('review sorting and filtering cover date, rating, helpful, verified and ima
   assert.deepEqual(sortAndFilterReviews(reviews, 'newest', 'images').map(item => item.id), ['b']);
 });
 
+test('customer review composer does not advertise unavailable image moderation', () => {
+  assert.doesNotMatch(component, /Review images/);
+  assert.doesNotMatch(component, /Image attachments are prepared for a future moderation-enabled release\./);
+  assert.doesNotMatch(component, /zy-image-foundation/);
+  assert.match(component, /review\.imageUrls\.length > 0/);
+  assert.match(component, /<option value="images">With Images<\/option>/);
+  assert.match(component, /Review reported for moderation\./);
+});
+
 test('helpful and not-helpful voting toggles and switches without count inflation', () => {
   assert.deepEqual(calculateVoteDeltas(undefined, 'helpful'), { helpful: 1, notHelpful: 0, removeVote: false });
   assert.deepEqual(calculateVoteDeltas('helpful', 'helpful'), { helpful: -1, notHelpful: 0, removeVote: true });

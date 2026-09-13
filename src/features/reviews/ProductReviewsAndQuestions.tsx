@@ -2,7 +2,7 @@ import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { User } from 'firebase/auth';
 import { collection, limit, onSnapshot, query, where } from 'firebase/firestore';
 import {
-  BadgeCheck, CheckCircle2, ChevronDown, ChevronUp, Flag, HelpCircle, ImagePlus,
+  BadgeCheck, CheckCircle2, ChevronDown, ChevronUp, Flag, HelpCircle,
   MessageCircleQuestion, MessageSquare, Pencil, Search, Star, ThumbsDown, ThumbsUp, Trash2,
 } from 'lucide-react';
 import { db } from '../../firebase';
@@ -281,7 +281,6 @@ export default function ProductReviewsAndQuestions({ productId, productName, cur
           <label>Review title<input required minLength={3} maxLength={120} value={reviewTitle} onChange={(event) => setReviewTitle(event.target.value)} /></label>
           <label>Your rating<Stars rating={reviewRating} interactive onChange={setReviewRating} /></label>
           <label>Review body<textarea required minLength={10} maxLength={3000} rows={5} value={reviewBody} onChange={(event) => setReviewBody(event.target.value)} /></label>
-          <div className="zy-image-foundation"><ImagePlus aria-hidden="true" /><span><b>Review images</b><small>Image attachments are prepared for a future moderation-enabled release.</small></span></div>
           <button type="submit" disabled={busy}>{busy ? 'Saving…' : editingReviewId ? 'Save changes' : 'Publish verified review'}</button>
         </form>
       )}
