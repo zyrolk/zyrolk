@@ -11,6 +11,7 @@ import {
   writeCheckoutDraft,
 } from '../src/features/checkout/checkoutModel';
 import { normalizeCustomerOrder, calculateCustomerOrderTotals } from '../src/features/account/customerOrders';
+import { calculateCheckoutTotals } from '../functions/src/api/checkout/checkoutLogic';
 
 const checkout = readFileSync('src/features/checkout/PremiumCheckoutDrawer.tsx', 'utf8');
 const checkoutStyles = readFileSync('src/features/checkout/premiumCheckout.css', 'utf8');
@@ -113,6 +114,46 @@ test('confirmation uses server-authoritative order values and coupon-aware order
     itemsSubtotal: 4000, discountAmount: 500, deliveryFee: 350, grandTotal: 3850,
   });
   assert.equal(order.couponCode, 'SAVE500');
+});
+
+test('delivery progress uses the resolved fee for its free and completed states', () => {
+  const zeroFeeBelowThreshold = calculateCheckoutTotals(1000, 'Colombo', {
+    deliveryCharge: 350,
+    freeDeliveryMin: 5000,
+    deliveryAreas: [{ charge: 0, districts: ['Colombo'], isActive: true }],
+  });
+  const positiveFeeBelowThreshold = calculateCheckoutTotals(1000, 'Colombo', {
+    deliveryCharge: 350,
+    freeDeliveryMin: 5000,
+  });
+  const zeroFeeAtThreshold = calculateCheckoutTotals(5000, 'Colombo', {
+    deliveryCharge: 350,
+    freeDeliveryMin: 5000,
+  });
+  const zeroThreshold = calculateCheckoutTotals(1000, 'Colombo', {
+    deliveryCharge: 350,
+    freeDeliveryMin: 0,
+  });
+
+  assert.equal(zeroFeeBelowThreshold.deliveryFee, 0);
+  assert.equal(positiveFeeBelowThreshold.deliveryFee, 350);
+  assert.equal(zeroFeeAtThreshold.deliveryFee, 0);
+  assert.equal(zeroThreshold.deliveryFee, 0);
+
+  const progressStart = checkout.indexOf('<div className="zy-delivery-progress">');
+  const progressEnd = checkout.indexOf('<div className="zy-coupon-card">', progressStart);
+  assert.notEqual(progressStart, -1);
+  assert.notEqual(progressEnd, -1);
+  const deliveryProgress = checkout.slice(progressStart, progressEnd);
+
+  assert.match(deliveryProgress, /\{deliveryFee\s*===\s*0\s*\?\s*<><b>Free delivery unlocked<\/b>/);
+  assert.match(deliveryProgress, /\{formatPrice\(freeDeliveryThreshold - itemsSubtotal\)\} away from free delivery/);
+  assert.match(deliveryProgress, /width:\s*`\$\{deliveryFee\s*===\s*0\s*\?\s*100\s*:\s*Math\.min\(100,\s*\(itemsSubtotal \/ freeDeliveryThreshold\) \* 100\)\}%`/);
+  assert.doesNotMatch(deliveryProgress, /itemsSubtotal >= freeDeliveryThreshold/);
+  assert.match(checkout, /const baseDelivery = resolveDeliveryCharge\(settings, form\.district, DEFAULT_DELIVERY_CHARGE\)/);
+  assert.equal(checkout.match(/resolveDeliveryCharge\(/g)?.length, 1);
+  assert.match(checkout, /const freeDeliveryThreshold = Math\.max\(0, settings\?\.freeDeliveryMin \?\? DEFAULT_FREE_DELIVERY_MIN\)/);
+  assert.match(checkout, /const deliveryFee = itemsSubtotal > 0 && itemsSubtotal < freeDeliveryThreshold \? baseDelivery : 0/);
 });
 
 test('premium one-page checkout includes accessible validation, focus containment, responsive layout, and reduced motion', () => {
