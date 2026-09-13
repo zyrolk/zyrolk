@@ -132,8 +132,12 @@ test('security foundation reauthenticates password users and exposes verificatio
   assert.match(account, /updatePassword\(user, newPassword\)/);
   assert.match(account, /sendEmailVerification\(user\)/);
   assert.match(account, /user\.emailVerified/);
+  assert.match(account, /<h2>Login information<\/h2>/);
+  assert.match(account, /<dt>Last sign-in<\/dt>/);
+  assert.match(account, /<dt>Account created<\/dt>/);
+  assert.match(account, /<dt>Sign-in providers<\/dt>/);
   assert.match(account, /user\.metadata\.lastSignInTime/);
-  assert.match(account, /Device-level session history is not stored yet/);
+  assert.doesNotMatch(account, /Phase 1 shows Firebase[\u2019']s latest account metadata\. Device-level session history is not stored yet\./);
 });
 
 test('account navigation replaces prior placeholders on desktop and mobile', () => {
