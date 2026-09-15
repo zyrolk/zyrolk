@@ -191,6 +191,14 @@ test('P1 06 approved product stock 25 to 7 updates automatically', async () => {
   assert.equal(documents.get('products/product-1')?.stock, 7);
 });
 
+test('P1 06A active approved product stock 5 to 3 updates automatically', async () => {
+  const { documents, result } = await applyStock(3, approvedOffer('source-a', 5));
+  assert.equal(result.action, 'STOCK_UPDATED');
+  assert.equal(documents.get('products/product-1')?.stock, 3);
+  assert.equal(documents.get('products/product-1')?.isActive, true);
+  assert.equal(documents.get('products/product-1')?.visible, true);
+});
+
 test('P1 07 approved product stock 7 to 0 becomes out of stock without leaving the catalogue', async () => {
   const { documents, result } = await applyStock(0, approvedOffer('source-a', 7));
   assert.equal(result.action, 'STOCK_BECAME_OUT_OF_STOCK');
@@ -203,6 +211,61 @@ test('P1 08 approved product stock 0 to 14 becomes purchasable again', async () 
   assert.equal(result.action, 'STOCK_RESTORED');
   assert.equal(documents.get('products/product-1')?.stock, 14);
   assert.equal(documents.get('products/product-1')?.availability, 'in_stock');
+});
+
+test('P1 08A archived product stock recovery preserves the publication guard', async () => {
+  const { documents, result } = await applyStock(10, approvedOffer('source-a', 0), {
+    isActive: false,
+    active: false,
+    visible: false,
+    archivedAt: '2026-09-15T10:00:00.000Z',
+  });
+  const product = documents.get('products/product-1');
+  assert.equal(result.action, 'STOCK_RESTORED');
+  assert.equal(product?.stock, 10);
+  assert.equal(product?.availability, 'in_stock');
+  assert.equal(product?.isActive, false);
+  assert.equal(product?.active, false);
+  assert.equal(product?.visible, false);
+  assert.equal(product?.archivedAt, '2026-09-15T10:00:00.000Z');
+});
+
+test('P1 08B admin-inactive product recovery cannot reactivate the product', async () => {
+  const { documents, result } = await applyStock(10, approvedOffer('source-a', 0), {
+    isActive: false,
+    active: true,
+    visible: true,
+  });
+  const product = documents.get('products/product-1');
+  assert.equal(result.action, 'STOCK_RESTORED');
+  assert.equal(product?.stock, 10);
+  assert.equal(product?.availability, 'in_stock');
+  assert.equal(product?.isActive, false);
+});
+
+test('P1 08C stock recovery leaves an existing pending observation untouched', async () => {
+  const base = approvedOffer('source-a', 0);
+  const pending = buildSupplierOfferPendingObservation({
+    offer: { ...base, stock: 10, availability: 'in_stock', lastSyncAt: '2026-09-15T10:00:00.000Z' },
+    kind: 'catalog_upsert',
+    reviewQueueItemId: 'review-0631',
+    observedAt: '2026-09-15T10:00:00.000Z',
+  });
+  const offer = buildSupplierProductOffer({
+    ...base,
+    pendingObservation: pending,
+    timestamp: '2026-09-15T10:00:00.000Z',
+  });
+  const fixture = inventoryFixture(offer, { isActive: false, active: false, visible: false, archivedAt: '2026-09-15T09:00:00.000Z' });
+  const before = fixture.documents.get(`supplier_product_offers/${offer.id}`)?.pendingObservation;
+  await applyApprovedSupplierInventoryObservation(fixture.db as never, {
+    offerId: offer.id,
+    productId: 'product-1',
+    stock: 10,
+    observedAt: '2026-09-15T10:30:00.000Z',
+    expectedStateVersion: offer.stateVersion,
+  });
+  assert.deepEqual(fixture.documents.get(`supplier_product_offers/${offer.id}`)?.pendingObservation, before);
 });
 
 test('P1 09 pure approved stock change creates no Product Review write', async () => {

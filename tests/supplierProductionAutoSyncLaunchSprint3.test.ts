@@ -10,6 +10,7 @@ import {
 } from '../functions/src/api/suppliers/supplierProductImport';
 import { createSupplierSyncJob } from '../functions/src/api/suppliers/supplierSyncJobs';
 import {
+  buildProductPayload,
   buildSupplierReactivationComparison,
   generateQueueDocId,
   resolveSupplierProductReviewVisibility,
@@ -100,7 +101,7 @@ test('Sprint 3 product removal and reactivation carry canonical before/after val
   assert.equal(reactivation.comparison.status, 'STOCK_CHANGED');
   assert.deepEqual(reactivation.comparison.fieldChanges[0].before, 'unavailable');
   assert.deepEqual(reactivation.comparison.fieldChanges[0].after, 'in_stock');
-  assert.deepEqual(resolveSupplierProductReviewVisibility({ isActive: false, active: false, visible: false }, false, true), {
+  assert.deepEqual(resolveSupplierProductReviewVisibility({ isActive: true, active: true, visible: true }, false, true), {
     isActive: true,
     visible: true,
   });
@@ -109,6 +110,91 @@ test('Sprint 3 product removal and reactivation carry canonical before/after val
   assert.match(syncSource, /queueMissingSupplierProductsForReview/);
   assert.match(syncSource, /supplier_review_queue/);
   assert.doesNotMatch(syncSource, /reconciliationAction:[\s\S]{0,300}collection: "products"/);
+});
+
+test('P1 archived or admin-inactive supplier matches cannot receive automatic publication flags', () => {
+  const product = {
+    sku: 'GUARD-1',
+    title: 'Guarded supplier product',
+    longDescription: 'Updated supplier description',
+    mediaGallery: [],
+    wholesalePrice: 80,
+    recommendedRetailPrice: 180,
+    inventoryLevel: 10,
+    categoryHierarchy: ['Kitchen'],
+    supplierCategory: 'Kitchen',
+    providedFields: ['stock', 'costPrice', 'longDescription', 'categoryHierarchy', 'supplierCategory'],
+  } as never;
+  const comparison = buildSupplierProductComparison(product, {
+    name: 'Existing product',
+    description: 'Existing description',
+    stock: 0,
+    costPrice: 70,
+    price: 150,
+    category: 'old-category',
+    supplierMetadata: { categoryHierarchy: ['Old category'], supplierCategory: 'Old category' },
+  });
+  const build = (match: Record<string, unknown>) => buildProductPayload(
+    product,
+    { id: 'product-1', ...match } as never,
+    {} as never,
+    {} as never,
+    [],
+    comparison,
+    { defaultMarkup: 30, defaultProfitMargin: 0, defaultImageLimit: 4 } as never,
+    { id: 'dropex', supplierId: 'dropex', supplierType: 'dropex' } as never,
+    undefined,
+    true,
+  );
+
+  const publicationState = (payload: Record<string, unknown>) => ({
+    isActive: payload.isActive,
+    active: payload.active,
+    visible: payload.visible,
+    published: payload.published,
+  });
+  const protectedCases = [
+    ['isActive=false', { isActive: false, active: true, visible: true, published: true }],
+    ['visible=false', { isActive: true, active: true, visible: false, published: true }],
+    ['active=false', { isActive: true, active: false, visible: true, published: true }],
+    ['published=false', { isActive: true, active: true, visible: true, published: false }],
+    ['archivedAt-present', { isActive: true, active: true, visible: true, published: true, archivedAt: '2026-09-15T10:00:00.000Z' }],
+  ] as const;
+  for (const [label, match] of protectedCases) {
+    const payload = build({ stock: 0, ...match });
+    assert.equal(payload.stock, 10, `${label} must still receive the fresh stock observation`);
+    assert.deepEqual(publicationState(payload), {
+      isActive: false,
+      active: false,
+      visible: false,
+      published: false,
+    }, `${label} must remain unpublished and unavailable to customers`);
+  }
+
+  const legacyWithoutPublicationFields = build({ stock: 0 });
+  assert.deepEqual(publicationState(legacyWithoutPublicationFields), {
+    isActive: true,
+    active: true,
+    visible: true,
+    published: true,
+  }, 'absent publication fields must preserve legacy reactivation behavior');
+
+  const active = build({ stock: 0, isActive: true, active: true, visible: true, published: true });
+  assert.deepEqual(publicationState(active), {
+    isActive: true,
+    active: true,
+    visible: true,
+    published: true,
+  });
+  assert.ok(comparison.fieldChanges.some((change) => change.field === 'stock'));
+  assert.ok(comparison.fieldChanges.some((change) => change.field === 'categoryHierarchy'));
+  assert.ok(comparison.fieldChanges.some((change) => change.field === 'longDescription'));
+
+  const adminProductManagement = readFileSync('functions/src/api/products/adminProductManagement.ts', 'utf8');
+  assert.match(adminProductManagement, /isActive: draft\.isActive/);
+  assert.match(adminProductManagement, /archivedAt: FieldValue\.delete\(\)/);
+  const syncSource = readFileSync('functions/src/scheduled/supplierSync.ts', 'utf8');
+  assert.match(syncSource, /match\.published === false/);
 });
 
 test('Sprint 3 prevents duplicate review documents and active duplicate review reopening', () => {

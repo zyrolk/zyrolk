@@ -271,6 +271,7 @@ interface ExistingProduct {
   published?: boolean;
   approved?: boolean;
   visible?: boolean;
+  archivedAt?: unknown;
   rating?: number;
   reviewsCount?: number;
   createdAt?: string;
@@ -286,6 +287,18 @@ interface ExistingProduct {
   supplierFieldOwnership?: Record<string, unknown>;
   supplierOfferSelection?: Record<string, unknown>;
 }
+
+type SupplierProductPublicationMatch = Pick<ExistingProduct, "isActive" | "active" | "visible" | "published" | "archivedAt">;
+
+const supplierProductPublicationIsProtected = (
+  match: SupplierProductPublicationMatch | undefined,
+): boolean => Boolean(match && (
+  (match.archivedAt !== undefined && match.archivedAt !== null)
+  || match.isActive === false
+  || match.active === false
+  || match.visible === false
+  || match.published === false
+));
 
 const isDropexSource = (source: SupplierSource): boolean => [
   source.id,
@@ -925,18 +938,21 @@ async function loadSupplierProductMappings(sourceId: string): Promise<{
 }
 
 export function resolveSupplierProductReviewVisibility(
-  match: Pick<ExistingProduct, "isActive" | "active" | "visible"> | undefined,
+  match: SupplierProductPublicationMatch | undefined,
   isNewProduct: boolean,
   reactivateSupplierProduct: boolean,
 ): { isActive: boolean; visible: boolean } {
-  const isActive = reactivateSupplierProduct
+  const publicationProtected = !isNewProduct && supplierProductPublicationIsProtected(match);
+  const isActive = publicationProtected
+    ? false
+    : reactivateSupplierProduct
     ? true
     : match
       ? (typeof match.isActive === "boolean" ? match.isActive : (typeof match.active === "boolean" ? match.active : true))
       : true;
   return {
     isActive,
-    visible: reactivateSupplierProduct || isNewProduct ? true : match?.visible !== false,
+    visible: publicationProtected ? false : reactivateSupplierProduct || isNewProduct ? true : match?.visible !== false,
   };
 }
 
@@ -1007,6 +1023,7 @@ export function buildProductPayload(
   const acceptedFields = isNewProduct ? true : acceptedSupplierFieldIds;
   const supplierCatalogDetails = mergeSupplierCatalogDetails(product, { ...(match || {}) }, acceptedFields);
   const supplierMetadata = mergeSupplierProductMetadata(product, match?.supplierMetadata || {}, acceptedFields);
+  const publicationProtected = !isNewProduct && supplierProductPublicationIsProtected(match);
 
   return {
     ...supplierCatalogDetails,
@@ -1029,7 +1046,7 @@ export function buildProductPayload(
     isBestSeller: isNewProduct ? false : match?.isBestSeller === true,
     isActive: reviewVisibility.isActive,
     active: reviewVisibility.isActive,
-    published: isNewProduct ? true : match?.published !== false,
+    published: publicationProtected ? false : isNewProduct ? true : match?.published !== false,
     approved: isNewProduct ? true : match?.approved !== false,
     visible: reviewVisibility.visible,
     // Supplier identity remains private. Existing Zyro SKUs are preserved and
