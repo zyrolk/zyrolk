@@ -29,8 +29,11 @@ export interface SupplierReviewSourceItem {
   mediaStatus?: string;
   categoryMapping?: {
     supplierCategory?: string;
+    supplierSubcategory?: string;
     targetCategoryId?: string;
     targetSubcategoryId?: string;
+    candidateCategoryId?: string;
+    candidateSubcategoryId?: string;
     confidence?: number;
     mappingType?: string;
     autoSelected?: boolean;

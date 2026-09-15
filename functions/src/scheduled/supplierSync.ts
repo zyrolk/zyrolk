@@ -78,8 +78,11 @@ import {
   SupplierBrandSuggestion,
   SupplierCategoryMappingRecord,
   SupplierCategorySuggestion,
+  SupplierTaxonomyCandidatePlan,
+  planSupplierTaxonomyCandidates,
   validateSupplierProductForApproval,
 } from "../api/suppliers/supplierProductMapping";
+import { upsertSupplierTaxonomyCandidate } from "../api/suppliers/supplierTaxonomy";
 import { matchesSupplierCategoryFilter, SupplierCategoryMappings } from "./supplierCategoryMapping";
 import {
   calculateSupplierInitialPricing,
@@ -1512,6 +1515,7 @@ interface SupplierSyncWrite {
   id: string;
   data: Record<string, unknown>;
   create?: boolean;
+  taxonomyCandidatePlan?: SupplierTaxonomyCandidatePlan;
   /** Queue record plus its initial audit event must commit together. */
   atomicGroup?: string;
   /** Optimistic fence for an offer read during comparison. */
@@ -1568,6 +1572,16 @@ async function commitQueuedItems(items: SupplierSyncWrite[]): Promise<void> {
 
   for (let index = 0; index < items.length;) {
     const firstItem = items[index];
+    if (firstItem.taxonomyCandidatePlan) {
+      await flushBatch();
+      await upsertSupplierTaxonomyCandidate(
+        adminDb,
+        firstItem.taxonomyCandidatePlan,
+        String(firstItem.data.observedAt || new Date().toISOString()),
+      );
+      index += 1;
+      continue;
+    }
     let groupEnd = index + 1;
     if (firstItem.atomicGroup) {
       while (groupEnd < items.length && items[groupEnd].atomicGroup === firstItem.atomicGroup) groupEnd += 1;
@@ -2419,6 +2433,10 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
       subcategories: Array.isArray(categoryDoc.data().subcategories) ? categoryDoc.data().subcategories : [],
       specificationTemplate: Array.isArray(categoryDoc.data().specificationTemplate) ? categoryDoc.data().specificationTemplate : [],
       keywords: Array.isArray(categoryDoc.data().keywords) ? categoryDoc.data().keywords : [],
+      taxonomyCandidate: categoryDoc.data().taxonomyCandidate === true,
+      supplierTaxonomySourceId: String(categoryDoc.data().supplierTaxonomySourceId || ""),
+      supplierTaxonomyId: String(categoryDoc.data().supplierTaxonomyId || ""),
+      normalizedSupplierCategory: String(categoryDoc.data().normalizedSupplierCategory || ""),
     }));
     const storeBrands: StoreBrandMappingCandidate[] = brandsSnap.docs.map((brandDoc) => ({
       id: brandDoc.id,
@@ -3208,17 +3226,45 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
             .map((keyword) => keyword.trim())
             .filter(Boolean);
           const productType = String(product.productType || product.specifications?.productType || product.specifications?.["Product Type"] || "").trim();
-          const categoryMapping = suggestSupplierCategory({
+          const supplierCategoryValues = (product.categoryHierarchy && product.categoryHierarchy.length > 0)
+            ? product.categoryHierarchy
+            : [product.supplierCategory, product.supplierSubcategory].filter((value): value is string => Boolean(String(value || "").trim()));
+          const supplierCategory = String(product.supplierCategory || supplierCategoryValues[0] || "").trim();
+          const supplierSubcategory = String(product.supplierSubcategory || supplierCategoryValues[1] || "").trim();
+          const categoryMappingSuggestion = suggestSupplierCategory({
             sourceId: source.id,
-            supplierCategories: (product.categoryHierarchy && product.categoryHierarchy.length > 0)
-              ? product.categoryHierarchy
-              : [product.supplierCategory, product.supplierSubcategory].filter((value): value is string => Boolean(String(value || "").trim())),
+            supplierCategories: supplierCategoryValues,
             productTitle: product.title,
             keywords: supplierKeywords,
             productType,
             categories: storeCategories,
             mappings: categoryMappingRecords,
           });
+          const categoryMetadata = asRecord(product.extraAttributes);
+          const taxonomyPlan = planSupplierTaxonomyCandidates({
+            sourceId: source.id,
+            supplierCategory,
+            supplierCategoryId: String(categoryMetadata.supplierCategoryId || ""),
+            supplierSubcategory,
+            supplierSubcategoryId: String(categoryMetadata.supplierSubcategoryId || ""),
+            categories: storeCategories,
+            mapping: categoryMappingSuggestion,
+          });
+          const categoryMapping: SupplierCategorySuggestion = {
+            ...categoryMappingSuggestion,
+            ...(taxonomyPlan ? {
+              ...(taxonomyPlan.categoryCandidate ? { candidateCategoryId: taxonomyPlan.categoryId } : {}),
+              ...(taxonomyPlan.subcategoryCandidate ? { candidateSubcategoryId: taxonomyPlan.subcategoryId } : {}),
+            } : {}),
+          };
+          if (taxonomyPlan) {
+            queuedWrites.push({
+              collection: "categories",
+              id: taxonomyPlan.categoryId,
+              data: { observedAt: createdAt },
+              taxonomyCandidatePlan: taxonomyPlan,
+            });
+          }
           const brandMapping = suggestSupplierBrand({
             sourceId: source.id,
             supplierBrand,

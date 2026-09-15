@@ -31,9 +31,20 @@ export interface StoreCategoryMappingCandidate {
   id: string;
   name: string;
   isActive?: boolean;
-  subcategories?: Array<{ id: string; name: string; isActive?: boolean }>;
+  subcategories?: Array<{
+    id: string;
+    name: string;
+    isActive?: boolean;
+    taxonomyCandidate?: boolean;
+    supplierTaxonomySourceId?: string;
+    supplierTaxonomyId?: string;
+  }>;
   specificationTemplate?: Array<{ name: string; required?: boolean }>;
   keywords?: string[];
+  taxonomyCandidate?: boolean;
+  supplierTaxonomySourceId?: string;
+  supplierTaxonomyId?: string;
+  normalizedSupplierCategory?: string;
 }
 
 export interface StoreBrandMappingCandidate {
@@ -45,9 +56,12 @@ export interface StoreBrandMappingCandidate {
 
 export interface SupplierCategorySuggestion {
   supplierCategory: string;
+  supplierSubcategory?: string;
   normalizedCategory: string;
   targetCategoryId: string;
   targetSubcategoryId: string;
+  candidateCategoryId?: string;
+  candidateSubcategoryId?: string;
   confidence: number;
   mappingType: SupplierMappingType;
   mappingSource: "source" | "global" | "catalog" | "none";
@@ -79,6 +93,37 @@ export const normalizeSupplierMappingValue = (value: unknown): string => String(
   .replace(/[^\p{L}\p{N}]+/gu, " ")
   .replace(/\s+/gu, " ")
   .trim();
+
+export interface SupplierTaxonomyCandidatePlan {
+  categoryId: string;
+  subcategoryId: string;
+  categoryCandidate: boolean;
+  subcategoryCandidate: boolean;
+  sourceId: string;
+  supplierCategoryId: string;
+  supplierCategory: string;
+  normalizedCategory: string;
+  supplierSubcategory: string;
+  supplierSubcategoryId: string;
+  parentCategoryId?: string;
+}
+
+export const buildSupplierTaxonomyCandidateId = (
+  sourceId: string,
+  supplierCategoryId: string,
+  supplierCategory: string,
+): string => `supplier-taxonomy-${createHash("sha256")
+  .update([sourceId, supplierCategoryId || normalizeSupplierMappingValue(supplierCategory)].join("\u001f"), "utf8")
+  .digest("hex")}`;
+
+export const buildSupplierTaxonomyCandidateSubcategoryId = (
+  sourceId: string,
+  categoryId: string,
+  supplierSubcategoryId: string,
+  supplierSubcategory: string,
+): string => `supplier-taxonomy-sub-${createHash("sha256")
+  .update([sourceId, categoryId, supplierSubcategoryId || normalizeSupplierMappingValue(supplierSubcategory)].join("\u001f"), "utf8")
+  .digest("hex")}`;
 
 const activeCategories = (categories: readonly StoreCategoryMappingCandidate[]) => categories.filter((category) => category.isActive !== false);
 const activeBrands = (brands: readonly StoreBrandMappingCandidate[]) => brands.filter((brand) => brand.isActive !== false);
@@ -114,12 +159,20 @@ export function suggestSupplierCategory(input: {
   categories: readonly StoreCategoryMappingCandidate[];
   mappings?: readonly SupplierCategoryMappingRecord[];
 }): SupplierCategorySuggestion {
-  const supplierCategory = input.supplierCategories.map((item) => String(item || "").trim()).find(Boolean) || "";
+  const supplierValues = input.supplierCategories.map((item) => String(item || "").trim()).filter(Boolean);
+  const supplierCategory = supplierValues[0] || "";
+  const supplierSubcategory = supplierValues[1] || "";
   const normalizedCategory = normalizeSupplierMappingValue(supplierCategory);
   const categories = activeCategories(input.categories);
   const categoryById = new Map(categories.map((category) => [category.id, category]));
+  const exactSubcategoryId = (category: StoreCategoryMappingCandidate): string => {
+    if (!supplierSubcategory) return "";
+    return category.subcategories?.find((subcategory) => subcategory.isActive !== false
+      && [subcategory.id, subcategory.name].some((value) => normalizeSupplierMappingValue(value) === normalizeSupplierMappingValue(supplierSubcategory)))?.id || "";
+  };
+  const unresolvedSubcategory = (category: StoreCategoryMappingCandidate): boolean => Boolean(supplierSubcategory && !exactSubcategoryId(category));
   const evidence = normalizeSupplierMappingValue([
-    ...input.supplierCategories,
+    ...supplierValues,
     input.productTitle || "",
     ...(input.keywords || []),
     input.productType || "",
@@ -135,9 +188,10 @@ export function suggestSupplierCategory(input: {
     if (!category) continue;
     return {
       supplierCategory,
+      supplierSubcategory,
       normalizedCategory,
       targetCategoryId: category.id,
-      targetSubcategoryId: validMappedSubcategory(category, mapping.targetSubcategoryId),
+      targetSubcategoryId: validMappedSubcategory(category, mapping.targetSubcategoryId) || exactSubcategoryId(category),
       confidence: 100,
       mappingType: mapping.mappingType === "learned" ? "learned" : "manual",
       mappingSource: scope,
@@ -148,11 +202,18 @@ export function suggestSupplierCategory(input: {
 
   const matchesInactiveCategory = Boolean(normalizedCategory) && input.categories.some((category) => (
     category.isActive === false
-    && [category.id, category.name].some((value) => normalizeSupplierMappingValue(value) === normalizedCategory)
+    && [category.id, category.name, category.normalizedSupplierCategory, category.supplierTaxonomyId]
+      .some((value) => normalizeSupplierMappingValue(value) === normalizedCategory)
   ));
   if (matchesInactiveCategory) {
+    const inactiveCandidate = input.categories.find((category) => category.isActive === false
+      && category.taxonomyCandidate === true
+      && [category.name, category.normalizedSupplierCategory, category.supplierTaxonomyId]
+        .some((value) => normalizeSupplierMappingValue(value) === normalizedCategory));
     return {
-      supplierCategory, normalizedCategory, targetCategoryId: "", targetSubcategoryId: "", confidence: 0,
+      supplierCategory, supplierSubcategory, normalizedCategory, targetCategoryId: "", targetSubcategoryId: "",
+      ...(inactiveCandidate ? { candidateCategoryId: inactiveCandidate.id } : {}),
+      confidence: 0,
       mappingType: "unmapped", mappingSource: "none", autoSelected: false, requiresManualSelection: true,
     };
   }
@@ -160,8 +221,9 @@ export function suggestSupplierCategory(input: {
   for (const category of categories) {
     if (supplierCategory && (supplierCategory === category.id || supplierCategory === category.name)) {
       return {
-        supplierCategory, normalizedCategory, targetCategoryId: category.id, targetSubcategoryId: "",
-        confidence: 100, mappingType: "exact", mappingSource: "catalog", autoSelected: true, requiresManualSelection: false,
+        supplierCategory, supplierSubcategory, normalizedCategory, targetCategoryId: category.id,
+        targetSubcategoryId: exactSubcategoryId(category), confidence: 100, mappingType: "exact", mappingSource: "catalog",
+        autoSelected: !unresolvedSubcategory(category), requiresManualSelection: unresolvedSubcategory(category),
       };
     }
   }
@@ -169,8 +231,9 @@ export function suggestSupplierCategory(input: {
   for (const category of categories) {
     if ([category.id, category.name].some((value) => normalizeSupplierMappingValue(value) === normalizedCategory && normalizedCategory)) {
       return {
-        supplierCategory, normalizedCategory, targetCategoryId: category.id, targetSubcategoryId: "",
-        confidence: 98, mappingType: "normalized", mappingSource: "catalog", autoSelected: true, requiresManualSelection: false,
+        supplierCategory, supplierSubcategory, normalizedCategory, targetCategoryId: category.id,
+        targetSubcategoryId: exactSubcategoryId(category), confidence: 98, mappingType: "normalized", mappingSource: "catalog",
+        autoSelected: !unresolvedSubcategory(category), requiresManualSelection: unresolvedSubcategory(category),
       };
     }
   }
@@ -185,6 +248,7 @@ export function suggestSupplierCategory(input: {
     const suggestionConfidence = Math.min(94, Math.max(70, Math.round(70 + best.score * 24)));
     return {
       supplierCategory,
+      supplierSubcategory,
       normalizedCategory,
       targetCategoryId: best.category.id,
       targetSubcategoryId: "",
@@ -197,8 +261,99 @@ export function suggestSupplierCategory(input: {
   }
 
   return {
-    supplierCategory, normalizedCategory, targetCategoryId: "", targetSubcategoryId: "", confidence: 0,
+    supplierCategory, supplierSubcategory, normalizedCategory, targetCategoryId: "", targetSubcategoryId: "", confidence: 0,
     mappingType: "unmapped", mappingSource: "none", autoSelected: false, requiresManualSelection: true,
+  };
+}
+
+const supplierCategoryMatches = (
+  category: StoreCategoryMappingCandidate,
+  normalizedCategory: string,
+  supplierCategoryId: string,
+): boolean => [category.id, category.name, category.normalizedSupplierCategory, category.supplierTaxonomyId]
+  .some((value) => normalizeSupplierMappingValue(value) === normalizedCategory
+    || (supplierCategoryId && String(value || "").trim() === supplierCategoryId));
+
+const supplierSubcategoryMatches = (
+  subcategory: { id: string; name: string; isActive?: boolean; taxonomyCandidate?: boolean; supplierTaxonomySourceId?: string; supplierTaxonomyId?: string },
+  normalizedSubcategory: string,
+  sourceId: string,
+  supplierSubcategoryId: string,
+): boolean => [subcategory.id, subcategory.name, subcategory.supplierTaxonomyId]
+  .some((value) => normalizeSupplierMappingValue(value) === normalizedSubcategory
+    || (supplierSubcategoryId && String(value || "").trim() === supplierSubcategoryId))
+  && (!subcategory.taxonomyCandidate || subcategory.supplierTaxonomySourceId === sourceId);
+
+export function planSupplierTaxonomyCandidates(input: {
+  sourceId: string;
+  supplierCategory: string;
+  supplierCategoryId?: string;
+  supplierSubcategory?: string;
+  supplierSubcategoryId?: string;
+  categories: readonly StoreCategoryMappingCandidate[];
+  mapping?: SupplierCategorySuggestion;
+}): SupplierTaxonomyCandidatePlan | null {
+  const supplierCategory = String(input.supplierCategory || "").trim();
+  const supplierSubcategory = String(input.supplierSubcategory || "").trim();
+  const normalizedCategory = normalizeSupplierMappingValue(supplierCategory);
+  const normalizedSubcategory = normalizeSupplierMappingValue(supplierSubcategory);
+  const supplierCategoryId = String(input.supplierCategoryId || "").trim();
+  const supplierSubcategoryId = String(input.supplierSubcategoryId || "").trim();
+  if (!supplierCategory || !normalizedCategory) return null;
+
+  const activeCategory = input.categories.find((category) => category.isActive !== false
+    && supplierCategoryMatches(category, normalizedCategory, supplierCategoryId));
+  const mappedCategory = input.mapping?.autoSelected && input.mapping.targetCategoryId
+    ? input.categories.find((category) => category.isActive !== false && category.id === input.mapping?.targetCategoryId)
+    : undefined;
+  const safeParent = activeCategory || mappedCategory;
+  if (safeParent) {
+    if (!supplierSubcategory || input.mapping?.targetSubcategoryId) return null;
+    const activeSubcategory = (safeParent.subcategories || []).find((subcategory) => subcategory.isActive !== false
+      && [subcategory.id, subcategory.name].some((value) => normalizeSupplierMappingValue(value) === normalizedSubcategory
+        || (supplierSubcategoryId && String(value || "").trim() === supplierSubcategoryId)));
+    if (activeSubcategory) return null;
+    const existingCandidate = (safeParent.subcategories || []).find((subcategory) => subcategory.isActive === false
+      && supplierSubcategoryMatches(subcategory, normalizedSubcategory, input.sourceId, supplierSubcategoryId));
+    return {
+      categoryId: safeParent.id,
+      subcategoryId: existingCandidate?.id || buildSupplierTaxonomyCandidateSubcategoryId(input.sourceId, safeParent.id, supplierSubcategoryId, supplierSubcategory),
+      categoryCandidate: false,
+      subcategoryCandidate: true,
+      sourceId: input.sourceId,
+      supplierCategoryId,
+      supplierCategory,
+      normalizedCategory,
+      supplierSubcategory,
+      supplierSubcategoryId,
+      parentCategoryId: safeParent.id,
+    };
+  }
+
+  const existingCandidate = input.categories.find((category) => category.isActive === false
+    && category.taxonomyCandidate === true
+    && category.supplierTaxonomySourceId === input.sourceId
+    && supplierCategoryMatches(category, normalizedCategory, supplierCategoryId));
+  const existingInactiveOwnedCategory = input.categories.find((category) => category.isActive === false
+    && category.taxonomyCandidate !== true
+    && supplierCategoryMatches(category, normalizedCategory, supplierCategoryId));
+  if (existingInactiveOwnedCategory && !existingCandidate) return null;
+  const categoryId = existingCandidate?.id || buildSupplierTaxonomyCandidateId(input.sourceId, supplierCategoryId, supplierCategory);
+  const existingSubcategory = existingCandidate?.subcategories?.find((subcategory) => subcategory.isActive === false
+    && supplierSubcategoryMatches(subcategory, normalizedSubcategory, input.sourceId, supplierSubcategoryId));
+  return {
+    categoryId,
+    subcategoryId: supplierSubcategory
+      ? existingSubcategory?.id || buildSupplierTaxonomyCandidateSubcategoryId(input.sourceId, categoryId, supplierSubcategoryId, supplierSubcategory)
+      : "",
+    categoryCandidate: true,
+    subcategoryCandidate: Boolean(supplierSubcategory),
+    sourceId: input.sourceId,
+    supplierCategoryId,
+    supplierCategory,
+    normalizedCategory,
+    supplierSubcategory,
+    supplierSubcategoryId,
   };
 }
 

@@ -12,6 +12,7 @@ import {
   supplierReviewValidCategoryIds,
 } from '../src/services/supplierReviewCatalog';
 import {
+  planSupplierTaxonomyCandidates,
   suggestSupplierBrand,
   suggestSupplierCategory,
 } from '../functions/src/api/suppliers/supplierProductMapping';
@@ -139,6 +140,45 @@ test('supplied supplier category and brand auto-map only on exact active matches
   assert.equal(brand.autoSelected, true);
 });
 
+test('same-named active subcategories stay scoped to the resolved parent', () => {
+  const categories = [
+    {
+      id: 'vehicle-accessories',
+      name: 'Vehicle Accessories',
+      isActive: true,
+      subcategories: [{ id: 'vehicle-chargers', name: 'Chargers', isActive: true }],
+    },
+    {
+      id: 'mobile-accessories',
+      name: 'Mobile Accessories',
+      isActive: true,
+      subcategories: [{ id: 'mobile-chargers', name: 'Chargers', isActive: true }],
+    },
+  ];
+
+  const suggestion = suggestSupplierCategory({
+    sourceId: 'dropex',
+    supplierCategories: ['Vehicle Accessories', 'Chargers'],
+    categories,
+  });
+
+  assert.equal(suggestion.targetCategoryId, 'vehicle-accessories');
+  assert.equal(suggestion.targetSubcategoryId, 'vehicle-chargers');
+  assert.notEqual(suggestion.targetSubcategoryId, 'mobile-chargers');
+  assert.equal(suggestion.autoSelected, true);
+  assert.equal(suggestion.requiresManualSelection, false);
+  assert.equal(suggestion.candidateCategoryId, undefined);
+  assert.equal(suggestion.candidateSubcategoryId, undefined);
+
+  const taxonomyPlan = planSupplierTaxonomyCandidates({
+    sourceId: 'dropex',
+    supplierCategory: 'Vehicle Accessories',
+    supplierSubcategory: 'Chargers',
+    categories,
+  });
+  assert.equal(taxonomyPlan, null);
+});
+
 test('admin can override auto-mapped category and brand values in the review draft', () => {
   const autoMappedItem = {
     ...reviewItem,
@@ -189,10 +229,12 @@ test('missing supplier category and brand leaves mapping unresolved but manual s
   assert.equal(errors.brand, undefined);
 });
 
-test('review catalog loading does not auto-create categories or brands', () => {
+test('review catalog does not write taxonomy directly while sync owns candidate ingestion', () => {
   const sync = projectFile('functions/src/scheduled/supplierSync.ts');
   const catalog = projectFile('functions/src/api/suppliers/supplierReviewCatalog.ts');
   assert.doesNotMatch(sync, /collection\("categories"\)\.doc\([^)]*\)\.set/);
+  assert.match(sync, /planSupplierTaxonomyCandidates/u);
+  assert.match(sync, /upsertSupplierTaxonomyCandidate/u);
   assert.doesNotMatch(catalog, /\.set\(/u);
 });
 

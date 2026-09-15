@@ -62,6 +62,7 @@ interface SupplierReviewEditorModalProps {
   onRefreshOffers: () => Promise<void>;
   onConfigureOffer: (offerId: string, patch: { priority?: number; enabled?: boolean }) => Promise<void>;
   onSelectOffer: (offerId: string, options: { locked: boolean; failoverEnabled: boolean }) => Promise<void>;
+  onActivateTaxonomyCandidate: (categoryId: string, subcategoryId?: string) => Promise<void>;
 }
 
 const money = (value: number | null | undefined): string => (
@@ -123,6 +124,7 @@ export default function SupplierReviewEditorModal({
   onRefreshOffers,
   onConfigureOffer,
   onSelectOffer,
+  onActivateTaxonomyCandidate,
 }: SupplierReviewEditorModalProps) {
   const [draft, setDraft] = useState(initialDraft);
   const [isEditing, setIsEditing] = useState(false);
@@ -431,7 +433,23 @@ export default function SupplierReviewEditorModal({
             </div>
             <div className="rounded-xl bg-white/70 p-3 dark:bg-slate-900/60">
               <span className="block text-[9px] font-black uppercase text-slate-400">Supplier category</span>
-              <strong>{supplierMetadata.supplierCategory || 'Not supplied'}</strong>
+              <strong>{supplierMetadata.supplierCategory || item.categoryMapping?.supplierCategory || 'Not supplied'}</strong>
+              {supplierMetadata.supplierSubcategory || item.categoryMapping?.supplierSubcategory ? <span className="mt-1 block text-[10px] text-slate-500">Subcategory: {String(supplierMetadata.supplierSubcategory || item.categoryMapping?.supplierSubcategory)}</span> : null}
+              {item.categoryMapping?.candidateCategoryId || item.categoryMapping?.candidateSubcategoryId ? (
+                <div className="mt-3 rounded-lg border border-amber-500/20 bg-amber-500/10 p-2 text-[10px] font-semibold text-amber-700 dark:text-amber-200">
+                  <p>{item.categoryMapping?.candidateCategoryId
+                    ? 'Supplier taxonomy is available as an inactive candidate and must be activated or mapped before publishing.'
+                    : 'Supplier subcategory is available as an inactive candidate and must be activated or mapped before publishing.'}</p>
+                  {isEditing ? <button
+                    type="button"
+                    onClick={() => void onActivateTaxonomyCandidate(
+                      item.categoryMapping?.candidateCategoryId || item.categoryMapping?.targetCategoryId || '',
+                      item.categoryMapping?.candidateSubcategoryId,
+                    )}
+                    className="mt-2 rounded-lg bg-amber-600 px-3 py-2 text-[10px] font-black text-white"
+                  >Activate supplier taxonomy</button> : null}
+                </div>
+              ) : null}
               {item.categoryMapping?.targetCategoryId ? <><div className="mt-2 flex flex-wrap items-center gap-2"><span className="text-[10px] text-slate-500">Suggested Category</span><strong className="text-xs text-blue-700 dark:text-blue-300">{suggestedCategory?.name || item.categoryMapping.targetCategoryId}</strong><span className="rounded-full bg-blue-500/10 px-2 py-0.5 text-[9px] font-black text-blue-600">{Math.round(Number(item.categoryMapping.confidence || 0))}% confidence</span></div>{isEditing ? <button type="button" onClick={() => setDraft((current) => ({ ...current, category: item.categoryMapping?.targetCategoryId || '', subcategory: item.categoryMapping?.targetSubcategoryId || '' }))} disabled={draft.category === item.categoryMapping.targetCategoryId && draft.subcategory === (item.categoryMapping.targetSubcategoryId || '')} className="mt-2 rounded-lg bg-blue-600 px-3 py-2 text-[10px] font-black text-white disabled:cursor-not-allowed disabled:opacity-40">Apply</button> : null}</> : <p className="mt-2 rounded-lg border border-dashed border-blue-500/20 p-3 text-[10px] text-slate-500">No category suggestion is available. Select a category manually.</p>}
             </div>
             <div className="rounded-xl bg-white/70 p-3 dark:bg-slate-900/60">

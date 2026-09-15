@@ -8,12 +8,22 @@ import {
   promoteSupplierOfferPendingObservation,
   resolveActiveSupplierOffer,
 } from '../functions/src/api/suppliers/supplierOfferEngine';
+import { ProductParser } from '../functions/src/api/suppliers/dropex/ProductParser';
 import { buildSupplierProductComparison } from '../functions/src/api/suppliers/supplierProductImport';
 import {
   removeAutomatedStockChangesFromSupplierComparison,
   shouldDeferNewSupplierProductForZeroStock,
 } from '../functions/src/scheduled/supplierSync';
-import { suggestSupplierCategory } from '../functions/src/api/suppliers/supplierProductMapping';
+import {
+  buildSupplierTaxonomyCandidateId,
+  planSupplierTaxonomyCandidates,
+  suggestSupplierCategory,
+  validateSupplierProductForApproval,
+} from '../functions/src/api/suppliers/supplierProductMapping';
+import {
+  activateSupplierTaxonomyCandidate,
+  upsertSupplierTaxonomyCandidate,
+} from '../functions/src/api/suppliers/supplierTaxonomy';
 
 type Data = Record<string, unknown>;
 type DocRef = { kind: 'doc'; collectionName: string; id: string; key: string };
@@ -30,7 +40,7 @@ type QuerySnap = { docs: DocSnap[] };
 
 const fakeFirestore = (initial: Record<string, Data>) => {
   const documents = new Map(Object.entries(initial));
-  const operations: Array<{ operation: 'set' | 'create'; key: string; data: Data }> = [];
+  const operations: Array<{ operation: 'set' | 'create' | 'update'; key: string; data: Data }> = [];
   let generated = 0;
   const docRef = (collectionName: string, id: string): DocRef => ({
     kind: 'doc', collectionName, id, key: `${collectionName}/${id}`,
@@ -65,6 +75,7 @@ const fakeFirestore = (initial: Record<string, Data>) => {
       get: (reference: DocRef | QueryRef) => Promise<DocSnap | QuerySnap>;
       set: (reference: DocRef, data: Data, options?: { merge?: boolean }) => void;
       create: (reference: DocRef, data: Data) => void;
+      update: (reference: DocRef, data: Data) => void;
     }) => Promise<T>): Promise<T> => callback({
       get: async (reference) => reference.kind === 'query' ? executeQuery(reference) : snapshot(reference),
       set: (reference, data, options) => {
@@ -75,6 +86,11 @@ const fakeFirestore = (initial: Record<string, Data>) => {
         assert.equal(documents.has(reference.key), false);
         operations.push({ operation: 'create', key: reference.key, data });
         merge(reference, data);
+      },
+      update: (reference, data) => {
+        assert.equal(documents.has(reference.key), true);
+        operations.push({ operation: 'update', key: reference.key, data });
+        merge(reference, data, true);
       },
     }),
   };
@@ -285,8 +301,15 @@ test('P1 18 unmatched category does not create uncontrolled taxonomy', () => {
   const result = suggestSupplierCategory({ sourceId: 'dropex', supplierCategories: ['Unmapped Department'], categories });
   assert.equal(result.targetCategoryId, '');
   assert.equal(result.requiresManualSelection, true);
-  const sync = readFileSync('functions/src/scheduled/supplierSync.ts', 'utf8');
-  assert.doesNotMatch(sync, /collection\("categories"\)\.doc\([^)]*\)\.set/);
+  const plan = planSupplierTaxonomyCandidates({
+    sourceId: 'dropex',
+    supplierCategory: 'Unmapped Department',
+    supplierCategoryId: '99',
+    categories,
+    mapping: result,
+  });
+  assert.equal(plan?.categoryCandidate, true);
+  assert.equal(plan?.parentCategoryId, undefined);
 });
 
 test('P1 19 inactive category is never silently auto-selected', () => {
@@ -298,8 +321,207 @@ test('P1 19 inactive category is never silently auto-selected', () => {
 test('P1 20 subcategory is never fabricated by exact or normalized category matching', () => {
   const exact = suggestSupplierCategory({ sourceId: 'dropex', supplierCategories: ['Kitchen', 'Cookware'], categories });
   const normalized = suggestSupplierCategory({ sourceId: 'dropex', supplierCategories: [' kitchen '], productTitle: 'Cookware set', categories });
-  assert.equal(exact.targetSubcategoryId, '');
+  assert.equal(exact.targetSubcategoryId, 'cookware');
   assert.equal(normalized.targetSubcategoryId, '');
+});
+
+test('P1 20A Dropex productCategories preserves SHX2924 category provenance without inventing a subcategory', () => {
+  const parsed = ProductParser.parseCatalogItem({
+    productDetail: {
+      id: 4970,
+      sku: 'SHX2924',
+      name: 'Vehicle Accessory',
+      productCategories: [{ id: 29, name: 'Vehicle Accessories' }],
+    },
+    price: 410,
+    sellingPrice: 1400,
+    onHandInventory: 1,
+  });
+  assert.equal(parsed.supplierCategory, 'Vehicle Accessories');
+  assert.equal(parsed.supplierSubcategory, undefined);
+  assert.deepEqual(parsed.categoryHierarchy, ['Vehicle Accessories']);
+  assert.equal(parsed.extraAttributes?.supplierCategoryId, '29');
+  assert.equal(parsed.extraAttributes?.supplierCategorySource, 'productDetail.productCategories');
+  assert.equal(parsed.extraAttributes?.supplierSubcategoryId, undefined);
+});
+
+test('P1 20B exact active supplier subcategory links only under its resolved parent', () => {
+  const result = suggestSupplierCategory({ sourceId: 'dropex', supplierCategories: ['Kitchen', 'Cookware'], categories });
+  assert.equal(result.targetCategoryId, 'kitchen');
+  assert.equal(result.targetSubcategoryId, 'cookware');
+  assert.equal(result.autoSelected, true);
+  const wrongParent = suggestSupplierCategory({
+    sourceId: 'dropex',
+    supplierCategories: ['Old Kitchen', 'Cookware'],
+    categories,
+  });
+  assert.equal(wrongParent.targetCategoryId, '');
+  assert.equal(wrongParent.targetSubcategoryId, '');
+  assert.equal(wrongParent.requiresManualSelection, true);
+});
+
+test('P1 20C missing supplier taxonomy is deterministic, inactive, pending, and idempotent', async () => {
+  const plan = planSupplierTaxonomyCandidates({
+    sourceId: 'dropex',
+    supplierCategory: 'Vehicle Accessories',
+    supplierCategoryId: '29',
+    categories,
+  });
+  assert.ok(plan);
+  assert.equal(plan.categoryCandidate, true);
+  assert.equal(plan.subcategoryCandidate, false);
+  assert.equal(plan.categoryId, buildSupplierTaxonomyCandidateId('dropex', '29', 'Vehicle Accessories'));
+  const fixture = fakeFirestore({});
+  await upsertSupplierTaxonomyCandidate(fixture.db as never, plan, '2026-09-15T10:00:00.000Z');
+  await upsertSupplierTaxonomyCandidate(fixture.db as never, plan, '2026-09-15T11:00:00.000Z');
+  const candidate = fixture.documents.get(`categories/${plan.categoryId}`);
+  assert.equal(candidate?.isActive, false);
+  assert.equal(candidate?.taxonomyStatus, 'pending');
+  assert.equal(candidate?.supplierTaxonomySourceId, 'dropex');
+  assert.equal(candidate?.supplierTaxonomyId, '29');
+  assert.equal(candidate?.firstObservedAt, '2026-09-15T10:00:00.000Z');
+  assert.equal(candidate?.lastObservedAt, '2026-09-15T11:00:00.000Z');
+  assert.equal([...fixture.documents.keys()].filter((key) => key.startsWith('categories/')).length, 1);
+});
+
+test('P1 20D unknown subcategory is created once under a safe active parent and remains inactive', async () => {
+  const mapping = suggestSupplierCategory({ sourceId: 'dropex', supplierCategories: ['Kitchen', 'Vehicle Parts'], categories });
+  const plan = planSupplierTaxonomyCandidates({
+    sourceId: 'dropex',
+    supplierCategory: 'Kitchen',
+    supplierCategoryId: 'kitchen-source-id',
+    supplierSubcategory: 'Vehicle Parts',
+    supplierSubcategoryId: 'vp-1',
+    categories,
+    mapping,
+  });
+  assert.ok(plan);
+  assert.equal(plan.categoryCandidate, false);
+  assert.equal(plan.subcategoryCandidate, true);
+  assert.equal(plan.parentCategoryId, 'kitchen');
+  const fixture = fakeFirestore({
+    'categories/kitchen': { ...categories[0] },
+  });
+  await upsertSupplierTaxonomyCandidate(fixture.db as never, plan, '2026-09-15T10:00:00.000Z');
+  await upsertSupplierTaxonomyCandidate(fixture.db as never, plan, '2026-09-15T11:00:00.000Z');
+  const stored = fixture.documents.get('categories/kitchen');
+  const candidates = (stored?.subcategories as Data[]).filter((subcategory) => subcategory.taxonomyCandidate === true);
+  assert.equal(stored?.isActive, true);
+  assert.equal(candidates.length, 1);
+  assert.equal(candidates[0]?.isActive, false);
+  assert.equal(candidates[0]?.supplierTaxonomyId, 'vp-1');
+});
+
+test('P1 20E ambiguous parent never receives a guessed supplier subcategory', () => {
+  const mapping = suggestSupplierCategory({
+    sourceId: 'dropex',
+    supplierCategories: ['Kitchen Tools', 'Vehicle Parts'],
+    productTitle: 'Kitchen Tools Vehicle Parts',
+    categories,
+  });
+  const plan = planSupplierTaxonomyCandidates({
+    sourceId: 'dropex',
+    supplierCategory: 'Kitchen Tools',
+    supplierSubcategory: 'Vehicle Parts',
+    categories,
+    mapping,
+  });
+  assert.ok(plan);
+  assert.equal(plan.categoryCandidate, true);
+  assert.equal(plan.parentCategoryId, undefined);
+});
+
+test('P1 20F an inactive supplier taxonomy candidate blocks publication until activation', () => {
+  const candidateId = buildSupplierTaxonomyCandidateId('dropex', '29', 'Vehicle Accessories');
+  const errors = validateSupplierProductForApproval({
+    name: 'Vehicle Accessory',
+    imageUrl: 'https://example.test/image.jpg',
+    price: 1400,
+    costPrice: 410,
+    description: 'Description',
+    stock: 1,
+    isActive: true,
+    category: candidateId,
+    brand: 'registered-brand',
+    supplierMetadata: { supplierCostAvailable: true, supplierStockAvailable: true },
+  }, [
+    { id: candidateId, name: 'Vehicle Accessories', isActive: false },
+  ], [{ id: 'registered-brand', name: 'Registered Brand', isActive: true }]);
+  assert.equal(errors.some((error) => error.field === 'category' && error.code === 'invalid'), true);
+});
+
+test('P1 20G admin can activate a candidate category and its pending child', async () => {
+  const plan = planSupplierTaxonomyCandidates({
+    sourceId: 'dropex',
+    supplierCategory: 'Vehicle Accessories',
+    supplierCategoryId: '29',
+    supplierSubcategory: 'Car Mounts',
+    supplierSubcategoryId: 'car-mounts',
+    categories,
+  });
+  assert.ok(plan);
+  const fixture = fakeFirestore({});
+  await upsertSupplierTaxonomyCandidate(fixture.db as never, plan, '2026-09-15T10:00:00.000Z');
+  const result = await activateSupplierTaxonomyCandidate(
+    fixture.db as never,
+    plan.categoryId,
+    { uid: 'admin-1', email: 'admin@example.test' },
+    plan.subcategoryId,
+  );
+  assert.equal(result.categoryId, plan.categoryId);
+  const activated = fixture.documents.get(`categories/${plan.categoryId}`);
+  assert.equal(activated?.isActive, true);
+  assert.equal((activated?.subcategories as Data[])[0]?.isActive, true);
+});
+
+test('P1 20H admin-owned taxonomy is not overwritten by later supplier observations', async () => {
+  const fixture = fakeFirestore({
+    'categories/admin-owned': { id: 'admin-owned', name: 'Admin Category', isActive: true, subcategories: [] },
+  });
+  const plan = planSupplierTaxonomyCandidates({
+    sourceId: 'dropex',
+    supplierCategory: 'Supplier Category',
+    supplierCategoryId: 'supplier-category-id',
+    categories: [{ id: 'admin-owned', name: 'Admin Category', isActive: true, subcategories: [] }],
+  });
+  assert.ok(plan);
+  await upsertSupplierTaxonomyCandidate(fixture.db as never, plan, '2026-09-15T10:00:00.000Z');
+  const owned = fixture.documents.get('categories/admin-owned');
+  assert.deepEqual(owned, { id: 'admin-owned', name: 'Admin Category', isActive: true, subcategories: [] });
+  assert.notEqual(plan.categoryId, 'admin-owned');
+});
+
+test('P1 20I mixed stock and non-stock observations keep stock automated and non-stock review-gated', () => {
+  const incoming = {
+    inventoryLevel: 8,
+    wholesalePrice: 90,
+    recommendedRetailPrice: 180,
+    longDescription: 'Supplier description changed',
+    categoryHierarchy: ['Vehicle Accessories'],
+    supplierCategory: 'Vehicle Accessories',
+    providedFields: ['stock', 'costPrice', 'comparePrice', 'longDescription', 'categoryHierarchy', 'supplierCategory'],
+    mediaGallery: [],
+  } as never;
+  const existing = {
+    stock: 10,
+    costPrice: 80,
+    price: 160,
+    description: 'Admin description',
+    category: 'electronics',
+    supplierMetadata: { categoryHierarchy: ['Electronics'], supplierCategory: 'Electronics' },
+  };
+  const comparison = buildSupplierProductComparison(incoming, existing);
+  const fieldNames = comparison.fieldChanges.map((change) => change.field);
+  assert.equal(fieldNames.includes('stock'), true);
+  assert.equal(fieldNames.includes('categoryHierarchy'), true);
+  assert.equal(fieldNames.includes('longDescription'), true);
+  assert.equal(fieldNames.includes('costPrice'), true);
+  const pending = removeAutomatedStockChangesFromSupplierComparison(comparison);
+  assert.ok(pending);
+  assert.equal(pending?.fieldChanges.some((change) => change.field === 'stock'), false);
+  assert.equal(pending?.fieldChanges.some((change) => change.field === 'categoryHierarchy'), true);
+  assert.equal(pending?.fieldChanges.some((change) => change.field === 'longDescription'), true);
+  assert.equal(pending?.fieldChanges.some((change) => change.field === 'costPrice'), true);
 });
 
 test('P1 21 limited traversal remains ineligible for removal reconciliation', () => {

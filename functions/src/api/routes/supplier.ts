@@ -58,6 +58,7 @@ import {
   listSupplierProductOffers,
   selectSupplierProductOffer,
 } from "../suppliers/supplierOfferEngine";
+import { activateSupplierTaxonomyCandidate } from "../suppliers/supplierTaxonomy";
 import {
   recordSupplierOperationalAlertSafely,
   resolveSupplierOperationalAlertSafely,
@@ -544,6 +545,25 @@ export function registerSupplierRoutes(app: express.Express): void {
         logMessage: "Supplier review catalog lookup failed.",
         fallbackMessage: "Active Zyro categories and brands could not be loaded.",
         context: { route: "/api/supplier-review-catalog" },
+      });
+    }
+  });
+
+  app.post("/api/supplier-taxonomy-candidates/:categoryId/activate", requireSupplierHubAdmin, async (req, res) => {
+    try {
+      const reviewer = reviewerFor(res);
+      const result = await activateSupplierTaxonomyCandidate(
+        adminDb,
+        req.params.categoryId,
+        reviewer,
+        req.body?.subcategoryId,
+      );
+      res.status(200).json({ success: true, ...result });
+    } catch (error: unknown) {
+      sendSupplierFailure(res, error, {
+        logMessage: "Supplier taxonomy candidate activation failed.",
+        fallbackMessage: "Supplier taxonomy candidate could not be activated.",
+        context: { route: req.path, action: "activate" },
       });
     }
   });

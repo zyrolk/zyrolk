@@ -129,7 +129,32 @@ function readCategoryLabels(
   detail: Record<string, unknown>,
   item: Record<string, unknown>,
   lookup?: DropexCategoryLookup,
-): { supplierCategory?: string; supplierSubcategory?: string; categoryHierarchy?: string[] } {
+): {
+  supplierCategory?: string;
+  supplierSubcategory?: string;
+  categoryHierarchy?: string[];
+  supplierCategoryId?: string;
+  supplierSubcategoryId?: string;
+  categorySource?: string;
+} {
+  const categoryCollection = [detail.productCategories, item.productCategories]
+    .find((value) => Array.isArray(value)) as unknown[] | undefined;
+  const categoryRecords = (categoryCollection || [])
+    .map(optionalRecord)
+    .filter((record): record is Record<string, unknown> => Boolean(record));
+  const collectionCategory = categoryRecords[0];
+  const collectionSubcategory = categoryRecords[1];
+  const collectionCategoryName = optionalString(collectionCategory?.name)
+    || optionalString(collectionCategory?.label)
+    || optionalString(collectionCategory?.categoryName);
+  const collectionSubcategoryName = optionalString(collectionSubcategory?.name)
+    || optionalString(collectionSubcategory?.label)
+    || optionalString(collectionSubcategory?.subcategoryName)
+    || optionalString(collectionSubcategory?.subCategoryName);
+  const collectionCategoryId = collectionCategory && (collectionCategory.id ?? collectionCategory.categoryId);
+  const collectionSubcategoryId = collectionSubcategory && (collectionSubcategory.id
+    ?? collectionSubcategory.subCategoryId
+    ?? collectionSubcategory.subcategoryId);
   const directCategory = optionalString(detail.categoryName)
     || optionalString(detail.category)
     || optionalString(item.categoryName)
@@ -156,15 +181,26 @@ function readCategoryLabels(
     ?? item.categoryId;
   const resolved = lookup?.resolveCategory(lookupKey);
 
-  const supplierCategory = directCategory || categoryFromRecord || resolved?.category;
-  const supplierSubcategory = directSubcategory || subcategoryFromRecord || resolved?.subcategory;
-  const categoryHierarchy = resolved?.hierarchy
+  const supplierCategory = collectionCategoryName || directCategory || categoryFromRecord || resolved?.category;
+  const supplierSubcategory = collectionSubcategoryName || directSubcategory || subcategoryFromRecord || resolved?.subcategory;
+  const categoryHierarchy = collectionCategoryName
+    ? [collectionCategoryName, collectionSubcategoryName].filter((entry): entry is string => Boolean(entry))
+    : resolved?.hierarchy
     || [supplierCategory, supplierSubcategory].filter((entry): entry is string => Boolean(entry));
+  const supplierCategoryId = collectionCategoryId !== undefined && collectionCategoryId !== null
+    ? String(collectionCategoryId).trim()
+    : lookupKey !== undefined && lookupKey !== null ? String(lookupKey).trim() : "";
+  const supplierSubcategoryId = collectionSubcategoryId !== undefined && collectionSubcategoryId !== null
+    ? String(collectionSubcategoryId).trim()
+    : "";
 
   return {
     ...(supplierCategory ? { supplierCategory } : {}),
     ...(supplierSubcategory ? { supplierSubcategory } : {}),
     ...(categoryHierarchy.length > 0 ? { categoryHierarchy } : {}),
+    ...(supplierCategoryId ? { supplierCategoryId } : {}),
+    ...(supplierSubcategoryId ? { supplierSubcategoryId } : {}),
+    ...(collectionCategoryName ? { categorySource: "productDetail.productCategories" } : {}),
   };
 }
 
@@ -192,10 +228,11 @@ export class ProductParser {
       ?? 0;
     const mediaGallery = extractDropexProductImages(detail.image ?? item.image);
     const categoryFields = readCategoryLabels(detail, item, options.categoryLookup);
-    const rawCategoryId = detail.productCategoryId
-      ?? detail.categoryId
-      ?? item.productCategoryId
-      ?? item.categoryId;
+    const rawCategoryId = categoryFields.supplierCategoryId
+      || detail.productCategoryId
+      || detail.categoryId
+      || item.productCategoryId
+      || item.categoryId;
     const brand = optionalString(detail.brand) || optionalString(item.brand);
     const openInventory = optionalNumber(detail.openInventory) ?? optionalNumber(item.openInventory);
     const dedicatedInventory = optionalNumber(detail.dedicatedInventory) ?? optionalNumber(item.dedicatedInventory);
@@ -207,6 +244,12 @@ export class ProductParser {
     const extraAttributes: Record<string, unknown> = {};
     if (rawCategoryId !== undefined && rawCategoryId !== null && String(rawCategoryId).trim()) {
       extraAttributes.supplierCategoryId = String(rawCategoryId).trim();
+    }
+    if (categoryFields.supplierSubcategoryId) {
+      extraAttributes.supplierSubcategoryId = categoryFields.supplierSubcategoryId;
+    }
+    if (categoryFields.categorySource) {
+      extraAttributes.supplierCategorySource = categoryFields.categorySource;
     }
     if (openInventory !== undefined) extraAttributes.openInventory = openInventory;
     if (dedicatedInventory !== undefined) extraAttributes.dedicatedInventory = dedicatedInventory;

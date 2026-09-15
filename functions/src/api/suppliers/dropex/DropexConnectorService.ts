@@ -173,6 +173,8 @@ function needsDropexProductEnrichment(
     item.category,
     detail.productCategory,
     item.productCategory,
+    detail.productCategories,
+    item.productCategories,
   ].every(isDropexFieldAbsent)
     && !categoryLookup?.resolveCategory(categoryId).category
     && !categoryLookup?.resolveCategory(categoryId).subcategory;
