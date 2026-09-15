@@ -66,6 +66,7 @@ const loginToken = encodeJwt({
 });
 
 const catalogItem = {
+  price: 450,
   productDetail: {
     id: 101,
     name: "Wall Phone Holder",
@@ -76,7 +77,6 @@ const catalogItem = {
     onHandInventory: 12,
     productCategoryId: 7,
   },
-  reSellingPrice: 450,
 };
 
 const thinCatalogItem = {
@@ -454,7 +454,7 @@ test("Dropex thin catalog rows trigger DTO enrichment for missing cost, stock, a
   const product = page.products[0] as RawA2ZProduct;
   assert.equal(product.sku, "ATF0080");
   assert.equal(product.title, "Electric Knife Sharpener Swifty Sharp");
-  assert.equal(product.wholesalePrice, 650);
+  assert.equal(product.wholesalePrice, 0);
   assert.equal(product.recommendedRetailPrice, 1000);
   assert.equal(product.inventoryLevel, 25);
   assert.equal(product.longDescription, "Sharpens knives quickly.");
@@ -463,6 +463,9 @@ test("Dropex thin catalog rows trigger DTO enrichment for missing cost, stock, a
     supplierCategoryId: "7",
     openInventory: 10,
     dedicatedInventory: 5,
+    commercialPriceProvenance: {
+      referencePrice: { source: "productDetail.sellingPrice", value: 1000 },
+    },
   });
 });
 
@@ -504,7 +507,57 @@ test("Dropex thin catalog rows with undefined placeholders also trigger DTO enri
   );
 
   assert.equal(dtoCalls, 1);
-  assert.equal((page.products[0] as RawA2ZProduct).wholesalePrice, 650);
+  assert.equal((page.products[0] as RawA2ZProduct).wholesalePrice, 0);
+});
+
+test("Dropex enrichment treats only a positive reseller-row price as supplied cost", async () => {
+  let dtoCalls = 0;
+  const service = new DropexConnectorService({
+    supplierId: "dropex-supplier",
+    sourceId: "dropex-source",
+    credentialReference: "dropex-production",
+  }, {
+    fetchOutbound: async (url) => {
+      if (url.endsWith("/auth/login")) return response(200, JSON.stringify({ access_token: loginToken }));
+      if (url.includes("/api/v1/re-seller-products/get")) {
+        return response(200, JSON.stringify({ content: [{
+          reSellingPrice: 503,
+          resellingPrice: 504,
+          reSellerPrice: 505,
+          productDetail: {
+            id: 1300,
+            name: "Alias-only Dropex Product",
+            sku: "ALIAS-1300",
+            reSellingPrice: 500,
+            resellingPrice: 501,
+            reSellerPrice: 502,
+            buyingPrice: 410,
+            sellingPrice: 1400,
+            onHandInventory: 1,
+            productCategoryId: 7,
+            description: "Complete description",
+            image: "alias-only.jpg",
+          },
+        }] }));
+      }
+      if (url.endsWith("/api/v1/product-categories")) return response(200, JSON.stringify(categoryPayload));
+      if (url.includes("/api/v1/products/1300/dto")) {
+        dtoCalls += 1;
+        return response(200, JSON.stringify({ buyingPrice: 410, sellingPrice: 1400 }));
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    },
+  });
+
+  const page = await service.fetchCatalogPage(
+    { username: "dropex-user", password: "dropex-pass" },
+    outboundPolicy,
+    { cursor: "0", pageSize: 1 },
+  );
+  const product = page.products[0] as RawA2ZProduct;
+  assert.equal(dtoCalls, 1);
+  assert.equal(product.wholesalePrice, 0);
+  assert.equal(product.recommendedRetailPrice, 1400);
 });
 
 test("Dropex item without a usable image produces a Firestore-safe review image payload", () => {
@@ -577,7 +630,7 @@ test("Dropex full catalog rows skip unnecessary DTO enrichment", async () => {
   assert.equal((page.products[0] as RawA2ZProduct).recommendedRetailPrice, 890);
 });
 
-test("Dropex detail-level reseller cost aliases map without DTO enrichment", () => {
+test("Dropex detail-level reseller cost aliases remain unavailable without row price", () => {
   const parsed = ProductParser.parseCatalogItem({
     productDetail: {
       id: 1206,
@@ -591,7 +644,7 @@ test("Dropex detail-level reseller cost aliases map without DTO enrichment", () 
     },
   });
 
-  assert.equal(parsed.wholesalePrice, 650);
+  assert.equal(parsed.wholesalePrice, 0);
   assert.equal(parsed.recommendedRetailPrice, 1000);
   assert.equal(parsed.inventoryLevel, 25);
 });

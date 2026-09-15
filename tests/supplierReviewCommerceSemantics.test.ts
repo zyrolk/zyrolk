@@ -8,6 +8,7 @@ import {
 import { ProductParser } from "../functions/src/api/suppliers/a2z/ProductParser";
 import { ProductParser as DropexProductParser } from "../functions/src/api/suppliers/dropex/ProductParser";
 import { buildSupplierImportWarnings } from "../functions/src/api/suppliers/supplierProductImport";
+import { validateSupplierProductForApproval } from "../functions/src/api/suppliers/supplierProductMapping";
 import {
   calculateSupplierInitialPricing,
 } from "../functions/src/scheduled/supplierSyncSettings";
@@ -79,19 +80,22 @@ test("re-parsing normalized A2Z output does not falsely mark missing commerce fi
 
 test("valid Dropex cost and stock remain numeric with profit available", () => {
   const parsed = DropexProductParser.parseCatalogItem({
+    price: 650,
     productDetail: {
       id: 99,
       name: "Valid Dropex Product",
       sku: "DPX-VALID",
-      reSellingPrice: 650,
       sellingPrice: 1000,
       onHandInventory: 12,
+      categoryName: "Vehicle Accessories",
       description: "Valid product",
       image: "valid.jpg",
     },
   });
   assert.equal(parsed.wholesalePrice, 650);
   assert.equal(parsed.inventoryLevel, 12);
+  assert.equal(parsed.supplierCategory, "Vehicle Accessories");
+  assert.equal(parsed.categoryHierarchy?.[0], "Vehicle Accessories");
   assert.equal(supplierCostWasProvided(parsed), true);
   assert.equal(supplierStockWasProvided(parsed), true);
   const profit = calculateSupplierProfit(1000, 650, true);
@@ -114,6 +118,50 @@ test("missing cost displays Not supplied and does not imply fake profit", () => 
   assert.equal(profit.available, false);
   assert.equal(profit.profit, null);
   assert.equal(profit.marginPercent, null);
+});
+
+test("Dropex buyingPrice alone is ambiguous and cannot be treated as supplier cost", () => {
+  const parsed = DropexProductParser.parseCatalogItem({
+    productDetail: {
+      id: 4970,
+      name: "Ambiguous Dropex Product",
+      sku: "SHX2924",
+      buyingPrice: 410,
+      sellingPrice: 1400,
+      onHandInventory: 1,
+      categoryName: "Vehicle Accessories",
+      description: "Product description",
+      image: "ambiguous.jpg",
+    },
+  });
+  assert.equal(parsed.wholesalePrice, 0);
+  assert.equal(supplierCostWasProvided(parsed), false);
+  assert.equal(parsed.recommendedRetailPrice, 1400);
+  assert.equal((parsed.extraAttributes?.commercialPriceProvenance as Record<string, unknown>)?.authoritativeCost, undefined);
+  assert.deepEqual((parsed.extraAttributes?.commercialPriceProvenance as Record<string, unknown>)?.referencePrice, {
+    source: "productDetail.sellingPrice",
+    value: 1400,
+  });
+});
+
+test("supplier approval validation rejects a customer price below supplier cost", () => {
+  const errors = validateSupplierProductForApproval({
+    name: "Cost floor product",
+    imageUrl: "https://supplier.example/cost-floor.jpg",
+    price: 553,
+    costPrice: 720,
+    description: "Product description",
+    stock: 1,
+    isActive: true,
+    category: "vehicle-accessories",
+    brand: "brand-1",
+    specs: {},
+  }, [{ id: "vehicle-accessories", name: "Vehicle Accessories" }], [{ id: "brand-1", name: "Brand" }]);
+  assert.deepEqual(errors.filter((error) => error.code === "below_supplier_cost"), [{
+    field: "price",
+    code: "below_supplier_cost",
+    message: "Selling price must be at least the supplier cost.",
+  }]);
 });
 
 test("explicit stock zero is preserved and labeled Out of stock", () => {

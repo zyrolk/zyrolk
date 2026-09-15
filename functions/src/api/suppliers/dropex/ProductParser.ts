@@ -79,33 +79,34 @@ function isDropexFieldAbsent(value: unknown): boolean {
     || (typeof value === "string" && !value.trim());
 }
 
-function readWholesalePrice(item: Record<string, unknown>, detail: Record<string, unknown>): number {
-  return optionalNumber(item.reSellingPrice)
-    ?? optionalNumber(item.resellingPrice)
-    ?? optionalNumber(item.reSellerPrice)
-    ?? optionalNumber(item.buyingPrice)
-    ?? optionalNumber(item.price)
-    ?? optionalNumber(detail.reSellingPrice)
-    ?? optionalNumber(detail.resellingPrice)
-    ?? optionalNumber(detail.reSellerPrice)
-    ?? optionalNumber(detail.buyingPrice)
-    ?? optionalNumber(detail.price)
-    ?? 0;
+interface DropexPriceSource {
+  source: string;
+  value: number;
 }
 
-function wholesalePriceWasProvided(item: Record<string, unknown>, detail: Record<string, unknown>): boolean {
-  return ![
-    item.reSellingPrice,
-    item.resellingPrice,
-    item.reSellerPrice,
-    item.buyingPrice,
-    item.price,
-    detail.reSellingPrice,
-    detail.resellingPrice,
-    detail.reSellerPrice,
-    detail.buyingPrice,
-    detail.price,
-  ].every(isDropexFieldAbsent);
+export const readDropexResellerPrice = (value: unknown): number | undefined => {
+  const normalized = optionalNumber(value);
+  return normalized !== undefined && normalized > 0 ? normalized : undefined;
+};
+
+function readAuthoritativeWholesalePrice(
+  rawItem: Record<string, unknown>,
+): DropexPriceSource | undefined {
+  const resellerPrice = readDropexResellerPrice(rawItem.price);
+  return resellerPrice === undefined ? undefined : { source: "reseller.price", value: resellerPrice };
+}
+
+function readReferencePrice(
+  item: Record<string, unknown>,
+  detail: Record<string, unknown>,
+): DropexPriceSource | undefined {
+  const detailSellingPrice = optionalNumber(detail.sellingPrice);
+  if (detailSellingPrice !== undefined) return { source: "productDetail.sellingPrice", value: detailSellingPrice };
+  const itemSellingPrice = optionalNumber(item.sellingPrice);
+  if (itemSellingPrice !== undefined) return { source: "sellingPrice", value: itemSellingPrice };
+  const marketPrice = optionalNumber(item.marketPrice);
+  if (marketPrice !== undefined) return { source: "marketPrice", value: marketPrice };
+  return undefined;
 }
 
 function inventoryLevelWasProvided(item: Record<string, unknown>, detail: Record<string, unknown>): boolean {
@@ -178,7 +179,9 @@ export class ProductParser {
     const sku = optionalString(detail.sku) || optionalString(item.sku) || supplierProductId || "";
     const title = optionalString(detail.name) || optionalString(item.name) || "";
     const longDescription = optionalString(detail.description) || optionalString(item.description) || "";
-    const wholesalePrice = readWholesalePrice(item, detail);
+    const costSource = readAuthoritativeWholesalePrice(rawItem);
+    const referenceSource = readReferencePrice(item, detail);
+    const wholesalePrice = costSource?.value ?? 0;
     const recommendedRetailPrice = optionalNumber(detail.sellingPrice)
       ?? optionalNumber(item.sellingPrice)
       ?? optionalNumber(item.marketPrice)
@@ -197,7 +200,7 @@ export class ProductParser {
     const openInventory = optionalNumber(detail.openInventory) ?? optionalNumber(item.openInventory);
     const dedicatedInventory = optionalNumber(detail.dedicatedInventory) ?? optionalNumber(item.dedicatedInventory);
     const maxOrderCount = optionalNumber(detail.maxOrderCount) ?? optionalNumber(item.maxOrderCount);
-    const costProvided = wholesalePriceWasProvided(item, detail);
+    const costProvided = costSource !== undefined;
     const stockProvided = inventoryLevelWasProvided(item, detail);
     const retailProvided = retailPriceWasProvided(item, detail);
 
@@ -208,6 +211,12 @@ export class ProductParser {
     if (openInventory !== undefined) extraAttributes.openInventory = openInventory;
     if (dedicatedInventory !== undefined) extraAttributes.dedicatedInventory = dedicatedInventory;
     if (maxOrderCount !== undefined) extraAttributes.maxOrderCount = maxOrderCount;
+    if (costSource || referenceSource) {
+      extraAttributes.commercialPriceProvenance = {
+        ...(costSource ? { authoritativeCost: costSource } : {}),
+        ...(referenceSource ? { referencePrice: referenceSource } : {}),
+      };
+    }
 
     return {
       sku,

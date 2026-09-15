@@ -9,6 +9,8 @@ import {
   parseSupplierApprovalDraft,
   toPublicProductPayload,
 } from '../functions/src/api/suppliers/supplierApproval';
+import { ProductParser as DropexProductParser } from '../functions/src/api/suppliers/dropex/ProductParser';
+import { validateSupplierProductForApproval } from '../functions/src/api/suppliers/supplierProductMapping';
 import {
   buildSupplierOfferPublicProjection,
   buildSupplierProductOffer,
@@ -190,6 +192,181 @@ test('invalid explicit regular prices cannot create a promotion and stored disco
     parseSupplierApprovalDraft(approvalInput({ promotionEnabled: true }))!,
   );
   assert.equal(payload.discount, 38);
+});
+
+test('Dropex reseller price is authoritative cost and reference price stays non-promotional', () => {
+  const product = DropexProductParser.parseCatalogItem({
+    price: 720,
+    reSellingPrice: 999,
+    reSellerId: 42,
+    reSellerAccount: 'zyro-reseller',
+    productDetail: {
+      id: 4970,
+      name: 'SHX2924 Product',
+      sku: 'SHX2924',
+      buyingPrice: 410,
+      reSellingPrice: 411,
+      sellingPrice: 1400,
+      onHandInventory: 1,
+      categoryName: 'Vehicle Accessories',
+      description: 'A valid product description.',
+      image: 'shx2924.jpg',
+    },
+  });
+  assert.equal(product.wholesalePrice, 720);
+  assert.equal(product.recommendedRetailPrice, 1400);
+  assert.equal(product.inventoryLevel, 1);
+  assert.deepEqual(product.extraAttributes?.commercialPriceProvenance, {
+    authoritativeCost: { source: 'reseller.price', value: 720 },
+    referencePrice: { source: 'productDetail.sellingPrice', value: 1400 },
+  });
+  assert.equal(product.supplierCategory, 'Vehicle Accessories');
+
+  const categorySuggestion = {
+    supplierCategory: 'Vehicle Accessories', normalizedCategory: 'vehicle accessories', targetCategoryId: 'vehicle-accessories',
+    targetSubcategoryId: '', confidence: 100, mappingType: 'exact', mappingSource: 'catalog',
+    autoSelected: true, requiresManualSelection: false,
+  } as const;
+  const brandSuggestion = {
+    supplierBrand: '', normalizedBrand: '', mappedBrandId: 'brand-1', confidence: 100,
+    mappingType: 'exact', mappingSource: 'registry', autoSelected: true, requiresManualSelection: false,
+  } as const;
+  const payload = buildProductPayload(product, undefined, categorySuggestion, brandSuggestion, [{ id: 'brand-1', name: 'Brand' }], {
+    status: 'NEW_PRODUCT', changedFields: [], fieldChanges: [],
+  }, { defaultMarkup: 19.9, defaultProfitMargin: 14.9, defaultImageLimit: 5 }, {
+    id: 'dropex', supplierId: 'dropex', connectorType: 'dropex', priority: 100,
+  });
+  assert.equal(payload.price, 971);
+  assert.equal(payload.costPrice, 720);
+  assert.equal(payload.marketPrice, 1400);
+  assert.equal(payload.stock, 1);
+  assert.equal(Object.hasOwn(payload, 'originalPrice'), false);
+  assert.equal(Object.hasOwn(payload, 'discount'), false);
+  assert.deepEqual((payload.supplierMetadata as Record<string, unknown>).extraAttributes, {
+    commercialPriceProvenance: {
+      authoritativeCost: { source: 'reseller.price', value: 720 },
+      referencePrice: { source: 'productDetail.sellingPrice', value: 1400 },
+    },
+  });
+});
+
+test('Dropex missing reseller price fails closed instead of using nested buyingPrice', () => {
+  const product = DropexProductParser.parseCatalogItem({
+    productDetail: {
+      id: 4970,
+      name: 'SHX2924 Product',
+      sku: 'SHX2924',
+      buyingPrice: 410,
+      sellingPrice: 1400,
+      onHandInventory: 1,
+      categoryName: 'Vehicle Accessories',
+      description: 'A valid product description.',
+      image: 'shx2924.jpg',
+    },
+  });
+  const categorySuggestion = {
+    supplierCategory: 'Vehicle Accessories', normalizedCategory: 'vehicle accessories', targetCategoryId: 'vehicle-accessories',
+    targetSubcategoryId: '', confidence: 100, mappingType: 'exact', mappingSource: 'catalog',
+    autoSelected: true, requiresManualSelection: false,
+  } as const;
+  const brandSuggestion = {
+    supplierBrand: '', normalizedBrand: '', mappedBrandId: 'brand-1', confidence: 100,
+    mappingType: 'exact', mappingSource: 'registry', autoSelected: true, requiresManualSelection: false,
+  } as const;
+  const payload = buildProductPayload(product, undefined, categorySuggestion, brandSuggestion, [{ id: 'brand-1', name: 'Brand' }], {
+    status: 'NEW_PRODUCT', changedFields: [], fieldChanges: [],
+  }, { defaultMarkup: 19.9, defaultProfitMargin: 14.9, defaultImageLimit: 5 }, {
+    id: 'dropex', supplierId: 'dropex', connectorType: 'dropex', priority: 100,
+  });
+  assert.equal(payload.price, 0);
+  assert.equal(payload.costPrice, undefined);
+  assert.ok(validateSupplierProductForApproval(payload, [{ id: 'vehicle-accessories', name: 'Vehicle Accessories' }], [{ id: 'brand-1', name: 'Brand' }])
+    .some((error) => error.code === 'invalid' && error.field === 'price'));
+});
+
+test('server publication rejects a customer price below its authoritative cost', () => {
+  const queue = approvalQueueItem({
+    productPayload: { ...approvalQueueItem().productPayload, price: 553, costPrice: 720 },
+  });
+  assert.throws(() => toPublicProductPayload(queue, undefined), (error: unknown) => {
+    assert.ok(error && typeof error === 'object');
+    assert.equal((error as { statusCode?: unknown }).statusCode, 422);
+    assert.equal((error as { message?: unknown }).message, 'Selling price must be at least the supplier cost.');
+    return true;
+  });
+  assert.throws(() => parseSupplierApprovalDraft(approvalInput({ sellingPrice: 553, costPrice: 720 })), (error: unknown) => {
+    assert.ok(error && typeof error === 'object');
+    assert.equal((error as { statusCode?: unknown }).statusCode, 400);
+    assert.equal((error as { message?: unknown }).message, 'Selling price must be at least the supplier cost.');
+    return true;
+  });
+});
+
+test('Dropex accepts only a finite positive reseller-row price for fulfilment cost', () => {
+  const categorySuggestion = {
+    supplierCategory: 'Vehicle Accessories', normalizedCategory: 'vehicle accessories', targetCategoryId: 'vehicle-accessories',
+    targetSubcategoryId: '', confidence: 100, mappingType: 'exact', mappingSource: 'catalog',
+    autoSelected: true, requiresManualSelection: false,
+  } as const;
+  const brandSuggestion = {
+    supplierBrand: '', normalizedBrand: '', mappedBrandId: 'brand-1', confidence: 100,
+    mappingType: 'exact', mappingSource: 'registry', autoSelected: true, requiresManualSelection: false,
+  } as const;
+  const baseDetail = {
+    id: 4970,
+    name: 'SHX2924 Product',
+    sku: 'SHX2924',
+    buyingPrice: 410,
+    sellingPrice: 1400,
+    onHandInventory: 1,
+    categoryName: 'Vehicle Accessories',
+    description: 'A valid product description.',
+    image: 'shx2924.jpg',
+  };
+  const aliasValues = {
+    reSellingPrice: 500,
+    resellingPrice: 501,
+    reSellerPrice: 502,
+  };
+  const missingOrAmbiguousInputs: Array<Record<string, unknown>> = [
+    { productDetail: { ...baseDetail }, ...aliasValues },
+    { productDetail: { ...baseDetail, reSellingPrice: 500 } },
+    { productDetail: { ...baseDetail, resellingPrice: 500 } },
+    { productDetail: { ...baseDetail, reSellerPrice: 500 } },
+    ...[undefined, null, '', 0, -1, Number.NaN, Number.POSITIVE_INFINITY, 'not-a-number'].map((price) => ({
+      price,
+      productDetail: { ...baseDetail, ...aliasValues },
+      reSellingPrice: 503,
+      resellingPrice: 504,
+      reSellerPrice: 505,
+    })),
+  ];
+
+  for (const rawItem of missingOrAmbiguousInputs) {
+    const product = DropexProductParser.parseCatalogItem(rawItem);
+    assert.equal(product.wholesalePrice, 0);
+    assert.equal((product.extraAttributes?.commercialPriceProvenance as Record<string, unknown> | undefined)?.authoritativeCost, undefined);
+    assert.equal((product.extraAttributes?.commercialPriceProvenance as Record<string, unknown> | undefined)?.referencePrice &&
+      ((product.extraAttributes?.commercialPriceProvenance as Record<string, unknown>).referencePrice as Record<string, unknown>).value, 1400);
+    assert.equal(
+      buildProductPayload(product, undefined, categorySuggestion, brandSuggestion, [{ id: 'brand-1', name: 'Brand' }], {
+        status: 'NEW_PRODUCT', changedFields: [], fieldChanges: [],
+      }, { defaultMarkup: 19.9, defaultProfitMargin: 14.9, defaultImageLimit: 5 }, {
+        id: 'dropex', supplierId: 'dropex', connectorType: 'dropex', priority: 100,
+      }).price,
+      0,
+    );
+  }
+
+  const valid = DropexProductParser.parseCatalogItem({
+    price: '720',
+    ...aliasValues,
+    productDetail: { ...baseDetail, ...aliasValues },
+  });
+  assert.equal(valid.wholesalePrice, 720);
+  assert.deepEqual((valid.extraAttributes?.commercialPriceProvenance as Record<string, unknown>).authoritativeCost, {
+    source: 'reseller.price', value: 720,
+  });
 });
 
 test('admin product saves apply the same explicit promotion contract', () => {

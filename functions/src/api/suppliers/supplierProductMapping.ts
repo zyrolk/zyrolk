@@ -286,6 +286,10 @@ export function validateSupplierProductForApproval(
   if (!/^https?:\/\/\S+$/iu.test(imageUrl)) add("imageUrl", "invalid", "A valid product image is required.");
   const price = Number(product.price);
   if (!Number.isFinite(price) || price <= 0) add("price", "invalid", "Selling price must be greater than zero.");
+  const costPrice = Number(product.costPrice);
+  if (Number.isFinite(price) && price > 0 && Number.isFinite(costPrice) && costPrice > price) {
+    add("price", "below_supplier_cost", "Selling price must be at least the supplier cost.");
+  }
   if (!String(product.description || "").trim()) add("description", "required", "Full description is required.");
   const metadata = asRecord(product.supplierMetadata);
   if (metadata.supplierCostAvailable === false) {

@@ -247,6 +247,9 @@ export function parseSupplierApprovalDraft(value: unknown): SupplierApprovalDraf
     : cleanNumber(draft.comparePrice, "Compare price", { minimum: 0 });
   const costPrice = draft.costPrice === undefined ? undefined : cleanNumber(draft.costPrice, "Cost price", { minimum: 0 });
   const marketPrice = draft.marketPrice === undefined ? undefined : cleanNumber(draft.marketPrice, "Market price", { minimum: 0 });
+  if (costPrice !== undefined && sellingPrice < costPrice) {
+    throw new ApiError("Selling price must be at least the supplier cost.", 400);
+  }
   if (promotionEnabled === true && (comparePrice === undefined || comparePrice <= sellingPrice)) {
     throw new ApiError("Regular price must be greater than the selling price when promotion is enabled.", 400);
   }
@@ -378,6 +381,7 @@ export const toPublicProductPayload = (queueItem: QueueItemRecord, draft: Suppli
     throw new ApiError("A valid managed product image is required before publishing.", 422);
   }
   const price = draft?.sellingPrice ?? Number(originalPayload.price);
+  const costPrice = draft?.costPrice ?? Number(originalPayload.costPrice ?? 0);
   const existingOriginalPrice = Number(originalPayload.originalPrice);
   const comparisonStatus = String(queueItem.comparisonStatus || record(queueItem.comparison).comparisonStatus || "").toUpperCase();
   const legacyPromotionEnabled = comparisonStatus !== "NEW_PRODUCT" && existingOriginalPrice > price;
@@ -386,6 +390,9 @@ export const toPublicProductPayload = (queueItem: QueueItemRecord, draft: Suppli
   const comparePrice = draft?.comparePrice ?? (promotionEnabled ? existingOriginalPrice : undefined);
   if (!Number.isFinite(price) || price <= 0 || (comparePrice !== undefined && (!Number.isFinite(comparePrice) || comparePrice < 0))) {
     throw new ApiError("Supplier product pricing is invalid.", 422);
+  }
+  if (Number.isFinite(costPrice) && costPrice > 0 && price < costPrice) {
+    throw new ApiError("Selling price must be at least the supplier cost.", 422);
   }
   if (promotionEnabled && (comparePrice === undefined || comparePrice <= price)) {
     throw new ApiError("Regular price must be greater than the selling price when promotion is enabled.", 422);

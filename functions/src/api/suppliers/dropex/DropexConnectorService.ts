@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { ProductParser, DropexCategoryLookup } from "./ProductParser";
+import { ProductParser, DropexCategoryLookup, readDropexResellerPrice } from "./ProductParser";
 import { RawA2ZProduct } from "../a2z/types";
 import { sanitizeDropexResponseBody, sanitizeDropexResponseHeaders } from "./diagnostics";
 import {
@@ -143,20 +143,8 @@ export function isDropexFieldAbsent(value: unknown): boolean {
 
 function isDropexSupplierCostAbsent(
   item: Record<string, unknown>,
-  detail: Record<string, unknown>,
 ): boolean {
-  return [
-    item.reSellingPrice,
-    item.resellingPrice,
-    item.reSellerPrice,
-    item.buyingPrice,
-    item.price,
-    detail.reSellingPrice,
-    detail.resellingPrice,
-    detail.reSellerPrice,
-    detail.buyingPrice,
-    detail.price,
-  ].every(isDropexFieldAbsent);
+  return readDropexResellerPrice(item.price) === undefined;
 }
 
 function needsDropexProductEnrichment(
@@ -192,7 +180,7 @@ function needsDropexProductEnrichment(
   return retailPriceAbsent
     || descriptionAbsent
     || imageAbsent
-    || isDropexSupplierCostAbsent(item, detail)
+    || isDropexSupplierCostAbsent(item)
     || inventoryAbsent
     || categoryAbsent;
 }

@@ -284,6 +284,14 @@ interface ExistingProduct {
   supplierOfferSelection?: Record<string, unknown>;
 }
 
+const isDropexSource = (source: SupplierSource): boolean => [
+  source.id,
+  source.supplierId,
+  source.connectorType,
+  source.supplierType,
+  source.type,
+].some((value) => String(value || "").trim().toLowerCase() === "dropex");
+
 interface SyncMetrics {
   productsDiscovered: number;
   productsScanned: number;
@@ -945,13 +953,18 @@ export function buildProductPayload(
   const costProvided = supplierCostWasProvided(product);
   const stockProvided = supplierStockWasProvided(product);
   const wholesale = costProvided ? product.wholesalePrice : undefined;
-  const pricing = calculateSupplierInitialPricing(
-    costProvided ? product.wholesalePrice : undefined,
-    product.recommendedRetailPrice,
-    settings.defaultMarkup,
-    settings.defaultProfitMargin,
-  );
-  const price = pricing.sellingPrice;
+  const dropex = isDropexSource(source);
+  const pricing = dropex && !costProvided
+    ? { sellingPrice: 0, comparePrice: Math.round(product.recommendedRetailPrice || 0), discountPercent: 0 }
+    : calculateSupplierInitialPricing(
+      costProvided ? product.wholesalePrice : undefined,
+      product.recommendedRetailPrice,
+      settings.defaultMarkup,
+      settings.defaultProfitMargin,
+    );
+  const price = costProvided && pricing.sellingPrice < product.wholesalePrice
+    ? 0
+    : pricing.sellingPrice;
   const imageLimit = getSupplierImageLimit(settings.defaultImageLimit);
   const imageUrls = [...new Set((product.mediaGallery || []).filter(isValidSupplierImageUrl).map((url) => url.trim()))].slice(0, imageLimit);
   const supplierImageUrl = imageUrls[0] || "";
