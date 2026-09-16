@@ -329,6 +329,40 @@ test('rendered View Details starts read-only and makes editing explicit', () => 
   assert.doesNotMatch(markup, /type="submit"/u);
 });
 
+test('supplier-managed commercial values stay read-only while listing controls remain editable', () => {
+  const modal = projectFile('src/components/SupplierReviewEditorModal.tsx');
+  const pricingStart = modal.indexOf('Product, pricing & catalogue');
+  const pricingEnd = modal.indexOf('</details>', pricingStart);
+  assert.ok(pricingStart >= 0 && pricingEnd > pricingStart);
+  const pricingSection = modal.slice(pricingStart, pricingEnd);
+
+  for (const field of ['costPrice', 'marketPrice', 'stock']) {
+    assert.doesNotMatch(pricingSection, new RegExp(`setNumber\\('${field}'`, 'u'));
+  }
+  assert.match(pricingSection, /Cost Price <span[^>]*>\(Supplier-managed, read-only\)/u);
+  assert.match(pricingSection, /formatSupplierCostLabel\(draft\.costPrice, draft\.supplierCostAvailable\)/u);
+  assert.match(pricingSection, /Market Price <span[^>]*>\(Supplier reference, read-only\)/u);
+  assert.match(pricingSection, /<ReadOnlyValue>\{money\(draft\.marketPrice\)\}<\/ReadOnlyValue>/u);
+  assert.match(pricingSection, /Reference only\. Does not set a customer promotion\./u);
+  assert.match(pricingSection, /Stock <span[^>]*>\(Supplier-managed, read-only\)/u);
+  assert.match(pricingSection, /formatSupplierStockLabel\(draft\.stock, draft\.supplierStockAvailable\)/u);
+  assert.match(pricingSection, /Supplier cost not supplied\. Enter a valid cost before approval\./u);
+  assert.match(pricingSection, /Supplier inventory not supplied\./u);
+
+  assert.match(pricingSection, /Selling Price[^]*setNumber\('sellingPrice'/u);
+  assert.match(pricingSection, /promotionEnabled[^]*setPromotionEnabled/u);
+  assert.match(pricingSection, /<select value=\{draft\.category\}/u);
+  assert.match(pricingSection, /<select value=\{draft\.subcategory\}/u);
+  assert.match(pricingSection, /<select value=\{draft\.brand\}/u);
+  assert.match(pricingSection, /<textarea rows=\{5\}[^]*draft\.description/u);
+  assert.match(modal, /Approve & Publish/u);
+
+  const promotionHandlerStart = modal.indexOf('const setPromotionEnabled');
+  const promotionHandlerEnd = modal.indexOf('const editDraft', promotionHandlerStart);
+  assert.ok(promotionHandlerStart >= 0 && promotionHandlerEnd > promotionHandlerStart);
+  assert.doesNotMatch(modal.slice(promotionHandlerStart, promotionHandlerEnd), /marketPrice/u);
+});
+
 test('existing approval API, attribution authority, and audit history remain in use', () => {
   const hub = projectFile('src/components/SupplierHubFiveStars.tsx');
   const quickCard = projectFile('src/components/SupplierReviewQuickCard.tsx');

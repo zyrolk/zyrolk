@@ -591,32 +591,33 @@ export default function SupplierReviewEditorModal({
               )}
             </div>
 
-            <label className="space-y-1.5 text-xs">
-              <span className="font-bold text-slate-600 dark:text-slate-300">Cost Price <span className="font-normal text-slate-400">(Admin only)</span></span>
+            <div className="space-y-1.5 text-xs" aria-readonly="true">
+              <span className="font-bold text-slate-600 dark:text-slate-300">Cost Price <span className="font-normal text-slate-400">(Supplier-managed, read-only)</span></span>
               {!draft.supplierCostAvailable && (
                 <p className="text-[10px] font-semibold text-amber-700 dark:text-amber-300">Supplier cost not supplied. Enter a valid cost before approval.</p>
               )}
-              <input type="number" min="0" step="0.01" value={Number.isFinite(draft.costPrice) ? draft.costPrice : ''} onChange={(event) => setNumber('costPrice', event.target.value)} aria-invalid={Boolean(errorFor('costPrice'))} className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 dark:border-slate-700 dark:bg-slate-900" />
+              <ReadOnlyValue>{formatSupplierCostLabel(draft.costPrice, draft.supplierCostAvailable)}</ReadOnlyValue>
               {errorFor('costPrice') && <span className="text-[10px] font-semibold text-red-500">{errorFor('costPrice')}</span>}
-            </label>
+            </div>
 
-            <label className="space-y-1.5 text-xs">
-              <span className="font-bold text-slate-600 dark:text-slate-300">Market Price <span className="font-normal text-slate-400">(Admin only)</span></span>
-              <input type="number" min="0" step="0.01" value={Number.isFinite(draft.marketPrice) ? draft.marketPrice : ''} onChange={(event) => setNumber('marketPrice', event.target.value)} aria-invalid={Boolean(errorFor('marketPrice'))} className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 dark:border-slate-700 dark:bg-slate-900" />
+            <div className="space-y-1.5 text-xs" aria-readonly="true">
+              <span className="font-bold text-slate-600 dark:text-slate-300">Market Price <span className="font-normal text-slate-400">(Supplier reference, read-only)</span></span>
+              <ReadOnlyValue>{money(draft.marketPrice)}</ReadOnlyValue>
+              <p className="text-[10px] text-slate-400">Reference only. Does not set a customer promotion.</p>
               {errorFor('marketPrice') && <span className="text-[10px] font-semibold text-red-500">{errorFor('marketPrice')}</span>}
-            </label>
+            </div>
 
-            <label className="space-y-1.5 text-xs">
-              <span className="font-bold text-slate-600 dark:text-slate-300">Stock</span>
+            <div className="space-y-1.5 text-xs" aria-readonly="true">
+              <span className="font-bold text-slate-600 dark:text-slate-300">Stock <span className="font-normal text-slate-400">(Supplier-managed, read-only)</span></span>
               {!draft.supplierStockAvailable && (
                 <p className="text-[10px] font-semibold text-amber-700 dark:text-amber-300">Supplier inventory not supplied.</p>
               )}
               {draft.supplierStockAvailable && draft.stock <= 0 && (
                 <p className="text-[10px] font-semibold text-amber-700 dark:text-amber-300">0 / Out of stock</p>
               )}
-              <input type="number" min="0" step="1" value={Number.isFinite(draft.stock) ? draft.stock : ''} onChange={(event) => setNumber('stock', event.target.value)} aria-invalid={Boolean(errorFor('stock'))} className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 dark:border-slate-700 dark:bg-slate-900" />
+              <ReadOnlyValue>{formatSupplierStockLabel(draft.stock, draft.supplierStockAvailable)}</ReadOnlyValue>
               {errorFor('stock') && <span className="text-[10px] font-semibold text-red-500">{errorFor('stock')}</span>}
-            </label>
+            </div>
 
             <label className="space-y-1.5 text-xs">
               <span className="font-bold text-slate-600 dark:text-slate-300">Category</span>
