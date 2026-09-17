@@ -9,6 +9,7 @@ import {
   buildSupplierOfferId,
   buildSupplierOfferPendingObservation,
   buildSupplierProductOffer,
+  parseSupplierOfferPendingObservation,
 } from '../functions/src/api/suppliers/supplierOfferEngine';
 import { buildSupplierProductApprovalBaseline } from '../functions/src/api/suppliers/supplierApprovalConcurrency';
 import { refreshActiveSupplierReviewItem } from '../functions/src/scheduled/supplierSync';
@@ -118,6 +119,112 @@ const createFakeAdminDb = () => {
     }),
   };
   return db;
+};
+
+const createRefreshGuardFixture = (options: {
+  sourceId?: string;
+  rawPending?: unknown;
+  omitRawPending?: boolean;
+  queuePatch?: Record<string, unknown>;
+  offerPatch?: Record<string, unknown>;
+} = {}) => {
+  const db = createFakeAdminDb();
+  const queueItemId = 'refresh-legacy-envelope';
+  const sourceId = options.sourceId || 'dropex';
+  const supplierProductId = '4990';
+  const supplierSku = 'AZK1690';
+  const offerId = buildSupplierOfferId(sourceId, supplierProductId, supplierSku);
+  const observedAt = '2026-09-17T00:00:00.000Z';
+  const initialOffer = buildSupplierProductOffer({
+    sourceId,
+    supplierId: sourceId,
+    supplierProductId,
+    sku: supplierSku,
+    price: 1173,
+    cost: 870,
+    stock: 8,
+    stockKnown: true,
+    availability: 'in_stock',
+    priority: 100,
+    lastSyncAt: observedAt,
+    reviewStatus: 'review_pending',
+    catalogPayload: { name: 'Legacy AZK1690', costPrice: 870, stock: 8 },
+    supplierSnapshot: { supplierProductId, supplierSku, sku: supplierSku },
+    timestamp: observedAt,
+  });
+  const initialPending = buildSupplierOfferPendingObservation({
+    offer: initialOffer,
+    kind: 'catalog_upsert',
+    reviewQueueItemId: queueItemId,
+    observedAt,
+    traversalId: 'legacy-traversal',
+  });
+  const queueItem = {
+    id: queueItemId,
+    queueState: 'review_pending',
+    status: 'Pending',
+    sourceId,
+    supplierId: sourceId,
+    supplierCode: supplierSku,
+    supplierSnapshot: { sourceId, supplierProductId, supplierSku, sku: supplierSku },
+    supplierOfferId: offerId,
+    supplierOfferPendingRevision: initialPending.revision,
+    productPayload: { name: 'Legacy AZK1690', costPrice: 870, stock: 8 },
+    comparisonStatus: 'NEW_PRODUCT',
+    comparison: { comparisonStatus: 'NEW_PRODUCT', status: 'NEW_PRODUCT', matchFound: false },
+    createdAt: observedAt,
+    queueCreatedAt: observedAt,
+    ...options.queuePatch,
+  };
+  const source = {
+    supplierId: sourceId,
+    supplierName: sourceId === 'dropex' ? 'Dropex' : 'Other supplier',
+    connectorType: sourceId,
+    supplierType: sourceId,
+    sourceStatus: 'active',
+    enabled: true,
+    websiteUrl: 'https://supplier.example',
+    endpoint: '',
+    authentication: { credentialProfile: 'test-profile' },
+    syncSchedule: 'Off',
+  };
+  const offer = {
+    ...initialOffer,
+    stateVersion: 1,
+    ...options.offerPatch,
+  } as Record<string, unknown>;
+  if (!options.omitRawPending) offer.pendingObservation = options.rawPending === undefined
+    ? initialPending
+    : options.rawPending;
+
+  db.collections.set('supplierSources', new Map([[sourceId, source]]));
+  db.collections.set('supplier_settings', new Map([['config', { defaultMarkup: 0, defaultProfitMargin: 0, defaultImageLimit: 10 }]]));
+  db.collections.set('categories', new Map([['vehicle-accessories', { name: 'Vehicle Accessories', isActive: true, subcategories: [] }]]));
+  db.collections.set('brands', new Map());
+  db.collections.set('supplier_product_offers', new Map([[offerId, offer]]));
+  db.collections.set('supplier_review_queue', new Map([[queueItemId, queueItem]]));
+
+  return { db, queueItemId, supplierProductId, supplierSku, offerId, initialPending };
+};
+
+const withPatchedAdminDb = async <T>(
+  db: ReturnType<typeof createFakeAdminDb>,
+  action: () => Promise<T>,
+): Promise<T> => {
+  const patchedDb = adminDb as unknown as PatchableAdminDb;
+  const originalCollection = patchedDb.collection;
+  const originalBatch = patchedDb.batch;
+  const originalRunTransaction = patchedDb.runTransaction;
+  try {
+    patchedDb.collection = db.collection;
+    patchedDb.batch = db.batch;
+    patchedDb.runTransaction = db.runTransaction;
+    return await action();
+  } finally {
+    patchedDb.collection = originalCollection;
+    patchedDb.batch = originalBatch;
+    patchedDb.runTransaction = originalRunTransaction;
+  }
 };
 
 const response = (body: unknown, status = 200) => ({
@@ -384,6 +491,145 @@ test('active NEW_PRODUCT refresh reuses the review and offer without creating a 
     patchedDb.batch = originalBatch;
     patchedDb.runTransaction = originalRunTransaction;
     SupplierRegistry.createConnectorForSourceRecord = originalCreateConnector;
+  }
+});
+
+test('legacy stale canonical revision still authorizes one fresh refresh in place', async () => {
+  const fixture = createRefreshGuardFixture();
+  const stalePending = {
+    ...fixture.initialPending,
+    effective: { ...fixture.initialPending.effective, price: fixture.initialPending.effective.price - 1 },
+  };
+  const offer = fixture.db.collections.get('supplier_product_offers')?.get(fixture.offerId);
+  assert.ok(offer);
+  offer.pendingObservation = stalePending;
+  assert.equal(parseSupplierOfferPendingObservation(stalePending), null);
+
+  const freshProduct = {
+    supplierProductId: fixture.supplierProductId,
+    sku: fixture.supplierSku,
+    title: 'Fresh AZK1690',
+    longDescription: 'Fresh supplier description',
+    mediaGallery: ['https://supplier.example/azk1690.jpg'],
+    wholesalePrice: 720,
+    recommendedRetailPrice: 1650,
+    price: 1650,
+    inventoryLevel: 8,
+    availability: 'in_stock',
+    supplierCategory: 'Vehicle Accessories',
+    categoryHierarchy: ['Vehicle Accessories'],
+    specifications: { Model: 'AZK1690' },
+    providedFields: ['costPrice', 'wholesalePrice', 'stock', 'inventoryLevel', 'title', 'longDescription', 'mediaGallery', 'price', 'comparePrice', 'categoryHierarchy', 'specifications'],
+  };
+  const originalCreateConnector = SupplierRegistry.createConnectorForSourceRecord;
+  let lookupCount = 0;
+  try {
+    SupplierRegistry.createConnectorForSourceRecord = async () => ({
+      id: 'dropex',
+      name: 'Dropex',
+      connectorType: 'dropex',
+      enabled: true,
+      priority: 100,
+      capabilities: [],
+      fetchProducts: async () => ({ products: [], targetUrl: '' }),
+      fetchProductPage: async () => ({ products: [], targetUrl: '', nextCursor: null, complete: true }),
+      testConnection: async () => ({ success: true, status: 'Connected', productsCount: 0, sampleProduct: null }),
+      fetchExactProductForRefresh: async (target: { supplierProductId: string; sku: string }) => {
+        assert.deepEqual(target, { supplierProductId: fixture.supplierProductId, sku: fixture.supplierSku });
+        lookupCount += 1;
+        return freshProduct;
+      },
+    } as never);
+
+    const result = await withPatchedAdminDb(fixture.db, () => refreshActiveSupplierReviewItem(fixture.queueItemId));
+    const refreshedOffer = fixture.db.collections.get('supplier_product_offers')?.get(fixture.offerId) as Record<string, unknown>;
+    const refreshedPending = refreshedOffer.pendingObservation as Record<string, unknown>;
+    const refreshedPayload = result.item.productPayload as Record<string, unknown>;
+
+    assert.equal(lookupCount, 1);
+    assert.equal(result.queueItemId, fixture.queueItemId);
+    assert.equal(result.item.supplierOfferId, fixture.offerId);
+    assert.equal(refreshedPayload.costPrice, 720);
+    assert.equal(refreshedPayload.price, 1650);
+    assert.equal(refreshedOffer.cost, 720);
+    assert.equal(refreshedOffer.price, 1650);
+    assert.equal(result.item.marketPrice, 0);
+    assert.equal(refreshedPending.reviewQueueItemId, fixture.queueItemId);
+    assert.notEqual(refreshedPending.revision, stalePending.revision);
+    assert.equal(fixture.db.collections.get('products')?.size || 0, 0);
+  } finally {
+    SupplierRegistry.createConnectorForSourceRecord = originalCreateConnector;
+  }
+});
+
+test('legacy refresh compatibility remains fail closed for invalid envelopes and identities', async () => {
+  const cases: Array<{
+    name: string;
+    fixture: ReturnType<typeof createRefreshGuardFixture>;
+    error: RegExp;
+  }> = [
+    {
+      name: 'missing raw pending observation',
+      fixture: createRefreshGuardFixture({ omitRawPending: true }),
+      error: /current pending supplier observation/u,
+    },
+    {
+      name: 'raw pending queue mismatch',
+      fixture: createRefreshGuardFixture({ rawPending: {
+        ...createRefreshGuardFixture().initialPending,
+        reviewQueueItemId: 'different-queue-item',
+      } }),
+      error: /current pending supplier observation/u,
+    },
+    {
+      name: 'raw pending revision mismatch',
+      fixture: createRefreshGuardFixture({ rawPending: {
+        ...createRefreshGuardFixture().initialPending,
+        revision: 'different-revision',
+      } }),
+      error: /current pending supplier observation/u,
+    },
+    {
+      name: 'raw pending revision empty',
+      fixture: createRefreshGuardFixture({ rawPending: {
+        ...createRefreshGuardFixture().initialPending,
+        revision: '',
+      } }),
+      error: /current pending supplier observation/u,
+    },
+    {
+      name: 'raw pending revision malformed',
+      fixture: createRefreshGuardFixture({ rawPending: {
+        ...createRefreshGuardFixture().initialPending,
+        revision: 123,
+      } }),
+      error: /current pending supplier observation/u,
+    },
+    {
+      name: 'supplier offer identity mismatch',
+      fixture: createRefreshGuardFixture({ offerPatch: { sku: 'OTHER-SKU' } }),
+      error: /identities are inconsistent/u,
+    },
+    {
+      name: 'non-Dropex source',
+      fixture: createRefreshGuardFixture({ sourceId: 'a2z' }),
+      error: /supported only for Dropex reviews/u,
+    },
+    {
+      name: 'non-review-pending queue',
+      fixture: createRefreshGuardFixture({ queuePatch: { queueState: 'approved' } }),
+      error: /Only an active supplier review_pending item can be refreshed/u,
+    },
+  ];
+
+  for (const testCase of cases) {
+    await withPatchedAdminDb(testCase.fixture.db, async () => {
+      await assert.rejects(
+        refreshActiveSupplierReviewItem(testCase.fixture.queueItemId),
+        testCase.error,
+        testCase.name,
+      );
+    });
   }
 });
 

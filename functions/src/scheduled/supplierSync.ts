@@ -1773,6 +1773,22 @@ const refreshIdentityMatches = (left: unknown, right: unknown): boolean => (
   refreshIdentityValue(left).toLocaleLowerCase() === refreshIdentityValue(right).toLocaleLowerCase()
 );
 
+const refreshLegacyPendingEnvelopeIsValid = (
+  value: unknown,
+  queueItemId: string,
+  queuePendingRevision: unknown,
+): boolean => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const pending = value as Record<string, unknown>;
+  return pending.kind === "catalog_upsert"
+    && pending.reviewQueueItemId === queueItemId
+    && typeof pending.revision === "string"
+    && pending.revision.trim().length > 0
+    && typeof queuePendingRevision === "string"
+    && queuePendingRevision.trim().length > 0
+    && pending.revision === queuePendingRevision;
+};
+
 const refreshReviewIsNewProduct = (queueItem: Record<string, unknown>): boolean => {
   const comparison = asRecord(queueItem.comparison);
   const comparisonStatus = refreshIdentityValue(
@@ -1837,7 +1853,8 @@ export async function refreshActiveSupplierReviewItem(
   }
   const offerSnapshot = await adminDb.collection(SUPPLIER_PRODUCT_OFFERS_COLLECTION).doc(deterministicOfferId).get();
   if (!offerSnapshot.exists) throw new ApiError("The deterministic supplier offer for this review item could not be found.", 409);
-  const existingOffer = projectSupplierOfferForAdmin({ id: offerSnapshot.id, ...offerSnapshot.data() });
+  const rawOffer = offerSnapshot.data() || {};
+  const existingOffer = projectSupplierOfferForAdmin({ id: offerSnapshot.id, ...rawOffer });
   if (!existingOffer) throw new ApiError("The supplier offer for this review item is invalid.", 409);
   const offerProductId = refreshIdentityValue(existingOffer.productId);
   if (claimedCanonicalProductId && offerProductId && claimedCanonicalProductId !== offerProductId) {
@@ -1854,7 +1871,12 @@ export async function refreshActiveSupplierReviewItem(
   }
   const pending = existingOffer.pendingObservation;
   const pendingRevision = refreshIdentityValue(queueItem.supplierOfferPendingRevision);
-  if (!pending || pending.reviewQueueItemId !== queueItemId || !pendingRevision || pendingRevision !== pending.revision) {
+  const legacyPendingEnvelopeIsValid = pending === null
+    && refreshLegacyPendingEnvelopeIsValid(rawOffer.pendingObservation, queueItemId, queueItem.supplierOfferPendingRevision);
+  if (
+    (!pending && !legacyPendingEnvelopeIsValid)
+    || (pending && (pending.reviewQueueItemId !== queueItemId || !pendingRevision || pendingRevision !== pending.revision))
+  ) {
     throw new ApiError("This review item does not have a current pending supplier observation to refresh.", 409);
   }
 
