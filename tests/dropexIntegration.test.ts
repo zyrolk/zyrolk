@@ -464,7 +464,7 @@ test("Dropex thin catalog rows trigger DTO enrichment for missing cost, stock, a
     openInventory: 10,
     dedicatedInventory: 5,
     commercialPriceProvenance: {
-      referencePrice: { source: "productDetail.sellingPrice", value: 1000 },
+      supplierSellingPrice: { source: "productDetail.sellingPrice", value: 1000 },
     },
   });
 });

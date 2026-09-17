@@ -194,7 +194,7 @@ test('invalid explicit regular prices cannot create a promotion and stored disco
   assert.equal(payload.discount, 38);
 });
 
-test('Dropex reseller price is authoritative cost and reference price stays non-promotional', () => {
+test('Dropex reseller cost and supplier selling price stay separate and non-promotional', () => {
   const product = DropexProductParser.parseCatalogItem({
     price: 720,
     reSellingPrice: 999,
@@ -218,7 +218,7 @@ test('Dropex reseller price is authoritative cost and reference price stays non-
   assert.equal(product.inventoryLevel, 1);
   assert.deepEqual(product.extraAttributes?.commercialPriceProvenance, {
     authoritativeCost: { source: 'reseller.price', value: 720 },
-    referencePrice: { source: 'productDetail.sellingPrice', value: 1400 },
+    supplierSellingPrice: { source: 'productDetail.sellingPrice', value: 1400 },
   });
   assert.equal(product.supplierCategory, 'Vehicle Accessories');
 
@@ -236,16 +236,16 @@ test('Dropex reseller price is authoritative cost and reference price stays non-
   }, { defaultMarkup: 19.9, defaultProfitMargin: 14.9, defaultImageLimit: 5 }, {
     id: 'dropex', supplierId: 'dropex', connectorType: 'dropex', priority: 100,
   });
-  assert.equal(payload.price, 971);
+  assert.equal(payload.price, 1400);
   assert.equal(payload.costPrice, 720);
-  assert.equal(payload.marketPrice, 1400);
+  assert.equal(payload.marketPrice, 0);
   assert.equal(payload.stock, 1);
   assert.equal(Object.hasOwn(payload, 'originalPrice'), false);
   assert.equal(Object.hasOwn(payload, 'discount'), false);
   assert.deepEqual((payload.supplierMetadata as Record<string, unknown>).extraAttributes, {
     commercialPriceProvenance: {
       authoritativeCost: { source: 'reseller.price', value: 720 },
-      referencePrice: { source: 'productDetail.sellingPrice', value: 1400 },
+      supplierSellingPrice: { source: 'productDetail.sellingPrice', value: 1400 },
     },
   });
 });
@@ -282,6 +282,38 @@ test('Dropex missing reseller price fails closed instead of using nested buyingP
   assert.equal(payload.costPrice, undefined);
   assert.ok(validateSupplierProductForApproval(payload, [{ id: 'vehicle-accessories', name: 'Vehicle Accessories' }], [{ id: 'brand-1', name: 'Brand' }])
     .some((error) => error.code === 'invalid' && error.field === 'price'));
+});
+
+test('Dropex missing or invalid supplier selling price fails closed without a cost-derived proposal', () => {
+  const categorySuggestion = {
+    supplierCategory: 'Vehicle Accessories', normalizedCategory: 'vehicle accessories', targetCategoryId: 'vehicle-accessories',
+    targetSubcategoryId: '', confidence: 100, mappingType: 'exact', mappingSource: 'catalog',
+    autoSelected: true, requiresManualSelection: false,
+  } as const;
+  const brandSuggestion = {
+    supplierBrand: '', normalizedBrand: '', mappedBrandId: 'brand-1', confidence: 100,
+    mappingType: 'exact', mappingSource: 'registry', autoSelected: true, requiresManualSelection: false,
+  } as const;
+  for (const sellingPrice of [undefined, null, '', 0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+    const product = DropexProductParser.parseCatalogItem({
+      price: 870,
+      productDetail: {
+        id: 4990,
+        name: 'AZK1690 Product',
+        sku: 'AZK1690',
+        sellingPrice,
+        onHandInventory: 8,
+      },
+    });
+    const payload = buildProductPayload(product, undefined, categorySuggestion, brandSuggestion, [], {
+      status: 'NEW_PRODUCT', changedFields: [], fieldChanges: [],
+    }, { defaultMarkup: 34.8, defaultProfitMargin: 0, defaultImageLimit: 5 }, {
+      id: 'dropex', supplierId: 'dropex', connectorType: 'dropex', priority: 100,
+    });
+    assert.equal(payload.price, 0);
+    assert.equal(payload.marketPrice, 0);
+    assert.equal(product.price, undefined);
+  }
 });
 
 test('server publication rejects a customer price below its authoritative cost', () => {
@@ -346,8 +378,8 @@ test('Dropex accepts only a finite positive reseller-row price for fulfilment co
     const product = DropexProductParser.parseCatalogItem(rawItem);
     assert.equal(product.wholesalePrice, 0);
     assert.equal((product.extraAttributes?.commercialPriceProvenance as Record<string, unknown> | undefined)?.authoritativeCost, undefined);
-    assert.equal((product.extraAttributes?.commercialPriceProvenance as Record<string, unknown> | undefined)?.referencePrice &&
-      ((product.extraAttributes?.commercialPriceProvenance as Record<string, unknown>).referencePrice as Record<string, unknown>).value, 1400);
+    assert.equal((product.extraAttributes?.commercialPriceProvenance as Record<string, unknown> | undefined)?.supplierSellingPrice &&
+      ((product.extraAttributes?.commercialPriceProvenance as Record<string, unknown>).supplierSellingPrice as Record<string, unknown>).value, 1400);
     assert.equal(
       buildProductPayload(product, undefined, categorySuggestion, brandSuggestion, [{ id: 'brand-1', name: 'Brand' }], {
         status: 'NEW_PRODUCT', changedFields: [], fieldChanges: [],
@@ -495,6 +527,7 @@ test('supplier sync does not create a new public promotion but preserves an exis
     mediaGallery: ['https://supplier.example/promotion.jpg'],
     wholesalePrice: 900,
     recommendedRetailPrice: 2_200,
+    price: 1_146,
     inventoryLevel: 5,
     supplierProductId: 'drop-product-1',
     categoryHierarchy: ['Electronics'],
@@ -518,7 +551,7 @@ test('supplier sync does not create a new public promotion but preserves an exis
   }, settings, source);
   assert.equal(Object.hasOwn(newPayload, 'originalPrice'), false);
   assert.equal(Object.hasOwn(newPayload, 'discount'), false);
-  assert.equal(newPayload.marketPrice, 2_200);
+  assert.equal(newPayload.marketPrice, 0);
 
   const existingPayload = buildProductPayload(product, {
     id: 'existing-product', price: 1_146, originalPrice: 1_850, discount: 38,
@@ -528,7 +561,7 @@ test('supplier sync does not create a new public promotion but preserves an exis
     status: 'PRICE_CHANGED', changedFields: ['price'], fieldChanges: [{ field: 'price' } as never],
   }, settings, source);
   assert.equal(existingPayload.originalPrice, 1_850);
-  assert.equal(existingPayload.discount, 51);
+  assert.equal(existingPayload.discount, 38);
 
   const unapprovedPricePayload = buildProductPayload(
     { ...product, recommendedRetailPrice: 500 },

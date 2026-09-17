@@ -169,6 +169,7 @@ test('Dropex exact refresh reads raw reseller price before enriching only the ex
   assert.equal(product.sku, 'SHX2924');
   assert.equal(product.wholesalePrice, 720);
   assert.equal(product.recommendedRetailPrice, 1400);
+  assert.equal(product.price, 1400);
   assert.equal(product.supplierCategory, 'Vehicle Accessories');
   assert.equal(calls.filter((url) => url.includes('/products/')).length, 1);
   assert.equal(calls.some((url) => url.includes('/products/unrelated/dto')), false);
@@ -220,6 +221,7 @@ test('Dropex exact refresh uses 500-row pages to find a target beyond 3,000 reco
   assert.equal(product.sku, 'AZK1690');
   assert.equal(product.wholesalePrice, 870);
   assert.equal(product.recommendedRetailPrice, 1650);
+  assert.equal(product.price, 1650);
   assert.deepEqual(dtoCalls.map((url) => new URL(url).pathname), ['/api/v1/products/4990/dto']);
 });
 
@@ -297,6 +299,7 @@ test('active NEW_PRODUCT refresh reuses the review and offer without creating a 
     mediaGallery: ['https://supplier.example/azk1690.jpg'],
     wholesalePrice: 720,
     recommendedRetailPrice: 1650,
+    price: 1650,
     inventoryLevel: 8,
     availability: 'in_stock',
     supplierCategory: 'Vehicle Accessories',
@@ -353,17 +356,21 @@ test('active NEW_PRODUCT refresh reuses the review and offer without creating a 
     assert.equal(result.item.productId, undefined);
     assert.equal(resultPayload.name, 'Fresh AZK1690');
     assert.equal(resultPayload.costPrice, 720);
+    assert.equal(resultPayload.price, 1650);
     assert.equal(result.item.costPrice, 720);
-    assert.equal(result.item.marketPrice, 1650);
+    assert.equal(result.item.marketPrice, 0);
     assert.equal(resultPayload.category, 'vehicle-accessories');
     assert.equal(resultPayload.description, 'Fresh supplier description');
     assert.deepEqual(result.item.supplierSnapshot && (result.item.supplierSnapshot as Record<string, unknown>).categoryHierarchy, ['Vehicle Accessories']);
     assert.equal(resultPayload.published, true);
+    assert.equal(Object.hasOwn(resultPayload, 'originalPrice'), false);
+    assert.equal(Object.hasOwn(resultPayload, 'discount'), false);
     assert.equal((result.item.productValidation as Record<string, unknown>).readyToPublish, false);
     assert.equal(result.stockAutomated, false);
     assert.equal(refreshedOffer.id, offerId);
     assert.equal(refreshedOffer.productId, null);
     assert.equal(refreshedOffer.cost, 720);
+    assert.equal(refreshedOffer.price, 1650);
     assert.equal(refreshedOffer.reviewStatus, 'review_pending');
     assert.equal(refreshedPending.reviewQueueItemId, queueItemId);
     assert.notEqual(refreshedPending.revision, initialPending.revision);

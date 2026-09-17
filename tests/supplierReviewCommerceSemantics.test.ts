@@ -138,7 +138,7 @@ test("Dropex buyingPrice alone is ambiguous and cannot be treated as supplier co
   assert.equal(supplierCostWasProvided(parsed), false);
   assert.equal(parsed.recommendedRetailPrice, 1400);
   assert.equal((parsed.extraAttributes?.commercialPriceProvenance as Record<string, unknown>)?.authoritativeCost, undefined);
-  assert.deepEqual((parsed.extraAttributes?.commercialPriceProvenance as Record<string, unknown>)?.referencePrice, {
+  assert.deepEqual((parsed.extraAttributes?.commercialPriceProvenance as Record<string, unknown>)?.supplierSellingPrice, {
     source: "productDetail.sellingPrice",
     value: 1400,
   });

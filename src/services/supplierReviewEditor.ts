@@ -374,7 +374,8 @@ export function createSupplierReviewDraft(item: SupplierReviewSourceItem): Suppl
   )];
   const storedOwnership = parseSupplierProductFieldOwnership(payload?.supplierFieldOwnership);
   const isNewProduct = item.comparison?.comparisonStatus === 'NEW_PRODUCT';
-  const sellingPrice = finiteNumber(payload?.price, finiteNumber(item.marketPrice));
+  const isDropexReview = String(item.sourceId || '').trim().toLowerCase() === 'dropex';
+  const sellingPrice = finiteNumber(payload?.price, isDropexReview ? Number.NaN : finiteNumber(item.marketPrice));
   const payloadOriginalPrice = optionalFiniteNumber(payload?.originalPrice);
   const legacyPromotionEnabled = !isNewProduct
     && payloadOriginalPrice !== undefined
@@ -406,7 +407,9 @@ export function createSupplierReviewDraft(item: SupplierReviewSourceItem): Suppl
     comparePrice: promotionEnabled ? (payloadOriginalPrice ?? 0) : 0,
     promotionEnabled,
     costPrice: supplierCostAvailable ? finiteNumber(resolvedCost, 0) : finiteNumber(resolvedCost, Number.NaN),
-    marketPrice: finiteNumber(payload?.marketPrice, finiteNumber(item.marketPrice)),
+    marketPrice: isDropexReview && isNewProduct
+      ? 0
+      : finiteNumber(payload?.marketPrice, finiteNumber(item.marketPrice)),
     stock: supplierStockAvailable
       ? Math.max(0, Math.floor(finiteNumber(resolvedStock, 0)))
       : Math.max(0, Math.floor(finiteNumber(resolvedStock, Number.NaN))),

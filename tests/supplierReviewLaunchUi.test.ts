@@ -341,8 +341,9 @@ test('supplier-managed commercial values stay read-only while listing controls r
   }
   assert.match(pricingSection, /Cost Price <span[^>]*>\(Supplier-managed, read-only\)/u);
   assert.match(pricingSection, /formatSupplierCostLabel\(draft\.costPrice, draft\.supplierCostAvailable\)/u);
-  assert.match(pricingSection, /Market Price <span[^>]*>\(Supplier reference, read-only\)/u);
-  assert.match(pricingSection, /<ReadOnlyValue>\{money\(draft\.marketPrice\)\}<\/ReadOnlyValue>/u);
+  assert.match(pricingSection, /Market \/ Reference Price <span[^>]*>\(Read-only\)/u);
+  assert.match(pricingSection, /<ReadOnlyValue>\{dropexNewProductHasNoReferencePrice \? 'Not supplied' : money\(draft\.marketPrice\)\}<\/ReadOnlyValue>/u);
+  assert.match(pricingSection, /No separate Dropex reference price was supplied\./u);
   assert.match(pricingSection, /Reference only\. Does not set a customer promotion\./u);
   assert.match(pricingSection, /Stock <span[^>]*>\(Supplier-managed, read-only\)/u);
   assert.match(pricingSection, /formatSupplierStockLabel\(draft\.stock, draft\.supplierStockAvailable\)/u);

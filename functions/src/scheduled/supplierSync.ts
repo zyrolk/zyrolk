@@ -313,6 +313,44 @@ const isDropexSource = (source: SupplierSource): boolean => [
   source.type,
 ].some((value) => String(value || "").trim().toLowerCase() === "dropex");
 
+const readDropexSupplierSellingPrice = (product: RawA2ZProduct): number | undefined => {
+  const value = Number(product.price);
+  return Number.isFinite(value) && value > 0 ? value : undefined;
+};
+
+function calculateSupplierProductPricing(
+  product: RawA2ZProduct,
+  source: SupplierSource,
+  settings: SupplierSettings,
+): { sellingPrice: number; comparePrice: number; discountPercent: number } {
+  if (isDropexSource(source)) {
+    const supplierSellingPrice = supplierCostWasProvided(product)
+      ? readDropexSupplierSellingPrice(product)
+      : undefined;
+    return {
+      sellingPrice: supplierSellingPrice ?? 0,
+      comparePrice: 0,
+      discountPercent: 0,
+    };
+  }
+  return calculateSupplierInitialPricing(
+    supplierCostWasProvided(product) ? product.wholesalePrice : undefined,
+    product.recommendedRetailPrice,
+    settings.defaultMarkup,
+    settings.defaultProfitMargin,
+  );
+}
+
+function resolveSupplierMarketPrice(
+  product: RawA2ZProduct,
+  source: SupplierSource,
+  match: ExistingProduct | undefined,
+): number {
+  if (!isDropexSource(source)) return product.recommendedRetailPrice || 0;
+  const existingMarketPrice = Number(match?.marketPrice);
+  return Number.isFinite(existingMarketPrice) && existingMarketPrice > 0 ? existingMarketPrice : 0;
+}
+
 interface SyncMetrics {
   productsDiscovered: number;
   productsScanned: number;
@@ -978,14 +1016,7 @@ export function buildProductPayload(
   const stockProvided = supplierStockWasProvided(product);
   const wholesale = costProvided ? product.wholesalePrice : undefined;
   const dropex = isDropexSource(source);
-  const pricing = dropex && !costProvided
-    ? { sellingPrice: 0, comparePrice: Math.round(product.recommendedRetailPrice || 0), discountPercent: 0 }
-    : calculateSupplierInitialPricing(
-      costProvided ? product.wholesalePrice : undefined,
-      product.recommendedRetailPrice,
-      settings.defaultMarkup,
-      settings.defaultProfitMargin,
-    );
+  const pricing = calculateSupplierProductPricing(product, source, settings);
   const price = costProvided && pricing.sellingPrice < product.wholesalePrice
     ? 0
     : pricing.sellingPrice;
@@ -1028,6 +1059,20 @@ export function buildProductPayload(
   const acceptedFields = isNewProduct ? true : acceptedSupplierFieldIds;
   const supplierCatalogDetails = mergeSupplierCatalogDetails(product, { ...(match || {}) }, acceptedFields);
   const supplierMetadata = mergeSupplierProductMetadata(product, match?.supplierMetadata || {}, acceptedFields);
+  if (dropex) {
+    delete supplierMetadata.comparePrice;
+    delete supplierMetadata.recommendedRetailPrice;
+    const supplierExtras = asRecord(supplierMetadata.extraAttributes);
+    const currentCommercialProvenance = asRecord(asRecord(product.extraAttributes).commercialPriceProvenance);
+    if (Object.keys(supplierExtras).length > 0) {
+      supplierMetadata.extraAttributes = {
+        ...supplierExtras,
+        ...(Object.keys(currentCommercialProvenance).length > 0
+          ? { commercialPriceProvenance: currentCommercialProvenance }
+          : {}),
+      };
+    }
+  }
   const publicationProtected = !isNewProduct && supplierProductPublicationIsProtected(match);
 
   return {
@@ -1074,7 +1119,9 @@ export function buildProductPayload(
     costPrice: priceUpdateEnabled
       ? (costProvided ? wholesale : undefined)
       : match?.costPrice,
-    marketPrice: priceUpdateEnabled ? (product.recommendedRetailPrice || 0) : (match?.marketPrice || 0),
+    marketPrice: priceUpdateEnabled
+      ? resolveSupplierMarketPrice(product, source, match)
+      : (match?.marketPrice || 0),
     rating: match?.rating ?? 0,
     reviewsCount: match?.reviewsCount ?? 0,
     createdAt: match?.createdAt || new Date().toISOString(),
@@ -1284,7 +1331,9 @@ export function buildSupplierDuplicateConflictReviewItem(input: {
       batchId: input.batchId,
       productName: String(productPayload.name || input.product.title),
       costPrice: input.offer.cost,
-      marketPrice: input.product.recommendedRetailPrice || input.offer.price,
+      marketPrice: isDropexSource(input.source)
+        ? Number(productPayload.marketPrice || 0)
+        : input.product.recommendedRetailPrice || input.offer.price,
       stock: input.offer.stock,
       imageUrl: String(productPayload.imageUrl || input.product.mediaGallery?.[0] || ""),
       comparisonStatus: String(existingQueueItem.comparisonStatus || comparison.comparisonStatus || "UNCHANGED"),
@@ -2063,7 +2112,7 @@ export async function refreshActiveSupplierReviewItem(
     } : {}),
     productName: product.title,
     costPrice: productPayload.costPrice,
-    marketPrice: product.recommendedRetailPrice,
+    marketPrice: productPayload.marketPrice,
     stock: productPayload.stock,
     barcode: product.barcode || "",
     ...buildSupplierReviewQueueImagePayload(product.mediaGallery),
@@ -3466,12 +3515,7 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
             sku: product.sku,
             barcode: product.barcode,
             productId: targetProductId,
-            price: calculateSupplierInitialPricing(
-              product.wholesalePrice || 0,
-              product.recommendedRetailPrice,
-              settings.defaultMarkup,
-              settings.defaultProfitMargin,
-            ).sellingPrice,
+            price: calculateSupplierProductPricing(product, source, settings).sellingPrice,
             cost: product.wholesalePrice,
             stock: supplierStockWasProvided(product) ? product.inventoryLevel : undefined,
             stockKnown: supplierStockWasProvided(product),
@@ -3867,7 +3911,7 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
             batchId,
             productName: product.title,
             costPrice: productPayload.costPrice,
-            marketPrice: product.recommendedRetailPrice,
+            marketPrice: productPayload.marketPrice,
             stock: productPayload.stock,
             barcode: product.barcode || "",
             ...buildSupplierReviewQueueImagePayload(product.mediaGallery),

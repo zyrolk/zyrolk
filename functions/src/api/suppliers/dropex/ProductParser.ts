@@ -96,17 +96,17 @@ function readAuthoritativeWholesalePrice(
   return resellerPrice === undefined ? undefined : { source: "reseller.price", value: resellerPrice };
 }
 
-function readReferencePrice(
-  item: Record<string, unknown>,
+function readSupplierSellingPrice(
   detail: Record<string, unknown>,
+  enrichment?: Record<string, unknown>,
 ): DropexPriceSource | undefined {
-  const detailSellingPrice = optionalNumber(detail.sellingPrice);
-  if (detailSellingPrice !== undefined) return { source: "productDetail.sellingPrice", value: detailSellingPrice };
-  const itemSellingPrice = optionalNumber(item.sellingPrice);
-  if (itemSellingPrice !== undefined) return { source: "sellingPrice", value: itemSellingPrice };
-  const marketPrice = optionalNumber(item.marketPrice);
-  if (marketPrice !== undefined) return { source: "marketPrice", value: marketPrice };
-  return undefined;
+  const enrichmentDetail = optionalRecord(enrichment?.productDetail);
+  const detailSellingPrice = optionalNumber(detail.sellingPrice)
+    ?? optionalNumber(enrichmentDetail?.sellingPrice)
+    ?? optionalNumber(enrichment?.sellingPrice);
+  return detailSellingPrice !== undefined && detailSellingPrice > 0
+    ? { source: "productDetail.sellingPrice", value: detailSellingPrice }
+    : undefined;
 }
 
 function inventoryLevelWasProvided(item: Record<string, unknown>, detail: Record<string, unknown>): boolean {
@@ -114,14 +114,6 @@ function inventoryLevelWasProvided(item: Record<string, unknown>, detail: Record
     detail.onHandInventory,
     item.onHandInventory,
     item.stock,
-  ].every(isDropexFieldAbsent);
-}
-
-function retailPriceWasProvided(item: Record<string, unknown>, detail: Record<string, unknown>): boolean {
-  return ![
-    detail.sellingPrice,
-    item.sellingPrice,
-    item.marketPrice,
   ].every(isDropexFieldAbsent);
 }
 
@@ -216,12 +208,9 @@ export class ProductParser {
     const title = optionalString(detail.name) || optionalString(item.name) || "";
     const longDescription = optionalString(detail.description) || optionalString(item.description) || "";
     const costSource = readAuthoritativeWholesalePrice(rawItem);
-    const referenceSource = readReferencePrice(item, detail);
+    const supplierSellingPrice = readSupplierSellingPrice(detail, options.enrichment);
     const wholesalePrice = costSource?.value ?? 0;
-    const recommendedRetailPrice = optionalNumber(detail.sellingPrice)
-      ?? optionalNumber(item.sellingPrice)
-      ?? optionalNumber(item.marketPrice)
-      ?? 0;
+    const recommendedRetailPrice = supplierSellingPrice?.value ?? 0;
     const inventoryLevel = optionalNumber(detail.onHandInventory)
       ?? optionalNumber(item.onHandInventory)
       ?? optionalNumber(item.stock)
@@ -239,7 +228,7 @@ export class ProductParser {
     const maxOrderCount = optionalNumber(detail.maxOrderCount) ?? optionalNumber(item.maxOrderCount);
     const costProvided = costSource !== undefined;
     const stockProvided = inventoryLevelWasProvided(item, detail);
-    const retailProvided = retailPriceWasProvided(item, detail);
+    const retailProvided = supplierSellingPrice !== undefined;
 
     const extraAttributes: Record<string, unknown> = {};
     if (rawCategoryId !== undefined && rawCategoryId !== null && String(rawCategoryId).trim()) {
@@ -254,10 +243,10 @@ export class ProductParser {
     if (openInventory !== undefined) extraAttributes.openInventory = openInventory;
     if (dedicatedInventory !== undefined) extraAttributes.dedicatedInventory = dedicatedInventory;
     if (maxOrderCount !== undefined) extraAttributes.maxOrderCount = maxOrderCount;
-    if (costSource || referenceSource) {
+    if (costSource || supplierSellingPrice) {
       extraAttributes.commercialPriceProvenance = {
         ...(costSource ? { authoritativeCost: costSource } : {}),
-        ...(referenceSource ? { referencePrice: referenceSource } : {}),
+        ...(supplierSellingPrice ? { supplierSellingPrice } : {}),
       };
     }
 
@@ -269,6 +258,7 @@ export class ProductParser {
       wholesalePrice,
       recommendedRetailPrice,
       inventoryLevel,
+      ...(supplierSellingPrice ? { price: supplierSellingPrice.value } : {}),
       ...(supplierProductId ? { supplierProductId } : {}),
       ...(brand ? { brand } : {}),
       ...categoryFields,
@@ -278,7 +268,7 @@ export class ProductParser {
         "title",
         ...(optionalString(longDescription) ? ["longDescription"] as const : []),
         ...(costProvided ? ["costPrice", "wholesalePrice"] as const : []),
-        ...(retailProvided ? ["comparePrice", "recommendedRetailPrice"] as const : []),
+        ...(retailProvided ? ["price"] as const : []),
         ...(stockProvided ? ["stock", "inventoryLevel"] as const : []),
         ...(mediaGallery.length > 0 ? ["mediaGallery"] as const : []),
         ...(supplierProductId ? ["supplierProductId"] as const : []),

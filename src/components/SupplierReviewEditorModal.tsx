@@ -177,6 +177,8 @@ export default function SupplierReviewEditorModal({
     [brands, item.brandMapping?.mappedBrandId],
   );
   const supplierMetadata = useMemo(() => supplierReviewRawMetadata(item), [item]);
+  const dropexNewProductHasNoReferencePrice = String(item.sourceId || '').trim().toLowerCase() === 'dropex'
+    && item.comparison?.comparisonStatus === 'NEW_PRODUCT';
   const selectedBrand = useMemo(
     () => brands.find((brand) => brand.id === draft.brand),
     [brands, draft.brand],
@@ -616,9 +618,9 @@ export default function SupplierReviewEditorModal({
             </div>
 
             <div className="space-y-1.5 text-xs" aria-readonly="true">
-              <span className="font-bold text-slate-600 dark:text-slate-300">Market Price <span className="font-normal text-slate-400">(Supplier reference, read-only)</span></span>
-              <ReadOnlyValue>{money(draft.marketPrice)}</ReadOnlyValue>
-              <p className="text-[10px] text-slate-400">Reference only. Does not set a customer promotion.</p>
+              <span className="font-bold text-slate-600 dark:text-slate-300">Market / Reference Price <span className="font-normal text-slate-400">(Read-only)</span></span>
+              <ReadOnlyValue>{dropexNewProductHasNoReferencePrice ? 'Not supplied' : money(draft.marketPrice)}</ReadOnlyValue>
+              <p className="text-[10px] text-slate-400">{dropexNewProductHasNoReferencePrice ? 'No separate Dropex reference price was supplied.' : 'Reference only. Does not set a customer promotion.'}</p>
               {errorFor('marketPrice') && <span className="text-[10px] font-semibold text-red-500">{errorFor('marketPrice')}</span>}
             </div>
 
