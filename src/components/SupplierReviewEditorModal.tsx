@@ -60,6 +60,10 @@ interface SupplierReviewEditorModalProps {
   offerActionId: string | null;
   offerError: string | null;
   onRefreshOffers: () => Promise<void>;
+  /** Available only for active Dropex review_pending items. */
+  refreshEligible?: boolean;
+  isRefreshing?: boolean;
+  onRefreshSupplier?: () => Promise<void>;
   onConfigureOffer: (offerId: string, patch: { priority?: number; enabled?: boolean }) => Promise<void>;
   onSelectOffer: (offerId: string, options: { locked: boolean; failoverEnabled: boolean }) => Promise<void>;
   onActivateTaxonomyCandidate: (categoryId: string, subcategoryId?: string) => Promise<void>;
@@ -122,6 +126,9 @@ export default function SupplierReviewEditorModal({
   offerActionId,
   offerError,
   onRefreshOffers,
+  refreshEligible = false,
+  isRefreshing = false,
+  onRefreshSupplier,
   onConfigureOffer,
   onSelectOffer,
   onActivateTaxonomyCandidate,
@@ -962,6 +969,11 @@ export default function SupplierReviewEditorModal({
           <div className="shrink-0 border-t border-slate-100 bg-white/95 px-4 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] backdrop-blur dark:border-slate-800 dark:bg-[#111928]/95 sm:px-6">
           <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
             <button type="button" onClick={onClose} disabled={isPublishing} className="min-h-11 w-full rounded-xl border border-slate-200 px-4 text-xs font-bold text-slate-500 disabled:opacity-50 dark:border-slate-700 sm:w-auto">Close</button>
+            {refreshEligible && onRefreshSupplier ? (
+              <button type="button" onClick={() => void onRefreshSupplier()} disabled={isPublishing || isRefreshing} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-blue-500/30 bg-blue-500/10 px-4 text-xs font-black text-blue-700 hover:bg-blue-500/20 disabled:cursor-not-allowed disabled:opacity-50 dark:text-blue-300">
+                <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} aria-hidden="true" />{isRefreshing ? 'Refreshing…' : 'Refresh from Supplier'}
+              </button>
+            ) : null}
             <button type="button" onClick={onRemove} disabled={isPublishing} className="min-h-11 w-full rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 text-xs font-black text-amber-700 hover:bg-amber-500/20 disabled:cursor-not-allowed disabled:opacity-50 dark:text-amber-300">Remove from Review</button>
             {!isEditing ? (
               <button ref={detailsActionRef} type="button" onClick={beginEditing} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 text-xs font-black text-white hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 sm:w-auto" aria-describedby="supplier-review-read-only-note">

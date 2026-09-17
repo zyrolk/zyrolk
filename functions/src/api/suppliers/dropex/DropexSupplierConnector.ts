@@ -82,6 +82,12 @@ export class DropexSupplierConnector implements SupplierConnector {
     return this.connectorService.fetchCatalogPage(credentials, this.outboundPolicy, request);
   }
 
+  /** Narrow admin review refresh capability; the generic connector contract is unchanged. */
+  public async fetchExactProductForRefresh(target: { supplierProductId: string; sku: string }) {
+    const credentials = await this.resolveCredentials();
+    return this.connectorService.fetchExactProductForRefresh(credentials, this.outboundPolicy, target);
+  }
+
   public async testConnection(): Promise<SupplierConnectionTestResult> {
     try {
       const credentials = await this.resolveCredentials();

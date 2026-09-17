@@ -548,6 +548,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
   }, [activeSubTab, editingSourceId, onNestedNavigationChange]);
 
   const [processingChangeId, setProcessingChangeId] = useState<string | null>(null);
+  const [refreshingReviewItemId, setRefreshingReviewItemId] = useState<string | null>(null);
   const [retryingMediaId, setRetryingMediaId] = useState<string | null>(null);
   const [editingReviewItem, setEditingReviewItem] = useState<ReviewQueueItem | null>(null);
 
@@ -881,6 +882,44 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
       throw new Error(result.error || 'Supplier review action could not be completed.');
     }
     return result;
+  };
+
+  const supplierReviewRefreshEligible = (item: ReviewQueueItem | null): boolean => {
+    if (!item) return false;
+    const connector = String(item.connector || '').trim().toLowerCase();
+    const source = String(item.sourceId || '').trim().toLowerCase();
+    const state = String(item.queueState || '').trim().toLowerCase();
+    const status = String(item.status || '').trim().toLowerCase();
+    return (connector === 'dropex' || source === 'dropex')
+      && state === 'review_pending'
+      && (status === 'pending' || status === '');
+  };
+
+  const handleRefreshSupplierReviewItem = async (item: ReviewQueueItem) => {
+    if (processingChangeId || refreshingReviewItemId || !supplierReviewRefreshEligible(item)) return;
+    setRefreshingReviewItemId(item.id);
+    try {
+      const response = await postSupplierApi(`/api/supplier-review-queue/${encodeURIComponent(item.id)}/refresh`, {});
+      const result = await response.json().catch(() => ({})) as {
+        success?: boolean;
+        error?: string;
+        item?: Record<string, unknown> & { id?: string };
+      };
+      if (!response.ok || result.success !== true || !result.item) {
+        throw new Error(result.error || 'Supplier review item could not be refreshed.');
+      }
+      const refreshedItem = result.item as unknown as ReviewQueueItem;
+      setReviewQueue((current) => current.map((candidate) => candidate.id === item.id ? refreshedItem : candidate));
+      setEditingReviewItem(refreshedItem);
+      await loadSupplierOffers(refreshedItem);
+      setSuccessMsg('Supplier review refreshed from the current Dropex observation. No approval or publication was performed.');
+      setTimeout(() => setSuccessMsg(null), 5000);
+    } catch (error) {
+      setErrorMsg(error instanceof Error ? error.message : 'Supplier review item could not be refreshed.');
+      setTimeout(() => setErrorMsg(null), 5000);
+    } finally {
+      setRefreshingReviewItemId(null);
+    }
   };
 
   const handleRetryDeadLetterMedia = async (item: ReviewQueueItem) => {
@@ -2894,6 +2933,9 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
           offerActionId={supplierOfferActionId}
           offerError={supplierOfferError ? supplierBusinessErrorMessage(supplierOfferError, 'Supplier offers could not be loaded.') : null}
           onRefreshOffers={() => loadSupplierOffers(editingReviewItem)}
+          refreshEligible={supplierReviewRefreshEligible(editingReviewItem)}
+          isRefreshing={refreshingReviewItemId === editingReviewItem.id}
+          onRefreshSupplier={() => handleRefreshSupplierReviewItem(editingReviewItem)}
           onConfigureOffer={configureSupplierOffer}
           onSelectOffer={selectSupplierOffer}
           onActivateTaxonomyCandidate={activateSupplierTaxonomyCandidate}

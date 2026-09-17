@@ -3,6 +3,7 @@ import { logger } from "firebase-functions";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { FieldPath, FieldValue } from "firebase-admin/firestore";
 import { adminDb } from "../api/firebase";
+import { ApiError } from "../api/errors";
 import { appLogger } from "../api/logging";
 import { COMMERCIAL_PRODUCT_FIELDS, mergeProductData, PRODUCT_PRIVATE_COLLECTION } from "../api/products/productCommercialData";
 import { SupplierRegistry } from "../api/suppliers/SupplierRegistry";
@@ -57,6 +58,7 @@ import {
   projectSupplierOfferForAdmin,
   SupplierProductOffer,
   SupplierOfferStateExpectation,
+  supplierOfferAvailability,
   supplierOfferStateExpectation,
   supplierOfferStateMatchesExpectation,
   SUPPLIER_PRODUCT_OFFERS_COLLECTION,
@@ -1537,6 +1539,13 @@ interface SupplierSyncWrite {
   atomicGroup?: string;
   /** Optimistic fence for an offer read during comparison. */
   offerStateExpectation?: SupplierOfferStateExpectation;
+  /** Optimistic fence for the active Product Review record being refreshed. */
+  reviewStateExpectation?: {
+    queueState: string;
+    status: string;
+    supplierOfferPendingRevision: string;
+    canonicalProductId: string;
+  };
 }
 
 function buildSupplierAutomationAuditWrite(input: {
@@ -1628,6 +1637,18 @@ async function commitQueuedItems(items: SupplierSyncWrite[]): Promise<void> {
         )) {
           throw new Error("Supplier offer state changed while its Product Review observation was being committed.");
         }
+        const fencedReview = group.find((item) => item.reviewStateExpectation)?.reviewStateExpectation;
+        if (fencedReview && reviewWrite) {
+          const currentReviewData = currentReview?.data() || {};
+          if (
+            String(currentReviewData.queueState || "").toLowerCase() !== fencedReview.queueState.toLowerCase()
+            || String(currentReviewData.status || "").toLowerCase() !== fencedReview.status.toLowerCase()
+            || String(currentReviewData.supplierOfferPendingRevision || "") !== fencedReview.supplierOfferPendingRevision
+            || String(currentReviewData.canonicalProductId || currentReviewData.productId || "") !== fencedReview.canonicalProductId
+          ) {
+            throw new Error("The Product Review item changed while its supplier refresh was in progress.");
+          }
+        }
         const reviewIdentity = reviewWrite
           ? (reviewIdentityFromWrite?.sourceId && reviewIdentityFromWrite.supplierProductId
             ? reviewIdentityFromWrite
@@ -1682,6 +1703,437 @@ async function commitQueuedItems(items: SupplierSyncWrite[]): Promise<void> {
   }
 
   await flushBatch();
+}
+
+export interface SupplierReviewRefreshResult {
+  queueItemId: string;
+  item: Record<string, unknown>;
+  stockAutomated: boolean;
+}
+
+type ExactSupplierRefreshConnector = SupplierConnector & {
+  fetchExactProductForRefresh: (target: { supplierProductId: string; sku: string }) => Promise<RawA2ZProduct>;
+};
+
+const refreshIdentityValue = (value: unknown): string => String(value || "").normalize("NFKC").trim();
+
+const refreshIdentityMatches = (left: unknown, right: unknown): boolean => (
+  refreshIdentityValue(left).toLocaleLowerCase() === refreshIdentityValue(right).toLocaleLowerCase()
+);
+
+/**
+ * Refreshes one active Dropex review in place. This deliberately lives beside
+ * the normal sync pipeline so it uses the same parser, commercial contract,
+ * taxonomy mapper, ownership rules, and queue/offer write fencing without
+ * creating a sync job, source checkpoint, or removal-reconciliation scope.
+ */
+export async function refreshActiveSupplierReviewItem(
+  queueItemIdInput: unknown,
+  reviewer?: { uid: string; email: string },
+): Promise<SupplierReviewRefreshResult> {
+  const queueItemId = refreshIdentityValue(queueItemIdInput);
+  if (!queueItemId || queueItemId.length > 160 || queueItemId.includes("/")) {
+    throw new ApiError("The supplier review queue item ID is invalid.", 400);
+  }
+
+  const reviewReference = adminDb.collection("supplier_review_queue").doc(queueItemId);
+  const reviewSnapshot = await reviewReference.get();
+  if (!reviewSnapshot.exists) throw new ApiError("Supplier review item could not be found.", 404);
+  const queueItem = reviewSnapshot.data() || {};
+  const queueState = refreshIdentityValue(queueItem.queueState).toLocaleLowerCase();
+  const queueStatus = refreshIdentityValue(queueItem.status).toLocaleLowerCase();
+  if (
+    reviewRecordIsTerminalDecision(queueItem)
+    || queueState !== "review_pending"
+    || !["pending", ""].includes(queueStatus)
+  ) {
+    throw new ApiError("Only an active supplier review_pending item can be refreshed.", 409);
+  }
+
+  const identity = getSupplierQueueIdentityCandidate(queueItem);
+  const sourceId = refreshIdentityValue(identity.sourceId);
+  const supplierProductId = refreshIdentityValue(identity.supplierProductId);
+  const supplierSku = refreshIdentityValue(queueItem.supplierCode || asRecord(queueItem.supplierSnapshot).sku);
+  const claimedOfferId = refreshIdentityValue(queueItem.supplierOfferId);
+  const canonicalProductId = refreshIdentityValue(
+    queueItem.canonicalProductId
+      || queueItem.productId
+      || asRecord(queueItem.productPayload).id
+      || queueItem.matchedProductId,
+  );
+  if (!sourceId || !supplierProductId || !supplierSku || !claimedOfferId || !canonicalProductId) {
+    throw new ApiError("This legacy supplier review item does not contain a complete refresh identity.", 409);
+  }
+
+  const sourceSnapshot = await adminDb.collection("supplierSources").doc(sourceId).get();
+  if (!sourceSnapshot.exists) throw new ApiError("The supplier source for this review item could not be found.", 409);
+  const source = { id: sourceId, ...sourceSnapshot.data() } as SupplierSource;
+  if (!isDropexSource(source)) throw new ApiError("Single-product refresh is currently supported only for Dropex reviews.", 409);
+
+  const deterministicOfferId = buildSupplierOfferId(sourceId, supplierProductId, supplierSku);
+  if (claimedOfferId !== deterministicOfferId) {
+    throw new ApiError("This review item does not reference its deterministic supplier offer.", 409);
+  }
+  const offerSnapshot = await adminDb.collection(SUPPLIER_PRODUCT_OFFERS_COLLECTION).doc(deterministicOfferId).get();
+  if (!offerSnapshot.exists) throw new ApiError("The deterministic supplier offer for this review item could not be found.", 409);
+  const existingOffer = projectSupplierOfferForAdmin({ id: offerSnapshot.id, ...offerSnapshot.data() });
+  if (!existingOffer) throw new ApiError("The supplier offer for this review item is invalid.", 409);
+  if (
+    existingOffer.id !== deterministicOfferId
+    || existingOffer.sourceId !== sourceId
+    || !refreshIdentityMatches(existingOffer.supplierProductId, supplierProductId)
+    || !refreshIdentityMatches(existingOffer.sku, supplierSku)
+    || existingOffer.productId !== canonicalProductId
+  ) {
+    throw new ApiError("The review item and supplier offer identities are inconsistent.", 409);
+  }
+  const pending = existingOffer.pendingObservation;
+  const pendingRevision = refreshIdentityValue(queueItem.supplierOfferPendingRevision);
+  if (!pending || pending.reviewQueueItemId !== queueItemId || !pendingRevision || pendingRevision !== pending.revision) {
+    throw new ApiError("This review item does not have a current pending supplier observation to refresh.", 409);
+  }
+
+  const [productSnapshot, privateProductSnapshot, settingsSnapshot, categoriesSnapshot, brandsSnapshot] = await Promise.all([
+    adminDb.collection("products").doc(canonicalProductId).get(),
+    adminDb.collection(PRODUCT_PRIVATE_COLLECTION).doc(canonicalProductId).get(),
+    adminDb.collection("supplier_settings").doc("config").get(),
+    adminDb.collection("categories").get(),
+    adminDb.collection("brands").get(),
+  ]);
+  if (!productSnapshot.exists) throw new ApiError("The canonical product for this review item could not be found.", 409);
+  const currentProduct = {
+    ...mergeProductData(productSnapshot.data() || {}, privateProductSnapshot.exists ? privateProductSnapshot.data() : undefined),
+    id: productSnapshot.id,
+  } as ExistingProduct;
+  const productSourceId = refreshIdentityValue(currentProduct.supplierSourceId || currentProduct.supplierId);
+  const productSupplierSku = refreshIdentityValue(currentProduct.supplierItemCode);
+  if (productSourceId && productSourceId !== sourceId) {
+    throw new ApiError("The canonical product is owned by a different supplier source.", 409);
+  }
+  if (productSupplierSku && !refreshIdentityMatches(productSupplierSku, supplierSku)) {
+    throw new ApiError("The canonical product is owned by a different supplier SKU.", 409);
+  }
+
+  const connector = await SupplierRegistry.createConnectorForSourceRecord(sourceId, sourceSnapshot.data() || {});
+  const exactConnector = connector as Partial<ExactSupplierRefreshConnector>;
+  if (typeof exactConnector.fetchExactProductForRefresh !== "function") {
+    throw new ApiError("This supplier does not support exact single-product refresh.", 409);
+  }
+  const product = await exactConnector.fetchExactProductForRefresh({ supplierProductId, sku: supplierSku });
+  if (
+    !refreshIdentityMatches(product.supplierProductId, supplierProductId)
+    || !refreshIdentityMatches(product.sku, supplierSku)
+  ) {
+    throw new ApiError("Dropex returned a product with an unexpected supplier identity.", 409);
+  }
+  if (!supplierCostWasProvided(product)) {
+    throw new ApiError("Dropex did not provide the authoritative reseller cost for this refresh.", 422);
+  }
+
+  const settings = (settingsSnapshot.exists ? settingsSnapshot.data() : {}) as SupplierSettings;
+  const sourceSettings = source.settings || {};
+  const storeCategories: StoreCategoryMappingCandidate[] = categoriesSnapshot.docs.map((categoryDoc) => ({
+    id: categoryDoc.id,
+    name: String(categoryDoc.data().name || categoryDoc.id),
+    isActive: categoryDoc.data().isActive !== false,
+    subcategories: Array.isArray(categoryDoc.data().subcategories) ? categoryDoc.data().subcategories : [],
+    specificationTemplate: Array.isArray(categoryDoc.data().specificationTemplate) ? categoryDoc.data().specificationTemplate : [],
+    keywords: Array.isArray(categoryDoc.data().keywords) ? categoryDoc.data().keywords : [],
+    taxonomyCandidate: categoryDoc.data().taxonomyCandidate === true,
+    supplierTaxonomySourceId: String(categoryDoc.data().supplierTaxonomySourceId || ""),
+    supplierTaxonomyId: String(categoryDoc.data().supplierTaxonomyId || ""),
+    normalizedSupplierCategory: String(categoryDoc.data().normalizedSupplierCategory || ""),
+  }));
+  const storeBrands: StoreBrandMappingCandidate[] = brandsSnapshot.docs.map((brandDoc) => ({
+    id: brandDoc.id,
+    name: String(brandDoc.data().name || brandDoc.id),
+    isActive: brandDoc.data().isActive !== false,
+    aliases: Array.isArray(brandDoc.data().aliases) ? brandDoc.data().aliases : [],
+  }));
+  const storedMappings = await loadSupplierProductMappings(sourceId);
+  const categoryMetadata = asRecord(product.extraAttributes);
+  const supplierCategoryValues = product.categoryHierarchy && product.categoryHierarchy.length > 0
+    ? product.categoryHierarchy
+    : [product.supplierCategory, product.supplierSubcategory].filter((value): value is string => Boolean(refreshIdentityValue(value)));
+  const supplierCategory = refreshIdentityValue(product.supplierCategory || supplierCategoryValues[0]);
+  const supplierSubcategory = refreshIdentityValue(product.supplierSubcategory || supplierCategoryValues[1]);
+  const supplierKeywords = product.keywords || String(product.specifications?.keywords || product.specifications?.Keywords || "")
+    .split(/[,|]/gu).map((keyword) => keyword.trim()).filter(Boolean);
+  const productType = refreshIdentityValue(product.productType || product.specifications?.productType || product.specifications?.["Product Type"]);
+  const categoryMappingSuggestion = suggestSupplierCategory({
+    sourceId,
+    supplierCategories: supplierCategoryValues,
+    productTitle: product.title,
+    keywords: supplierKeywords,
+    productType,
+    categories: storeCategories,
+    mappings: storedMappings.categoryMappings,
+  });
+  const taxonomyPlan = planSupplierTaxonomyCandidates({
+    sourceId,
+    supplierCategory,
+    supplierCategoryId: String(categoryMetadata.supplierCategoryId || ""),
+    supplierSubcategory,
+    supplierSubcategoryId: String(categoryMetadata.supplierSubcategoryId || ""),
+    categories: storeCategories,
+    mapping: categoryMappingSuggestion,
+  });
+  const categoryMapping: SupplierCategorySuggestion = {
+    ...categoryMappingSuggestion,
+    ...(taxonomyPlan ? {
+      ...(taxonomyPlan.categoryCandidate ? { candidateCategoryId: taxonomyPlan.categoryId } : {}),
+      ...(taxonomyPlan.subcategoryCandidate ? { candidateSubcategoryId: taxonomyPlan.subcategoryId } : {}),
+    } : {}),
+  };
+  const supplierBrand = refreshIdentityValue(product.brand || product.specifications?.brand || product.specifications?.Brand);
+  const brandMapping = suggestSupplierBrand({
+    sourceId,
+    supplierBrand,
+    brands: storeBrands,
+    mappings: storedMappings.brandMappings,
+  });
+
+  const detectedComparison = buildSupplierProductComparison(product, { ...currentProduct });
+  const reactivation = buildSupplierReactivationComparison(
+    detectedComparison,
+    existingOffer.availability,
+    supplierOfferAvailability(product.availability, product.inventoryLevel, supplierStockWasProvided(product)),
+  );
+  let effectiveOffer = existingOffer;
+  let effectiveMatch = currentProduct;
+  let reviewCandidate: SupplierProductComparison = reactivation.comparison;
+  let stockAutomated = false;
+  const hasAutomatableStockChange = reviewCandidate.fieldChanges.some((change) => AUTOMATED_STOCK_FIELDS.has(change.field));
+  if (
+    existingOffer.reviewStatus === "approved"
+    && existingOffer.productId
+    && supplierStockWasProvided(product)
+    && hasAutomatableStockChange
+  ) {
+    const latestWithoutStock = removeAutomatedStockChangesFromSupplierComparison(reviewCandidate);
+    const automation = await applyApprovedSupplierInventoryObservation(adminDb, {
+      offerId: existingOffer.id,
+      productId: existingOffer.productId,
+      stock: product.inventoryLevel,
+      observedAt: new Date().toISOString(),
+      traversalId: `review-refresh-${createHash("sha256").update(queueItemId).digest("hex").slice(0, 24)}`,
+      batchId: `review-refresh-${createHash("sha256").update(`${queueItemId}|${Date.now()}`).digest("hex").slice(0, 24)}`,
+      reason: "Known supplier inventory changed during an administrator-requested Product Review refresh.",
+      expectedStateVersion: existingOffer.stateVersion,
+    });
+    if (automation.applied && automation.offer) {
+      stockAutomated = true;
+      effectiveOffer = automation.offer;
+      effectiveMatch = {
+        ...currentProduct,
+        ...(automation.publicStock !== null ? { stock: automation.publicStock } : {}),
+        ...(automation.publicAvailability ? { availability: automation.publicAvailability } : {}),
+      };
+      reviewCandidate = latestWithoutStock || { status: "UNCHANGED", changedFields: [], fieldChanges: [] };
+    }
+  }
+
+  const selectedComparison = selectSupplierComparisonForReview(
+    reviewCandidate,
+    sourceSettings,
+    effectiveOffer.reviewStatus,
+    true,
+  ) || { status: "UNCHANGED", changedFields: [], fieldChanges: [] };
+  const productPayloadBase = {
+    ...effectiveMatch,
+    ...asRecord(queueItem.productPayload),
+    id: canonicalProductId,
+    stock: effectiveMatch.stock,
+    ...(asRecord(effectiveMatch).availability !== undefined ? { availability: asRecord(effectiveMatch).availability } : {}),
+  } as ExistingProduct;
+  const productPayload = buildProductPayload(
+    product,
+    productPayloadBase,
+    categoryMapping,
+    brandMapping,
+    storeBrands,
+    { ...selectedComparison, fieldChanges: selectedComparison.fieldChanges || [] },
+    settings,
+    source,
+    canonicalProductId,
+  );
+  const productValidationErrors = validateSupplierProductForApproval(productPayload, storeCategories, storeBrands);
+  const productImportWarnings = buildSupplierImportWarnings(product, productPayload);
+  const observedAt = new Date().toISOString();
+  const refreshTraversalId = `review-refresh-${createHash("sha256").update(`${queueItemId}|${observedAt}`).digest("hex").slice(0, 24)}`;
+  const supplierSnapshot = {
+    ...product,
+    supplierId: source.supplierId || source.id,
+    sourceId,
+    supplierPriority: supplierPriority(source),
+    supplierName: source.supplierName || source.name || source.id,
+    supplierSku: product.sku,
+    barcode: product.barcode || "",
+    productName: product.title,
+    description: product.longDescription || "",
+    wholesalePrice: product.wholesalePrice,
+    recommendedRetailPrice: product.recommendedRetailPrice,
+    stock: supplierStockWasProvided(product) ? product.inventoryLevel : undefined,
+    imageUrls: [...(product.mediaGallery || [])],
+    categoryHierarchy: [...(product.categoryHierarchy || [])],
+    specifications: { ...(product.specifications || {}) },
+    supplierMetadata: productPayload.supplierMetadata,
+  };
+  const observedOffer = buildSupplierProductOffer({
+    sourceId,
+    supplierId: source.supplierId || source.id,
+    supplierProductId: product.supplierProductId || product.sku,
+    sku: product.sku,
+    barcode: product.barcode,
+    productId: canonicalProductId,
+    price: productPayload.price,
+    cost: product.wholesalePrice,
+    stock: supplierStockWasProvided(product) ? product.inventoryLevel : undefined,
+    stockKnown: supplierStockWasProvided(product),
+    availability: product.availability,
+    priority: supplierPriority(source),
+    health: { ...(source.syncHealth || {}), availability: "available", observedAt },
+    lastSyncAt: observedAt,
+    reviewStatus: "review_pending",
+    catalogPayload: productPayload,
+    supplierSnapshot,
+    existing: effectiveOffer,
+    timestamp: observedAt,
+  });
+  const stagedOffer = stageSupplierOfferObservation({
+    existing: effectiveOffer,
+    observed: observedOffer,
+    queueItemId,
+    traversalId: refreshTraversalId,
+    observedAt,
+  });
+  const queueCreatedAt = refreshIdentityValue(queueItem.queueCreatedAt || queueItem.createdAt || observedAt);
+  const sourceImageUrls = supplierReviewSourceImageUrls(product);
+  const queueLifecycle = resolveSupplierReviewQueueUpsertLifecycle({
+    existing: queueItem,
+    sourceUrls: sourceImageUrls,
+    queueCreatedAt,
+  });
+  const preservedManagedMedia = queueLifecycle.preservedManagedMedia?.length
+    ? queueLifecycle.preservedManagedMedia
+    : Array.isArray(queueItem.managedMedia) && queueLifecycle.requeueForMedia === false
+      ? queueItem.managedMedia
+      : Array.isArray(productPayload.supplierMedia) ? productPayload.supplierMedia : [];
+  const queueData: Record<string, unknown> = {
+    ...queueItem,
+    id: queueItemId,
+    status: "Pending",
+    source: "Website",
+    sourceId,
+    supplierId: source.supplierId || source.id,
+    supplierCode: product.sku,
+    supplierName: source.supplierName || source.name || source.id,
+    supplierOfferId: observedOffer.id,
+    supplierOfferPendingRevision: stagedOffer.revision,
+    canonicalProductId,
+    productId: canonicalProductId,
+    productName: product.title,
+    costPrice: productPayload.costPrice,
+    marketPrice: product.recommendedRetailPrice,
+    stock: productPayload.stock,
+    barcode: product.barcode || "",
+    ...buildSupplierReviewQueueImagePayload(product.mediaGallery),
+    comparisonStatus: selectedComparison.status,
+    comparison: {
+      matchFound: true,
+      matchedProductId: canonicalProductId,
+      comparisonStatus: selectedComparison.status,
+      changedFields: selectedComparison.changedFields,
+      fieldChanges: selectedComparison.fieldChanges || [],
+    },
+    productPayload,
+    managedMedia: preservedManagedMedia,
+    supplierSnapshot,
+    categoryMapping,
+    brandMapping,
+    productValidation: {
+      readyToPublish: productValidationErrors.length === 0,
+      missingFields: [...new Set(productValidationErrors.map((error) => error.field))],
+      errors: productValidationErrors,
+      warnings: productImportWarnings,
+    },
+    matchedProductId: canonicalProductId,
+    approvalBaseline: queueItem.approvalBaseline,
+    createdAt: queueCreatedAt,
+    updatedAt: observedAt,
+    ...queueLifecycle.lifecycleFields,
+    correlationId: queueItem.correlationId || queueItemId,
+    importPayload: {
+      ...product,
+      id: queueItemId,
+      supplierCode: product.sku,
+      supplierName: source.supplierName || source.name || source.id,
+      source: "Website",
+      sourceId,
+      batchId: queueItem.batchId || refreshTraversalId,
+      importStatus: "Pending",
+      progress: 0,
+      createdAt: observedAt,
+      updatedAt: observedAt,
+    },
+  };
+  const pendingChange = buildPendingChange({
+    ...queueData,
+    supplierOfferPendingRevision: stagedOffer.revision,
+  }, selectedComparison);
+  queueData.pendingChangePayload = pendingChange || FieldValue.delete();
+
+  const queuedWrites: SupplierSyncWrite[] = [
+    {
+      collection: SUPPLIER_PRODUCT_OFFERS_COLLECTION,
+      id: observedOffer.id,
+      atomicGroup: queueItemId,
+      offerStateExpectation: stagedOffer.expectation,
+      reviewStateExpectation: {
+        queueState,
+        status: queueStatus,
+        supplierOfferPendingRevision: pendingRevision,
+        canonicalProductId,
+      },
+      data: stagedOffer.data,
+    },
+    {
+      collection: "supplier_review_queue",
+      id: queueItemId,
+      atomicGroup: queueItemId,
+      data: queueData,
+    },
+  ];
+  if (taxonomyPlan) {
+    queuedWrites.push({
+      collection: "categories",
+      id: taxonomyPlan.categoryId,
+      data: { observedAt },
+      taxonomyCandidatePlan: taxonomyPlan,
+    });
+  }
+  if (reviewer) {
+    const auditReference = adminDb.collection("supplier_approval_audit").doc();
+    queuedWrites.push({
+      collection: "supplier_approval_audit",
+      id: auditReference.id,
+      create: true,
+      atomicGroup: queueItemId,
+      data: buildSupplierAuditEvent({
+        queueItemId,
+        queueItem: { ...queueData, ...(queueData.pendingChangePayload instanceof FieldValue ? {} : {}) },
+        action: "review_pending",
+        previousState: queueState,
+        newState: String(queueLifecycle.lifecycleFields.queueState || queueState),
+        reason: "Supplier review refreshed by an administrator from the current Dropex observation.",
+        admin: reviewer,
+      }, auditReference.id),
+    });
+  }
+  await commitQueuedItems(queuedWrites);
+  const responseItem = { ...queueData };
+  if (responseItem.pendingChangePayload instanceof FieldValue) delete responseItem.pendingChangePayload;
+  return { queueItemId, item: responseItem, stockAutomated };
 }
 
 export function isSupplierProductEligibleForRemovalReview(product: Record<string, unknown>): boolean {

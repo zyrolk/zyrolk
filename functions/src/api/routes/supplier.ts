@@ -21,7 +21,7 @@ import {
 import { SupplierRegistry } from "../suppliers/SupplierRegistry";
 import { adminAuth, adminDb } from "../firebase";
 import { appLogger } from "../logging";
-import { getSupplierSyncSchedulerStatus } from "../../scheduled/supplierSync";
+import { getSupplierSyncSchedulerStatus, refreshActiveSupplierReviewItem } from "../../scheduled/supplierSync";
 import { getSyncInvestigationPage, getRecentSyncInvestigations } from "../suppliers/supplierInvestigations";
 import { recordSupplierInvestigationRequestMetric } from "../suppliers/supplierCloudMonitoring";
 import { isLocalSupplierSyncWorkerRuntime, processSupplierSyncJob } from "../../scheduled/supplierSyncWorker";
@@ -627,6 +627,19 @@ export function registerSupplierRoutes(app: express.Express): void {
   app.post("/api/supplier-review-queue/:queueItemId/approve", requireSupplierHubAdmin, decide("approved"));
   app.post("/api/supplier-review-queue/:queueItemId/reject", requireSupplierHubAdmin, decide("rejected"));
   app.post("/api/supplier-review-queue/:queueItemId/delete", requireSupplierHubAdmin, decide("deleted"));
+  app.post("/api/supplier-review-queue/:queueItemId/refresh", requireSupplierHubAdmin, async (req, res) => {
+    try {
+      const queueItemId = readQueueItemId(req.params.queueItemId);
+      const result = await refreshActiveSupplierReviewItem(queueItemId, reviewerFor(res));
+      res.status(200).json({ success: true, ...result });
+    } catch (error: unknown) {
+      sendSupplierFailure(res, error, {
+        logMessage: "Supplier Product Review refresh failed.",
+        fallbackMessage: "Supplier review item could not be refreshed from Dropex.",
+        context: { route: req.path, action: "refresh" },
+      });
+    }
+  });
 
   // The UI can use this endpoint for a chronological, server-authorized review
   // history without ever receiving permission to write audit records directly.

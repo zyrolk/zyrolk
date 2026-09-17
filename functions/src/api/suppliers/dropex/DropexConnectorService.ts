@@ -43,6 +43,10 @@ interface DropexLoginResponse {
 
 const REQUEST_TIMEOUT_MS = 15_000;
 const TOKEN_REFRESH_SKEW_MS = 60_000;
+const REFRESH_MAX_PAGES = 20;
+const REFRESH_MAX_RECORDS = 2_000;
+const REFRESH_MAX_ELAPSED_MS = 30_000;
+const REFRESH_PAGE_SIZE = 100;
 
 const normalizeScopeValue = (value: string, field: string): string => {
   const normalized = String(value || "").trim();
@@ -555,6 +559,133 @@ export class DropexConnectorService {
       invalidProducts,
       ...(catalogTotal ? { catalogTotal } : {}),
     };
+  }
+
+  /**
+   * Finds exactly one reseller catalogue row without turning a review refresh
+   * into a normal catalogue traversal. Non-matching rows are inspected only
+   * for their supplier identity; they are never parsed, enriched, or written.
+   */
+  public async fetchExactProductForRefresh(
+    credentials: { username?: string; password?: string },
+    outboundPolicy: SupplierOutboundPolicy,
+    target: { supplierProductId: string; sku: string },
+  ): Promise<RawA2ZProduct> {
+    if (!credentials.username || !credentials.password) {
+      throw new Error("Dropex credentials are required.");
+    }
+    const expectedProductId = String(target.supplierProductId || "").normalize("NFKC").trim();
+    const expectedSku = String(target.sku || "").normalize("NFKC").trim().toLocaleLowerCase();
+    if (!expectedProductId || !expectedSku) {
+      throw new Error("Dropex refresh requires an exact supplier product ID and SKU.");
+    }
+
+    const startedAt = this.now();
+    let page = 0;
+    let recordsInspected = 0;
+    let match: Record<string, unknown> | null = null;
+
+    while (page < REFRESH_MAX_PAGES && recordsInspected < REFRESH_MAX_RECORDS) {
+      if (this.now() - startedAt >= REFRESH_MAX_ELAPSED_MS) {
+        throw new Error("Dropex refresh catalogue lookup exceeded its time bound.");
+      }
+      const activeSession = this.reusableSession({ username: credentials.username, password: credentials.password })
+        || await this.login({ username: credentials.username, password: credentials.password }, outboundPolicy);
+      const catalogUrl = new URL(`${DROPEX_INVENTORY_SERVICE_URL}/api/v1/re-seller-products/get`);
+      catalogUrl.searchParams.set("reSellerAccountId", activeSession.reSellerAccountId);
+      catalogUrl.searchParams.set("page", String(page));
+      catalogUrl.searchParams.set("size", String(REFRESH_PAGE_SIZE));
+
+      let responseBodyText = "";
+      for (let transientAttempt = 1; transientAttempt <= DROPEX_TRANSIENT_HTTP_MAX_ATTEMPTS; transientAttempt += 1) {
+        try {
+          const { response, bodyText } = await this.authorizedRequest(
+            { username: credentials.username, password: credentials.password },
+            outboundPolicy,
+            (token) => ({
+              url: catalogUrl.toString(),
+              init: { method: "GET", headers: { Authorization: `Bearer ${token}` } },
+            }),
+            transientAttempt === 1,
+          );
+          responseBodyText = bodyText;
+          this.logDiagnostic("refresh-catalog-fetch", {
+            endpoint: catalogUrl.toString(),
+            method: "GET",
+            httpStatus: response.status,
+            responseHeaders: sanitizeDropexResponseHeaders(response.headers),
+            responseBody: sanitizeDropexResponseBody(responseBodyText),
+          });
+          const httpError = classifyDropexHttpStatus(response.status, response.headers.get("retry-after"), this.now());
+          if (httpError) throw httpError;
+          break;
+        } catch (error: unknown) {
+          if (error instanceof DropexHttpError && error.retryable && transientAttempt < DROPEX_TRANSIENT_HTTP_MAX_ATTEMPTS) {
+            await this.sleep(transientRetryDelayMs(error, transientAttempt));
+            continue;
+          }
+          if (error instanceof Error && error.name === "AbortError") {
+            throw new DropexHttpError("Dropex refresh catalogue request timed out.", 408, true);
+          }
+          throw error;
+        }
+      }
+
+      let responseBody: unknown;
+      try {
+        responseBody = JSON.parse(responseBodyText);
+      } catch {
+        throw new Error("Failed to parse Dropex refresh catalogue response as JSON.");
+      }
+      const pageRecord = asRecord(responseBody);
+      const rawList = Array.isArray(responseBody)
+        ? asRecordArray(responseBody)
+        : envelopeRecords(responseBody);
+      recordsInspected += rawList.length;
+      if (recordsInspected > REFRESH_MAX_RECORDS) {
+        throw new Error("Dropex refresh catalogue lookup exceeded its record bound.");
+      }
+
+      for (const item of rawList) {
+        const detail = asRecord(item.productDetail) || item;
+        const productId = String(detail.id || item.productId || item.id || "").normalize("NFKC").trim();
+        const sku = String(detail.sku || item.sku || "").normalize("NFKC").trim().toLocaleLowerCase();
+        if (productId !== expectedProductId || sku !== expectedSku) continue;
+        if (match) throw new Error("Dropex refresh found multiple catalogue rows for the exact supplier identity.");
+        match = item;
+      }
+
+      const reportedTotal = Number(pageRecord?.totalElements ?? pageRecord?.total ?? pageRecord?.count);
+      const currentPage = Number(pageRecord?.number ?? page);
+      const complete = pageRecord?.last === true
+        || (Number.isFinite(reportedTotal) && ((currentPage + 1) * REFRESH_PAGE_SIZE) >= reportedTotal)
+        || rawList.length < REFRESH_PAGE_SIZE;
+      if (match) break;
+      if (complete) break;
+      page += 1;
+    }
+
+    if (!match) {
+      throw new Error("The exact Dropex reseller catalogue row could not be found within the refresh bounds.");
+    }
+    if (this.now() - startedAt >= REFRESH_MAX_ELAPSED_MS) {
+      throw new Error("Dropex refresh catalogue lookup exceeded its time bound.");
+    }
+
+    const detail = asRecord(match.productDetail) || match;
+    const productId = String(detail.id || match.productId || match.id || "").trim();
+    const categoryLookup = await this.loadCategoryLookup(
+      { username: credentials.username, password: credentials.password },
+      outboundPolicy,
+    );
+    const enrichment = productId
+      ? await this.enrichProductDto(
+        { username: credentials.username, password: credentials.password },
+        outboundPolicy,
+        productId,
+      )
+      : undefined;
+    return ProductParser.parseCatalogItem(match, { categoryLookup, enrichment });
   }
 
   public async fetchCatalogPage(
