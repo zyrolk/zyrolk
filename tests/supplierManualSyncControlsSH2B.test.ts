@@ -6,6 +6,7 @@ import {
   supplierSyncFilterExecutionLabel,
   supplierSyncFilterIsSupported,
 } from '../src/services/supplierManualSync';
+import { validateDropexManualSupplierSyncLimit } from '../functions/src/api/suppliers/supplierSyncRequest';
 
 const serverSideCapabilities = {
   incremental: {
@@ -107,6 +108,36 @@ test('SH-2B validates the traversal-wide total product limit independently', () 
   }
 });
 
+test('Dropex controlled manual sync requires and preserves an explicit run limit', () => {
+  assert.equal(buildSupplierManualSyncRequest({
+    sourceId: 'dropex',
+    mode: 'full',
+    totalProductLimit: '5',
+    requireTotalProductLimit: true,
+    capabilities: serverSideCapabilities,
+  }).totalProductLimit, 5);
+  assert.throws(() => buildSupplierManualSyncRequest({
+    sourceId: 'dropex',
+    mode: 'full',
+    totalProductLimit: '',
+    requireTotalProductLimit: true,
+    capabilities: serverSideCapabilities,
+  }), /Product count limit is required/);
+  assert.throws(() => validateDropexManualSupplierSyncLimit(['dropex'], { mode: 'full' }), /Product count limit is required/);
+  assert.doesNotThrow(() => validateDropexManualSupplierSyncLimit(['dropex'], { mode: 'full', totalProductLimit: 5 }));
+  assert.throws(() => validateDropexManualSupplierSyncLimit(
+    ['production-source'],
+    { mode: 'full' },
+    ['dropex'],
+  ), /Product count limit is required/);
+  assert.doesNotThrow(() => validateDropexManualSupplierSyncLimit(
+    ['production-source'],
+    { mode: 'full', totalProductLimit: 5 },
+    ['dropex'],
+  ));
+  assert.doesNotThrow(() => validateDropexManualSupplierSyncLimit(['a2z-traders'], { mode: 'full' }));
+});
+
 test('SH-2B Supplier Hub wiring uses the capability-driven dialog and explicit request contract', () => {
   const hub = readFileSync('src/components/SupplierHubFiveStars.tsx', 'utf8');
   const dialog = readFileSync('src/components/supplier-management/SupplierManualSyncDialog.tsx', 'utf8');
@@ -119,7 +150,10 @@ test('SH-2B Supplier Hub wiring uses the capability-driven dialog and explicit r
   assert.match(hub, /isInitialSync=\{!supplierHasCompletedInitialSync\(manualSyncSource\)\}/);
   assert.match(dialog, /source\.syncCapabilities \|\| \{\}/);
   assert.match(dialog, /supportsIncremental \?/);
-  assert.match(dialog, /required for first sync/);
+  assert.match(dialog, /requiresProductLimit/);
+  assert.match(dialog, /useState\(requiresProductLimit \? '5' : ''\)/);
+  assert.match(dialog, /required=\{requiresProductLimit\}/);
+  assert.match(dialog, /requireTotalProductLimit: requiresProductLimit/);
   assert.match(requestBuilder, /Applied by Zyro after retrieval/);
   assert.match(dialog, /is not the catalog fetch page size/);
 });

@@ -32,6 +32,7 @@ export interface SupplierManualSyncDraft {
   subcategory?: string;
   search?: string;
   totalProductLimit?: string | number | null;
+  requireTotalProductLimit?: boolean;
   catalogContinuation?: 'continue' | 'restart';
   capabilities?: SupplierSyncCapabilities | null;
 }
@@ -79,6 +80,9 @@ export function buildSupplierManualSyncRequest(draft: SupplierManualSyncDraft): 
       throw new Error('Product count limit must be a whole number from 1 to 10,000.');
     }
     totalProductLimit = parsed;
+  }
+  if (draft.requireTotalProductLimit && totalProductLimit === undefined) {
+    throw new Error('Product count limit is required for this controlled sync.');
   }
 
   return {

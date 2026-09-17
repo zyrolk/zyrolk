@@ -158,6 +158,12 @@ export function recordSupplierManualSyncRequestMetric(input: {
   jobId: string;
   sourceCount: number;
   created: boolean;
+  syncRequest?: {
+    mode?: string;
+    totalProductLimit?: number;
+    pageSize?: number;
+    catalogContinuation?: string;
+  } | null;
 }): void {
   emitSupplierCloudMetric({
     name: "supplier_manual_sync_requests",
@@ -168,6 +174,14 @@ export function recordSupplierManualSyncRequestMetric(input: {
       sourceScope: input.sourceCount === 0 ? "all" : input.sourceCount === 1 ? "single" : "multiple",
       jobResult: input.created ? "created" : "deduplicated",
     },
-    context: { jobId: input.jobId, sourceCount: input.sourceCount },
+    context: {
+      jobId: input.jobId,
+      sourceCount: input.sourceCount,
+      trigger: "manual",
+      mode: input.syncRequest?.mode || "full",
+      totalProductLimit: input.syncRequest?.totalProductLimit ?? null,
+      pageSize: input.syncRequest?.pageSize ?? null,
+      catalogContinuation: input.syncRequest?.catalogContinuation ?? null,
+    },
   });
 }

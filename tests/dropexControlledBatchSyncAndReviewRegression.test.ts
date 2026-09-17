@@ -110,6 +110,7 @@ test('continue-next-batch returns products 6-10, not 1-5', async () => {
     pageSize: 25,
     totalProductLimit: 5,
     requestFingerprint: 'dropex-limit-5',
+    continuationFingerprint: 'same-catalogue-scope',
     syncJobId: 'job-1',
     processPage: processEntirePage,
     persistCheckpoint: async () => undefined,
@@ -124,6 +125,7 @@ test('continue-next-batch returns products 6-10, not 1-5', async () => {
     pageSize: 25,
     totalProductLimit: 5,
     requestFingerprint: 'dropex-limit-5',
+    continuationFingerprint: 'same-catalogue-scope',
     syncJobId: 'job-2',
     catalogContinuation: 'continue',
     initial: first.checkpoint,
@@ -140,6 +142,220 @@ test('continue-next-batch returns products 6-10, not 1-5', async () => {
   assert.deepEqual(observed, ['SKU-0005', 'SKU-0006', 'SKU-0007', 'SKU-0008', 'SKU-0009']);
   assert.equal(secondRequests[0].cursor, '5');
   assert.notEqual(observed[0], 'SKU-0000');
+});
+
+test('continue-next-batch with a changed limit resumes the saved cursor and applies the new batch size', async () => {
+  const first = await runSupplierCatalogTraversal({
+    connector: pagedConnector(100, []),
+    pageSize: 5,
+    totalProductLimit: 5,
+    requestFingerprint: 'admitted-request-limit-5',
+    continuationFingerprint: 'same-catalogue-scope',
+    syncJobId: 'job-1',
+    processPage: processEntirePage,
+    persistCheckpoint: async () => undefined,
+    reconcileDeletedProducts: async () => undefined,
+  });
+  assert.equal(first.limited, true);
+
+  const requests: SupplierCatalogPageRequest[] = [];
+  const observed: string[] = [];
+  const second = await runSupplierCatalogTraversal({
+    connector: pagedConnector(100, requests),
+    pageSize: 5,
+    totalProductLimit: 10,
+    requestFingerprint: 'admitted-request-limit-10',
+    continuationFingerprint: 'same-catalogue-scope',
+    syncJobId: 'job-2',
+    catalogContinuation: 'continue',
+    initial: first.checkpoint,
+    processPage: async (page) => {
+      observed.push(...page.products.map((entry) => entry.sku));
+      return processEntirePage(page);
+    },
+    persistCheckpoint: async () => undefined,
+    reconcileDeletedProducts: async () => undefined,
+  });
+
+  assert.equal(second.limited, true);
+  assert.equal(second.checkpoint.totalProductLimit, 10);
+  assert.equal(second.checkpoint.productsObserved, 15);
+  assert.equal(second.checkpoint.cursor, '15');
+  assert.equal(requests[0].cursor, '5');
+  assert.deepEqual(observed, [
+    'SKU-0005', 'SKU-0006', 'SKU-0007', 'SKU-0008', 'SKU-0009',
+    'SKU-0010', 'SKU-0011', 'SKU-0012', 'SKU-0013', 'SKU-0014',
+  ]);
+});
+
+test('continuation rejects a changed catalogue identity even when only batch controls are otherwise valid', async () => {
+  const first = await runSupplierCatalogTraversal({
+    connector: pagedConnector(100, []),
+    pageSize: 5,
+    totalProductLimit: 5,
+    requestFingerprint: 'admitted-request-limit-5',
+    continuationFingerprint: 'catalogue-scope-a',
+    syncJobId: 'job-1',
+    processPage: processEntirePage,
+    persistCheckpoint: async () => undefined,
+    reconcileDeletedProducts: async () => undefined,
+  });
+  const requests: SupplierCatalogPageRequest[] = [];
+  const observed: string[] = [];
+  const restarted = await runSupplierCatalogTraversal({
+    connector: pagedConnector(100, requests),
+    pageSize: 5,
+    totalProductLimit: 10,
+    requestFingerprint: 'admitted-request-limit-10',
+    continuationFingerprint: 'catalogue-scope-b',
+    syncJobId: 'job-2',
+    catalogContinuation: 'continue',
+    initial: first.checkpoint,
+    processPage: async (page) => {
+      observed.push(...page.products.map((entry) => entry.sku));
+      return processEntirePage(page);
+    },
+    persistCheckpoint: async () => undefined,
+    reconcileDeletedProducts: async () => undefined,
+  });
+
+  assert.equal(restarted.limited, true);
+  assert.equal(requests[0].cursor, null);
+  assert.equal(restarted.checkpoint.productsObserved, 10);
+  assert.equal(observed[0], 'SKU-0000');
+});
+
+test('legacy limited continuation fails closed without replacing its saved cursor', async () => {
+  const initial = {
+    status: 'limited' as const,
+    terminationReason: 'limit_reached' as const,
+    syncMode: 'full' as const,
+    requestFingerprint: 'legacy-request',
+    cursor: '5',
+    totalProductLimit: 5,
+  };
+  const requests: SupplierCatalogPageRequest[] = [];
+  let persisted = 0;
+
+  await assert.rejects(
+    runSupplierCatalogTraversal({
+      connector: pagedConnector(100, requests),
+      pageSize: 5,
+      totalProductLimit: 10,
+      requestFingerprint: 'new-request',
+      continuationFingerprint: 'new-catalogue-scope',
+      continuationContract: 'manual',
+      syncJobId: 'job-new',
+      catalogContinuation: 'continue',
+      initial,
+      processPage: processEntirePage,
+      persistCheckpoint: async () => { persisted += 1; },
+      reconcileDeletedProducts: async () => undefined,
+    }),
+    /predates the current continuation contract.*restart|checkpoint reconciliation/i,
+  );
+  assert.equal(requests.length, 0);
+  assert.equal(persisted, 0);
+  assert.equal(initial.cursor, '5');
+});
+
+test('legacy automatic in-progress checkpoint resumes by its matching canonical scope and upgrades safely', async () => {
+  const requests: SupplierCatalogPageRequest[] = [];
+  let persisted: ReturnType<typeof createSupplierCatalogTraversalCheckpoint> | null = null;
+  const result = await runSupplierCatalogTraversal({
+    connector: pagedConnector(10, requests),
+    pageSize: 5,
+    totalProductLimit: null,
+    requestFingerprint: 'legacy-automatic-request',
+    continuationFingerprint: 'current-automatic-scope',
+    continuationContract: 'automatic',
+    syncJobId: 'scheduled-job-1',
+    initial: {
+      status: 'in_progress',
+      syncMode: 'full',
+      requestFingerprint: 'legacy-automatic-request',
+      syncJobId: 'scheduled-job-1',
+      cursor: '5',
+      productsObserved: 5,
+      productsScanned: 5,
+      resumeCount: 2,
+      totalProductLimit: null,
+      terminationReason: null,
+    },
+    processPage: processEntirePage,
+    persistCheckpoint: async (checkpoint) => { persisted = checkpoint; },
+    reconcileDeletedProducts: async () => undefined,
+  });
+
+  assert.equal(requests[0].cursor, '5');
+  assert.equal(result.checkpoint.productsObserved, 10);
+  assert.equal(result.checkpoint.totalProductLimit, null);
+  assert.equal(result.checkpoint.continuationFingerprint, 'current-automatic-scope');
+  assert.equal(persisted?.cursor, null);
+  assert.equal(persisted?.productsObserved, 10);
+});
+
+test('legacy automatic checkpoint with an incompatible canonical scope restarts safely', async () => {
+  const requests: SupplierCatalogPageRequest[] = [];
+  const result = await runSupplierCatalogTraversal({
+    connector: pagedConnector(10, requests),
+    pageSize: 5,
+    totalProductLimit: null,
+    requestFingerprint: 'current-automatic-request',
+    continuationFingerprint: 'current-automatic-scope',
+    continuationContract: 'automatic',
+    syncJobId: 'scheduled-job-2',
+    initial: {
+      status: 'in_progress',
+      syncMode: 'full',
+      requestFingerprint: 'different-legacy-request',
+      syncJobId: 'scheduled-job-2',
+      cursor: '5',
+      productsObserved: 5,
+      productsScanned: 5,
+      totalProductLimit: null,
+      terminationReason: null,
+    },
+    processPage: processEntirePage,
+    persistCheckpoint: async () => undefined,
+    reconcileDeletedProducts: async () => undefined,
+  });
+
+  assert.equal(requests[0].cursor, null);
+  assert.equal(result.checkpoint.productsObserved, 10);
+  assert.equal(result.checkpoint.continuationFingerprint, 'current-automatic-scope');
+});
+
+test('new-format automatic checkpoint continues by continuation scope while remaining unbounded', async () => {
+  const requests: SupplierCatalogPageRequest[] = [];
+  const result = await runSupplierCatalogTraversal({
+    connector: pagedConnector(10, requests),
+    pageSize: 5,
+    totalProductLimit: null,
+    requestFingerprint: 'new-automatic-request',
+    continuationFingerprint: 'current-automatic-scope',
+    continuationContract: 'automatic',
+    syncJobId: 'scheduled-job-3',
+    initial: {
+      status: 'in_progress',
+      syncMode: 'full',
+      requestFingerprint: 'new-automatic-request',
+      continuationFingerprint: 'current-automatic-scope',
+      syncJobId: 'scheduled-job-3',
+      cursor: '5',
+      productsObserved: 5,
+      productsScanned: 5,
+      totalProductLimit: null,
+      terminationReason: null,
+    },
+    processPage: processEntirePage,
+    persistCheckpoint: async () => undefined,
+    reconcileDeletedProducts: async () => undefined,
+  });
+
+  assert.equal(requests[0].cursor, '5');
+  assert.equal(result.checkpoint.productsObserved, 10);
+  assert.equal(result.checkpoint.totalProductLimit, null);
 });
 
 test('third continuation returns the next limited batch', async () => {
@@ -220,12 +436,14 @@ test('explicit restart-from-beginning resets traversal only when requested', () 
     lastCheckpointAt: '2026-08-01T00:05:00.000Z',
     syncMode: 'full',
     requestFingerprint: 'dropex-limit-5',
+    continuationFingerprint: 'new-catalogue-scope',
     syncJobId: 'job-old',
     totalProductLimit: 5,
     terminationReason: 'limit_reached',
     status: 'limited',
   }, {
     requestFingerprint: 'dropex-limit-5',
+    continuationFingerprint: 'new-catalogue-scope',
     syncJobId: 'job-new',
     totalProductLimit: 5,
     catalogContinuation: 'continue',
@@ -254,6 +472,7 @@ test('explicit restart-from-beginning resets traversal only when requested', () 
     status: 'limited',
   }, {
     requestFingerprint: 'dropex-limit-5',
+    continuationFingerprint: 'new-catalogue-scope',
     syncJobId: 'job-new',
     totalProductLimit: 5,
     catalogContinuation: 'restart',
@@ -261,6 +480,7 @@ test('explicit restart-from-beginning resets traversal only when requested', () 
   assert.equal(restarted.cursor, null);
   assert.equal(restarted.productsObserved, 0);
   assert.equal(restarted.productsObservedAtBatchStart, 0);
+  assert.equal(restarted.totalProductLimit, 5);
   assert.notEqual(restarted.traversalId, 'traversal-1');
 });
 

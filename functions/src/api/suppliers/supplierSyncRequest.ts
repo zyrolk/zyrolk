@@ -85,7 +85,7 @@ export function normalizeSupplierSyncRequest(value: unknown): SupplierSyncReques
   };
 }
 
-/** Stable scope identity prevents resuming a cursor under different controls. */
+/** Stable admitted request identity for job deduplication and request history. */
 export function fingerprintSupplierSyncRequest(request: SupplierSyncRequest): string {
   const normalized = normalizeSupplierSyncRequest(request);
   return createHash("sha256").update(JSON.stringify({
@@ -95,6 +95,21 @@ export function fingerprintSupplierSyncRequest(request: SupplierSyncRequest): st
     search: normalized.filters?.search || null,
     pageSize: normalized.pageSize || null,
     totalProductLimit: normalized.totalProductLimit || null,
+  })).digest("hex");
+}
+
+/**
+ * Stable catalogue identity used only for traversal continuation. Batch-size
+ * controls must not move a saved catalogue cursor, while source/filter
+ * selection changes must invalidate that cursor.
+ */
+export function fingerprintSupplierSyncContinuationScope(request: SupplierSyncRequest): string {
+  const normalized = normalizeSupplierSyncRequest(request);
+  return createHash("sha256").update(JSON.stringify({
+    mode: normalized.mode,
+    category: normalized.filters?.category || null,
+    subcategory: normalized.filters?.subcategory || null,
+    search: normalized.filters?.search || null,
   })).digest("hex");
 }
 
@@ -234,6 +249,19 @@ export function supplierSyncRequestIsSubset(request: SupplierSyncRequest): boole
   return request.mode === "incremental"
     || Boolean(request.totalProductLimit)
     || supplierSyncRequestHasFilters(request);
+}
+
+/** Controlled Dropex manual runs must always carry an explicit run-wide limit. */
+export function validateDropexManualSupplierSyncLimit(
+  sourceIds: readonly string[],
+  request: SupplierSyncRequest,
+  connectorTypes: readonly string[] = [],
+): void {
+  const includesDropex = sourceIds.some((sourceId) => sourceId.toLowerCase() === "dropex")
+    || connectorTypes.some((connectorType) => connectorType.toLowerCase() === "dropex");
+  if (includesDropex && request.totalProductLimit === undefined) {
+    throw new ApiError("Product count limit is required for Dropex manual synchronization.", 400);
+  }
 }
 
 export interface ValidatedSupplierSyncSource {

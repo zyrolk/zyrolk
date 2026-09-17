@@ -210,7 +210,7 @@ test('Initial Sync opens the controlled dialog and never auto-starts an unbounde
   assert.doesNotMatch(hub, /runManualSupplierSync\(\{ sourceIds: \[id\], mode: 'full' \}\)/);
   assert.match(hub, /isInitialSync=\{!supplierHasCompletedInitialSync\(manualSyncSource\)\}/);
   assert.match(hub, /Catalog fetch page size/);
-  assert.match(dialog, /required for first sync/);
+  assert.match(dialog, /required for controlled sync/);
   assert.match(dialog, /is not the catalog fetch page size/);
   assert.match(dialog, /Limited runs never mark unscanned/);
   assert.match(presentation, /supplierReviewIsPreparing/);

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import type { Firestore } from 'firebase-admin/firestore';
 import {
@@ -111,6 +112,24 @@ test('SH-2B persists and projects the explicit full sync request', async () => {
   assert.deepEqual(created.job.syncRequest, manualInput().syncRequest);
   assert.deepEqual(db.documents.get(`supplier_sync_jobs/${created.job.id}`)?.syncRequest, manualInput().syncRequest);
   assert.deepEqual(projectSupplierSyncJobForAdmin(created.job).syncRequest, manualInput().syncRequest);
+});
+
+test('Dropex manual admission stores the exact run limit and worker projection', async () => {
+  const db = new FakeFirestore();
+  const request = { mode: 'full' as const, pageSize: 5, totalProductLimit: 5, catalogContinuation: 'restart' as const };
+  const created = await createSupplierSyncJob(db as unknown as Firestore, {
+    trigger: 'manual',
+    sourceIds: ['dropex'],
+    requestedBy: { uid: 'admin-1', email: 'admin@zyro.lk' },
+    syncRequest: request,
+  }, 1_000);
+
+  assert.deepEqual(db.documents.get(`supplier_sync_jobs/${created.job.id}`)?.syncRequest, request);
+  const worker = readFileSync('functions/src/scheduled/supplierSyncWorker.ts', 'utf8');
+  assert.match(worker, /syncRequest: lease\.job\.syncRequest/);
+  assert.match(worker, /totalProductLimit: lease\.job\.syncRequest\?\.totalProductLimit \?\? null/);
+  assert.match(worker, /pageSize: lease\.job\.syncRequest\?\.pageSize \?\? null/);
+  assert.match(worker, /catalogContinuation: lease\.job\.syncRequest\?\.catalogContinuation \?\? null/);
 });
 
 test('SH-2B reuses one active job for repeated requests with the exact same source scope', async () => {

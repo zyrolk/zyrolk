@@ -29,6 +29,8 @@ export interface SupplierCatalogTraversalCheckpoint {
   recentCursorFingerprints?: string[];
   syncMode: SupplierCatalogSyncMode;
   requestFingerprint: string | null;
+  /** Stable catalogue/filter identity used for continuation; excludes batch sizing. */
+  continuationFingerprint?: string | null;
   syncJobId: string | null;
   totalProductLimit: number | null;
   /** Connector total for this traversal scope; reported totals never imply determinate progress. */
@@ -64,6 +66,8 @@ export interface SupplierCatalogTraversalOptions {
   /** False for incremental, filtered, or otherwise partial catalogue scopes. */
   deletionReconciliationEligible?: boolean;
   requestFingerprint?: string;
+  continuationFingerprint?: string;
+  continuationContract?: "manual" | "automatic";
   syncJobId?: string;
   initial?: Partial<SupplierCatalogTraversalCheckpoint>;
   processPage(page: SupplierCatalogPageResult, checkpoint: SupplierCatalogTraversalCheckpoint): Promise<SupplierCatalogPageMetrics>;
@@ -177,6 +181,8 @@ export function createSupplierCatalogTraversalCheckpoint(
     traversalId?: string;
     syncMode?: SupplierCatalogSyncMode;
     requestFingerprint?: string;
+    continuationFingerprint?: string;
+    continuationContract?: "manual" | "automatic";
     syncJobId?: string;
     totalProductLimit?: number | null;
     deletionReconciliationEligible?: boolean;
@@ -186,23 +192,45 @@ export function createSupplierCatalogTraversalCheckpoint(
   const now = options.now ?? Date.now();
   const requestedMode = options.syncMode === "incremental" ? "incremental" : "full";
   const requestedFingerprint = String(options.requestFingerprint || "").trim();
+  const requestedContinuationFingerprint = String(options.continuationFingerprint || "").trim();
   const requestedJobId = String(options.syncJobId || "").trim();
+  const requestedTotalProductLimit = normalizeSupplierTotalProductLimit(options.totalProductLimit);
   const restartRequested = options.catalogContinuation === "restart";
-  const sameRequestScope = (!requestedFingerprint || initial.requestFingerprint === requestedFingerprint)
+  const legacyLimitedContinuation = options.catalogContinuation === "continue"
+    && Boolean(requestedContinuationFingerprint)
+    && requestedTotalProductLimit !== null
+    && initial.status === "limited"
+    && initial.terminationReason === "limit_reached"
+    && !initial.continuationFingerprint;
+  if (legacyLimitedContinuation) {
+    throw new SupplierCatalogTraversalIntegrityError(
+      "The saved supplier catalogue checkpoint predates the current continuation contract. "
+      + "Use Start from beginning/restart, or authorize checkpoint reconciliation.",
+    );
+  }
+  const sameRequestScope = (requestedContinuationFingerprint
+    ? initial.continuationFingerprint === requestedContinuationFingerprint
+    : (!requestedFingerprint || initial.requestFingerprint === requestedFingerprint))
     && (!initial.syncMode || initial.syncMode === requestedMode);
-  const sameJobScope = sameRequestScope
+  const legacyAutomaticResumeScope = options.continuationContract === "automatic"
+    && !initial.continuationFingerprint
+    && ["in_progress", "paused", "reconciling"].includes(String(initial.status || ""))
+    && Boolean(requestedFingerprint)
+    && initial.requestFingerprint === requestedFingerprint
+    && (!initial.syncMode || initial.syncMode === requestedMode);
+  const sameStandardResumeScope = sameRequestScope || legacyAutomaticResumeScope;
+  const sameJobScope = sameStandardResumeScope
     && (!requestedJobId || initial.syncJobId === requestedJobId);
   const limitedContinuation = options.catalogContinuation === "continue"
     && !restartRequested
     && initial.status === "limited"
     && initial.terminationReason === "limit_reached"
     && sameRequestScope
-    && Boolean(requestedFingerprint);
+    && Boolean(requestedContinuationFingerprint || requestedFingerprint);
   const standardResume = !restartRequested
     && sameJobScope
     && ["in_progress", "paused", "reconciling"].includes(String(initial.status || ""));
   const resumable = limitedContinuation || standardResume;
-  const requestedTotalProductLimit = normalizeSupplierTotalProductLimit(options.totalProductLimit);
   const startedAt = resumable && typeof initial.startedAt === "string" && initial.startedAt
     ? initial.startedAt
     : new Date(now).toISOString();
@@ -236,8 +264,11 @@ export function createSupplierCatalogTraversalCheckpoint(
     recentCursorFingerprints: resumable ? boundedFingerprints(initial.recentCursorFingerprints) : [],
     syncMode: requestedMode,
     requestFingerprint: requestedFingerprint || null,
+    continuationFingerprint: requestedContinuationFingerprint || initial.continuationFingerprint || null,
     syncJobId: requestedJobId || null,
-    totalProductLimit: resumable
+    totalProductLimit: limitedContinuation && requestedTotalProductLimit !== null
+      ? requestedTotalProductLimit
+      : resumable
       ? normalizeSupplierTotalProductLimit(initial.totalProductLimit ?? requestedTotalProductLimit)
       : requestedTotalProductLimit,
     catalogTotalProducts: resumable ? safeOptionalCount(initial.catalogTotalProducts) : null,
@@ -260,6 +291,8 @@ export async function runSupplierCatalogTraversal(options: SupplierCatalogTraver
     traversalId: options.traversalId,
     syncMode: options.syncMode,
     requestFingerprint: options.requestFingerprint,
+    continuationFingerprint: options.continuationFingerprint,
+    continuationContract: options.continuationContract,
     syncJobId: options.syncJobId,
     totalProductLimit: options.totalProductLimit,
     deletionReconciliationEligible: hasFilters ? false : options.deletionReconciliationEligible,

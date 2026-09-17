@@ -4,6 +4,7 @@ import test from 'node:test';
 import { SupplierRegistry } from '../functions/src/api/suppliers/SupplierRegistry';
 import { projectSupplierSourceForAdmin } from '../functions/src/api/suppliers/supplierAdminConfiguration';
 import {
+  fingerprintSupplierSyncContinuationScope,
   fingerprintSupplierSyncRequest,
   parseSupplierSyncRequest,
   supplierSyncRequestIsSubset,
@@ -75,6 +76,27 @@ test('SH-2B sync request fingerprints are deterministic and scope-sensitive', ()
   assert.equal(supplierSyncRequestIsSubset({ mode: 'incremental' }), true);
 });
 
+test('SH-2B continuation identity ignores only batch-size controls', () => {
+  const first = fingerprintSupplierSyncContinuationScope({
+    mode: 'full',
+    filters: { search: 'A55' },
+    pageSize: 5,
+    totalProductLimit: 5,
+  });
+  assert.equal(first, fingerprintSupplierSyncContinuationScope({
+    mode: 'full',
+    filters: { search: 'A55' },
+    pageSize: 200,
+    totalProductLimit: 10,
+  }));
+  assert.notEqual(first, fingerprintSupplierSyncContinuationScope({
+    mode: 'full',
+    filters: { search: 'A56' },
+    pageSize: 200,
+    totalProductLimit: 10,
+  }));
+});
+
 test('SH-2B every manual API entry point persists an explicit server-validated request', () => {
   const routes = readFileSync('functions/src/api/routes/supplier.ts', 'utf8');
   const worker = readFileSync('functions/src/scheduled/supplierSyncWorker.ts', 'utf8');
@@ -82,9 +104,17 @@ test('SH-2B every manual API entry point persists an explicit server-validated r
   const sync = readFileSync('functions/src/scheduled/supplierSync.ts', 'utf8');
 
   assert.match(routes, /readManualSupplierSyncRequest\(req\.body, \{ requireExplicitMode: true \}\)/);
-  assert.match(routes, /readManualSupplierSyncRequest\(\{ mode: "full" \}, \{ fallbackSourceIds: \[sourceId\] \}\)/);
+  assert.match(routes, /readManualSupplierSyncRequest\(\{[\s\S]*?totalProductLimit: action === "retry" \? storedLimit : req\.body\?\.totalProductLimit,[\s\S]*?\}, \{ fallbackSourceIds: \[sourceId\] \}\)/);
   assert.match(routes, /validateSupplierSyncSources\(adminDb, sourceIds, syncRequest\)/);
   assert.match(jobs, /syncRequest: input\.syncRequest/);
   assert.match(worker, /syncRequest: lease\.job\.syncRequest/);
   assert.match(sync, /supplier_sync_history[\s\S]*syncRequest/);
+});
+
+test('SH-2B controlled Dropex admission rejects an omitted run limit before job creation', () => {
+  const routes = readFileSync('functions/src/api/routes/supplier.ts', 'utf8');
+  assert.match(routes, /validateDropexManualSupplierSyncLimit\(\s*manualRequest\.sourceIds,\s*manualRequest\.syncRequest,\s*manualRequest\.validatedSources\.map/);
+  assert.match(routes, /totalProductLimit: action === "retry" \? storedLimit : req\.body\?\.totalProductLimit/);
+  assert.match(routes, /const storedLimit = action === "retry" \? sourceSnapshot\.data\(\)\?\.catalogSync\?\.totalProductLimit : undefined/);
+  assert.match(routes, /startInitialSync[\s\S]*validateDropexManualSupplierSyncLimit\(\s*initialRequest\.sourceIds,\s*initialRequest\.syncRequest,\s*initialRequest\.validatedSources\.map/);
 });

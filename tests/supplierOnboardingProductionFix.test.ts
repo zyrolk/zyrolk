@@ -119,7 +119,7 @@ test('connection testing uses the exact source registry record while retaining t
   assert.match(routes, /createOnly: true/);
   assert.match(routes, /testProposedSupplierSource\(sourceId, req\.body\?\.source\)/);
   assert.match(routes, /const startInitialSync = req\.body\?\.startInitialSync !== false/);
-  assert.match(routes, /startInitialSync[\s\S]*readManualSupplierSyncRequest\(\{ mode: "full" \}, \{ fallbackSourceIds: \[sourceId\] \}\)/);
+  assert.match(routes, /startInitialSync[\s\S]*readManualSupplierSyncRequest\(\{[\s\S]*?mode: "full",[\s\S]*?\}, \{ fallbackSourceIds: \[sourceId\] \}\)/);
   assert.match(routes, /createSupplierSyncJob\(adminDb, \{[\s\S]*trigger: "manual",[\s\S]*sourceIds: initialRequest\.sourceIds,[\s\S]*syncRequest: initialRequest\.syncRequest/);
   assert.ok(routes.indexOf('testProposedSupplierSource(sourceId, req.body?.source)') < routes.indexOf('saveSupplierSource(adminDb, sourceId, source'));
   assert.ok(routes.indexOf('saveSupplierSource(adminDb, sourceId, source') < routes.indexOf('createSupplierSyncJob(adminDb'));

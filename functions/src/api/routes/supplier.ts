@@ -36,6 +36,7 @@ import {
 import {
   parseSupplierSyncRequest,
   resolveEnabledSupplierSyncSourceIds,
+  validateDropexManualSupplierSyncLimit,
   validateSupplierSyncSources,
 } from "../suppliers/supplierSyncRequest";
 import {
@@ -95,8 +96,8 @@ const readManualSupplierSyncRequest = async (
   const sourceIds = requestedSourceIds.length
     ? requestedSourceIds
     : await resolveEnabledSupplierSyncSourceIds(adminDb);
-  await validateSupplierSyncSources(adminDb, sourceIds, syncRequest);
-  return { sourceIds, syncRequest };
+  const validatedSources = await validateSupplierSyncSources(adminDb, sourceIds, syncRequest);
+  return { sourceIds, syncRequest, validatedSources };
 };
 
 const readQueueItemId = (value: unknown): string => {
@@ -399,8 +400,16 @@ export function registerSupplierRoutes(app: express.Express): void {
       }, { merge: true });
       const startInitialSync = req.body?.startInitialSync !== false;
       const initialRequest = startInitialSync
-        ? await readManualSupplierSyncRequest({ mode: "full" }, { fallbackSourceIds: [sourceId] })
+        ? await readManualSupplierSyncRequest({
+          mode: "full",
+          ...(req.body?.totalProductLimit !== undefined ? { totalProductLimit: req.body.totalProductLimit } : {}),
+        }, { fallbackSourceIds: [sourceId] })
         : null;
+      if (initialRequest) validateDropexManualSupplierSyncLimit(
+        initialRequest.sourceIds,
+        initialRequest.syncRequest,
+        initialRequest.validatedSources.map((source) => source.connectorType),
+      );
       const initialSync = initialRequest
         ? await createSupplierSyncJob(adminDb, {
           trigger: "manual",
@@ -790,6 +799,11 @@ export function registerSupplierRoutes(app: express.Express): void {
     try {
       const reviewer = reviewerFor(res);
       const manualRequest = await readManualSupplierSyncRequest(req.body, { requireExplicitMode: true });
+      validateDropexManualSupplierSyncLimit(
+        manualRequest.sourceIds,
+        manualRequest.syncRequest,
+        manualRequest.validatedSources.map((source) => source.connectorType),
+      );
       const result = await createSupplierSyncJob(adminDb, {
         trigger: "manual",
         sourceIds: manualRequest.sourceIds,
@@ -951,7 +965,16 @@ export function registerSupplierRoutes(app: express.Express): void {
       const sourceSnapshot = await sourceReference.get();
       if (!sourceSnapshot.exists) throw new ApiError("Supplier source was not found.", 404);
       if (action === "sync" || action === "retry") {
-        const manualRequest = await readManualSupplierSyncRequest({ mode: "full" }, { fallbackSourceIds: [sourceId] });
+        const storedLimit = action === "retry" ? sourceSnapshot.data()?.catalogSync?.totalProductLimit : undefined;
+        const manualRequest = await readManualSupplierSyncRequest({
+          mode: "full",
+          totalProductLimit: action === "retry" ? storedLimit : req.body?.totalProductLimit,
+        }, { fallbackSourceIds: [sourceId] });
+        validateDropexManualSupplierSyncLimit(
+          manualRequest.sourceIds,
+          manualRequest.syncRequest,
+          manualRequest.validatedSources.map((source) => source.connectorType),
+        );
         const result = await createSupplierSyncJob(adminDb, {
           trigger: "manual",
           sourceIds: manualRequest.sourceIds,

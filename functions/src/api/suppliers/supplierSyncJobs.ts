@@ -550,6 +550,7 @@ export async function createSupplierSyncJob(
       jobId: result.job.id,
       sourceCount: record.sourceIds.length,
       created: result.created,
+      syncRequest: result.job.syncRequest,
     });
   }
   return result;

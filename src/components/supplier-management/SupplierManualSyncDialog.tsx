@@ -50,11 +50,12 @@ export default function SupplierManualSyncDialog({
 }: SupplierManualSyncDialogProps) {
   const capabilities = source.syncCapabilities || {};
   const supportsIncremental = capabilities.incremental?.supported === true;
+  const requiresProductLimit = source.id.toLowerCase() === 'dropex' || isInitialSync;
   const [mode, setMode] = useState<SupplierSyncMode>('full');
   const [category, setCategory] = useState('');
   const [subcategory, setSubcategory] = useState('');
   const [search, setSearch] = useState('');
-  const [totalProductLimit, setTotalProductLimit] = useState(isInitialSync ? '5' : '');
+  const [totalProductLimit, setTotalProductLimit] = useState(requiresProductLimit ? '5' : '');
   const [restartFromBeginning, setRestartFromBeginning] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
   const supplierName = String(source.supplierName || source.name || source.id);
@@ -76,9 +77,6 @@ export default function SupplierManualSyncDialog({
     event.preventDefault();
     setValidationError(null);
     try {
-      if (isInitialSync && !String(totalProductLimit || '').trim()) {
-        throw new Error('Set a Product count limit for the first controlled sync (for example 5). Leave blank only after the first trial.');
-      }
       const request = buildSupplierManualSyncRequest({
         sourceId: source.id,
         mode,
@@ -86,6 +84,7 @@ export default function SupplierManualSyncDialog({
         subcategory,
         search,
         totalProductLimit,
+        requireTotalProductLimit: requiresProductLimit,
         capabilities,
         ...(limitedCheckpointAvailable && !restartFromBeginning ? { catalogContinuation: 'continue' as const } : {}),
         ...(restartFromBeginning ? { catalogContinuation: 'restart' as const } : {}),
@@ -111,8 +110,8 @@ export default function SupplierManualSyncDialog({
               {isInitialSync ? `First sync for ${supplierName}` : `Update ${supplierName}`}
             </h3>
             <p className="mt-1 text-xs text-slate-500">
-              {isInitialSync
-                ? 'Choose a Product count limit for this controlled first sync. Catalog fetch page size is separate and does not stop the run.'
+              {requiresProductLimit
+                ? 'Choose a Product count limit for this controlled sync. Catalog fetch page size is separate and does not stop the run.'
                 : limitedCheckpointAvailable
                   ? `Continue from product ${observedCount + 1} using the saved supplier cursor, or restart from the beginning.`
                   : 'Choose which supplier products to check. Every detected change still goes to Product Review.'}
@@ -171,8 +170,8 @@ export default function SupplierManualSyncDialog({
         <label className="mt-6 block space-y-1.5">
           <span className="block text-[10px] font-bold text-slate-600 dark:text-slate-300">
             Product count limit
-            {isInitialSync
-              ? <span className="font-normal text-amber-600"> (required for first sync)</span>
+            {requiresProductLimit
+              ? <span className="font-normal text-amber-600"> (required for controlled sync)</span>
               : <span className="font-normal text-slate-400"> (optional)</span>}
           </span>
           <input
@@ -181,10 +180,10 @@ export default function SupplierManualSyncDialog({
             min="1"
             max="10000"
             step="1"
-            required={isInitialSync}
+            required={requiresProductLimit}
             value={totalProductLimit}
             onChange={(event) => setTotalProductLimit(event.target.value)}
-            placeholder={isInitialSync ? 'e.g. 5' : 'All matching products'}
+            placeholder={requiresProductLimit ? 'e.g. 5' : 'All matching products'}
             className="min-h-11 w-full rounded-xl border border-slate-200 bg-transparent px-3 text-xs dark:border-slate-700"
           />
           <small className="block text-[10px] leading-relaxed text-slate-500">

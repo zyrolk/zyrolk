@@ -46,6 +46,7 @@ import {
 import { createSupplierSyncJob, SupplierSyncJobProgressInput } from "../api/suppliers/supplierSyncJobs";
 import {
   fingerprintSupplierSyncRequest,
+  fingerprintSupplierSyncContinuationScope,
   normalizeSupplierSyncRequest,
   resolveSupplierIncrementalCatalogRequest,
   SupplierSyncRequest,
@@ -525,6 +526,21 @@ function supplierSyncRequestFingerprint(
   return createHash("sha256").update(JSON.stringify({
     request: fingerprintSupplierSyncRequest(request),
     effectivePageSize,
+    persistentCategories,
+    persistentBrandFilter: normalizeSupplierCatalogFilterValue(source.settings?.brandFilter),
+  })).digest("hex");
+}
+
+function supplierSyncContinuationFingerprint(
+  request: SupplierSyncRequest,
+  source: SupplierSource,
+): string {
+  const persistentCategories = [...(source.settings?.categoriesFilter || [])]
+    .map(normalizeSupplierCatalogFilterValue)
+    .filter(Boolean)
+    .sort((left, right) => left.localeCompare(right));
+  return createHash("sha256").update(JSON.stringify({
+    request: fingerprintSupplierSyncContinuationScope(request),
     persistentCategories,
     persistentBrandFilter: normalizeSupplierCatalogFilterValue(source.settings?.brandFilter),
   })).digest("hex");
@@ -3180,15 +3196,19 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
         const legacySourcePageSize = resolveSupplierProductLimit(sourceSettings.productLimit, settings.productLimit, maxProducts);
         const sourcePageSize = syncRequest.pageSize || legacySourcePageSize;
         const requestFingerprint = supplierSyncRequestFingerprint(syncRequest, source, sourcePageSize);
+        const continuationFingerprint = supplierSyncContinuationFingerprint(syncRequest, source);
+        const continuationScopeMatches = source.catalogSync?.continuationFingerprint
+          ? source.catalogSync.continuationFingerprint === continuationFingerprint
+          : source.catalogSync?.requestFingerprint === requestFingerprint;
         const catalogContinuation = syncRequest.catalogContinuation
           ?? (source.catalogSync?.status === "limited"
-            && source.catalogSync?.requestFingerprint === requestFingerprint
+            && continuationScopeMatches
             && source.catalogSync?.terminationReason === "limit_reached"
             && source.catalogSync?.syncJobId !== batchId
             ? "continue"
             : undefined);
         const resumesTraversal = ["in_progress", "paused", "reconciling"].includes(String(source.catalogSync?.status || ""))
-          && source.catalogSync?.requestFingerprint === requestFingerprint
+          && continuationScopeMatches
           && source.catalogSync?.syncJobId === batchId;
         const initialTraversalPages = resumesTraversal ? Number(source.catalogSync?.pagesProcessed || 0) : 0;
         const initialResumeCount = resumesTraversal ? Number(source.catalogSync?.resumeCount || 0) : 0;
@@ -3211,6 +3231,8 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
           totalProductLimit: normalizeSupplierTotalProductLimit(syncRequest.totalProductLimit),
           deletionReconciliationEligible,
           requestFingerprint,
+          continuationFingerprint,
+          continuationContract: trigger === "manual" ? "manual" : "automatic",
           syncJobId: batchId,
           catalogContinuation,
           initial: source.catalogSync,

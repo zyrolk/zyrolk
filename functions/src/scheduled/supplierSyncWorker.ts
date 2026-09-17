@@ -57,6 +57,16 @@ export async function processSupplierSyncJob(jobId: string, now = Date.now()): P
   const lease = await leaseSupplierSyncJob(adminDb, jobId, workerId, now);
   if (!lease) return { jobId, outcome: "skipped" };
 
+  logger.info("Supplier sync job request admitted.", {
+    event: "supplier_sync_job_request",
+    jobId,
+    trigger: lease.job.trigger,
+    mode: lease.job.syncRequest?.mode || "full",
+    totalProductLimit: lease.job.syncRequest?.totalProductLimit ?? null,
+    pageSize: lease.job.syncRequest?.pageSize ?? null,
+    catalogContinuation: lease.job.syncRequest?.catalogContinuation ?? null,
+  });
+
   const storedProgress = normalizeSupplierSyncJobProgress(lease.job, now);
   const startedAtMs = Date.parse(String(lease.job.startedAt || lease.job.createdAt || "")) || now;
   const attemptStartedAtMs = now;
