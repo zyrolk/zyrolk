@@ -34,7 +34,10 @@ import {
   recordSupplierOperationalAlertSafely,
   resolveSupplierOperationalAlertSafely,
 } from "../api/suppliers/supplierOperationalAlerts";
-import { buildSupplierProductApprovalBaseline } from "../api/suppliers/supplierApprovalConcurrency";
+import {
+  buildSupplierProductApprovalBaseline,
+  parseSupplierProductApprovalBaseline,
+} from "../api/suppliers/supplierApprovalConcurrency";
 import { buildSupplierHealth, resolveSupplierPriority, SupplierPriorityCandidate } from "../api/suppliers/multiSupplier";
 import {
   resolveSupplierAccountSyncGuard,
@@ -1721,6 +1724,15 @@ const refreshIdentityMatches = (left: unknown, right: unknown): boolean => (
   refreshIdentityValue(left).toLocaleLowerCase() === refreshIdentityValue(right).toLocaleLowerCase()
 );
 
+const refreshReviewIsNewProduct = (queueItem: Record<string, unknown>): boolean => {
+  const comparison = asRecord(queueItem.comparison);
+  const comparisonStatus = refreshIdentityValue(
+    queueItem.comparisonStatus || comparison.comparisonStatus || comparison.status,
+  ).toLocaleUpperCase();
+  return comparisonStatus === "NEW_PRODUCT"
+    || parseSupplierProductApprovalBaseline(queueItem.approvalBaseline)?.exists === false;
+};
+
 /**
  * Refreshes one active Dropex review in place. This deliberately lives beside
  * the normal sync pipeline so it uses the same parser, commercial contract,
@@ -1755,13 +1767,13 @@ export async function refreshActiveSupplierReviewItem(
   const supplierProductId = refreshIdentityValue(identity.supplierProductId);
   const supplierSku = refreshIdentityValue(queueItem.supplierCode || asRecord(queueItem.supplierSnapshot).sku);
   const claimedOfferId = refreshIdentityValue(queueItem.supplierOfferId);
-  const canonicalProductId = refreshIdentityValue(
+  const claimedCanonicalProductId = refreshIdentityValue(
     queueItem.canonicalProductId
       || queueItem.productId
       || asRecord(queueItem.productPayload).id
       || queueItem.matchedProductId,
   );
-  if (!sourceId || !supplierProductId || !supplierSku || !claimedOfferId || !canonicalProductId) {
+  if (!sourceId || !supplierProductId || !supplierSku || !claimedOfferId) {
     throw new ApiError("This legacy supplier review item does not contain a complete refresh identity.", 409);
   }
 
@@ -1778,12 +1790,16 @@ export async function refreshActiveSupplierReviewItem(
   if (!offerSnapshot.exists) throw new ApiError("The deterministic supplier offer for this review item could not be found.", 409);
   const existingOffer = projectSupplierOfferForAdmin({ id: offerSnapshot.id, ...offerSnapshot.data() });
   if (!existingOffer) throw new ApiError("The supplier offer for this review item is invalid.", 409);
+  const offerProductId = refreshIdentityValue(existingOffer.productId);
+  if (claimedCanonicalProductId && offerProductId && claimedCanonicalProductId !== offerProductId) {
+    throw new ApiError("The review item and supplier offer identities are inconsistent.", 409);
+  }
+  const refreshProductId = claimedCanonicalProductId || offerProductId;
   if (
     existingOffer.id !== deterministicOfferId
     || existingOffer.sourceId !== sourceId
     || !refreshIdentityMatches(existingOffer.supplierProductId, supplierProductId)
     || !refreshIdentityMatches(existingOffer.sku, supplierSku)
-    || existingOffer.productId !== canonicalProductId
   ) {
     throw new ApiError("The review item and supplier offer identities are inconsistent.", 409);
   }
@@ -1794,24 +1810,31 @@ export async function refreshActiveSupplierReviewItem(
   }
 
   const [productSnapshot, privateProductSnapshot, settingsSnapshot, categoriesSnapshot, brandsSnapshot] = await Promise.all([
-    adminDb.collection("products").doc(canonicalProductId).get(),
-    adminDb.collection(PRODUCT_PRIVATE_COLLECTION).doc(canonicalProductId).get(),
+    refreshProductId ? adminDb.collection("products").doc(refreshProductId).get() : Promise.resolve(null),
+    refreshProductId ? adminDb.collection(PRODUCT_PRIVATE_COLLECTION).doc(refreshProductId).get() : Promise.resolve(null),
     adminDb.collection("supplier_settings").doc("config").get(),
     adminDb.collection("categories").get(),
     adminDb.collection("brands").get(),
   ]);
-  if (!productSnapshot.exists) throw new ApiError("The canonical product for this review item could not be found.", 409);
-  const currentProduct = {
-    ...mergeProductData(productSnapshot.data() || {}, privateProductSnapshot.exists ? privateProductSnapshot.data() : undefined),
+  const currentProduct = productSnapshot?.exists ? {
+    ...mergeProductData(productSnapshot.data() || {}, privateProductSnapshot?.exists ? privateProductSnapshot.data() : undefined),
     id: productSnapshot.id,
-  } as ExistingProduct;
-  const productSourceId = refreshIdentityValue(currentProduct.supplierSourceId || currentProduct.supplierId);
-  const productSupplierSku = refreshIdentityValue(currentProduct.supplierItemCode);
-  if (productSourceId && productSourceId !== sourceId) {
-    throw new ApiError("The canonical product is owned by a different supplier source.", 409);
+  } as ExistingProduct : undefined;
+  if (!currentProduct && !refreshReviewIsNewProduct(queueItem)) {
+    throw new ApiError("The canonical product for this review item could not be found.", 409);
   }
-  if (productSupplierSku && !refreshIdentityMatches(productSupplierSku, supplierSku)) {
-    throw new ApiError("The canonical product is owned by a different supplier SKU.", 409);
+  if (currentProduct) {
+    const productSourceId = refreshIdentityValue(currentProduct.supplierSourceId || currentProduct.supplierId);
+    const productSupplierSku = refreshIdentityValue(currentProduct.supplierItemCode);
+    if (productSourceId && productSourceId !== sourceId) {
+      throw new ApiError("The canonical product is owned by a different supplier source.", 409);
+    }
+    if (productSupplierSku && !refreshIdentityMatches(productSupplierSku, supplierSku)) {
+      throw new ApiError("The canonical product is owned by a different supplier SKU.", 409);
+    }
+    if (!offerProductId || (refreshProductId && offerProductId !== refreshProductId)) {
+      throw new ApiError("The review item and supplier offer identities are inconsistent.", 409);
+    }
   }
 
   const connector = await SupplierRegistry.createConnectorForSourceRecord(sourceId, sourceSnapshot.data() || {});
@@ -1893,7 +1916,10 @@ export async function refreshActiveSupplierReviewItem(
     mappings: storedMappings.brandMappings,
   });
 
-  const detectedComparison = buildSupplierProductComparison(product, { ...currentProduct });
+  const detectedComparison = buildSupplierProductComparison(
+    product,
+    currentProduct ? { ...currentProduct } : undefined,
+  );
   const reactivation = buildSupplierReactivationComparison(
     detectedComparison,
     existingOffer.availability,
@@ -1907,6 +1933,7 @@ export async function refreshActiveSupplierReviewItem(
   if (
     existingOffer.reviewStatus === "approved"
     && existingOffer.productId
+    && currentProduct
     && supplierStockWasProvided(product)
     && hasAutomatableStockChange
   ) {
@@ -1939,13 +1966,13 @@ export async function refreshActiveSupplierReviewItem(
     effectiveOffer.reviewStatus,
     true,
   ) || { status: "UNCHANGED", changedFields: [], fieldChanges: [] };
-  const productPayloadBase = {
+  const productPayloadBase = effectiveMatch ? {
     ...effectiveMatch,
     ...asRecord(queueItem.productPayload),
-    id: canonicalProductId,
+    id: effectiveMatch.id,
     stock: effectiveMatch.stock,
     ...(asRecord(effectiveMatch).availability !== undefined ? { availability: asRecord(effectiveMatch).availability } : {}),
-  } as ExistingProduct;
+  } as ExistingProduct : undefined;
   const productPayload = buildProductPayload(
     product,
     productPayloadBase,
@@ -1955,7 +1982,7 @@ export async function refreshActiveSupplierReviewItem(
     { ...selectedComparison, fieldChanges: selectedComparison.fieldChanges || [] },
     settings,
     source,
-    canonicalProductId,
+    refreshProductId || undefined,
   );
   const productValidationErrors = validateSupplierProductForApproval(productPayload, storeCategories, storeBrands);
   const productImportWarnings = buildSupplierImportWarnings(product, productPayload);
@@ -1985,7 +2012,7 @@ export async function refreshActiveSupplierReviewItem(
     supplierProductId: product.supplierProductId || product.sku,
     sku: product.sku,
     barcode: product.barcode,
-    productId: canonicalProductId,
+    productId: refreshProductId || undefined,
     price: productPayload.price,
     cost: product.wholesalePrice,
     stock: supplierStockWasProvided(product) ? product.inventoryLevel : undefined,
@@ -2030,8 +2057,10 @@ export async function refreshActiveSupplierReviewItem(
     supplierName: source.supplierName || source.name || source.id,
     supplierOfferId: observedOffer.id,
     supplierOfferPendingRevision: stagedOffer.revision,
-    canonicalProductId,
-    productId: canonicalProductId,
+    ...(refreshProductId ? {
+      canonicalProductId: refreshProductId,
+      productId: refreshProductId,
+    } : {}),
     productName: product.title,
     costPrice: productPayload.costPrice,
     marketPrice: product.recommendedRetailPrice,
@@ -2040,8 +2069,8 @@ export async function refreshActiveSupplierReviewItem(
     ...buildSupplierReviewQueueImagePayload(product.mediaGallery),
     comparisonStatus: selectedComparison.status,
     comparison: {
-      matchFound: true,
-      matchedProductId: canonicalProductId,
+      matchFound: Boolean(effectiveMatch),
+      matchedProductId: effectiveMatch?.id || null,
       comparisonStatus: selectedComparison.status,
       changedFields: selectedComparison.changedFields,
       fieldChanges: selectedComparison.fieldChanges || [],
@@ -2057,7 +2086,7 @@ export async function refreshActiveSupplierReviewItem(
       errors: productValidationErrors,
       warnings: productImportWarnings,
     },
-    matchedProductId: canonicalProductId,
+    matchedProductId: effectiveMatch?.id || null,
     approvalBaseline: queueItem.approvalBaseline,
     createdAt: queueCreatedAt,
     updatedAt: observedAt,
@@ -2093,7 +2122,7 @@ export async function refreshActiveSupplierReviewItem(
         queueState,
         status: queueStatus,
         supplierOfferPendingRevision: pendingRevision,
-        canonicalProductId,
+        canonicalProductId: refreshProductId,
       },
       data: stagedOffer.data,
     },
