@@ -174,6 +174,55 @@ test('Dropex exact refresh reads raw reseller price before enriching only the ex
   assert.equal(calls.some((url) => url.includes('/products/unrelated/dto')), false);
 });
 
+test('Dropex exact refresh uses 500-row pages to find a target beyond 3,000 records', async () => {
+  const cataloguePages: number[] = [];
+  const dtoCalls: string[] = [];
+  const service = new DropexConnectorService(
+    { supplierId: 'dropex', sourceId: 'dropex', credentialReference: 'test-profile' },
+    {
+      fetchOutbound: async (url) => {
+        if (url.includes('/auth/login')) return response({ access_token: jwtForAccount('reseller-1') });
+        if (url.includes('/re-seller-products/get')) {
+          const page = Number(new URL(url).searchParams.get('page') || '0');
+          const size = Number(new URL(url).searchParams.get('size') || '0');
+          assert.equal(size, 500);
+          cataloguePages.push(page);
+          const content = Array.from({ length: 500 }, (_, index) => ({
+            productDetail: { id: `other-${page}-${index}`, sku: `OTHER-${page}-${index}` },
+            price: 720,
+          }));
+          if (page === 6) {
+            content[0] = {
+              productDetail: { id: '4990', sku: 'AZK1690', name: 'Target' },
+              price: 870,
+            };
+          }
+          return response({ content, number: page, totalElements: 8_038, last: false });
+        }
+        if (url.includes('/product-categories')) return response([{ id: 29, name: 'Vehicle Accessories' }]);
+        if (url.includes('/products/4990/dto')) {
+          dtoCalls.push(url);
+          return response({ data: { description: 'Current description', sellingPrice: 1650, onHandInventory: 8 } });
+        }
+        throw new Error(`Unexpected supplier endpoint in deep refresh test: ${url}`);
+      },
+    },
+  );
+
+  const product = await service.fetchExactProductForRefresh(
+    { username: 'test-user', password: 'test-password' },
+    { approvedHosts: ['inventory.dropex.lk', 'user.dropex.lk'], connector: 'dropex' },
+    { supplierProductId: '4990', sku: 'AZK1690' },
+  );
+
+  assert.deepEqual(cataloguePages, [0, 1, 2, 3, 4, 5, 6]);
+  assert.equal(product.supplierProductId, '4990');
+  assert.equal(product.sku, 'AZK1690');
+  assert.equal(product.wholesalePrice, 870);
+  assert.equal(product.recommendedRetailPrice, 1650);
+  assert.deepEqual(dtoCalls.map((url) => new URL(url).pathname), ['/api/v1/products/4990/dto']);
+});
+
 test('active NEW_PRODUCT refresh reuses the review and offer without creating a canonical product', async () => {
   const db = createFakeAdminDb();
   const patchedDb = adminDb as unknown as PatchableAdminDb;
@@ -386,12 +435,12 @@ test('Dropex exact refresh fails closed at its page and record bounds when the t
           const page = new URL(url).searchParams.get('page') || '0';
           catalogCalls.push(page);
           return response({
-            content: Array.from({ length: 100 }, (_, index) => ({
+            content: Array.from({ length: 500 }, (_, index) => ({
               productDetail: { id: `other-${page}-${index}`, sku: `OTHER-${page}-${index}` },
               price: 720,
             })),
             number: Number(page),
-            totalElements: 5_000,
+            totalElements: 50_000,
             last: false,
           });
         }
@@ -412,6 +461,108 @@ test('Dropex exact refresh fails closed at its page and record bounds when the t
   assert.equal(catalogCalls.at(-1), '19');
 });
 
+test('Dropex exact refresh fails closed at the 10,000-record cap', async () => {
+  const catalogCalls: string[] = [];
+  const service = new DropexConnectorService(
+    { supplierId: 'dropex', sourceId: 'dropex', credentialReference: 'test-profile' },
+    {
+      fetchOutbound: async (url) => {
+        if (url.includes('/auth/login')) return response({ access_token: jwtForAccount('reseller-1') });
+        if (url.includes('/re-seller-products/get')) {
+          const page = new URL(url).searchParams.get('page') || '0';
+          catalogCalls.push(page);
+          return response({
+            content: Array.from({ length: 1_001 }, (_, index) => ({
+              productDetail: { id: `other-${page}-${index}`, sku: `OTHER-${page}-${index}` },
+              price: 720,
+            })),
+            number: Number(page),
+            totalElements: 50_000,
+            last: false,
+          });
+        }
+        throw new Error(`Unexpected enrichment request for record-bound test: ${url}`);
+      },
+    },
+  );
+
+  await assert.rejects(
+    service.fetchExactProductForRefresh(
+      { username: 'test-user', password: 'test-password' },
+      { approvedHosts: ['inventory.dropex.lk', 'user.dropex.lk'], connector: 'dropex' },
+      { supplierProductId: '4970', sku: 'SHX2924' },
+    ),
+    /exceeded its record bound/u,
+  );
+  assert.equal(catalogCalls.length, 10);
+  assert.equal(catalogCalls.at(-1), '9');
+});
+
+test('Dropex exact refresh fails closed at the 30-second elapsed-time cap', async () => {
+  const catalogCalls: string[] = [];
+  let now = 0;
+  const service = new DropexConnectorService(
+    { supplierId: 'dropex', sourceId: 'dropex', credentialReference: 'test-profile' },
+    {
+      now: () => now,
+      fetchOutbound: async (url) => {
+        if (url.includes('/auth/login')) return response({ access_token: jwtForAccount('reseller-1') });
+        if (url.includes('/re-seller-products/get')) {
+          catalogCalls.push(new URL(url).searchParams.get('page') || '0');
+          now = 30_000;
+          return response({
+            content: Array.from({ length: 500 }, (_, index) => ({
+              productDetail: { id: `other-${index}`, sku: `OTHER-${index}` },
+              price: 720,
+            })),
+            number: 0,
+            totalElements: 50_000,
+            last: false,
+          });
+        }
+        throw new Error(`Unexpected enrichment request for time-bound test: ${url}`);
+      },
+    },
+  );
+
+  await assert.rejects(
+    service.fetchExactProductForRefresh(
+      { username: 'test-user', password: 'test-password' },
+      { approvedHosts: ['inventory.dropex.lk', 'user.dropex.lk'], connector: 'dropex' },
+      { supplierProductId: '4970', sku: 'SHX2924' },
+    ),
+    /exceeded its time bound/u,
+  );
+  assert.deepEqual(catalogCalls, ['0']);
+});
+
+test('normal Dropex catalogue traversal keeps its caller-provided page size', async () => {
+  const calls: string[] = [];
+  const service = new DropexConnectorService(
+    { supplierId: 'dropex', sourceId: 'dropex', credentialReference: 'test-profile' },
+    {
+      fetchOutbound: async (url) => {
+        calls.push(url);
+        if (url.includes('/auth/login')) return response({ access_token: jwtForAccount('reseller-1') });
+        if (url.includes('/re-seller-products/get')) {
+          assert.equal(new URL(url).searchParams.get('size'), '100');
+          return response({ content: [], last: true });
+        }
+        if (url.includes('/product-categories')) return response([]);
+        throw new Error(`Unexpected supplier endpoint in normal traversal test: ${url}`);
+      },
+    },
+  );
+
+  await service.fetchCatalogPage(
+    { username: 'test-user', password: 'test-password' },
+    { approvedHosts: ['inventory.dropex.lk', 'user.dropex.lk'], connector: 'dropex' },
+    { cursor: '0', pageSize: 100 },
+  );
+
+  assert.equal(calls.filter((url) => url.includes('/re-seller-products/get')).length, 1);
+});
+
 test('refresh route and sync helper are identity-bound, bounded, and use the current review pipeline', () => {
   const routes = read('functions/src/api/routes/supplier.ts');
   const sync = read('functions/src/scheduled/supplierSync.ts');
@@ -430,8 +581,11 @@ test('refresh route and sync helper are identity-bound, bounded, and use the cur
   assert.match(sync, /stageSupplierOfferObservation\(/u);
   assert.match(sync, /commitQueuedItems\(queuedWrites\)/u);
   assert.match(connector, /REFRESH_MAX_PAGES = 20/u);
-  assert.match(connector, /REFRESH_MAX_RECORDS = 2_000/u);
+  assert.match(connector, /REFRESH_MAX_RECORDS = 10_000/u);
   assert.match(connector, /REFRESH_MAX_ELAPSED_MS = 30_000/u);
+  assert.match(connector, /REFRESH_PAGE_SIZE = 500/u);
+  assert.match(connector, /const pageSize = Math\.max\(1, request\.pageSize\)/u);
+  assert.match(connector, /catalogUrl\.searchParams\.set\("size", String\(pageSize\)\)/u);
   assert.match(connector, /productId !== expectedProductId \|\| sku !== expectedSku/u);
   assert.match(connector, /ProductParser\.parseCatalogItem\(match, \{ categoryLookup, enrichment \}\)/u);
 });

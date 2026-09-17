@@ -44,9 +44,9 @@ interface DropexLoginResponse {
 const REQUEST_TIMEOUT_MS = 15_000;
 const TOKEN_REFRESH_SKEW_MS = 60_000;
 const REFRESH_MAX_PAGES = 20;
-const REFRESH_MAX_RECORDS = 2_000;
+const REFRESH_MAX_RECORDS = 10_000;
 const REFRESH_MAX_ELAPSED_MS = 30_000;
-const REFRESH_PAGE_SIZE = 100;
+const REFRESH_PAGE_SIZE = 500;
 
 const normalizeScopeValue = (value: string, field: string): string => {
   const normalized = String(value || "").trim();
