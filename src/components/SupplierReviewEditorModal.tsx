@@ -63,6 +63,7 @@ interface SupplierReviewEditorModalProps {
   /** Available only for active Dropex review_pending items. */
   refreshEligible?: boolean;
   isRefreshing?: boolean;
+  refreshFeedback?: { kind: 'success' | 'error'; message: string } | null;
   onRefreshSupplier?: () => Promise<void>;
   onConfigureOffer: (offerId: string, patch: { priority?: number; enabled?: boolean }) => Promise<void>;
   onSelectOffer: (offerId: string, options: { locked: boolean; failoverEnabled: boolean }) => Promise<void>;
@@ -128,6 +129,7 @@ export default function SupplierReviewEditorModal({
   onRefreshOffers,
   refreshEligible = false,
   isRefreshing = false,
+  refreshFeedback = null,
   onRefreshSupplier,
   onConfigureOffer,
   onSelectOffer,
@@ -249,6 +251,12 @@ export default function SupplierReviewEditorModal({
   useEffect(() => {
     if (!isEditing) setDraft(initialDraft);
   }, [initialDraft, isEditing]);
+  useEffect(() => {
+    if (refreshFeedback?.kind === 'success') {
+      setDraft(initialDraft);
+      setSubmitted(false);
+    }
+  }, [initialDraft, refreshFeedback]);
 
   useEffect(() => {
     previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -967,6 +975,16 @@ export default function SupplierReviewEditorModal({
           </div>
 
           <div className="shrink-0 border-t border-slate-100 bg-white/95 px-4 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] backdrop-blur dark:border-slate-800 dark:bg-[#111928]/95 sm:px-6">
+          {refreshFeedback ? (
+            <div
+              role={refreshFeedback.kind === 'error' ? 'alert' : 'status'}
+              aria-live="polite"
+              className={`mb-3 flex items-start gap-2 rounded-xl border px-3 py-2 text-xs font-semibold ${refreshFeedback.kind === 'error' ? 'border-red-500/20 bg-red-500/10 text-red-600 dark:text-red-300' : 'border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'}`}
+            >
+              {refreshFeedback.kind === 'error' ? <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" /> : <Check className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />}
+              <span>{refreshFeedback.message}</span>
+            </div>
+          ) : null}
           <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
             <button type="button" onClick={onClose} disabled={isPublishing} className="min-h-11 w-full rounded-xl border border-slate-200 px-4 text-xs font-bold text-slate-500 disabled:opacity-50 dark:border-slate-700 sm:w-auto">Close</button>
             {refreshEligible && onRefreshSupplier ? (

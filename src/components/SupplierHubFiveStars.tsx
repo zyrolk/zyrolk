@@ -549,6 +549,9 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
 
   const [processingChangeId, setProcessingChangeId] = useState<string | null>(null);
   const [refreshingReviewItemId, setRefreshingReviewItemId] = useState<string | null>(null);
+  const refreshingReviewItemIdRef = useRef<string | null>(null);
+  const [refreshFeedback, setRefreshFeedback] = useState<{ kind: 'success' | 'error'; message: string } | null>(null);
+  const refreshFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [retryingMediaId, setRetryingMediaId] = useState<string | null>(null);
   const [editingReviewItem, setEditingReviewItem] = useState<ReviewQueueItem | null>(null);
 
@@ -895,9 +898,20 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
       && (status === 'pending' || status === '');
   };
 
+  const showRefreshFeedback = (feedback: { kind: 'success' | 'error'; message: string }) => {
+    if (refreshFeedbackTimerRef.current !== null) clearTimeout(refreshFeedbackTimerRef.current);
+    setRefreshFeedback(feedback);
+    refreshFeedbackTimerRef.current = setTimeout(() => {
+      setRefreshFeedback(null);
+      refreshFeedbackTimerRef.current = null;
+    }, 5000);
+  };
+
   const handleRefreshSupplierReviewItem = async (item: ReviewQueueItem) => {
-    if (processingChangeId || refreshingReviewItemId || !supplierReviewRefreshEligible(item)) return;
+    if (processingChangeId || refreshingReviewItemIdRef.current || !supplierReviewRefreshEligible(item)) return;
+    refreshingReviewItemIdRef.current = item.id;
     setRefreshingReviewItemId(item.id);
+    setRefreshFeedback(null);
     try {
       const response = await postSupplierApi(`/api/supplier-review-queue/${encodeURIComponent(item.id)}/refresh`, {});
       const result = await response.json().catch(() => ({})) as {
@@ -911,14 +925,23 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
       const refreshedItem = result.item as unknown as ReviewQueueItem;
       setReviewQueue((current) => current.map((candidate) => candidate.id === item.id ? refreshedItem : candidate));
       setEditingReviewItem(refreshedItem);
-      await loadSupplierOffers(refreshedItem);
-      setSuccessMsg('Supplier review refreshed from the current Dropex observation. No approval or publication was performed.');
+      refreshingReviewItemIdRef.current = null;
+      setRefreshingReviewItemId(null);
+      const refreshMessage = 'Supplier review refreshed from the current Dropex observation. No approval or publication was performed.';
+      showRefreshFeedback({ kind: 'success', message: refreshMessage });
+      setSuccessMsg(refreshMessage);
       setTimeout(() => setSuccessMsg(null), 5000);
+      void Promise.all([loadSupplierOffers(refreshedItem), refreshSupplierQueueViews()]);
     } catch (error) {
-      setErrorMsg(error instanceof Error ? error.message : 'Supplier review item could not be refreshed.');
+      const refreshMessage = error instanceof Error ? error.message : 'Supplier review item could not be refreshed.';
+      showRefreshFeedback({ kind: 'error', message: refreshMessage });
+      setErrorMsg(refreshMessage);
       setTimeout(() => setErrorMsg(null), 5000);
     } finally {
-      setRefreshingReviewItemId(null);
+      if (refreshingReviewItemIdRef.current === item.id) {
+        refreshingReviewItemIdRef.current = null;
+        setRefreshingReviewItemId(null);
+      }
     }
   };
 
@@ -2935,6 +2958,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
           onRefreshOffers={() => loadSupplierOffers(editingReviewItem)}
           refreshEligible={supplierReviewRefreshEligible(editingReviewItem)}
           isRefreshing={refreshingReviewItemId === editingReviewItem.id}
+          refreshFeedback={refreshFeedback}
           onRefreshSupplier={() => handleRefreshSupplierReviewItem(editingReviewItem)}
           onConfigureOffer={configureSupplierOffer}
           onSelectOffer={selectSupplierOffer}

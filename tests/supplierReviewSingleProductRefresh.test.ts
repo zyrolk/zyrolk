@@ -187,7 +187,7 @@ test('Dropex exact refresh uses 500-row pages to find a target beyond 3,000 reco
           const size = Number(new URL(url).searchParams.get('size') || '0');
           assert.equal(size, 500);
           cataloguePages.push(page);
-          const content = Array.from({ length: 500 }, (_, index) => ({
+          const content: Array<{ productDetail: { id: string; sku: string; name?: string }; price: number }> = Array.from({ length: 500 }, (_, index) => ({
             productDetail: { id: `other-${page}-${index}`, sku: `OTHER-${page}-${index}` },
             price: 720,
           }));
@@ -602,4 +602,32 @@ test('supplier review refresh UI is visible only for eligible Dropex reviews and
   assert.match(hub, /\/refresh`/u);
   assert.match(hub, /No approval or publication was performed/u);
   assert.doesNotMatch(hub.slice(hub.indexOf('const handleRefreshSupplierReviewItem'), hub.indexOf('const handleRetryDeadLetterMedia')), /decideSupplierReviewQueueItem/u);
+});
+
+test('supplier review refresh reconciles the modal and list immediately with one request and visible result', () => {
+  const modal = read('src/components/SupplierReviewEditorModal.tsx');
+  const hub = read('src/components/SupplierHubFiveStars.tsx');
+  const start = hub.indexOf('const handleRefreshSupplierReviewItem');
+  const end = hub.indexOf('const handleRetryDeadLetterMedia', start);
+  const handler = hub.slice(start, end);
+  assert.ok(start >= 0 && end > start);
+
+  assert.equal((handler.match(/postSupplierApi\(/gu) || []).length, 1);
+  assert.match(handler, /refreshingReviewItemIdRef\.current/u);
+  assert.match(handler, /setReviewQueue\(\(current\) => current\.map\(.*refreshedItem/su);
+  assert.match(handler, /setEditingReviewItem\(refreshedItem\)/u);
+  assert.match(handler, /showRefreshFeedback\(\{ kind: 'success', message: refreshMessage \}\)/u);
+  assert.match(handler, /showRefreshFeedback\(\{ kind: 'error', message: refreshMessage \}\)/u);
+  assert.match(handler, /finally \{[\s\S]*setRefreshingReviewItemId\(null\)/u);
+  assert.ok(handler.indexOf('setReviewQueue((current)') < handler.indexOf('setRefreshingReviewItemId(null)'));
+  assert.ok(handler.indexOf('setRefreshingReviewItemId(null)') < handler.indexOf('showRefreshFeedback({ kind: \'success\''));
+  assert.match(handler, /void Promise\.all\(\[loadSupplierOffers\(refreshedItem\), refreshSupplierQueueViews\(\)\]\)/u);
+  assert.doesNotMatch(handler, /window\.location\.reload|decideSupplierReviewQueueItem/u);
+
+  assert.match(modal, /refreshFeedback\?: \{ kind: 'success' \| 'error'; message: string \} \| null/u);
+  assert.match(modal, /role=\{refreshFeedback\.kind === 'error' \? 'alert' : 'status'\}/u);
+  assert.match(modal, /\{refreshFeedback\.message\}/u);
+  assert.match(modal, /if \(refreshFeedback\?\.kind === 'success'\)/u);
+  assert.match(modal, /if \(refreshFeedback\?\.kind === 'success'\) \{[\s\S]*setSubmitted\(false\)/u);
+  assert.match(hub, /refreshFeedback=\{refreshFeedback\}/u);
 });
