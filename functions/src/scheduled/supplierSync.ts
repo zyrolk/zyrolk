@@ -1744,6 +1744,16 @@ async function commitQueuedItems(items: SupplierSyncWrite[]): Promise<void> {
           if (item === reviewWrite && !reviewHasStableIdentity) continue;
           const reference = adminDb.collection(item.collection).doc(item.id);
           if (item.create) transaction.create(reference, item.data);
+          else if (item === fencedOffer) {
+            const mergeData = { ...item.data };
+            delete mergeData.pendingObservation;
+            transaction.set(reference, mergeData, { merge: true });
+            if (Object.hasOwn(item.data, "pendingObservation")) {
+              transaction.set(reference, { pendingObservation: item.data.pendingObservation }, {
+                mergeFields: ["pendingObservation"],
+              });
+            }
+          }
           else transaction.set(reference, item.data, { merge: true });
         }
         if (reviewWrite && !reviewHasStableIdentity) {

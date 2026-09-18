@@ -19,6 +19,8 @@ import {
 // stateful Functions modules in one CommonJS cache so the connector registered
 // by this test is the same SupplierRegistry instance used by runSupplierSync.
 const requireFunctions = createRequire(import.meta.url);
+const requireFunctionDependencies = createRequire(new URL("../functions/package.json", import.meta.url));
+const { GeoPoint, Timestamp } = requireFunctionDependencies("firebase-admin/firestore") as typeof import("firebase-admin/firestore");
 const { adminDb } = requireFunctions("../functions/src/api/firebase.ts") as typeof import("../functions/src/api/firebase");
 const {
   decideSupplierQueueItem,
@@ -26,13 +28,17 @@ const {
 } = requireFunctions("../functions/src/api/suppliers/supplierApproval.ts") as typeof import("../functions/src/api/suppliers/supplierApproval");
 const { SupplierRegistry } = requireFunctions("../functions/src/api/suppliers/SupplierRegistry.ts") as typeof import("../functions/src/api/suppliers/SupplierRegistry");
 const { ProductParser } = requireFunctions("../functions/src/api/suppliers/a2z/ProductParser.ts") as typeof import("../functions/src/api/suppliers/a2z/ProductParser");
+const { parseSupplierOfferPendingObservation } = requireFunctions("../functions/src/api/suppliers/supplierOfferEngine.ts") as typeof import("../functions/src/api/suppliers/supplierOfferEngine");
 const { SERVER_FILTERED_FULL_CATALOG_CAPABILITIES } = requireFunctions("../functions/src/api/suppliers/supplierSyncCapabilities.ts") as typeof import("../functions/src/api/suppliers/supplierSyncCapabilities");
 const {
   listSupplierQueuePage,
   processSupplierReviewQueueItem,
   reviewRecordIsTerminalDecision,
 } = requireFunctions("../functions/src/scheduled/supplierReviewQueue.ts") as typeof import("../functions/src/scheduled/supplierReviewQueue");
-const { runSupplierSync } = requireFunctions("../functions/src/scheduled/supplierSync.ts") as typeof import("../functions/src/scheduled/supplierSync");
+const {
+  refreshActiveSupplierReviewItem,
+  runSupplierSync,
+} = requireFunctions("../functions/src/scheduled/supplierSync.ts") as typeof import("../functions/src/scheduled/supplierSync");
 const { buildZyroSkuClaimId } = requireFunctions("../functions/src/api/suppliers/supplierProductIdentity.ts") as typeof import("../functions/src/api/suppliers/supplierProductIdentity");
 const { createAdminProduct } = requireFunctions("../functions/src/api/products/adminProductManagement.ts") as typeof import("../functions/src/api/products/adminProductManagement");
 
@@ -66,6 +72,19 @@ SupplierRegistry.registerConnectorFactory(
     async testConnection() {
       return { success: true, status: "Connected", productsCount: 1, sampleProduct: null };
     },
+    async fetchExactProductForRefresh(target: { supplierProductId: string; sku: string }) {
+      const page = connectorFixtures.get(source.id);
+      if (!page) throw new Error(`Missing SH-3 Product Review connector fixture for ${source.id}.`);
+      const result = page({ cursor: null, pageSize: 20, mode: "full" });
+      const product = result.products.find((candidate) => (
+        candidate.supplierProductId === target.supplierProductId
+        && candidate.sku === target.sku
+      ));
+      if (!product) throw new Error(`Missing exact SH-3 Product Review fixture for ${source.id}.`);
+      return product;
+    },
+  } as SupplierConnector & {
+    fetchExactProductForRefresh(target: { supplierProductId: string; sku: string }): Promise<RawA2ZProduct>;
   }),
   SERVER_FILTERED_FULL_CATALOG_CAPABILITIES,
 );
@@ -429,6 +448,154 @@ test("SH-3 new and updated products use the real review worker and approval tran
     delete approvedEvidence.canonicalProductId;
     assert.deepEqual(approvedEvidence, originalEvidence);
     assert.ok((await auditActions(review.id)).includes("approve"));
+  });
+
+  await t.test("refreshed latest observation accepts client-local review edits while stale revisions still fail closed", async () => {
+    const identity = identityFor("refresh-edit-approve");
+    const roundTripTimestamp = Timestamp.fromMillis(Date.parse("2026-09-18T10:00:00.123Z"));
+    const roundTripDate = new Date("2026-09-18T10:01:00.456Z");
+    const roundTripGeoPoint = new GeoPoint(6.9271, 79.8612);
+    const roundTripBytes = Buffer.from([0, 1, 2, 254, 255]);
+    const roundTripReference = adminDb.collection("supplier_test_references").doc(identity);
+    const { sourceId } = await seedSource(identity);
+    await adminDb.collection("supplierSources").doc(sourceId).set({ supplierType: "dropex" }, { merge: true });
+    configureConnector(sourceId, [supplierProduct(identity)]);
+
+    const sync = await runFullSync(sourceId, "refresh-edit-approve-sync");
+    assert.equal(sync.status, "Success");
+    const review = await activeReviewForSource(sourceId);
+    await prepareReview(review.id, identity);
+    const staleRevision = await pendingRevisionForReview(review);
+    const initialOfferId = String(review.data().supplierOfferId || "");
+    await adminDb.collection("supplier_product_offers").doc(initialOfferId).set({
+      health: { mergeSemanticsProbe: { retained: true } },
+      pendingObservation: { staleNestedEnvelopeValue: { removeMe: true } },
+    }, { merge: true });
+
+    await adminDb.collection("supplierSources").doc(sourceId).set({
+      syncHealth: {
+        pendingObservationSpecialValues: {
+          timestamp: roundTripTimestamp,
+          date: roundTripDate,
+          geoPoint: roundTripGeoPoint,
+          bytes: roundTripBytes,
+          reference: roundTripReference,
+        },
+      },
+    }, { merge: true });
+    configureConnector(sourceId, [supplierProduct(identity, {
+      price: 175,
+      costPrice: 110,
+      wholesalePrice: 110,
+      recommendedRetailPrice: 175,
+      inventoryLevel: 4,
+      brand: "",
+      specifications: { Model: identity, Brand: undefined, Optional: undefined },
+    })]);
+    const refreshed = await refreshActiveSupplierReviewItem(review.id, {
+      uid: "sh3-admin",
+      email: "admin@example.test",
+    });
+    const refreshedQueue = (await adminDb.collection("supplier_review_queue").doc(review.id).get()).data()!;
+    const offerId = String(refreshedQueue.supplierOfferId || "");
+    const refreshedOffer = (await adminDb.collection("supplier_product_offers").doc(offerId).get()).data()!;
+    const rawPending = refreshedOffer.pendingObservation as Record<string, unknown>;
+    const parsedPending = parseSupplierOfferPendingObservation(rawPending);
+    const latestRevision = String(refreshedQueue.supplierOfferPendingRevision || "");
+
+    assert.match(latestRevision, /^[a-f0-9]{64}$/u);
+    assert.notEqual(latestRevision, staleRevision);
+    assert.equal(rawPending.revision, latestRevision);
+    assert.equal(parsedPending?.revision, latestRevision);
+    assert.equal(refreshed.item.supplierOfferPendingRevision, latestRevision);
+    assert.equal(refreshedOffer.price, 175);
+    assert.equal(refreshedOffer.cost, 110);
+    assert.equal(refreshedOffer.stock, 4);
+    assert.deepEqual(refreshedOffer.health.mergeSemanticsProbe, { retained: true });
+    assert.equal(Object.hasOwn(rawPending, "staleNestedEnvelopeValue"), false);
+    const pendingEffective = rawPending.effective as Record<string, unknown>;
+    const persistedSpecialValues = (pendingEffective.health as Record<string, unknown>)
+      .pendingObservationSpecialValues as Record<string, unknown>;
+    assert.ok(persistedSpecialValues.timestamp instanceof Timestamp);
+    assert.equal((persistedSpecialValues.timestamp as FirebaseFirestore.Timestamp).toMillis(), roundTripTimestamp.toMillis());
+    assert.ok(persistedSpecialValues.date instanceof Timestamp);
+    assert.equal((persistedSpecialValues.date as FirebaseFirestore.Timestamp).toMillis(), roundTripDate.getTime());
+    assert.ok(persistedSpecialValues.geoPoint instanceof GeoPoint);
+    assert.equal((persistedSpecialValues.geoPoint as FirebaseFirestore.GeoPoint).latitude, roundTripGeoPoint.latitude);
+    assert.equal((persistedSpecialValues.geoPoint as FirebaseFirestore.GeoPoint).longitude, roundTripGeoPoint.longitude);
+    assert.ok(Buffer.isBuffer(persistedSpecialValues.bytes));
+    assert.deepEqual(persistedSpecialValues.bytes, roundTripBytes);
+    assert.equal((persistedSpecialValues.reference as FirebaseFirestore.DocumentReference).path, roundTripReference.path);
+
+    const draft = approvalDraft(review.id, refreshedQueue, {
+      category: "electronics",
+      subcategory: "phones",
+      brand: "test-brand",
+      productType: "Gaming Earbuds",
+      specifications: { Model: identity, "Product Type": "Gaming Earbuds" },
+    });
+    const offerAfterLocalEdits = (await adminDb.collection("supplier_product_offers").doc(offerId).get()).data()!;
+    assert.equal((offerAfterLocalEdits.pendingObservation as Record<string, unknown>).revision, latestRevision);
+
+    const productCountBefore = (await adminDb.collection("products").get()).size;
+    const privateProductCountBefore = (await adminDb.collection("product_private").get()).size;
+    const approvalAuditCountBefore = (await adminDb.collection("supplier_approval_audit")
+      .where("queueItemId", "==", review.id).get()).size;
+    const skuClaimCountBefore = (await adminDb.collection("zyro_sku_claims").get()).size;
+    const mappingAuditCountBefore = (await adminDb.collection("supplier_mapping_audit").get()).size;
+    await assert.rejects(decideSupplierQueueItem(adminDb, review.id, "approved", {
+      uid: "sh3-admin",
+      email: "admin@example.test",
+    }, { draft, expectedPendingRevision: staleRevision }), (error: unknown) => {
+      assert.equal((error as { statusCode?: unknown }).statusCode, 409);
+      assert.match(String((error as Error).message || ""), /changed after it was opened/u);
+      return true;
+    });
+    assert.equal((await adminDb.collection("products").get()).size, productCountBefore);
+    assert.equal((await adminDb.collection("product_private").get()).size, privateProductCountBefore);
+    assert.equal((await adminDb.collection("supplier_approval_audit")
+      .where("queueItemId", "==", review.id).get()).size, approvalAuditCountBefore);
+    assert.equal((await adminDb.collection("zyro_sku_claims").get()).size, skuClaimCountBefore);
+    assert.equal((await adminDb.collection("supplier_mapping_audit").get()).size, mappingAuditCountBefore);
+    assert.equal((await adminDb.collection("supplier_review_queue").doc(review.id).get()).data()?.queueState, "review_pending");
+    assert.equal((await auditActions(review.id)).filter((action) => action === "approve").length, 0);
+
+    const approved = await decideSupplierQueueItem(adminDb, review.id, "approved", {
+      uid: "sh3-admin",
+      email: "admin@example.test",
+    }, { draft, expectedPendingRevision: latestRevision });
+    assert.equal(approved.success, true);
+    assert.equal((await adminDb.collection("products").get()).size, productCountBefore + 1);
+    assert.equal((await adminDb.collection("product_private").get()).size, privateProductCountBefore + 1);
+
+    const product = (await adminDb.collection("products").doc(approved.productId!).get()).data()!;
+    const privateProduct = (await adminDb.collection("product_private").doc(approved.productId!).get()).data()!;
+    const approvedOffer = (await adminDb.collection("supplier_product_offers").doc(offerId).get()).data()!;
+    assert.equal(product.price, 175);
+    assert.equal(product.stock, 4);
+    assert.equal(product.category, "electronics");
+    assert.equal(product.subcategory, "phones");
+    assert.equal(product.brand, "test-brand");
+    assert.equal(product.productType, "Gaming Earbuds");
+    assert.equal(product.specs.Model, identity);
+    assert.equal(product.specs.Brand, "Test Brand");
+    assert.equal(product.specs.RAM, "8 GB");
+    assert.equal(product.specs.Optional, "");
+    assert.equal(product.specs["Product Type"], "Gaming Earbuds");
+    assert.equal(privateProduct.costPrice, 110);
+    assert.equal(approvedOffer.price, 175);
+    assert.equal(approvedOffer.cost, 110);
+    assert.equal(approvedOffer.stock, 4);
+    assert.equal(approvedOffer.pendingObservation, null);
+
+    const retried = await decideSupplierQueueItem(adminDb, review.id, "approved", {
+      uid: "sh3-admin",
+      email: "admin@example.test",
+    }, { draft, expectedPendingRevision: latestRevision });
+    assert.equal(retried.success, true);
+    assert.equal(retried.productId, approved.productId);
+    assert.equal((await adminDb.collection("products").get()).size, productCountBefore + 1);
+    assert.equal((await auditActions(review.id)).filter((action) => action === "approve").length, 1);
   });
 
   await t.test("new product rejection remains private and records the exact terminal decision", async () => {

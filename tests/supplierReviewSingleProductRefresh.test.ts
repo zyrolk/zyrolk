@@ -15,6 +15,8 @@ import { buildSupplierProductApprovalBaseline } from '../functions/src/api/suppl
 import { refreshActiveSupplierReviewItem } from '../functions/src/scheduled/supplierSync';
 
 const requireFunctions = createRequire(import.meta.url);
+const requireFunctionDependencies = createRequire(new URL('../functions/package.json', import.meta.url));
+const { GeoPoint, Timestamp } = requireFunctionDependencies('firebase-admin/firestore') as typeof import('firebase-admin/firestore');
 const { SupplierRegistry } = requireFunctions('../functions/src/api/suppliers/SupplierRegistry.ts') as typeof import('../functions/src/api/suppliers/SupplierRegistry');
 
 const read = (path: string): string => readFileSync(path, 'utf8');
@@ -239,6 +241,114 @@ const jwtForAccount = (accountId: string): string => {
   const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
   return `${encode({ alg: 'none', typ: 'JWT' })}.${encode({ account: { id: accountId }, exp: Math.floor(Date.now() / 1000) + 3_600 })}.signature`;
 };
+
+test('pending observations canonicalize optional nested values before revision generation and persistence', () => {
+  const observedAt = '2026-09-18T10:55:26.359Z';
+  const timestamp = Timestamp.fromMillis(Date.parse('2026-09-18T10:00:00.123Z'));
+  const date = new Date('2026-09-18T10:01:00.456Z');
+  const geoPoint = new GeoPoint(6.9271, 79.8612);
+  const bytes = Buffer.from([0, 1, 2, 254, 255]);
+  const offer = buildSupplierProductOffer({
+    sourceId: 'dropex',
+    supplierId: 'dropex',
+    supplierProductId: '4502',
+    sku: 'AZK1571',
+    barcode: '',
+    price: 4_750,
+    cost: 4_050,
+    stock: 4,
+    stockKnown: true,
+    availability: 'in_stock',
+    priority: 100,
+    health: {
+      available: true,
+      retryCount: 0,
+      optionalMessage: undefined,
+    },
+    lastSyncAt: observedAt,
+    reviewStatus: 'review_pending',
+    catalogPayload: {
+      name: 'R19 Pro Gaming Earbuds',
+      price: 4_750,
+      costPrice: 4_050,
+      stock: 4,
+      isActive: false,
+      category: '',
+      supplierCategory: 'Speakers/Blutooth/Headset',
+      optionalBrand: undefined,
+      nested: {
+        numericZero: 0,
+        booleanFalse: false,
+        emptyString: '',
+        nullValue: null,
+        optionalValue: undefined,
+      },
+      values: [0, false, '', undefined, { retained: true, optionalValue: undefined }],
+      firestoreValues: { timestamp, date, geoPoint, bytes },
+    },
+    supplierSnapshot: {
+      supplierProductId: '4502',
+      supplierSku: 'AZK1571',
+      brand: undefined,
+      specifications: {
+        ProductType: undefined,
+        StockManaged: false,
+      },
+    },
+    timestamp: observedAt,
+  });
+  const pending = buildSupplierOfferPendingObservation({
+    offer,
+    kind: 'catalog_upsert',
+    reviewQueueItemId: 'dropex-azk1571',
+    observedAt,
+    traversalId: 'review-refresh-regression',
+  });
+  const queueRevision = pending.revision;
+  const persisted = {
+    ...pending,
+    effective: {
+      ...pending.effective,
+      catalogPayload: {
+        ...pending.effective.catalogPayload,
+        firestoreValues: {
+          timestamp: Timestamp.fromMillis(timestamp.toMillis()),
+          // Firestore stores a JavaScript Date and returns a Timestamp.
+          date: Timestamp.fromDate(date),
+          geoPoint: new GeoPoint(geoPoint.latitude, geoPoint.longitude),
+          bytes: Buffer.from(bytes),
+        },
+      },
+    },
+  };
+  const parsed = parseSupplierOfferPendingObservation(persisted);
+
+  assert.ok(parsed);
+  assert.equal(queueRevision, pending.revision);
+  assert.equal(parsed.revision, pending.revision);
+  assert.deepEqual(parsed.effective, persisted.effective);
+  assert.equal(pending.effective.price, 4_750);
+  assert.equal(pending.effective.cost, 4_050);
+  assert.equal(pending.effective.stock, 4);
+  assert.equal(pending.effective.stockKnown, true);
+  assert.equal(pending.effective.catalogPayload.isActive, false);
+  assert.equal(pending.effective.catalogPayload.category, '');
+  assert.equal(Object.hasOwn(pending.effective.catalogPayload, 'optionalBrand'), false);
+  assert.equal(Object.hasOwn(pending.effective.health, 'optionalMessage'), false);
+  assert.deepEqual(pending.effective.catalogPayload.nested, {
+    numericZero: 0,
+    booleanFalse: false,
+    emptyString: '',
+    nullValue: null,
+  });
+  assert.deepEqual(pending.effective.catalogPayload.values, [0, false, '', { retained: true }]);
+  const firestoreValues = pending.effective.catalogPayload.firestoreValues as Record<string, unknown>;
+  assert.strictEqual(firestoreValues.timestamp, timestamp);
+  assert.strictEqual(firestoreValues.date, date);
+  assert.strictEqual(firestoreValues.geoPoint, geoPoint);
+  assert.strictEqual(firestoreValues.bytes, bytes);
+  assert.deepEqual(pending.effective.supplierSnapshot.specifications, { StockManaged: false });
+});
 
 test('Dropex exact refresh reads raw reseller price before enriching only the exact row', async () => {
   const calls: string[] = [];

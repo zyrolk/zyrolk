@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { FieldValue, Firestore } from "firebase-admin/firestore";
+import { DocumentReference, FieldValue, Firestore, GeoPoint, Timestamp } from "firebase-admin/firestore";
 import { ApiError } from "../errors";
 import { SupplierHubAdminIdentity } from "../middleware/supplierHubAdminAuth";
 import { PRODUCT_PRIVATE_COLLECTION } from "../products/productCommercialData";
@@ -79,6 +79,12 @@ export interface SupplierOfferPendingObservation {
   effective: SupplierOfferEffectiveSnapshot;
 }
 
+const isPlainSupplierRecord = (value: unknown): value is Record<string, unknown> => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+};
+
 const serializeSupplierAuditValue = (value: unknown): unknown => {
   if (value === undefined || value instanceof FieldValue) return undefined;
   if (Array.isArray(value)) {
@@ -87,11 +93,33 @@ const serializeSupplierAuditValue = (value: unknown): unknown => {
       .filter((entry): entry is unknown => entry !== undefined);
   }
   if (value && typeof value === "object") {
-    const prototype = Object.getPrototypeOf(value);
-    if (prototype !== Object.prototype && prototype !== null) return value;
+    if (!isPlainSupplierRecord(value)) return value;
     return Object.fromEntries(Object.entries(value).flatMap(([key, entry]) => {
       const serialized = serializeSupplierAuditValue(entry);
       return serialized === undefined ? [] : [[key, serialized]];
+    }));
+  }
+  return value;
+};
+
+const canonicalizeSupplierOfferPendingValue = (value: unknown): unknown => {
+  if (
+    value === undefined
+    || value instanceof FieldValue
+    || typeof value === "function"
+    || typeof value === "symbol"
+    || typeof value === "bigint"
+  ) return undefined;
+  if (Array.isArray(value)) {
+    return value
+      .map(canonicalizeSupplierOfferPendingValue)
+      .filter((entry): entry is unknown => entry !== undefined);
+  }
+  if (value && typeof value === "object") {
+    if (!isPlainSupplierRecord(value)) return value;
+    return Object.fromEntries(Object.entries(value).flatMap(([key, entry]) => {
+      const canonical = canonicalizeSupplierOfferPendingValue(entry);
+      return canonical === undefined ? [] : [[key, canonical]];
     }));
   }
   return value;
@@ -147,8 +175,24 @@ const stateVersion = (value: unknown): number => {
 
 const stableValue = (value: unknown): unknown => {
   if (Array.isArray(value)) return value.map(stableValue);
+  if (value instanceof Date) return stableValue(Timestamp.fromDate(value));
+  if (value instanceof Timestamp) {
+    return { __firestoreType: "timestamp", seconds: value.seconds, nanoseconds: value.nanoseconds };
+  }
+  if (value instanceof GeoPoint) {
+    return { __firestoreType: "geo_point", latitude: value.latitude, longitude: value.longitude };
+  }
+  if (value instanceof DocumentReference) {
+    return { __firestoreType: "document_reference", path: value.path };
+  }
+  if (Buffer.isBuffer(value) || value instanceof Uint8Array) {
+    return { __firestoreType: "bytes", base64: Buffer.from(value).toString("base64") };
+  }
   if (value && typeof value === "object") {
-    return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+    if (!isPlainSupplierRecord(value)) {
+      throw new Error(`Unsupported non-plain supplier observation value: ${value.constructor?.name || "unknown"}.`);
+    }
+    return Object.fromEntries(Object.entries(value)
       .filter(([key]) => key !== "observedAt")
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([key, entry]) => [key, stableValue(entry)]));
@@ -159,7 +203,7 @@ const stableValue = (value: unknown): unknown => {
 const effectiveSnapshot = (offer: Pick<SupplierProductOffer,
   "supplierId" | "sourceId" | "supplierProductId" | "sku" | "skuNormalized" | "barcode" | "barcodeNormalized"
   | "price" | "cost" | "stock" | "stockKnown" | "availability" | "health" | "lastSyncAt" | "catalogPayload" | "supplierSnapshot"
->): SupplierOfferEffectiveSnapshot => ({
+>): SupplierOfferEffectiveSnapshot => canonicalizeSupplierOfferPendingValue({
   supplierId: offer.supplierId,
   sourceId: offer.sourceId,
   supplierProductId: offer.supplierProductId,
@@ -176,7 +220,7 @@ const effectiveSnapshot = (offer: Pick<SupplierProductOffer,
   lastSyncAt: offer.lastSyncAt,
   catalogPayload: asRecord(offer.catalogPayload),
   supplierSnapshot: asRecord(offer.supplierSnapshot),
-});
+}) as SupplierOfferEffectiveSnapshot;
 
 const observationRevision = (
   kind: SupplierOfferObservationKind,
@@ -244,8 +288,9 @@ export function buildSupplierOfferPendingObservation(input: {
   traversalId?: string | null;
 }): SupplierOfferPendingObservation {
   const effective = effectiveSnapshot(input.offer);
+  const revision = observationRevision(input.kind, effective);
   return {
-    revision: observationRevision(input.kind, effective),
+    revision,
     kind: input.kind,
     reviewQueueItemId: text(input.reviewQueueItemId, 180),
     observedAt: text(input.observedAt, 80),
