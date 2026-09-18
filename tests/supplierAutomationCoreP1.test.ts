@@ -9,8 +9,12 @@ import {
   resolveActiveSupplierOffer,
 } from '../functions/src/api/suppliers/supplierOfferEngine';
 import { ProductParser } from '../functions/src/api/suppliers/dropex/ProductParser';
-import { buildSupplierProductComparison } from '../functions/src/api/suppliers/supplierProductImport';
 import {
+  buildSupplierImportWarnings,
+  buildSupplierProductComparison,
+} from '../functions/src/api/suppliers/supplierProductImport';
+import {
+  buildProductPayload,
   removeAutomatedStockChangesFromSupplierComparison,
   shouldDeferNewSupplierProductForZeroStock,
 } from '../functions/src/scheduled/supplierSync';
@@ -37,6 +41,17 @@ type QueryRef = {
 };
 type DocSnap = { exists: boolean; id: string; data: () => Data | undefined };
 type QuerySnap = { docs: DocSnap[] };
+
+const assertNoUndefined = (value: unknown, path = 'payload'): void => {
+  assert.notEqual(value, undefined, `${path} must not be undefined`);
+  if (Array.isArray(value)) {
+    value.forEach((entry, index) => assertNoUndefined(entry, `${path}[${index}]`));
+    return;
+  }
+  if (value && typeof value === 'object') {
+    Object.entries(value).forEach(([key, entry]) => assertNoUndefined(entry, `${path}.${key}`));
+  }
+};
 
 const fakeFirestore = (initial: Record<string, Data>) => {
   const documents = new Map(Object.entries(initial));
@@ -152,6 +167,108 @@ const categories = [
   { id: 'kitchen', name: 'Kitchen', isActive: true, subcategories: [{ id: 'cookware', name: 'Cookware', isActive: true }] },
   { id: 'inactive-kitchen', name: 'Old Kitchen', isActive: false },
 ];
+
+const buildPayloadFixture = (product: ReturnType<typeof ProductParser.parseCatalogItem>, sourceId = 'dropex') => buildProductPayload(
+  product,
+  undefined,
+  { autoSelected: false, targetCategoryId: '', targetSubcategoryId: '' } as never,
+  { autoSelected: false, mappedBrandId: '' } as never,
+  [],
+  { status: 'NEW_PRODUCT', changedFields: [], fieldChanges: [] },
+  {},
+  { id: sourceId } as never,
+);
+
+const buildOfferFixture = (
+  product: ReturnType<typeof ProductParser.parseCatalogItem>,
+  catalogPayload: Record<string, unknown>,
+  sourceId = 'dropex',
+) => buildSupplierProductOffer({
+  sourceId,
+  supplierId: sourceId,
+  supplierProductId: product.supplierProductId,
+  sku: product.sku,
+  price: catalogPayload.price as number,
+  ...(product.providedFields?.includes('costPrice') ? { cost: product.wholesalePrice } : {}),
+  ...(product.providedFields?.includes('stock') ? { stock: product.inventoryLevel } : {}),
+  stockKnown: product.providedFields?.includes('stock') === true,
+  availability: product.providedFields?.includes('stock') ? 'in_stock' : undefined,
+  priority: 100,
+  health: {},
+  lastSyncAt: '2026-09-18T00:00:00.000Z',
+  reviewStatus: 'review_pending',
+  catalogPayload,
+  supplierSnapshot: { ...product, sourceId, supplierId: sourceId },
+  timestamp: '2026-09-18T00:00:00.000Z',
+});
+
+test('P1 05A supplier payloads omit absent optional commerce fields before Firestore writes', () => {
+  const validProduct = ProductParser.parseCatalogItem({
+    price: 870,
+    productDetail: {
+      id: 4990,
+      name: 'AZK1690',
+      sku: 'AZK1690',
+      sellingPrice: 1650,
+      onHandInventory: 8,
+    },
+  });
+  const validPayload = buildPayloadFixture(validProduct);
+  assert.equal(validPayload.costPrice, 870);
+  assert.equal(validPayload.price, 1650);
+  assert.equal(validPayload.stock, 8);
+  assert.equal(validPayload.marketPrice, 0);
+  assert.equal(Object.hasOwn(validPayload, 'originalPrice'), false);
+  assert.equal(Object.hasOwn(validPayload, 'discount'), false);
+  assertNoUndefined(validPayload);
+
+  const validOffer = buildOfferFixture(validProduct, validPayload);
+  assertNoUndefined(validOffer.catalogPayload, 'offer.catalogPayload');
+  assertNoUndefined(validOffer.supplierSnapshot, 'offer.supplierSnapshot');
+
+  const missingCostAndStock = ProductParser.parseCatalogItem({
+    productDetail: {
+      id: 4991,
+      name: 'Missing commercial fields',
+      sku: 'MISSING-4991',
+      sellingPrice: 1650,
+    },
+  });
+  const missingPayload = buildPayloadFixture(missingCostAndStock);
+  assert.equal(Object.hasOwn(missingPayload, 'costPrice'), false);
+  assert.equal(Object.hasOwn(missingPayload, 'stock'), false);
+  assertNoUndefined(missingPayload);
+  const missingOffer = buildOfferFixture(missingCostAndStock, missingPayload);
+  assertNoUndefined(missingOffer.catalogPayload, 'offer.catalogPayload');
+  assertNoUndefined(missingOffer.supplierSnapshot, 'offer.supplierSnapshot');
+  const reviewProjection = {
+    productPayload: missingPayload,
+    ...(missingPayload.costPrice !== undefined ? { costPrice: missingPayload.costPrice } : {}),
+    ...(missingPayload.stock !== undefined ? { stock: missingPayload.stock } : {}),
+    supplierSnapshot: missingOffer.supplierSnapshot,
+  };
+  assertNoUndefined(reviewProjection, 'reviewProjection');
+  assert.ok(buildSupplierImportWarnings(missingCostAndStock, missingPayload)
+    .some((warning) => warning.code === 'missing_cost'));
+  assert.ok(validateSupplierProductForApproval(missingPayload, [], [])
+    .some((error) => error.field === 'costPrice'));
+
+  const genericMissingCost = {
+    sku: 'A2Z-MISSING-COST',
+    title: 'Generic missing cost',
+    longDescription: 'Description',
+    mediaGallery: [],
+    wholesalePrice: 0,
+    recommendedRetailPrice: 1000,
+    inventoryLevel: 4,
+    providedFields: ['sku', 'title', 'stock', 'inventoryLevel'],
+  } as ReturnType<typeof ProductParser.parseCatalogItem>;
+  const genericPayload = buildPayloadFixture(genericMissingCost, 'a2z');
+  assert.equal(Object.hasOwn(genericPayload, 'costPrice'), false);
+  assert.equal(genericPayload.price, 1000);
+  assert.equal(genericPayload.stock, 4);
+  assertNoUndefined(genericPayload, 'genericPayload');
+});
 
 test('P1 01 new supplier product with known positive stock remains review eligible', () => {
   assert.equal(shouldDeferNewSupplierProductForZeroStock({ inventoryLevel: 3, providedFields: ['stock'] }, false), false);

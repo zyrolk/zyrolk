@@ -342,6 +342,16 @@ function calculateSupplierProductPricing(
   );
 }
 
+function omitAbsentSupplierSnapshotFields(
+  product: RawA2ZProduct,
+  snapshot: Record<string, unknown>,
+): Record<string, unknown> {
+  const normalized = { ...snapshot };
+  if (!supplierCostWasProvided(product)) delete normalized.wholesalePrice;
+  if (!supplierStockWasProvided(product)) delete normalized.stock;
+  return normalized;
+}
+
 function resolveSupplierMarketPrice(
   product: RawA2ZProduct,
   source: SupplierSource,
@@ -1098,9 +1108,9 @@ export function buildProductPayload(
     description: descriptionUpdateEnabled ? (product.longDescription || "") : (match?.description || ""),
     price: priceUpdateEnabled ? price : (match?.price || price),
     ...promotionFields,
-    stock: stockUpdateEnabled
-      ? (stockProvided ? product.inventoryLevel : undefined)
-      : (match?.stock),
+    ...(stockUpdateEnabled
+      ? (stockProvided ? { stock: product.inventoryLevel } : {})
+      : (match?.stock !== undefined ? { stock: match.stock } : {})),
     imageUrl,
     imageUrls: effectiveImageUrls,
     category: isNewProduct && categorySuggestion.autoSelected ? categorySuggestion.targetCategoryId : (match?.category || ""),
@@ -1132,9 +1142,9 @@ export function buildProductPayload(
     ...(acceptsField("minimumOrderQuantity") && product.minimumOrderQuantity !== undefined
       ? { supplierMoq: product.minimumOrderQuantity }
       : match?.supplierMoq !== undefined ? { supplierMoq: match.supplierMoq } : {}),
-    costPrice: priceUpdateEnabled
-      ? (costProvided ? wholesale : undefined)
-      : match?.costPrice,
+    ...(priceUpdateEnabled
+      ? (costProvided ? { costPrice: wholesale } : {})
+      : (match?.costPrice !== undefined ? { costPrice: match.costPrice } : {})),
     marketPrice: priceUpdateEnabled
       ? resolveSupplierMarketPrice(product, source, match)
       : (match?.marketPrice || 0),
@@ -2075,7 +2085,7 @@ export async function refreshActiveSupplierReviewItem(
   const productImportWarnings = buildSupplierImportWarnings(product, productPayload);
   const observedAt = new Date().toISOString();
   const refreshTraversalId = `review-refresh-${createHash("sha256").update(`${queueItemId}|${observedAt}`).digest("hex").slice(0, 24)}`;
-  const supplierSnapshot = {
+  const supplierSnapshot = omitAbsentSupplierSnapshotFields(product, {
     ...product,
     supplierId: source.supplierId || source.id,
     sourceId,
@@ -2092,7 +2102,7 @@ export async function refreshActiveSupplierReviewItem(
     categoryHierarchy: [...(product.categoryHierarchy || [])],
     specifications: { ...(product.specifications || {}) },
     supplierMetadata: productPayload.supplierMetadata,
-  };
+  });
   const observedOffer = buildSupplierProductOffer({
     sourceId,
     supplierId: source.supplierId || source.id,
@@ -2149,9 +2159,9 @@ export async function refreshActiveSupplierReviewItem(
       productId: refreshProductId,
     } : {}),
     productName: product.title,
-    costPrice: productPayload.costPrice,
+    ...(productPayload.costPrice !== undefined ? { costPrice: productPayload.costPrice } : {}),
     marketPrice: productPayload.marketPrice,
-    stock: productPayload.stock,
+    ...(productPayload.stock !== undefined ? { stock: productPayload.stock } : {}),
     barcode: product.barcode || "",
     ...buildSupplierReviewQueueImagePayload(product.mediaGallery),
     comparisonStatus: selectedComparison.status,
@@ -3882,7 +3892,7 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
           );
           const productValidationErrors = validateSupplierProductForApproval(productPayload, storeCategories, storeBrands);
           const productImportWarnings = buildSupplierImportWarnings(product, productPayload);
-          const supplierSnapshot = {
+          const supplierSnapshot = omitAbsentSupplierSnapshotFields(product, {
             ...product,
             supplierId: source.supplierId || source.id,
             sourceId: source.id,
@@ -3899,7 +3909,7 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
             categoryHierarchy: [...(product.categoryHierarchy || [])],
             specifications: { ...(product.specifications || {}) },
             supplierMetadata: productPayload.supplierMetadata,
-          };
+          });
           const supplierOffer = buildSupplierProductOffer({
             sourceId: source.id,
             supplierId: source.supplierId || source.id,
@@ -3954,9 +3964,9 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
             productId: targetProductId,
             batchId,
             productName: product.title,
-            costPrice: productPayload.costPrice,
+            ...(productPayload.costPrice !== undefined ? { costPrice: productPayload.costPrice } : {}),
             marketPrice: productPayload.marketPrice,
-            stock: productPayload.stock,
+            ...(productPayload.stock !== undefined ? { stock: productPayload.stock } : {}),
             barcode: product.barcode || "",
             ...buildSupplierReviewQueueImagePayload(product.mediaGallery),
             comparisonStatus: comparison.status,
