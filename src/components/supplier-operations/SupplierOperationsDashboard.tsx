@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { formatSupplierTimestamp, supplierBusinessErrorMessage } from '../../services/supplierHubPresentation';
 import { reportClientIssue } from '../../services/observability/clientDiagnostics';
+import { postSupplierApi } from '../../services/supplierHubApi';
 import SupplierConnectionBadge from '../supplier-ui/SupplierConnectionBadge';
 
 type SupplierApiRequest = (path: string, method: 'GET' | 'POST', body?: Record<string, unknown>) => Promise<Response>;
@@ -119,6 +120,26 @@ export interface OperationalAlertFilters {
   category?: string;
   severity?: string;
   supplierId?: string;
+}
+
+export const P1_002_MEDIA_RECOVERY_QUEUE_IDS = [
+  'dropex-shx2063',
+  'dropex-atf0326',
+  'dropex-0520',
+  'dropex-azk0709',
+  'dropex-shx1985',
+  'dropex-atf0186',
+  'dropex-azk0414',
+] as const;
+
+export function isP1_002MediaRecoveryQueueId(value: string): value is typeof P1_002_MEDIA_RECOVERY_QUEUE_IDS[number] {
+  return (P1_002_MEDIA_RECOVERY_QUEUE_IDS as readonly string[]).includes(value);
+}
+
+export function buildP1_002MediaRecoveryEndpoint(queueItemId: string): string | null {
+  return isP1_002MediaRecoveryQueueId(queueItemId)
+    ? `/api/supplier-review-queue/${encodeURIComponent(queueItemId)}/refresh`
+    : null;
 }
 
 export function buildOperationalAlertQuery(filters: OperationalAlertFilters, after?: string | null): string {
@@ -236,6 +257,10 @@ function SupplierOperationsDashboard({
   const [queueError, setQueueError] = useState<string | null>(null);
   const [operationalAlertError, setOperationalAlertError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [p1MediaRecoveryQueueId, setP1MediaRecoveryQueueId] = useState('');
+  const [p1MediaRecoveryConfirmed, setP1MediaRecoveryConfirmed] = useState(false);
+  const [p1MediaRecoveryBusy, setP1MediaRecoveryBusy] = useState(false);
+  const [p1MediaRecoveryResult, setP1MediaRecoveryResult] = useState<{ kind: 'success' | 'error'; message: string } | null>(null);
   const snapshotRequestIdRef = useRef(0);
   const queueRequestIdRef = useRef(0);
   const operationalAlertRequestIdRef = useRef(0);
@@ -407,6 +432,31 @@ function SupplierOperationsDashboard({
     }
   };
 
+  const runP1MediaRecovery = async (): Promise<void> => {
+    const endpoint = buildP1_002MediaRecoveryEndpoint(p1MediaRecoveryQueueId);
+    if (!endpoint || !p1MediaRecoveryConfirmed || p1MediaRecoveryBusy) return;
+    setP1MediaRecoveryBusy(true);
+    setP1MediaRecoveryResult(null);
+    try {
+      const response = await postSupplierApi(endpoint, {});
+      const result = await response.json().catch(() => ({})) as { success?: boolean; error?: string };
+      if (!response.ok || result.success !== true) {
+        throw new Error(result.error || 'The selected P1-002 media refresh could not be requested.');
+      }
+      setP1MediaRecoveryResult({
+        kind: 'success',
+        message: `Refresh requested once for ${p1MediaRecoveryQueueId}. Monitor the queue and matching media alert; no approval or publication was performed.`,
+      });
+    } catch (recoveryError) {
+      setP1MediaRecoveryResult({
+        kind: 'error',
+        message: recoveryError instanceof Error ? recoveryError.message : 'The selected P1-002 media refresh could not be requested.',
+      });
+    } finally {
+      setP1MediaRecoveryBusy(false);
+    }
+  };
+
   const summary = snapshot?.summary || EMPTY_SUMMARY;
   const error = actionError || snapshotError || queueError;
   const visibleError = error ? supplierBusinessErrorMessage(error, 'Supplier activity could not be loaded.') : null;
@@ -540,6 +590,33 @@ function SupplierOperationsDashboard({
         <p className="mb-4 text-xs text-slate-500">Read-only incident records. Loaded {operationalAlerts.length} alert{operationalAlerts.length === 1 ? '' : 's'}; use Load more to continue through the current result set.</p>
         {operationalAlerts.length ? <div className="grid gap-3 lg:grid-cols-2">{operationalAlerts.map((alert) => { const presentation = operationalAlertStatusPresentation(alert.status); return <article key={alert.alertId || alert.id} className="rounded-2xl border border-slate-200/70 p-4 dark:border-slate-800"><div className="flex items-start justify-between gap-3"><div><h5 className="text-sm font-black text-slate-900 dark:text-white">{alert.title || 'Supplier operational alert'}</h5><p className="mt-1 text-[10px] font-bold uppercase tracking-wide text-slate-400">{alert.category || 'Uncategorized'}{alert.supplierId ? ` / ${alert.supplierId}` : ''}</p></div><span className={`rounded-full px-2 py-1 text-[9px] font-black uppercase ${presentation.className}`}>{presentation.label}</span></div><p className="mt-3 text-xs text-slate-600 dark:text-slate-300">{alert.message || 'No additional message.'}</p><div className="mt-3 grid gap-1 text-[10px] text-slate-500 sm:grid-cols-2"><span>First: {dateTime(alert.firstOccurrence || alert.createdAt)}</span><span>Last: {dateTime(alert.lastOccurrence)}</span><span>Occurrences: {Number(alert.occurrenceCount || 0)}</span><span>Incident generation: {Number(alert.incidentGeneration || 0)}</span></div>{(alert.queueItemId || alert.jobId || alert.batchId) && <p className="mt-3 text-[10px] text-slate-400">{alert.queueItemId ? `Queue ${alert.queueItemId}` : ''}{alert.jobId ? ` / Job ${alert.jobId}` : ''}{alert.batchId ? ` / Batch ${alert.batchId}` : ''}</p>}</article>; })}</div> : <p className="rounded-2xl border border-dashed border-slate-200 py-8 text-center text-sm text-slate-500 dark:border-slate-800">No operational alerts match these filters.</p>}
         {operationalAlertCursor && <button type="button" onClick={() => void loadOperationalAlerts(true, operationalAlertCursor)} className="mt-4 min-h-10 rounded-xl bg-slate-100 px-4 text-xs font-black dark:bg-slate-800">Load more</button>}
+      </section>}
+
+      {mode === 'activity' && <section aria-labelledby="p1-002-media-recovery-title" className="rounded-3xl border border-amber-200/80 bg-amber-50/50 p-5 dark:border-amber-900/50 dark:bg-amber-950/20">
+        <div className="mb-3 flex items-start gap-2">
+          <Image className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" aria-hidden="true" />
+          <div>
+            <h4 id="p1-002-media-recovery-title" className="font-black text-slate-900 dark:text-white">P1-002 Media Recovery <span className="text-[10px] uppercase tracking-widest text-amber-700 dark:text-amber-400">Temporary operational control</span></h4>
+            <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">Refresh one allowlisted Dropex review item through the existing Supplier Review endpoint. This does not approve, publish, sync, or resolve alerts.</p>
+          </div>
+        </div>
+        <form className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]" onSubmit={(event) => { event.preventDefault(); void runP1MediaRecovery(); }}>
+          <div className="space-y-3">
+            <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500" htmlFor="p1-002-media-recovery-queue-id">Queue item</label>
+            <select id="p1-002-media-recovery-queue-id" value={p1MediaRecoveryQueueId} onChange={(event) => { setP1MediaRecoveryQueueId(event.target.value); setP1MediaRecoveryConfirmed(false); setP1MediaRecoveryResult(null); }} className="min-h-11 w-full rounded-xl border border-amber-300 bg-white px-3 text-xs dark:border-amber-800 dark:bg-slate-900" aria-label="Select P1-002 media recovery queue item">
+              <option value="">Select one queue item</option>
+              {P1_002_MEDIA_RECOVERY_QUEUE_IDS.map((queueItemId) => <option key={queueItemId} value={queueItemId}>{queueItemId}</option>)}
+            </select>
+            <label className="flex items-start gap-2 text-xs text-slate-600 dark:text-slate-300">
+              <input type="checkbox" checked={p1MediaRecoveryConfirmed} onChange={(event) => setP1MediaRecoveryConfirmed(event.target.checked)} disabled={!p1MediaRecoveryQueueId || p1MediaRecoveryBusy} className="mt-0.5" />
+              <span>I confirm this one-time refresh is for the selected P1-002 queue item.</span>
+            </label>
+          </div>
+          <button type="submit" disabled={!p1MediaRecoveryQueueId || !p1MediaRecoveryConfirmed || p1MediaRecoveryBusy} className="min-h-11 self-end rounded-xl bg-amber-600 px-4 text-xs font-black text-white disabled:cursor-not-allowed disabled:opacity-50">
+            {p1MediaRecoveryBusy ? 'Requesting…' : 'Refresh selected item once'}
+          </button>
+        </form>
+        {p1MediaRecoveryResult && <p role="status" className={`mt-3 rounded-xl border px-3 py-2 text-xs font-semibold ${p1MediaRecoveryResult.kind === 'success' ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-300' : 'border-red-200 bg-red-50 text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300'}`}>{p1MediaRecoveryResult.message}</p>}
       </section>}
 
       {mode === 'advanced' && <section aria-labelledby="alerts-title" className="rounded-3xl border border-slate-200/70 bg-white p-5 dark:border-slate-800 dark:bg-slate-950">
