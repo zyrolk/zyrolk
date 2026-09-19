@@ -237,6 +237,7 @@ export async function dispatchDueSupplierSyncJobs(now = Date.now(), limit = 10):
 
 export const supplierSyncJobCreated = onDocumentCreated({
   document: "supplier_sync_jobs/{jobId}",
+  region: "asia-south1",
   retry: true,
   timeoutSeconds: 540,
   memory: "1GiB",

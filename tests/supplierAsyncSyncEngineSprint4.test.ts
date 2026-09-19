@@ -175,6 +175,7 @@ test('Sprint 4 routes all callers through the durable worker and separates media
   assert.match(sync, /runScheduledSupplierSync[\s\S]*createSupplierSyncJob/);
   assert.match(worker, /runSupplierSync\(\{/);
   assert.match(worker, /supplierSyncJobCreated/);
+  assert.match(worker, /supplierSyncJobCreated = onDocumentCreated\(\{[\s\S]*?region: "asia-south1"/);
   assert.match(worker, /scheduledSupplierSyncJobDispatcher/);
   assert.match(worker, /heartbeatSupplierSyncJob/);
   assert.doesNotMatch(sync, /processSupplierReviewQueueItem|ensureSupplierReviewQueueManagedMedia/);
