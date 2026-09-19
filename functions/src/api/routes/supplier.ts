@@ -13,6 +13,7 @@ import {
 } from "../suppliers/supplierReviewCleanup";
 import { appendSupplierAuditEvent, createSupplierAuditEvent } from "../suppliers/supplierAuditTrail";
 import {
+  loadSupplierOperationalAlerts,
   loadSupplierOperationsAudit,
   loadSupplierOperationsHistory,
   loadSupplierOperationsQueue,
@@ -902,6 +903,25 @@ export function registerSupplierRoutes(app: express.Express): void {
       sendSupplierFailure(res, error, {
         logMessage: "Supplier operations summary failed.",
         fallbackMessage: "Supplier operations could not be loaded.",
+        context: { route: req.path },
+      });
+    }
+  });
+
+  app.get("/api/supplier-operations/alerts", requireSupplierHubAdmin, async (req, res) => {
+    try {
+      res.status(200).json({ success: true, ...(await loadSupplierOperationalAlerts(adminDb, {
+        status: req.query.status,
+        category: req.query.category,
+        severity: req.query.severity,
+        supplierId: req.query.supplierId,
+        after: req.query.after,
+        limit: req.query.limit,
+      })) });
+    } catch (error: unknown) {
+      sendSupplierFailure(res, error, {
+        logMessage: "Supplier operational alert listing failed.",
+        fallbackMessage: "Operational alerts could not be loaded.",
         context: { route: req.path },
       });
     }

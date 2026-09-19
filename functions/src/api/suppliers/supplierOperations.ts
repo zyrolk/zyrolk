@@ -1,8 +1,14 @@
-import { AggregateField, Firestore, Timestamp } from "firebase-admin/firestore";
+import { AggregateField, FieldPath, Firestore, Timestamp } from "firebase-admin/firestore";
+import { ApiError } from "../errors";
 import { reviewRecordIsActionable } from "../../scheduled/supplierReviewQueue";
+import { SUPPLIER_OPERATIONAL_ALERT_CATEGORIES } from "./supplierOperationalAlerts";
 
 export const OPERATIONS_PAGE_LIMIT = 50;
 export const OPERATIONS_MAX_PAGE_LIMIT = 100;
+export const OPERATIONAL_ALERTS_PAGE_LIMIT = 50;
+export const OPERATIONAL_ALERTS_MAX_PAGE_LIMIT = 100;
+const OPERATIONAL_ALERTS_SCAN_BATCH_SIZE = 100;
+const OPERATIONAL_ALERTS_MAX_SCAN_PER_REQUEST = 5_000;
 
 export type SupplierOperationalSeverity = "critical" | "high" | "medium" | "low";
 
@@ -17,6 +23,10 @@ export interface SupplierOperationsAlert {
 }
 
 type DocumentRecord = Record<string, unknown> & { id: string };
+
+const OPERATIONAL_ALERT_STATUSES = ["open", "acknowledged", "resolved"] as const;
+const OPERATIONAL_ALERT_CATEGORIES = SUPPLIER_OPERATIONAL_ALERT_CATEGORIES;
+const OPERATIONAL_ALERT_SEVERITIES = ["critical", "high", "medium", "low"] as const;
 
 const number = (value: unknown): number => Number.isFinite(Number(value)) ? Math.max(0, Number(value)) : 0;
 
@@ -120,6 +130,168 @@ export function supplierMediaFailureMentionsStorage(record: Record<string, unkno
 function readLimit(value: unknown): number {
   const parsed = Number(value || OPERATIONS_PAGE_LIMIT);
   return Number.isInteger(parsed) ? Math.max(1, Math.min(OPERATIONS_MAX_PAGE_LIMIT, parsed)) : OPERATIONS_PAGE_LIMIT;
+}
+
+function readOperationalAlertQueryString(value: unknown, label: string): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") {
+    throw new ApiError(`${label} must be provided exactly once.`, 400);
+  }
+  return value;
+}
+
+function readOperationalAlertLimit(value: unknown): number {
+  const raw = readOperationalAlertQueryString(value, "limit");
+  if (raw === undefined) return OPERATIONAL_ALERTS_PAGE_LIMIT;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > OPERATIONAL_ALERTS_MAX_PAGE_LIMIT) {
+    throw new ApiError(`limit must be a whole number between 1 and ${OPERATIONAL_ALERTS_MAX_PAGE_LIMIT}.`, 400);
+  }
+  return parsed;
+}
+
+function readOperationalAlertFilter<T extends readonly string[]>(value: unknown, allowed: T, label: string): T[number] | undefined {
+  const raw = readOperationalAlertQueryString(value, label);
+  if (raw === undefined) return undefined;
+  const normalized = raw.trim().toLowerCase();
+  if (!allowed.includes(normalized as T[number])) {
+    throw new ApiError(`${label} is invalid.`, 400);
+  }
+  return normalized as T[number];
+}
+
+function readOperationalAlertSupplierId(value: unknown): string | undefined {
+  const raw = readOperationalAlertQueryString(value, "supplierId");
+  if (raw === undefined) return undefined;
+  const supplierId = raw.trim();
+  if (!supplierId || supplierId.length > 180 || /[\u0000-\u001F\u007F/]/u.test(supplierId)) {
+    throw new ApiError("supplierId is invalid.", 400);
+  }
+  return supplierId;
+}
+
+type OperationalAlertCursor = { version: 1; alertId: string };
+
+export function encodeOperationalAlertCursor(alertId: string): string {
+  return Buffer.from(JSON.stringify({ version: 1, alertId }), "utf8").toString("base64url");
+}
+
+function decodeOperationalAlertCursor(value: unknown): OperationalAlertCursor | undefined {
+  const raw = readOperationalAlertQueryString(value, "after");
+  if (raw === undefined) return undefined;
+  if (raw.length > 512) throw new ApiError("Operational alert cursor is invalid.", 400);
+  try {
+    const parsed = JSON.parse(Buffer.from(raw, "base64url").toString("utf8")) as Partial<OperationalAlertCursor>;
+    if (parsed.version !== 1 || typeof parsed.alertId !== "string" || !parsed.alertId || parsed.alertId.includes("/")) {
+      throw new Error("invalid cursor");
+    }
+    return { version: 1, alertId: parsed.alertId };
+  } catch {
+    throw new ApiError("Operational alert cursor is invalid.", 400);
+  }
+}
+
+const sanitizedAlertText = (value: unknown, maximum: number): string | null => {
+  if (typeof value !== "string") return null;
+  const text = value.trim().replace(/[\u0000-\u001F\u007F]/gu, " ").replace(/\s+/gu, " ").slice(0, maximum);
+  return text || null;
+};
+
+const sanitizedAlertIdentifier = (value: unknown): string | null => {
+  const text = sanitizedAlertText(value, 180);
+  return text ? text.replace(/[^a-zA-Z0-9._:-]/gu, "-") : null;
+};
+
+export function projectSupplierOperationalAlertForAdmin(document: { id: string; data: () => Record<string, unknown> | undefined }): Record<string, unknown> {
+  const alert = document.data() || {};
+  return {
+    id: document.id,
+    alertId: document.id,
+    status: sanitizedAlertText(alert.status, 32) || "open",
+    severity: sanitizedAlertText(alert.severity, 32),
+    category: sanitizedAlertText(alert.category, 80),
+    supplierId: sanitizedAlertIdentifier(alert.supplierId),
+    firstOccurrence: toOperationsIso(alert.firstOccurrence),
+    lastOccurrence: toOperationsIso(alert.lastOccurrence),
+    occurrenceCount: number(alert.occurrenceCount),
+    incidentGeneration: number(alert.incidentGeneration),
+    createdAt: toOperationsIso(alert.createdAt),
+    updatedAt: toOperationsIso(alert.updatedAt),
+    reopenedAt: toOperationsIso(alert.reopenedAt),
+    acknowledgedAt: toOperationsIso(alert.acknowledgedAt),
+    resolvedAt: toOperationsIso(alert.resolvedAt),
+    title: sanitizedAlertText(alert.title, 180),
+    message: sanitizedAlertText(alert.message, 1_000),
+    queueItemId: sanitizedAlertIdentifier(alert.queueItemId),
+    jobId: sanitizedAlertIdentifier(alert.jobId),
+    batchId: sanitizedAlertIdentifier(alert.batchId),
+  };
+}
+
+export async function loadSupplierOperationalAlerts(db: Firestore, options: {
+  status?: unknown;
+  category?: unknown;
+  severity?: unknown;
+  supplierId?: unknown;
+  after?: unknown;
+  limit?: unknown;
+}): Promise<Record<string, unknown>> {
+  const limit = readOperationalAlertLimit(options.limit);
+  const status = readOperationalAlertFilter(options.status, OPERATIONAL_ALERT_STATUSES, "status");
+  const category = readOperationalAlertFilter(options.category, OPERATIONAL_ALERT_CATEGORIES, "category");
+  const severity = readOperationalAlertFilter(options.severity, OPERATIONAL_ALERT_SEVERITIES, "severity");
+  const supplierId = readOperationalAlertSupplierId(options.supplierId);
+  const cursor = decodeOperationalAlertCursor(options.after);
+  const collection = db.collection("supplier_operational_alerts");
+  let query: FirebaseFirestore.Query = collection
+    .orderBy("lastOccurrence", "desc")
+    .orderBy(FieldPath.documentId(), "desc");
+  if (cursor) {
+    const cursorSnapshot = await collection.doc(cursor.alertId).get();
+    if (!cursorSnapshot.exists) throw new ApiError("Operational alert cursor is no longer valid.", 400);
+    query = query.startAfter(cursorSnapshot);
+  }
+
+  const matched: Array<{ id: string; data: Record<string, unknown> }> = [];
+  let scanned = 0;
+  let hasMoreSource = false;
+  let lastScannedId: string | null = null;
+  while (matched.length < limit && scanned < OPERATIONAL_ALERTS_MAX_SCAN_PER_REQUEST) {
+    const batchLimit = Math.min(OPERATIONAL_ALERTS_SCAN_BATCH_SIZE, OPERATIONAL_ALERTS_MAX_SCAN_PER_REQUEST - scanned);
+    const snapshot = await query.limit(batchLimit).get();
+    if (!snapshot.size) {
+      hasMoreSource = false;
+      break;
+    }
+    scanned += snapshot.size;
+    let consumedAllBatch = true;
+    for (let index = 0; index < snapshot.docs.length; index += 1) {
+      const document = snapshot.docs[index];
+      lastScannedId = document.id;
+      const alert = document.data() as Record<string, unknown>;
+      if (status && String(alert.status || "").toLowerCase() !== status) continue;
+      if (category && String(alert.category || "").toLowerCase() !== category) continue;
+      if (severity && String(alert.severity || "").toLowerCase() !== severity) continue;
+      if (supplierId && String(alert.supplierId || "") !== supplierId) continue;
+      matched.push({ id: document.id, data: alert });
+      if (matched.length >= limit) {
+        consumedAllBatch = index === snapshot.docs.length - 1;
+        break;
+      }
+    }
+    hasMoreSource = !consumedAllBatch || snapshot.size === batchLimit;
+    if (matched.length >= limit || !hasMoreSource) break;
+    query = query.startAfter(snapshot.docs.at(-1));
+  }
+
+  const hasMore = Boolean(hasMoreSource && lastScannedId);
+  return {
+    items: matched.map((document) => projectSupplierOperationalAlertForAdmin({ id: document.id, data: () => document.data })),
+    nextCursor: hasMore ? encodeOperationalAlertCursor(lastScannedId as string) : null,
+    hasMore,
+    returnedCount: matched.length,
+    scannedCount: scanned,
+  };
 }
 
 async function countState(db: Firestore, state: string): Promise<number> {

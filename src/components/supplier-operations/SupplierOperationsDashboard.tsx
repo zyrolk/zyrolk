@@ -75,14 +75,24 @@ interface QueueItem {
   failureReason: string | null;
 }
 
-interface OperationsAlert {
+export interface OperationsAlert {
   id: string;
+  alertId?: string;
   severity: string;
+  category?: string | null;
+  supplierId?: string | null;
   title: string;
   message: string;
-  createdAt: string;
+  createdAt?: string | null;
+  firstOccurrence?: string | null;
   lastOccurrence?: string | null;
-  status?: 'open' | 'acknowledged';
+  occurrenceCount?: number;
+  incidentGeneration?: number;
+  reopenedAt?: string | null;
+  queueItemId?: string | null;
+  jobId?: string | null;
+  batchId?: string | null;
+  status?: 'open' | 'acknowledged' | 'resolved' | string;
 }
 
 interface OperationsSnapshot {
@@ -99,7 +109,39 @@ interface PageResponse {
   success: boolean;
   items: Array<Record<string, any>>;
   nextCursor: string | null;
+  hasMore?: boolean;
+  returnedCount?: number;
   error?: string;
+}
+
+export interface OperationalAlertFilters {
+  status?: string;
+  category?: string;
+  severity?: string;
+  supplierId?: string;
+}
+
+export function buildOperationalAlertQuery(filters: OperationalAlertFilters, after?: string | null): string {
+  const params = new URLSearchParams({ limit: '50' });
+  if (filters.status && filters.status !== 'all') params.set('status', filters.status);
+  if (filters.category && filters.category !== 'all') params.set('category', filters.category);
+  if (filters.severity && filters.severity !== 'all') params.set('severity', filters.severity);
+  if (filters.supplierId?.trim()) params.set('supplierId', filters.supplierId.trim());
+  if (after) params.set('after', after);
+  return params.toString();
+}
+
+export function mergeOperationalAlertPage(
+  current: OperationsAlert[],
+  page: Pick<PageResponse, 'items' | 'nextCursor'>,
+  append: boolean,
+): { items: OperationsAlert[]; cursor: string | null } {
+  const items = page.items as OperationsAlert[];
+  return { items: append ? [...current, ...items] : items, cursor: page.nextCursor };
+}
+
+export function operationalAlertResponseIsCurrent(requestId: number, currentRequestId: number): boolean {
+  return requestId === currentRequestId;
 }
 
 const EMPTY_SUMMARY: OperationsSummary = {
@@ -135,6 +177,19 @@ const bytes = (value: unknown): string => {
 
 const stateLabel = (value: string): string => value.replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
 
+const OPERATIONAL_ALERT_CATEGORIES = [
+  'supplier_sync_failure',
+  'dead_letter_created',
+  'queue_age_threshold_exceeded',
+  'queue_worker_failure',
+  'scheduler_failure',
+  'media_processing_failure',
+  'storage_failure',
+  'authentication_failure',
+  'app_check_failure',
+  'supplier_connection_failure',
+];
+
 const downloadCsv = (name: string, records: Array<Record<string, unknown>>): void => {
   if (!records.length) return;
   const keys = [...new Set(records.flatMap((record) => Object.keys(record)))];
@@ -160,12 +215,18 @@ function SupplierOperationsDashboard({
   const [queueItems, setQueueItems] = useState<QueueItem[]>([]);
   const [historyItems, setHistoryItems] = useState<Array<Record<string, any>>>([]);
   const [auditItems, setAuditItems] = useState<Array<Record<string, any>>>([]);
+  const [operationalAlerts, setOperationalAlerts] = useState<OperationsAlert[]>([]);
   const [queueCursor, setQueueCursor] = useState<string | null>(null);
   const [historyCursor, setHistoryCursor] = useState<string | null>(null);
   const [auditCursor, setAuditCursor] = useState<string | null>(null);
+  const [operationalAlertCursor, setOperationalAlertCursor] = useState<string | null>(null);
   const [queueState, setQueueState] = useState('all');
   const [search, setSearch] = useState('');
   const [auditSearch, setAuditSearch] = useState('');
+  const [alertStatusFilter, setAlertStatusFilter] = useState('all');
+  const [alertCategoryFilter, setAlertCategoryFilter] = useState('all');
+  const [alertSeverityFilter, setAlertSeverityFilter] = useState('all');
+  const [alertSupplierFilter, setAlertSupplierFilter] = useState('');
   const [activityFilter, setActivityFilter] = useState<'all' | 'success' | 'failed' | 'skipped' | 'running'>('all');
   const [selected, setSelected] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
@@ -173,9 +234,11 @@ function SupplierOperationsDashboard({
   const [actionId, setActionId] = useState<string | null>(null);
   const [snapshotError, setSnapshotError] = useState<string | null>(null);
   const [queueError, setQueueError] = useState<string | null>(null);
+  const [operationalAlertError, setOperationalAlertError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const snapshotRequestIdRef = useRef(0);
   const queueRequestIdRef = useRef(0);
+  const operationalAlertRequestIdRef = useRef(0);
   const previousSyncStateRef = useRef<string | null>(activeSyncJob?.state || null);
   const refreshKeyRef = useRef(refreshKey);
 
@@ -197,6 +260,27 @@ function SupplierOperationsDashboard({
     setQueueCursor(result.nextCursor);
     setQueueError(null);
   }, [queueState, readJson, requestApi, search]);
+
+  const loadOperationalAlerts = useCallback(async (append = false, after?: string | null) => {
+    const requestId = ++operationalAlertRequestIdRef.current;
+    const query = buildOperationalAlertQuery({
+      status: alertStatusFilter,
+      category: alertCategoryFilter,
+      severity: alertSeverityFilter,
+      supplierId: alertSupplierFilter,
+    }, after);
+    try {
+      const result = await readJson<PageResponse>(await requestApi(`/api/supplier-operations/alerts?${query}`, 'GET'));
+      if (!operationalAlertResponseIsCurrent(requestId, operationalAlertRequestIdRef.current)) return;
+      setOperationalAlerts((current) => mergeOperationalAlertPage(current, result, append).items);
+      setOperationalAlertCursor(result.nextCursor);
+      setOperationalAlertError(null);
+    } catch (loadError) {
+      if (operationalAlertResponseIsCurrent(requestId, operationalAlertRequestIdRef.current)) {
+        setOperationalAlertError(loadError instanceof Error ? loadError.message : 'Operational alerts could not be loaded.');
+      }
+    }
+  }, [alertCategoryFilter, alertSeverityFilter, alertStatusFilter, alertSupplierFilter, readJson, requestApi]);
 
   const loadAll = useCallback(async (quiet = false) => {
     const requestId = ++snapshotRequestIdRef.current;
@@ -264,6 +348,10 @@ function SupplierOperationsDashboard({
   }, [loadQueue]);
 
   useEffect(() => {
+    void loadOperationalAlerts(false);
+  }, [loadOperationalAlerts]);
+
+  useEffect(() => {
     const previousState = previousSyncStateRef.current;
     const nextState = activeSyncJob?.state || null;
     previousSyncStateRef.current = nextState;
@@ -273,8 +361,9 @@ function SupplierOperationsDashboard({
       loadQueue(false).catch((loadError) => {
         setQueueError(loadError instanceof Error ? loadError.message : 'Queue could not be loaded.');
       }),
+      loadOperationalAlerts(false),
     ]);
-  }, [activeSyncJob?.id, activeSyncJob?.state, activeSyncJob?.updatedAt, loadAll, loadQueue]);
+  }, [activeSyncJob?.id, activeSyncJob?.state, activeSyncJob?.updatedAt, loadAll, loadQueue, loadOperationalAlerts]);
 
   useEffect(() => {
     if (refreshKeyRef.current === refreshKey) return;
@@ -284,8 +373,9 @@ function SupplierOperationsDashboard({
       loadQueue(false).catch((loadError) => {
         setQueueError(loadError instanceof Error ? loadError.message : 'Queue could not be loaded.');
       }),
+      loadOperationalAlerts(false),
     ]);
-  }, [loadAll, loadQueue, refreshKey]);
+  }, [loadAll, loadQueue, loadOperationalAlerts, refreshKey]);
 
   const runQueueAction = async (action: 'bulk-retry' | 'bulk-reopen' | 'bulk-resolve') => {
     if (!selected.length) return;
@@ -351,6 +441,14 @@ function SupplierOperationsDashboard({
     return { label: stateLabel(status || 'unknown'), className: 'bg-amber-500/10 text-amber-600 dark:text-amber-400' };
   };
 
+  const operationalAlertStatusPresentation = (value: unknown): { label: string; className: string } => {
+    const status = String(value || '').trim().toLowerCase();
+    if (status === 'open') return { label: 'Open', className: 'bg-red-500/10 text-red-600 dark:text-red-400' };
+    if (status === 'acknowledged') return { label: 'Acknowledged', className: 'bg-amber-500/10 text-amber-600 dark:text-amber-400' };
+    if (status === 'resolved') return { label: 'Resolved', className: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' };
+    return { label: stateLabel(status || 'unknown'), className: 'bg-slate-500/10 text-slate-600 dark:text-slate-300' };
+  };
+
   const updateAlertStatus = async (alertId: string, status: 'acknowledged' | 'resolved') => {
     setActionId(`${alertId}:${status}`);
     setActionError(null);
@@ -397,7 +495,7 @@ function SupplierOperationsDashboard({
           <div className="flex items-center gap-2"><Activity className="h-5 w-5 text-blue-500" /><h3 className="font-display text-lg font-black text-slate-900 dark:text-white">{mode === 'activity' ? 'Activity' : 'Advanced Operations'}</h3></div>
           <p className="mt-1 text-xs text-slate-500">{mode === 'activity' ? 'Current and previous supplier synchronization activity.' : 'Diagnostics, recovery, scheduling, and queue information.'} / Refreshed {dateTime(snapshot?.generatedAt)}</p>
         </div>
-        <button type="button" onClick={() => void loadAll(true)} disabled={refreshing} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 text-xs font-black text-white disabled:opacity-60" aria-label="Refresh supplier activity">
+        <button type="button" onClick={() => void Promise.all([loadAll(true), loadOperationalAlerts(false)])} disabled={refreshing} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 text-xs font-black text-white disabled:opacity-60" aria-label="Refresh supplier activity">
           <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} /> Refresh
         </button>
       </div>
@@ -421,6 +519,28 @@ function SupplierOperationsDashboard({
         </div>
         {mode === 'advanced' && <div className="mt-3 grid gap-3 text-xs text-slate-500 sm:grid-cols-2"><p>Last successful sync: <strong className="text-slate-700 dark:text-slate-200">{dateTime(summary.lastSuccessfulSync)}</strong></p><p>Next scheduled sync: <strong className="text-slate-700 dark:text-slate-200">{dateTime(summary.nextScheduledSync)}</strong></p></div>}
       </section>
+
+      {mode === 'activity' && <section aria-labelledby="operational-alerts-title" className="rounded-3xl border border-slate-200/70 bg-white p-5 dark:border-slate-800 dark:bg-slate-950">
+        <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex items-center gap-2"><AlertTriangle className="h-5 w-5 text-amber-500" /><h4 id="operational-alerts-title" className="font-black text-slate-900 dark:text-white">Operational alerts</h4><span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-black text-slate-600 dark:bg-slate-800 dark:text-slate-300">Loaded {operationalAlerts.length}</span></div>
+          <div className="flex flex-wrap gap-2">
+            <select value={alertStatusFilter} onChange={(event) => setAlertStatusFilter(event.target.value)} className="min-h-10 rounded-xl border border-slate-200 bg-white px-3 text-xs dark:border-slate-700 dark:bg-slate-900" aria-label="Filter operational alerts by status">
+              <option value="all">All statuses</option><option value="open">Open</option><option value="acknowledged">Acknowledged</option><option value="resolved">Resolved</option>
+            </select>
+            <select value={alertCategoryFilter} onChange={(event) => setAlertCategoryFilter(event.target.value)} className="min-h-10 rounded-xl border border-slate-200 bg-white px-3 text-xs dark:border-slate-700 dark:bg-slate-900" aria-label="Filter operational alerts by category">
+              <option value="all">All categories</option>{OPERATIONAL_ALERT_CATEGORIES.map((category) => <option key={category} value={category}>{stateLabel(category)}</option>)}
+            </select>
+            <select value={alertSeverityFilter} onChange={(event) => setAlertSeverityFilter(event.target.value)} className="min-h-10 rounded-xl border border-slate-200 bg-white px-3 text-xs dark:border-slate-700 dark:bg-slate-900" aria-label="Filter operational alerts by severity">
+              <option value="all">All severities</option><option value="critical">Critical</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option>
+            </select>
+            <input value={alertSupplierFilter} onChange={(event) => setAlertSupplierFilter(event.target.value)} className="min-h-10 w-40 rounded-xl border border-slate-200 bg-transparent px-3 text-xs dark:border-slate-700" placeholder="Supplier ID" aria-label="Filter operational alerts by supplier" />
+          </div>
+        </div>
+        {operationalAlertError && <div role="alert" className="mb-4 rounded-2xl border border-red-200 bg-red-50 p-3 text-xs font-semibold text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300">{supplierBusinessErrorMessage(operationalAlertError, 'Operational alerts could not be loaded.')}</div>}
+        <p className="mb-4 text-xs text-slate-500">Read-only incident records. Loaded {operationalAlerts.length} alert{operationalAlerts.length === 1 ? '' : 's'}; use Load more to continue through the current result set.</p>
+        {operationalAlerts.length ? <div className="grid gap-3 lg:grid-cols-2">{operationalAlerts.map((alert) => { const presentation = operationalAlertStatusPresentation(alert.status); return <article key={alert.alertId || alert.id} className="rounded-2xl border border-slate-200/70 p-4 dark:border-slate-800"><div className="flex items-start justify-between gap-3"><div><h5 className="text-sm font-black text-slate-900 dark:text-white">{alert.title || 'Supplier operational alert'}</h5><p className="mt-1 text-[10px] font-bold uppercase tracking-wide text-slate-400">{alert.category || 'Uncategorized'}{alert.supplierId ? ` / ${alert.supplierId}` : ''}</p></div><span className={`rounded-full px-2 py-1 text-[9px] font-black uppercase ${presentation.className}`}>{presentation.label}</span></div><p className="mt-3 text-xs text-slate-600 dark:text-slate-300">{alert.message || 'No additional message.'}</p><div className="mt-3 grid gap-1 text-[10px] text-slate-500 sm:grid-cols-2"><span>First: {dateTime(alert.firstOccurrence || alert.createdAt)}</span><span>Last: {dateTime(alert.lastOccurrence)}</span><span>Occurrences: {Number(alert.occurrenceCount || 0)}</span><span>Incident generation: {Number(alert.incidentGeneration || 0)}</span></div>{(alert.queueItemId || alert.jobId || alert.batchId) && <p className="mt-3 text-[10px] text-slate-400">{alert.queueItemId ? `Queue ${alert.queueItemId}` : ''}{alert.jobId ? ` / Job ${alert.jobId}` : ''}{alert.batchId ? ` / Batch ${alert.batchId}` : ''}</p>}</article>; })}</div> : <p className="rounded-2xl border border-dashed border-slate-200 py-8 text-center text-sm text-slate-500 dark:border-slate-800">No operational alerts match these filters.</p>}
+        {operationalAlertCursor && <button type="button" onClick={() => void loadOperationalAlerts(true, operationalAlertCursor)} className="mt-4 min-h-10 rounded-xl bg-slate-100 px-4 text-xs font-black dark:bg-slate-800">Load more</button>}
+      </section>}
 
       {mode === 'advanced' && <section aria-labelledby="alerts-title" className="rounded-3xl border border-slate-200/70 bg-white p-5 dark:border-slate-800 dark:bg-slate-950">
         <div className="mb-4 flex items-center gap-2"><AlertTriangle className="h-5 w-5 text-amber-500" /><h4 id="alerts-title" className="font-black text-slate-900 dark:text-white">Active alerts</h4><span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black text-amber-700">{snapshot?.alerts.length || 0}</span></div>
