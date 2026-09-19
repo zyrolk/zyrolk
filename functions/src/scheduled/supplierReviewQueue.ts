@@ -18,7 +18,10 @@ import {
   getSupplierQueueIdentityCandidate,
   resolveSupplierQueueIdentity,
 } from "../api/suppliers/supplierQueueIdentity";
-import { recordSupplierOperationalAlertSafely } from "../api/suppliers/supplierOperationalAlerts";
+import {
+  recordSupplierOperationalAlertSafely,
+  resolveSupplierMediaOperationalAlertsSafely,
+} from "../api/suppliers/supplierOperationalAlerts";
 import { recordSupplierQueueProcessingDurationMetric } from "../api/suppliers/supplierCloudMonitoring";
 import { appLogger } from "../api/logging";
 
@@ -120,6 +123,7 @@ export async function ensureSupplierReviewQueueManagedMedia(
   options: {
     imageUrls?: readonly string[];
     maxImages?: number;
+    reprocessIncomplete?: boolean;
     dependencies?: Partial<SupplierMediaPipelineDependencies>;
   } = {},
 ): Promise<SupplierQueueManagedMediaResult> {
@@ -136,7 +140,10 @@ export async function ensureSupplierReviewQueueManagedMedia(
       url === existingUrls[index]
       || url === existingAssets[index]?.originalSupplierUrl
     ));
-  if ((options.imageUrls === undefined || requestedExistingMedia) && existingAssets.length > 0) {
+  const canReuseExistingMedia = options.reprocessIncomplete === true
+    ? supplierReviewQueueMediaIsHealthy(queueItem)
+    : existingAssets.length > 0;
+  if ((options.imageUrls === undefined || requestedExistingMedia) && canReuseExistingMedia) {
     return {
       assets: existingAssets,
       failures: Array.isArray(queueItem.mediaFailures) ? queueItem.mediaFailures as SupplierMediaFailure[] : [],
@@ -219,12 +226,13 @@ export async function ensureSupplierReviewQueueManagedMedia(
     ...(Array.isArray(validation.missingFields) ? validation.missingFields.map(String) : []),
     ...(mediaError ? ["images"] : []),
   ].filter((field) => !(field === "images" && !mediaError)))];
+  const mediaProcessedAt = new Date().toISOString();
   const patch: Record<string, unknown> = {
     productPayload: nextPayload,
     managedMedia: result.assets,
     mediaFailures: result.failures,
     mediaStatus: result.assets.length === 0 ? "failed" : result.failures.length > 0 ? "partial" : "ready",
-    mediaProcessedAt: new Date().toISOString(),
+    mediaProcessedAt,
     mediaDuplicateCount: result.duplicateCount,
     productValidation: {
       ...validation,
@@ -248,6 +256,9 @@ export async function ensureSupplierReviewQueueManagedMedia(
     } : {}),
   };
   await reference.set(patch, { merge: true });
+  if (result.assets.length > 0 && result.failures.length === 0) {
+    await resolveSupplierMediaOperationalAlertsSafely(db, { supplierId, queueItemId, mediaProcessedAt });
+  }
   return { assets: result.assets, failures: result.failures, reusedExistingQueueMedia: false };
 }
 
@@ -318,6 +329,12 @@ export function supplierManagedMediaMatchesSourceUrls(
 export function supplierReviewQueueMediaIsReady(managedMedia: unknown): boolean {
   const assets = extractSupplierMediaFromRecord(managedMedia);
   return assets.length > 0 && assets.every((asset) => /^https:\/\/\S+$/u.test(asset.firebaseStorageUrl));
+}
+
+export function supplierReviewQueueMediaIsHealthy(record: Record<string, unknown>): boolean {
+  return String(record.mediaStatus || "").toLowerCase() === "ready"
+    && supplierReviewQueueMediaIsReady(record.managedMedia)
+    && (!Array.isArray(record.mediaFailures) || record.mediaFailures.length === 0);
 }
 
 /** Resolves the canonical managed object path across current and legacy shapes. */
@@ -403,10 +420,13 @@ export function resolveSupplierReviewQueueUpsertLifecycle(input: {
   const mediaReady = supplierReviewQueueMediaIsReady(managedMedia)
     && supplierManagedMediaMatchesSourceUrls(managedMedia, input.sourceUrls);
   const imagesChanged = !supplierManagedMediaMatchesSourceUrls(managedMedia, input.sourceUrls);
-  const mediaFailed = String(existing.mediaStatus || "").toLowerCase() === "failed"
+  const mediaIncomplete = !supplierReviewQueueMediaIsHealthy(existing)
+    || !mediaReady
+    || (Array.isArray(existing.mediaFailures) && existing.mediaFailures.length > 0);
+  const mediaFailed = ["failed", "partial"].includes(String(existing.mediaStatus || "").toLowerCase())
     || state === "retryable_failure"
     || state === "dead_letter";
-  if (state === "review_pending" && mediaReady && !imagesChanged) {
+  if (state === "review_pending" && mediaReady && !imagesChanged && !mediaIncomplete) {
     return {
       lifecycleFields: {
         queueState: "review_pending" satisfies SupplierQueueState,
@@ -420,7 +440,7 @@ export function resolveSupplierReviewQueueUpsertLifecycle(input: {
       preservedManagedMedia: extractSupplierMediaFromRecord(managedMedia),
     };
   }
-  if (imagesChanged || mediaFailed || !mediaReady) {
+  if (imagesChanged || mediaFailed || mediaIncomplete || !mediaReady) {
     return {
       lifecycleFields: buildSupplierQueueLifecycle(input.queueCreatedAt),
       preserveReviewPending: false,
@@ -753,6 +773,7 @@ export async function processSupplierReviewQueueItem(
     if (sourceImageUrls(processingRecord).length > 0 || extractSupplierMediaFromRecord(processingRecord.managedMedia).length > 0) {
       managedMediaResult = await ensureSupplierReviewQueueManagedMedia(db, queueItemId, {
         dependencies: control.mediaDependencies,
+        reprocessIncomplete: true,
       });
     }
     // Fail closed only when no usable managed asset exists. Partial per-URL

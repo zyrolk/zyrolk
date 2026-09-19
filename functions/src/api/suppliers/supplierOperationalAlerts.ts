@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { Firestore } from "firebase-admin/firestore";
+import { Firestore, Transaction } from "firebase-admin/firestore";
 import { getRuntimeConfig } from "../config";
 import { adminDb } from "../firebase";
 import { appLogger } from "../logging";
@@ -267,12 +267,14 @@ export async function transitionSupplierOperationalAlert(
   status: "acknowledged" | "resolved",
   actor?: SupplierOperationalAlertActor,
   now = Date.now(),
+  guard?: (transaction: Transaction) => Promise<boolean>,
 ): Promise<Record<string, unknown> | null> {
   const alertId = cleanId(alertIdValue);
   if (!alertId || alertId !== alertIdValue || alertId.length !== 64) throw new Error("Operational alert ID is invalid.");
   const reference = db.collection(SUPPLIER_OPERATIONAL_ALERTS_COLLECTION).doc(alertId);
   const occurredAt = new Date(now).toISOString();
   return db.runTransaction(async (transaction) => {
+    if (guard && !(await guard(transaction))) return null;
     const snapshot = await transaction.get(reference);
     if (!snapshot.exists) return null;
     const alert = snapshot.data() || {};
@@ -345,4 +347,41 @@ export async function resolveSupplierOperationalAlertSafely(
       error,
     });
   }
+}
+
+export async function resolveSupplierMediaOperationalAlertsSafely(
+  db: Firestore,
+  input: Pick<SupplierOperationalAlertInput, "supplierId" | "queueItemId"> & { mediaProcessedAt: string },
+): Promise<void> {
+  if (!input.queueItemId) return;
+  await Promise.all(([
+    "media_processing_failure",
+    "storage_failure",
+  ] as const).map(async (category) => {
+    try {
+      await transitionSupplierOperationalAlert(db, supplierOperationalAlertId({
+        category,
+        supplierId: input.supplierId,
+        queueItemId: input.queueItemId,
+      }), "resolved", undefined, Date.now(), async (transaction) => {
+        const queueReference = db.collection("supplier_review_queue").doc(input.queueItemId as string);
+        const queueSnapshot = await transaction.get(queueReference);
+        if (!queueSnapshot.exists) return false;
+        const queue = queueSnapshot.data() || {};
+        const mediaFailures = Array.isArray(queue.mediaFailures) ? queue.mediaFailures : [];
+        const managedMedia = Array.isArray(queue.managedMedia) ? queue.managedMedia : [];
+        return queue.mediaStatus === "ready"
+          && mediaFailures.length === 0
+          && managedMedia.length > 0
+          && queue.mediaProcessedAt === input.mediaProcessedAt;
+      });
+    } catch (error) {
+      appLogger.error("Supplier media operational alert could not be automatically resolved.", {
+        category,
+        supplierId: cleanId(input.supplierId) || null,
+        queueItemId: cleanId(input.queueItemId) || null,
+        error,
+      });
+    }
+  }));
 }
