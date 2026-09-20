@@ -16,7 +16,9 @@ import {
   SUPPLIER_MEDIA_FAILURE_CODE,
 } from '../functions/src/api/suppliers/supplierMediaReadiness';
 import {
+  buildSupplierQueueLifecycle,
   ensureSupplierReviewQueueManagedMedia,
+  processSupplierReviewQueueItem,
   resolveSupplierReviewQueueUpsertLifecycle,
 } from '../functions/src/scheduled/supplierReviewQueue';
 
@@ -32,16 +34,18 @@ type DocumentReference = {
 
 const createFakeFirestore = (initial: Record<string, StoredDocument> = {}) => {
   const documents = new Map<string, StoredDocument>(Object.entries(initial));
+  let generatedId = 0;
   const snapshot = (documentReference: DocumentReference) => ({
     exists: documents.has(documentReference.key),
     id: documentReference.id,
     data: () => documents.get(documentReference.key),
   });
-  const reference = (collectionName: string, id: string): DocumentReference => {
+  const reference = (collectionName: string, id: string | undefined): DocumentReference => {
+    const documentId = id || `generated-${++generatedId}`;
     const documentReference = {
       collectionName,
-      id,
-      key: `${collectionName}/${id}`,
+      id: documentId,
+      key: `${collectionName}/${documentId}`,
       get: async () => snapshot(documentReference),
       set: async (data: StoredDocument, options?: { merge?: boolean }) => {
         documents.set(documentReference.key, options?.merge
@@ -53,7 +57,7 @@ const createFakeFirestore = (initial: Record<string, StoredDocument> = {}) => {
   };
   const db = {
     collection: (collectionName: string) => ({
-      doc: (id: string) => reference(collectionName, id),
+      doc: (id?: string) => reference(collectionName, id),
     }),
     runTransaction: async <T>(operation: (transaction: {
       get: (documentReference: DocumentReference) => Promise<FakeSnapshot>;
@@ -210,6 +214,52 @@ test('successful supplier media processing resolves matching media and storage a
   const lifecycleEvents = collectionDocuments(documents, 'supplier_operational_alert_events')
     .filter((event) => [mediaAlert.alertId, storageAlert.alertId].includes(String(event.alertId)));
   assert.deepEqual(lifecycleEvents.map((event) => event.event).sort(), ['opened', 'resolved', 'opened', 'resolved'].sort());
+});
+
+test('queue worker resolves warning-safe Dropex media alerts after review completion', async () => {
+  const queueItemId = 'dropex-worker-warning-safe';
+  const primaryUrl = 'https://supplier.example/worker-primary.png';
+  const oversizedUrl = 'https://supplier.example/worker-oversized.png';
+  const { db, documents } = createFakeFirestore({
+    [`supplier_review_queue/${queueItemId}`]: {
+      ...buildSupplierQueueLifecycle(new Date(Date.now() - 1_000).toISOString()),
+      status: 'Pending',
+      sourceId: 'dropex',
+      supplierSnapshot: { supplierId: 'dropex', imageUrls: [primaryUrl, oversizedUrl] },
+      productPayload: { id: 'worker-warning-safe-product', imageUrls: [primaryUrl, oversizedUrl] },
+      managedMedia: [],
+      mediaStatus: 'partial',
+      mediaFailures: [{ code: SUPPLIER_MEDIA_FAILURE_CODE.IMAGE_TOO_LARGE, retryable: false }],
+    },
+  });
+  const mediaAlert = await recordSupplierOperationalAlert(db as never, {
+    category: 'media_processing_failure',
+    supplierId: 'dropex',
+    queueItemId,
+  });
+  const storageAlert = await recordSupplierOperationalAlert(db as never, {
+    category: 'storage_failure',
+    supplierId: 'dropex',
+    queueItemId,
+  });
+
+  const result = await processSupplierReviewQueueItem(
+    db as never,
+    queueItemId,
+    'warning-safe-worker',
+    Date.now(),
+    { mediaDependencies: mediaDependencies(pngBody, undefined, undefined, oversizedUrl) },
+  );
+
+  const queue = documents.get(`supplier_review_queue/${queueItemId}`)!;
+  assert.deepEqual(result, { queueItemId, outcome: 'completed', state: 'review_pending' });
+  assert.equal(queue.queueState, 'review_pending');
+  assert.equal(queue.mediaReadiness, 'publication_safe_with_media_warnings');
+  assert.equal((queue.mediaFailures as Array<Record<string, unknown>>).length, 1);
+  assert.equal(documents.get(`supplier_operational_alerts/${mediaAlert.alertId}`)?.status, 'resolved');
+  assert.equal(documents.get(`supplier_operational_alerts/${storageAlert.alertId}`)?.status, 'resolved');
+  assert.equal(documents.has('products/worker-warning-safe-product'), false);
+  assert.equal(documents.has('product_private/worker-warning-safe-product'), false);
 });
 
 test('same-source partial media is reprocessed while healthy same-source media is reused', async () => {
@@ -592,7 +642,7 @@ test('media alert resolution is idempotent and a resolver failure does not fail 
 
   const failureState = createFakeFirestore({
     'supplier_review_queue/dropex-media-resolution-failure': {
-      queueState: 'processing',
+      queueState: 'review_pending',
       sourceId: 'dropex',
       supplierSnapshot: { supplierId: 'dropex', imageUrls: [imageUrl] },
       productPayload: { id: 'resolution-failure-product', imageUrls: [imageUrl] },

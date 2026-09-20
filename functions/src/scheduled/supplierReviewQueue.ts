@@ -115,6 +115,7 @@ export interface SupplierQueueManagedMediaResult {
   assets: SupplierManagedMediaAsset[];
   failures: SupplierMediaFailure[];
   reusedExistingQueueMedia: boolean;
+  mediaProcessedAt?: string;
 }
 
 /**
@@ -274,10 +275,12 @@ export async function ensureSupplierReviewQueueManagedMedia(
     } : {}),
   };
   await reference.set(patch, { merge: true });
-  if (mediaReadiness.publicationSafe) {
+  // Queue workers resolve only after completion changes the queue back to
+  // review_pending. The resolver intentionally fences processing records.
+  if (mediaReadiness.publicationSafe && String(queueItem.queueState || "").toLowerCase() !== "processing") {
     await resolveSupplierMediaOperationalAlertsSafely(db, { supplierId, queueItemId, mediaProcessedAt });
   }
-  return { assets: result.assets, failures: result.failures, reusedExistingQueueMedia: false };
+  return { assets: result.assets, failures: result.failures, reusedExistingQueueMedia: false, mediaProcessedAt };
 }
 
 const toMillis = (value: unknown): number => {
@@ -832,6 +835,17 @@ export async function processSupplierReviewQueueItem(
     if (leaseLost) throw new Error("Supplier queue lease was lost during processing.");
     await control.verifyWorkerOwnership?.();
     await completeSupplierQueueItem(db, queueItemId, workerId, currentTime());
+    if (managedMediaResult?.mediaProcessedAt) {
+      const supplierSnapshot = asRecord(processingRecord.supplierSnapshot);
+      const supplierId = asString(supplierSnapshot.supplierId)
+        || asString(processingRecord.sourceId)
+        || "unknown-source";
+      await resolveSupplierMediaOperationalAlertsSafely(db, {
+        supplierId,
+        queueItemId,
+        mediaProcessedAt: managedMediaResult.mediaProcessedAt,
+      });
+    }
     return { queueItemId, outcome: "completed", state: "review_pending" };
   } catch (error) {
     const currentSnapshot = await db.collection("supplier_review_queue").doc(queueItemId).get();
