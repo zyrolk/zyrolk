@@ -43,6 +43,7 @@ import {
 import {
   listSupplierQueuePage,
   SupplierReviewBusinessFilter,
+  SupplierReviewQueueSort,
   processDueSupplierReviewQueueItems,
   recoverExpiredSupplierReviewQueueLeases,
   retryDeadLetterSupplierReviewQueueItem,
@@ -169,6 +170,15 @@ const readSupplierReviewBusinessFilter = (value: unknown): SupplierReviewBusines
     throw new ApiError("Supplier review business filter is invalid.", 400);
   }
   return filter as SupplierReviewBusinessFilter;
+};
+
+const readSupplierReviewQueueSort = (value: unknown): SupplierReviewQueueSort => {
+  if (value === undefined || value === "") return "created";
+  const sort = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (sort !== "created" && sort !== "updated") {
+    throw new ApiError("Supplier review queue sort is invalid.", 400);
+  }
+  return sort as SupplierReviewQueueSort;
 };
 
 const startLocalSupplierSyncJob = (jobId: string): void => {
@@ -582,11 +592,13 @@ export function registerSupplierRoutes(app: express.Express): void {
     try {
       const view = readSupplierQueueView(req.query.view);
       const state = readSupplierReviewQueueState(req.query.state);
+      const sort = readSupplierReviewQueueSort(req.query.sort);
       const businessFilter = view === "review" ? readSupplierReviewBusinessFilter(req.query.filter) : undefined;
       const after = req.query.after === undefined ? undefined : readQueueItemId(req.query.after);
       const page = await listSupplierQueuePage(adminDb, {
         view,
         ...(view === "review" ? { state } : {}),
+        ...(view === "review" ? { sort } : {}),
         ...(businessFilter ? { businessFilter } : {}),
         ...(after ? { after } : {}),
         limit: readBoundedLimit(req.query.limit, 50, 100),

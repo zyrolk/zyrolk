@@ -16,19 +16,33 @@ const createReviewQueueFirestore = (records: Array<{ id: string; data: StoredDoc
     statuses: string[] | null = null,
     cursorId: string | null = null,
     pageLimit: number | null = null,
+    sortField = 'createdAt',
+    sortDirection = 'desc',
   ) => ({
     where: (_field: string, operator: string, value: unknown) => query(
       operator === 'in' ? value as string[] : [String(value)],
       cursorId,
       pageLimit,
+      sortField,
+      sortDirection,
     ),
-    orderBy: () => query(statuses, cursorId, pageLimit),
-    startAfter: (cursor: { id: string }) => query(statuses, cursor.id, pageLimit),
-    limit: (limit: number) => query(statuses, cursorId, limit),
+    orderBy: (field: string | { toString: () => string }, direction: string) => {
+      const fieldName = String(field);
+      return fieldName === '__name__'
+        ? query(statuses, cursorId, pageLimit, sortField, direction)
+        : query(statuses, cursorId, pageLimit, fieldName, direction);
+    },
+    startAfter: (cursor: { id: string }) => query(statuses, cursor.id, pageLimit, sortField, sortDirection),
+    limit: (limit: number) => query(statuses, cursorId, limit, sortField, sortDirection),
     get: async (): Promise<QuerySnapshot> => {
       let selected = [...records]
         .filter((entry) => !statuses || statuses.includes(String(entry.data.status)))
-        .sort((left, right) => String(right.data.createdAt).localeCompare(String(left.data.createdAt)));
+        .sort((left, right) => {
+          const primary = String(right.data[sortField] || '').localeCompare(String(left.data[sortField] || ''));
+          return primary || (sortDirection === 'desc'
+            ? right.id.localeCompare(left.id)
+            : left.id.localeCompare(right.id));
+        });
       if (cursorId) {
         const cursorIndex = selected.findIndex((entry) => entry.id === cursorId);
         selected = cursorIndex >= 0 ? selected.slice(cursorIndex + 1) : [];
@@ -178,13 +192,58 @@ test('Product Review API core keeps existing generic pagination behaviour when n
   assert.equal(page.nextCursor, 'review-000');
 });
 
+test('Product Review can order filtered pages by recently updated records', async () => {
+  const records = [
+    { ...activeReview(0, 'NEW_PRODUCT'), data: { ...activeReview(0, 'NEW_PRODUCT').data, updatedAt: '2026-09-01T00:00:00.000Z' } },
+    { ...activeReview(1, 'NEW_PRODUCT'), data: { ...activeReview(1, 'NEW_PRODUCT').data, updatedAt: '2026-09-03T00:00:00.000Z' } },
+  ];
+  const page = await listSupplierQueuePage(createReviewQueueFirestore(records) as never, {
+    view: 'review', state: 'active', businessFilter: 'new_products', sort: 'updated', limit: 2,
+  });
+
+  assert.deepEqual(page.items.map((item) => item.id), ['review-001', 'review-000']);
+  assert.equal(page.nextCursor, null);
+});
+
+test('recently updated cursor pagination is stable across equal timestamps without duplicates or skips', async () => {
+  const records = [0, 1, 2, 3].map((index) => ({
+    ...activeReview(index, 'NEW_PRODUCT'),
+    data: { ...activeReview(index, 'NEW_PRODUCT').data, updatedAt: '2026-09-03T00:00:00.000Z' },
+  }));
+  const db = createReviewQueueFirestore(records) as never;
+  const first = await listSupplierQueuePage(db, {
+    view: 'review', state: 'active', businessFilter: 'new_products', sort: 'updated', limit: 2,
+  });
+  const second = await listSupplierQueuePage(db, {
+    view: 'review', state: 'active', businessFilter: 'new_products', sort: 'updated', limit: 2,
+    after: first.nextCursor || undefined,
+  });
+
+  assert.deepEqual(first.items.map((item) => item.id), ['review-003', 'review-002']);
+  assert.deepEqual(second.items.map((item) => item.id), ['review-001', 'review-000']);
+  assert.equal(new Set([...first.items, ...second.items].map((item) => item.id)).size, 4);
+  assert.equal(first.nextCursor, 'review-002');
+  assert.equal(second.nextCursor, null);
+});
+
 test('Product Review sends the selected filter and polling reloads every already-loaded page', () => {
   const component = readFileSync('src/components/SupplierHubFiveStars.tsx', 'utf8');
   const routes = readFileSync('functions/src/api/routes/supplier.ts', 'utf8');
 
   assert.match(component, /new URLSearchParams\(\{ view: 'review', limit: '50', filter: reviewFilter \}\)/);
+  assert.match(component, /parameters\.set\('sort', 'updated'\)/);
+  assert.match(component, /Recently updated/);
   assert.match(component, /supplierReviewLoadedPagesRef\.current \+ pagesLoaded/);
   assert.match(component, /loadSupplierQueueView\(\{ pageCount: supplierReviewLoadedPagesRef\.current \}\)/);
   assert.match(routes, /readSupplierReviewBusinessFilter\(req\.query\.filter\)/);
+  assert.match(routes, /readSupplierReviewQueueSort\(req\.query\.sort\)/);
   assert.match(routes, /\.\.\.\(businessFilter \? \{ businessFilter \} : \{\}\)/);
+});
+
+test('default Product Review ordering remains createdAt-based and recent sorting is server-selected', () => {
+  const queue = readFileSync('functions/src/scheduled/supplierReviewQueue.ts', 'utf8');
+  const indexes = readFileSync('firestore.indexes.json', 'utf8');
+  assert.match(queue, /sort === "updated" \? "updatedAt" : "createdAt"/);
+  assert.match(queue, /orderBy\(FieldPath\.documentId\(\), "desc"\)/);
+  assert.match(indexes, /"fieldPath": "updatedAt",\s*"order": "DESCENDING"/);
 });

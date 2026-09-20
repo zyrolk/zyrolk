@@ -251,6 +251,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
   const [activeSubTab, setActiveSubTab] = useState<SupplierHubSection>(initialSubTab);
   const [canAccessAdvanced, setCanAccessAdvanced] = useState(false);
   const [reviewFilter, setReviewFilter] = useState<ProductReviewFilter>('new_products');
+  const [reviewSort, setReviewSort] = useState<'created' | 'updated'>('created');
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [reviewSearch, setReviewSearch] = useState<string>('');
 
@@ -621,6 +622,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
       for (let page = 0; page < requestedPageCount; page += 1) {
         const parameters = new URLSearchParams({ view: 'review', limit: '50', filter: reviewFilter });
         parameters.set('state', options.reviewState || supplierReviewApiState(reviewFilter));
+        if (reviewSort === 'updated') parameters.set('sort', 'updated');
         if (scanCursor) parameters.set('after', scanCursor);
         const response = await getSupplierApi(`/api/supplier-review-queue?${parameters.toString()}`);
         const result = await response.json().catch(() => ({})) as SupplierQueuePageResponse;
@@ -674,7 +676,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
       cancelled = true;
       if (refreshTimer !== null) window.clearTimeout(refreshTimer);
     };
-  }, [activeSubTab, reviewFilter]);
+  }, [activeSubTab, reviewFilter, reviewSort]);
 
   useEffect(() => {
     if (!editingReviewItem) return;
@@ -1903,6 +1905,18 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                     className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-9 pr-3 text-xs focus:outline-none dark:border-slate-800 dark:bg-slate-900/50"
                   />
                 </div>
+                <label className="flex shrink-0 items-center gap-2 text-[10px] font-black uppercase tracking-wider text-slate-400">
+                  <span>Order</span>
+                  <select
+                    value={reviewSort}
+                    onChange={(event) => setReviewSort(event.target.value as 'created' | 'updated')}
+                    aria-label="Order Product Review items"
+                    className="min-h-10 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold normal-case tracking-normal text-slate-700 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200"
+                  >
+                    <option value="created">Recently added</option>
+                    <option value="updated">Recently updated</option>
+                  </select>
+                </label>
               </div>
               <p className="mt-2 text-[10px] text-slate-400">Search is intentionally limited to the products loaded on this page. Use Load more products to extend the bounded search.</p>
               <div className="mt-4 flex flex-wrap gap-2 pb-1" role="tablist" aria-label="Product review filters">

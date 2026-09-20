@@ -1,4 +1,4 @@
-import { FieldValue, Firestore } from "firebase-admin/firestore";
+import { FieldPath, FieldValue, Firestore } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
 import { createSupplierAuditEvent, SupplierAuditActor } from "../api/suppliers/supplierAuditTrail";
 import {
@@ -1017,6 +1017,7 @@ export async function getSupplierReviewQueueMetrics(db: Firestore, now = Date.no
 
 export type SupplierQueuePageView = "review" | "import" | "changes";
 export type SupplierReviewQueuePageState = "active" | "review_pending" | "conflict" | "approved" | "rejected" | "history";
+export type SupplierReviewQueueSort = "created" | "updated";
 export type SupplierReviewBusinessFilter =
   | "new_products"
   | "product_updates"
@@ -1155,6 +1156,7 @@ export async function listSupplierQueuePage(
   options: {
     view: SupplierQueuePageView;
     state?: SupplierReviewQueuePageState;
+    sort?: SupplierReviewQueueSort;
     businessFilter?: SupplierReviewBusinessFilter;
     after?: string;
     limit?: number;
@@ -1162,6 +1164,7 @@ export async function listSupplierQueuePage(
 ): Promise<SupplierQueuePageResult> {
   const pageLimit = Number.isInteger(options.limit) ? Math.max(1, Math.min(100, Number(options.limit))) : 50;
   const state = options.view === "review" ? options.state || "active" : "active";
+  const sort = options.view === "review" ? options.sort || "created" : "created";
   const collectionName = options.view === "review"
     ? "supplier_review_queue"
     : options.view === "import" ? "supplier_import_queue" : "supplier_pending_changes";
@@ -1174,7 +1177,9 @@ export async function listSupplierQueuePage(
       ? query.where("status", "==", statuses[0])
       : query.where("status", "in", statuses);
   }
-  query = query.orderBy("createdAt", "desc");
+  query = query
+    .orderBy(sort === "updated" ? "updatedAt" : "createdAt", "desc")
+    .orderBy(FieldPath.documentId(), "desc");
   if (options.after) {
     const cursor = await collection.doc(options.after).get();
     if (!cursor.exists) throw new Error("Supplier queue cursor is invalid.");
