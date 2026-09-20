@@ -29,6 +29,8 @@ export interface ReviewPresentationItem {
   queueState?: unknown;
   decisionAction?: unknown;
   mediaStatus?: unknown;
+  mediaReadiness?: unknown;
+  mediaFailures?: unknown;
   comparisonStatus?: unknown;
   changedFields?: unknown[];
   fieldChanges?: unknown[];
@@ -224,7 +226,17 @@ export function supplierReviewManagedImageUrl(item: SupplierReviewQuickApprovalI
 
 export function supplierReviewManagedMediaReady(item: SupplierReviewQuickApprovalItem): boolean {
   const records = managedMediaRecords(item);
-  return String(item.mediaStatus || '').toLowerCase() === 'ready'
+  const mediaReadiness = String(item.mediaReadiness || '').trim().toLowerCase();
+  const hasUsablePrimary = records.some((record) => record.isPrimary === true
+    && /^https:\/\/\S+$/iu.test(String(record.firebaseStorageUrl || '').trim())
+    && ['ready', 'published'].includes(String(record.imageStatus || '').trim().toLowerCase()));
+  const serverSafe = ['publication_safe', 'publication_safe_with_media_warnings'].includes(mediaReadiness);
+  const mediaFailures = Array.isArray(item.mediaFailures) ? item.mediaFailures : [];
+  const legacySafe = !mediaReadiness
+    && String(item.mediaStatus || '').toLowerCase() === 'ready'
+    && mediaFailures.length === 0;
+  return (serverSafe || legacySafe)
+    && hasUsablePrimary
     && records.length > 0
     && records.every((record) => /^https:\/\/\S+$/iu.test(String(record.firebaseStorageUrl || '').trim()));
 }

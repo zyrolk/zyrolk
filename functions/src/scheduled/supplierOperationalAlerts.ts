@@ -6,6 +6,7 @@ import {
   recordSupplierOperationalAlert,
   SupplierOperationalAlertInput,
 } from "../api/suppliers/supplierOperationalAlerts";
+import { classifySupplierMediaReadiness } from "../api/suppliers/supplierMediaReadiness";
 
 const DEFAULT_ALERT_MONITOR_SCHEDULE = "every 5 minutes";
 const DEFAULT_QUEUE_AGE_THRESHOLD_MS = 60 * 60 * 1000;
@@ -162,6 +163,36 @@ export async function evaluateSupplierOperationalAlerts(
 
   for (const document of mediaFailureSnapshot.docs) {
     const item = document.data();
+    const supplierSnapshot = item.supplierSnapshot && typeof item.supplierSnapshot === "object"
+      ? item.supplierSnapshot as Record<string, unknown>
+      : {};
+    const productPayload = item.productPayload && typeof item.productPayload === "object"
+      ? item.productPayload as Record<string, unknown>
+      : {};
+    const processedMediaUrls = Array.isArray(item.mediaSourceImageUrls)
+      ? item.mediaSourceImageUrls.filter((value): value is string => typeof value === "string")
+      : [];
+    const snapshotMediaGallery = Array.isArray(supplierSnapshot.mediaGallery)
+      ? supplierSnapshot.mediaGallery.filter((value): value is string => typeof value === "string")
+      : [];
+    const snapshotImageUrls = Array.isArray(supplierSnapshot.imageUrls)
+      ? supplierSnapshot.imageUrls.filter((value): value is string => typeof value === "string")
+      : [];
+    const sourceImageUrls = processedMediaUrls.length > 0
+      ? processedMediaUrls
+      : snapshotMediaGallery.length > 0
+      ? snapshotMediaGallery
+      : snapshotImageUrls.length > 0
+        ? snapshotImageUrls
+        : Array.isArray(productPayload.imageUrls)
+          ? productPayload.imageUrls.filter((value): value is string => typeof value === "string")
+          : [];
+    if (classifySupplierMediaReadiness({
+      supplierId: item.supplierId || supplierSnapshot.supplierId || item.sourceId,
+      sourceImageUrls,
+      managedMedia: item.managedMedia,
+      mediaFailures: item.mediaFailures,
+    }).publicationSafe) continue;
     const reason = mediaFailureReason(item);
     const common: SupplierOperationalAlertInput = {
       category: "media_processing_failure",

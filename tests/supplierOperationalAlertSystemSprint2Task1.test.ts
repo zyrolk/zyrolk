@@ -9,7 +9,12 @@ import {
   supplierOperationalAlertId,
   transitionSupplierOperationalAlert,
 } from '../functions/src/api/suppliers/supplierOperationalAlerts';
+import { evaluateSupplierOperationalAlerts } from '../functions/src/scheduled/supplierOperationalAlerts';
 import type { SupplierMediaPipelineDependencies } from '../functions/src/api/suppliers/supplierMediaPipeline';
+import {
+  classifySupplierMediaReadiness,
+  SUPPLIER_MEDIA_FAILURE_CODE,
+} from '../functions/src/api/suppliers/supplierMediaReadiness';
 import {
   ensureSupplierReviewQueueManagedMedia,
   resolveSupplierReviewQueueUpsertLifecycle,
@@ -70,14 +75,41 @@ const createFakeFirestore = (initial: Record<string, StoredDocument> = {}) => {
   return { db, documents };
 };
 
+const createAlertMonitorFirestore = (queueItems: Record<string, StoredDocument>) => {
+  type Filter = { field: string; operator: string; value: unknown };
+  const queryFor = (collectionName: string, filters: Filter[] = [], take?: number): Record<string, unknown> => ({
+    where: (field: string, operator: string, value: unknown) => queryFor(collectionName, [...filters, { field, operator, value }], take),
+    orderBy: () => queryFor(collectionName, filters, take),
+    limit: (value: number) => queryFor(collectionName, filters, value),
+    get: async () => {
+      const entries = collectionName === 'supplier_review_queue' ? Object.entries(queueItems) : [];
+      const filtered = entries.filter(([, record]) => filters.every(({ field, operator, value }) => {
+        if (operator === '==') return record[field] === value;
+        if (operator === 'in') return Array.isArray(value) && value.includes(record[field]);
+        return false;
+      })).slice(0, take);
+      return {
+        docs: filtered.map(([id, record]) => ({ id, data: () => record })),
+        size: filtered.length,
+      };
+    },
+  });
+  return {
+    collection: (collectionName: string) => ({
+      doc: () => ({ get: async () => ({ exists: false, data: () => undefined }) }),
+      where: (field: string, operator: string, value: unknown) => queryFor(collectionName, [{ field, operator, value }]),
+    }),
+  };
+};
+
 const collectionDocuments = (documents: Map<string, StoredDocument>, collectionName: string) => [...documents.entries()]
   .filter(([key]) => key.startsWith(`${collectionName}/`))
   .map(([, value]) => value);
 
-const mediaResponse = (body: Buffer, contentType: string, status = 200): SupplierOutboundResponse => ({
+const mediaResponse = (body: Buffer, contentType: string, status = 200, declaredLength = body.length): SupplierOutboundResponse => ({
   status,
   ok: status >= 200 && status < 300,
-  headers: new Headers({ 'content-type': contentType, 'content-length': String(body.length) }),
+  headers: new Headers({ 'content-type': contentType, 'content-length': String(declaredLength) }),
   text: async () => body.toString('utf8'),
   arrayBuffer: async () => body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength) as ArrayBuffer,
   json: async <T>() => JSON.parse(body.toString('utf8')) as T,
@@ -87,10 +119,13 @@ const mediaDependencies = (
   imageBody: Buffer,
   failingUrl?: string,
   fetchedUrls?: string[],
+  oversizedUrl?: string,
 ): SupplierMediaPipelineDependencies => ({
   fetchImage: async (url) => {
     fetchedUrls?.push(url);
-    return url === failingUrl
+    return url === oversizedUrl
+      ? mediaResponse(imageBody, 'image/png', 200, 10 * 1024 * 1024 + 1)
+      : url === failingUrl
       ? mediaResponse(Buffer.from('upstream failure'), 'text/plain', 500)
       : mediaResponse(imageBody, 'image/png');
   },
@@ -184,6 +219,9 @@ test('same-source partial media is reprocessed while healthy same-source media i
     contentHash: 'existing-hash',
     firebaseStorageUrl: 'https://storage.example/existing.png',
     originalSupplierUrl: imageUrl,
+    imageStatus: 'ready',
+    isPrimary: true,
+    sortOrder: 0,
     variants: { large: { storagePath: 'supplier-review/existing/large.png' } },
   };
   const partialFetched: string[] = [];
@@ -226,6 +264,253 @@ test('same-source partial media is reprocessed while healthy same-source media i
   });
   assert.equal(healthyResult.reusedExistingQueueMedia, true);
   assert.deepEqual(healthyFetched, []);
+
+  const failedHealthy = createFakeFirestore({
+    'supplier_review_queue/dropex-same-source-with-failure': {
+      queueState: 'review_pending',
+      sourceId: 'dropex',
+      supplierSnapshot: { supplierId: 'dropex', imageUrls: [imageUrl] },
+      productPayload: { id: 'same-source-with-failure', imageUrls: [imageUrl] },
+      managedMedia: [managedAsset],
+      mediaStatus: 'ready',
+      mediaFailures: [{ reason: 'stale failure', retryable: false }],
+    },
+  });
+  const failedHealthyFetched: string[] = [];
+  const failedHealthyResult = await ensureSupplierReviewQueueManagedMedia(
+    failedHealthy.db as never,
+    'dropex-same-source-with-failure',
+    { imageUrls: [imageUrl], reprocessIncomplete: true, dependencies: mediaDependencies(pngBody, undefined, failedHealthyFetched) },
+  );
+  assert.equal(failedHealthyResult.reusedExistingQueueMedia, false);
+  assert.deepEqual(failedHealthyFetched, [imageUrl]);
+});
+
+test('media readiness allows only structured optional gallery warnings', () => {
+  const sourceImageUrls = [
+    'https://supplier.example/primary.png',
+    'https://supplier.example/optional-large.png',
+  ];
+  const primary = {
+    firebaseStorageUrl: 'https://storage.example/primary.png',
+    originalSupplierUrl: sourceImageUrls[0],
+    imageStatus: 'ready',
+    isPrimary: true,
+  };
+  const optionalOversized = {
+    code: SUPPLIER_MEDIA_FAILURE_CODE.IMAGE_TOO_LARGE,
+    originalSupplierUrl: sourceImageUrls[1],
+    retryable: false,
+    sourceIndex: 2,
+    isPrimary: false,
+  };
+  assert.equal(classifySupplierMediaReadiness({
+    supplierId: 'dropex',
+    sourceImageUrls,
+    managedMedia: [primary],
+    mediaFailures: [optionalOversized],
+  }).status, 'publication_safe_with_media_warnings');
+  assert.equal(classifySupplierMediaReadiness({
+    sourceImageUrls,
+    managedMedia: [primary],
+    mediaFailures: [{ ...optionalOversized, isPrimary: true, sourceIndex: 1 }],
+  }).publicationSafe, false);
+  assert.equal(classifySupplierMediaReadiness({
+    sourceImageUrls,
+    managedMedia: [primary],
+    mediaFailures: [{ ...optionalOversized, retryable: true }],
+  }).publicationSafe, false);
+  assert.equal(classifySupplierMediaReadiness({
+    sourceImageUrls,
+    managedMedia: [primary],
+    mediaFailures: [{ originalSupplierUrl: sourceImageUrls[1], reason: 'legacy failure' }],
+  }).publicationSafe, false);
+  assert.equal(classifySupplierMediaReadiness({
+    sourceImageUrls,
+    managedMedia: [],
+    mediaFailures: [],
+  }).publicationSafe, false);
+});
+
+test('optional media warnings are Dropex-only and source metadata fails closed', () => {
+  const sourceImageUrls = [
+    'https://supplier.example/primary.png',
+    'https://supplier.example/optional-large.png',
+  ];
+  const primary = {
+    firebaseStorageUrl: 'https://storage.example/primary.png',
+    originalSupplierUrl: sourceImageUrls[0],
+    imageStatus: 'ready',
+    isPrimary: true,
+  };
+  const warning = {
+    code: SUPPLIER_MEDIA_FAILURE_CODE.IMAGE_TOO_LARGE,
+    originalSupplierUrl: sourceImageUrls[1],
+    retryable: false,
+    sourceIndex: 2,
+    isPrimary: false,
+  };
+  assert.equal(classifySupplierMediaReadiness({
+    supplierId: 'dropex',
+    sourceImageUrls,
+    managedMedia: [primary],
+    mediaFailures: [warning],
+  }).publicationSafe, true);
+  assert.equal(classifySupplierMediaReadiness({
+    supplierId: 'a2z',
+    sourceImageUrls,
+    managedMedia: [primary],
+    mediaFailures: [warning],
+  }).publicationSafe, false);
+  assert.equal(classifySupplierMediaReadiness({
+    supplierId: 'dropex',
+    sourceImageUrls: [sourceImageUrls[1], sourceImageUrls[0]],
+    managedMedia: [{ ...primary, originalSupplierUrl: sourceImageUrls[1] }],
+    mediaFailures: [warning],
+  }).publicationSafe, false);
+  assert.equal(classifySupplierMediaReadiness({
+    supplierId: 'dropex',
+    sourceImageUrls: [sourceImageUrls[0]],
+    managedMedia: [primary],
+    mediaFailures: [warning],
+  }).publicationSafe, false);
+  assert.equal(classifySupplierMediaReadiness({
+    supplierId: 'dropex',
+    sourceImageUrls,
+    managedMedia: [{
+      ...primary,
+      originalSupplierUrl: sourceImageUrls[1],
+    }],
+    mediaFailures: [{
+      code: SUPPLIER_MEDIA_FAILURE_CODE.IMAGE_TOO_LARGE,
+      originalSupplierUrl: sourceImageUrls[0],
+      retryable: false,
+      sourceIndex: 1,
+      isPrimary: true,
+    }],
+  }).publicationSafe, false);
+  assert.equal(classifySupplierMediaReadiness({
+    supplierId: 'dropex',
+    sourceImageUrls,
+    managedMedia: [{
+      ...primary,
+      originalSupplierUrl: sourceImageUrls[1],
+    }],
+    mediaFailures: [],
+  }).publicationSafe, false);
+});
+
+test('scheduled alert evaluation skips warning-safe Dropex media and surfaces later blocking media', async () => {
+  const sourceImageUrls = [
+    'https://supplier.example/primary.png',
+    'https://supplier.example/optional-large.png',
+  ];
+  const managedMedia = [{
+    firebaseStorageUrl: 'https://storage.example/primary.png',
+    originalSupplierUrl: sourceImageUrls[0],
+    imageStatus: 'ready',
+    isPrimary: true,
+  }];
+  const reports: Array<Record<string, unknown>> = [];
+  const warningQueue = {
+    queueState: 'review_pending',
+    supplierId: 'dropex',
+    sourceId: 'dropex',
+    mediaStatus: 'partial',
+    mediaSourceImageUrls: sourceImageUrls,
+    managedMedia,
+    mediaFailures: [{
+      code: SUPPLIER_MEDIA_FAILURE_CODE.IMAGE_TOO_LARGE,
+      originalSupplierUrl: sourceImageUrls[1],
+      retryable: false,
+      sourceIndex: 2,
+      isPrimary: false,
+    }],
+  };
+  await evaluateSupplierOperationalAlerts(
+    createAlertMonitorFirestore({ warning: warningQueue }) as never,
+    Date.UTC(2026, 8, 20),
+    async (input) => { reports.push(input as unknown as Record<string, unknown>); },
+  );
+  assert.equal(reports.some((report) => report.category === 'media_processing_failure'), false);
+  assert.equal(reports.some((report) => report.category === 'storage_failure'), false);
+
+  reports.length = 0;
+  await evaluateSupplierOperationalAlerts(
+    createAlertMonitorFirestore({ blocking: {
+      ...warningQueue,
+      mediaFailures: [{ reason: 'socket hang up', retryable: true }],
+    } }) as never,
+    Date.UTC(2026, 8, 20),
+    async (input) => { reports.push(input as unknown as Record<string, unknown>); },
+  );
+  assert.equal(reports.filter((report) => report.category === 'media_processing_failure').length, 1);
+});
+
+test('primary failure remains blocking even when a surviving gallery asset is ordered first', async () => {
+  const primaryUrl = 'https://supplier.example/primary-failed.png';
+  const galleryUrl = 'https://supplier.example/gallery-survived.png';
+  const { db, documents } = createFakeFirestore({
+    'supplier_review_queue/dropex-primary-failed': {
+      queueState: 'review_pending',
+      sourceId: 'dropex',
+      supplierId: 'dropex',
+      supplierSnapshot: { supplierId: 'dropex', imageUrls: [primaryUrl, galleryUrl] },
+      productPayload: { id: 'primary-failed-product', imageUrls: [primaryUrl, galleryUrl] },
+      managedMedia: [],
+      mediaStatus: 'partial',
+      mediaFailures: [],
+    },
+  });
+  await ensureSupplierReviewQueueManagedMedia(db as never, 'dropex-primary-failed', {
+    reprocessIncomplete: true,
+    dependencies: mediaDependencies(pngBody, primaryUrl),
+  });
+  const queue = documents.get('supplier_review_queue/dropex-primary-failed')!;
+  assert.equal(queue.mediaReadiness, 'blocked');
+  assert.equal((queue.productValidation as StoredDocument).readyToPublish, false);
+  assert.equal(classifySupplierMediaReadiness({
+    supplierId: 'dropex',
+    sourceImageUrls: [primaryUrl, galleryUrl],
+    managedMedia: queue.managedMedia,
+    mediaFailures: queue.mediaFailures,
+  }).publicationSafe, false);
+  assert.equal((queue.managedMedia as Array<StoredDocument>)[0].originalSupplierUrl, galleryUrl);
+});
+
+test('optional oversized gallery media is excluded from the review payload while the item stays reviewable', async () => {
+  const queueItemId = 'dropex-media-optional-warning';
+  const primaryUrl = 'https://supplier.example/optional-primary.png';
+  const oversizedUrl = 'https://supplier.example/optional-oversized.png';
+  const galleryUrl = 'https://supplier.example/optional-gallery.png';
+  const { db, documents } = createFakeFirestore({
+    [`supplier_review_queue/${queueItemId}`]: {
+      queueState: 'review_pending',
+      sourceId: 'dropex',
+      supplierSnapshot: { supplierId: 'dropex', imageUrls: [primaryUrl, oversizedUrl, galleryUrl] },
+      productPayload: { id: 'optional-warning-product', imageUrls: [primaryUrl, oversizedUrl, galleryUrl] },
+      managedMedia: [],
+      mediaStatus: 'partial',
+      mediaFailures: [{ reason: 'legacy failure', retryable: false }],
+    },
+  });
+
+  await ensureSupplierReviewQueueManagedMedia(db as never, queueItemId, {
+    reprocessIncomplete: true,
+    dependencies: mediaDependencies(pngBody, undefined, undefined, oversizedUrl),
+  });
+
+  const queue = documents.get(`supplier_review_queue/${queueItemId}`)!;
+  assert.equal(queue.mediaStatus, 'ready');
+  assert.equal(queue.mediaReadiness, 'publication_safe_with_media_warnings');
+  assert.equal((queue.mediaFailures as Array<Record<string, unknown>>).length, 1);
+  assert.equal((queue.mediaFailures as Array<Record<string, unknown>>)[0].code, SUPPLIER_MEDIA_FAILURE_CODE.IMAGE_TOO_LARGE);
+  assert.equal((queue.managedMedia as Array<Record<string, unknown>>).length, 2);
+  assert.equal((queue.productPayload as Record<string, unknown>).imageUrls instanceof Array, true);
+  assert.equal(((queue.productPayload as Record<string, unknown>).imageUrls as string[]).includes(oversizedUrl), false);
+  assert.equal((queue.productValidation as Record<string, unknown>).readyToPublish, true);
+  assert.equal(documents.has('products/optional-warning-product'), false);
+  assert.equal(documents.has('product_private/optional-warning-product'), false);
 });
 
 test('same-source partial lifecycle is requeued while healthy lifecycle is preserved', () => {
@@ -235,6 +520,9 @@ test('same-source partial lifecycle is requeued while healthy lifecycle is prese
     contentHash: 'hash',
     firebaseStorageUrl: 'https://storage.example/lifecycle.png',
     originalSupplierUrl: imageUrl,
+    imageStatus: 'ready',
+    isPrimary: true,
+    sortOrder: 0,
     variants: { large: {} },
   };
   const partial = resolveSupplierReviewQueueUpsertLifecycle({
@@ -269,7 +557,7 @@ test('media alert resolution is idempotent and a resolver failure does not fail 
   const imageUrl = 'https://supplier.example/idempotent.png';
   const { db, documents } = createFakeFirestore({
     [`supplier_review_queue/${queueItemId}`]: {
-      queueState: 'processing',
+      queueState: 'review_pending',
       sourceId: 'dropex',
       supplierSnapshot: { supplierId: 'dropex', imageUrls: [imageUrl] },
       productPayload: { id: 'idempotent-product', imageUrls: [imageUrl] },
@@ -360,6 +648,61 @@ test('stale media success cannot resolve an alert after a newer failure state', 
   assert.equal(documents.get(`supplier_operational_alerts/${alert.alertId}`)?.status, 'open');
   assert.equal(collectionDocuments(documents, 'supplier_operational_alert_events')
     .filter((event) => event.alertId === alert.alertId && event.event === 'resolved').length, 0);
+});
+
+test('media alert resolution fences supplier, queue identity, review state, timestamp, and newer blocking media', async () => {
+  const queueItemId = 'dropex-media-resolution-fence';
+  const imageUrl = 'https://supplier.example/resolution-fence.png';
+  const baseQueue = {
+    queueItemId,
+    queueState: 'review_pending',
+    status: 'Pending',
+    supplierId: 'dropex',
+    sourceId: 'dropex',
+    supplierSnapshot: { supplierId: 'dropex', imageUrls: [imageUrl] },
+    productPayload: { id: 'resolution-fence-product', imageUrls: [imageUrl] },
+    mediaSourceImageUrls: [imageUrl],
+    managedMedia: [{
+      firebaseStorageUrl: 'https://storage.example/resolution-fence.png',
+      originalSupplierUrl: imageUrl,
+      imageStatus: 'ready',
+      isPrimary: true,
+    }],
+    mediaFailures: [],
+    mediaStatus: 'ready',
+    mediaProcessedAt: 'successful-completion',
+  };
+  const cases: Array<{ name: string; queue: StoredDocument; supplierId?: string; mediaProcessedAt?: string }> = [
+    { name: 'supplier mismatch', queue: { ...baseQueue }, supplierId: 'a2z' },
+    { name: 'queue identity mismatch', queue: { ...baseQueue, queueItemId: 'another-queue' } },
+    { name: 'review state mismatch', queue: { ...baseQueue, queueState: 'processing' } },
+    { name: 'stale completion', queue: { ...baseQueue }, mediaProcessedAt: 'stale-completion' },
+    {
+      name: 'newer blocking state',
+      queue: {
+        ...baseQueue,
+        mediaStatus: 'partial',
+        mediaFailures: [{ reason: 'newer socket failure', retryable: true }],
+        mediaProcessedAt: 'newer-failure',
+      },
+    },
+  ];
+  for (const entry of cases) {
+    const { db, documents } = createFakeFirestore({
+      [`supplier_review_queue/${queueItemId}`]: entry.queue,
+    });
+    const alert = await recordSupplierOperationalAlert(db as never, {
+      category: 'media_processing_failure',
+      supplierId: entry.supplierId || 'dropex',
+      queueItemId,
+    });
+    await resolveSupplierMediaOperationalAlertsSafely(db as never, {
+      supplierId: 'dropex',
+      queueItemId,
+      mediaProcessedAt: entry.mediaProcessedAt || 'successful-completion',
+    });
+    assert.equal(documents.get(`supplier_operational_alerts/${alert.alertId}`)?.status, 'open', entry.name);
+  }
 });
 
 test('still-partial supplier media remains open and does not publish or resolve alerts', async () => {

@@ -207,6 +207,7 @@ export default function SupplierReviewEditorModal({
       if (check.label === 'Specifications' && !specificationsRequired && specificationCount === 0) {
         return { label: check.label, valid: true, note: 'Not required' };
       }
+      const optionalMediaWarnings = String(item.mediaReadiness || '').trim().toLowerCase() === 'publication_safe_with_media_warnings';
       const error = check.label === 'Images'
         ? (supplierReviewManagedMediaReady(item) ? undefined : 'Managed supplier media is not ready for publication.')
         : check.label === 'Specifications'
@@ -215,7 +216,14 @@ export default function SupplierReviewEditorModal({
             ? 'The supplier did not provide product specifications.'
             : undefined))
         : check.fields.map((field) => validationErrors[field]).find(Boolean);
-      return { label: check.label, valid: !error, error };
+      return {
+        label: check.label,
+        valid: !error,
+        ...(check.label === 'Images' && optionalMediaWarnings
+          ? { note: 'Some optional supplier images were rejected; usable managed media is ready.' }
+          : {}),
+        error,
+      };
     });
   }, [categories, draft.category, item, specificationCount, specificationsRequired, validationErrors]);
   const previewImages = useMemo(() => {

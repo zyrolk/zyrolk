@@ -234,6 +234,7 @@ test('PR-STAB-07b quick card and details share signed managed-media projection',
   const managedMedia = supplierImages.map((_, index) => ({
     firebaseStorageUrl: `https://firebasestorage.googleapis.com/v0/b/private/o/managed-${index}.webp`,
     adminReviewUrl: `https://signed.example.test/review-${index}.webp`,
+    imageStatus: 'ready',
     isPrimary: index === 0,
     sortOrder: index,
   }));

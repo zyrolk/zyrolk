@@ -27,6 +27,7 @@ export interface SupplierReviewSourceItem {
   managedMedia?: Array<Record<string, unknown>>;
   mediaFailures?: Array<{ originalSupplierUrl?: string; reason?: string; retryable?: boolean; failedAt?: string }>;
   mediaStatus?: string;
+  mediaReadiness?: string;
   categoryMapping?: {
     supplierCategory?: string;
     supplierSubcategory?: string;

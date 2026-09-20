@@ -6,6 +6,11 @@ const sharp: typeof import("sharp").default = require("sharp");
 import { appLogger } from "../logging";
 import { fetchSupplierOutbound, SupplierOutboundResponse } from "../security/supplierOutboundRequest";
 import { recordSupplierOperationalAlertSafely } from "./supplierOperationalAlerts";
+import {
+  isOptionalSupplierMediaWarning,
+  SUPPLIER_MEDIA_FAILURE_CODE,
+  SupplierMediaFailureCode,
+} from "./supplierMediaReadiness";
 
 export const SUPPLIER_MEDIA_COLLECTION = "supplier_media_assets";
 export const SUPPLIER_MEDIA_AUDIT_COLLECTION = "supplier_media_audit";
@@ -66,10 +71,15 @@ export interface SupplierManagedMediaAsset {
 }
 
 export interface SupplierMediaFailure {
+  /** Structured server-generated classification; absent on legacy records. */
+  code?: SupplierMediaFailureCode;
   originalSupplierUrl: string;
   reason: string;
   retryable: boolean;
   failedAt: string;
+  /** One-based source image position captured by the server. */
+  sourceIndex?: number;
+  isPrimary?: boolean;
 }
 
 export interface SupplierMediaAcquisitionRequest {
@@ -98,9 +108,12 @@ export interface SupplierMediaPipelineDependencies {
 }
 
 export class SupplierMediaValidationError extends Error {
-  constructor(message: string) {
+  readonly code: SupplierMediaFailureCode;
+
+  constructor(message: string, code: SupplierMediaFailureCode = SUPPLIER_MEDIA_FAILURE_CODE.VALIDATION) {
     super(message);
     this.name = "SupplierMediaValidationError";
+    this.code = code;
   }
 }
 
@@ -290,6 +303,7 @@ const defaultDependencies = (db: Firestore): SupplierMediaPipelineDependencies =
       await db.collection(SUPPLIER_MEDIA_AUDIT_COLLECTION).add(event);
       if (event.event === "supplier_media_failed") {
         const failure = record(event.failure);
+        if (isOptionalSupplierMediaWarning(failure, undefined, event.supplierId || event.sourceId)) return;
         const reason = String(failure.reason || "Supplier media processing failed.");
         const common = {
           severity: "critical" as const,
@@ -340,14 +354,19 @@ const downloadSupplierImage = async (
   const declaredMimeType = parseDeclaredSupplierImageMimeType(response.headers.get("content-type"));
   const declaredLength = Number(response.headers.get("content-length"));
   if (Number.isFinite(declaredLength) && declaredLength > MAX_SUPPLIER_IMAGE_BYTES) {
-    throw new SupplierMediaValidationError("Supplier image exceeds the maximum allowed size.");
+    throw new SupplierMediaValidationError(
+      "Supplier image exceeds the maximum allowed size.",
+      SUPPLIER_MEDIA_FAILURE_CODE.IMAGE_TOO_LARGE,
+    );
   }
   if (!response.arrayBuffer) throw new Error("Supplier image transport did not provide a binary response.");
   const body = Buffer.from(await response.arrayBuffer());
-  if (body.length === 0 || body.length > MAX_SUPPLIER_IMAGE_BYTES) {
-    throw new SupplierMediaValidationError(body.length === 0
-      ? "Supplier image response was empty."
-      : "Supplier image exceeds the maximum allowed size.");
+  if (body.length === 0) throw new SupplierMediaValidationError("Supplier image response was empty.");
+  if (body.length > MAX_SUPPLIER_IMAGE_BYTES) {
+    throw new SupplierMediaValidationError(
+      "Supplier image exceeds the maximum allowed size.",
+      SUPPLIER_MEDIA_FAILURE_CODE.IMAGE_TOO_LARGE,
+    );
   }
   let metadata: Awaited<ReturnType<ReturnType<typeof sharp>["metadata"]>>;
   try {
@@ -523,10 +542,15 @@ export async function acquireSupplierManagedMedia(
     } catch (error) {
       const retryable = !(error instanceof SupplierMediaValidationError);
       const failure: SupplierMediaFailure = {
+        code: error instanceof SupplierMediaValidationError
+          ? error.code
+          : SUPPLIER_MEDIA_FAILURE_CODE.UNKNOWN,
         originalSupplierUrl: suppliedUrl,
         reason: (error instanceof Error ? error.message : "Supplier image download failed.").slice(0, 500),
         retryable,
         failedAt: uploadTimestamp,
+        sourceIndex: index + 1,
+        isPrimary: index === 0,
       };
       failures.push(failure);
       await dependencies.recordAudit({

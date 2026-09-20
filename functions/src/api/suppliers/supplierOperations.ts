@@ -2,6 +2,7 @@ import { AggregateField, FieldPath, Firestore, Timestamp } from "firebase-admin/
 import { ApiError } from "../errors";
 import { reviewRecordIsActionable } from "../../scheduled/supplierReviewQueue";
 import { SUPPLIER_OPERATIONAL_ALERT_CATEGORIES } from "./supplierOperationalAlerts";
+import { classifySupplierMediaReadiness } from "./supplierMediaReadiness";
 
 export const OPERATIONS_PAGE_LIMIT = 50;
 export const OPERATIONS_MAX_PAGE_LIMIT = 100;
@@ -111,7 +112,38 @@ export function calculateOperationsPerformance(input: {
 
 export function isUnresolvedSupplierMediaFailure(record: Record<string, unknown>): boolean {
   const mediaStatus = String(record.mediaStatus || "").trim().toLowerCase();
-  if (mediaStatus === "failed" || mediaStatus === "partial") return true;
+  if (mediaStatus === "failed" || mediaStatus === "partial") {
+    const supplierSnapshot = record.supplierSnapshot && typeof record.supplierSnapshot === "object"
+      ? record.supplierSnapshot as Record<string, unknown>
+      : {};
+    const productPayload = record.productPayload && typeof record.productPayload === "object"
+      ? record.productPayload as Record<string, unknown>
+      : {};
+    const processedMediaUrls = Array.isArray(record.mediaSourceImageUrls)
+      ? record.mediaSourceImageUrls.filter((value): value is string => typeof value === "string")
+      : [];
+    const snapshotMediaGallery = Array.isArray(supplierSnapshot.mediaGallery)
+      ? supplierSnapshot.mediaGallery.filter((value): value is string => typeof value === "string")
+      : [];
+    const snapshotImageUrls = Array.isArray(supplierSnapshot.imageUrls)
+      ? supplierSnapshot.imageUrls.filter((value): value is string => typeof value === "string")
+      : [];
+    const sourceImageUrls = processedMediaUrls.length > 0
+      ? processedMediaUrls
+      : snapshotMediaGallery.length > 0
+      ? snapshotMediaGallery
+      : snapshotImageUrls.length > 0
+        ? snapshotImageUrls
+        : Array.isArray(productPayload.imageUrls)
+          ? productPayload.imageUrls.filter((value): value is string => typeof value === "string")
+          : [];
+    return !classifySupplierMediaReadiness({
+      supplierId: record.supplierId || supplierSnapshot.supplierId || record.sourceId,
+      sourceImageUrls,
+      managedMedia: record.managedMedia,
+      mediaFailures: record.mediaFailures,
+    }).publicationSafe;
+  }
   const queueState = String(record.queueState || "").trim().toLowerCase();
   return ["retryable_failure", "dead_letter"].includes(queueState)
     && /image|media|storage/iu.test(String(record.lastFailureReason || ""));

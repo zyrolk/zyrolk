@@ -491,6 +491,7 @@ test('existing managed-media-ready review does not regress to Preparing when sup
     firebaseStorageUrl: 'https://firebasestorage.googleapis.com/v0/b/demo/o/atf0080.jpg',
     originalSupplierUrl: sourceUrls[0],
     variants: { large: { firebaseStorageUrl: 'https://firebasestorage.googleapis.com/v0/b/demo/o/atf0080.jpg' } },
+    imageStatus: 'ready',
     isPrimary: true,
     sortOrder: 0,
   }];

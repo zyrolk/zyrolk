@@ -7,6 +7,7 @@ import {
   SUPPLIER_MEDIA_COLLECTION,
   toPublishedProductMedia,
 } from "./supplierMediaPipeline";
+import { classifySupplierMediaReadiness } from "./supplierMediaReadiness";
 import { createSupplierAuditEvent } from "./supplierAuditTrail";
 import {
   normalizeSupplierMappingValue,
@@ -373,6 +374,25 @@ export const toPublicProductPayload = (queueItem: QueueItemRecord, draft: Suppli
     ? originalPayload.imageUrls.filter((imageUrl): imageUrl is string => typeof imageUrl === "string")
     : [];
   const managedMedia = extractSupplierMediaFromRecord(queueItem.managedMedia || record(queueItem.supplierSnapshot).managedMedia);
+  const supplierSnapshot = record(queueItem.supplierSnapshot);
+  const sourceImageUrls = Array.isArray(queueItem.mediaSourceImageUrls)
+    ? queueItem.mediaSourceImageUrls.filter((value): value is string => typeof value === "string")
+    : Array.isArray(supplierSnapshot.mediaGallery)
+    ? supplierSnapshot.mediaGallery.filter((value): value is string => typeof value === "string")
+    : Array.isArray(supplierSnapshot.imageUrls)
+      ? supplierSnapshot.imageUrls.filter((value): value is string => typeof value === "string")
+      : (Array.isArray(originalPayload.imageUrls)
+        ? originalPayload.imageUrls.filter((value): value is string => typeof value === "string")
+        : []);
+  const mediaReadiness = classifySupplierMediaReadiness({
+    supplierId: queueItem.supplierId || supplierSnapshot.supplierId || queueItem.sourceId,
+    sourceImageUrls,
+    managedMedia,
+    mediaFailures: queueItem.mediaFailures,
+  });
+  if (!mediaReadiness.publicationSafe) {
+    throw new ApiError("Supplier media contains a blocking image failure before publishing.", 422);
+  }
   const managedUrls = managedMedia.map((asset) => asset.firebaseStorageUrl);
   const primaryImageUrl = draft?.primaryImageUrl || managedUrls[0] || fallbackPrimaryImage;
   const galleryImageUrls = draft?.galleryImageUrls || (managedUrls.length > 0 ? managedUrls.slice(1) : fallbackGallery);

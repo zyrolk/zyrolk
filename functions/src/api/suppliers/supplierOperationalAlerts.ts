@@ -3,6 +3,7 @@ import { Firestore, Transaction } from "firebase-admin/firestore";
 import { getRuntimeConfig } from "../config";
 import { adminDb } from "../firebase";
 import { appLogger } from "../logging";
+import { classifySupplierMediaReadiness } from "./supplierMediaReadiness";
 
 export const SUPPLIER_OPERATIONAL_ALERTS_COLLECTION = "supplier_operational_alerts";
 export const SUPPLIER_OPERATIONAL_ALERT_EVENTS_COLLECTION = "supplier_operational_alert_events";
@@ -368,11 +369,46 @@ export async function resolveSupplierMediaOperationalAlertsSafely(
         const queueSnapshot = await transaction.get(queueReference);
         if (!queueSnapshot.exists) return false;
         const queue = queueSnapshot.data() || {};
-        const mediaFailures = Array.isArray(queue.mediaFailures) ? queue.mediaFailures : [];
-        const managedMedia = Array.isArray(queue.managedMedia) ? queue.managedMedia : [];
-        return queue.mediaStatus === "ready"
-          && mediaFailures.length === 0
-          && managedMedia.length > 0
+        const supplierSnapshot = queue.supplierSnapshot && typeof queue.supplierSnapshot === "object"
+          ? queue.supplierSnapshot as Record<string, unknown>
+          : {};
+        const currentSupplierId = String(queue.supplierId || supplierSnapshot.supplierId || queue.sourceId || "").trim();
+        if (!input.supplierId || currentSupplierId !== String(input.supplierId).trim()) return false;
+        const storedQueueIds = [queue.queueItemId, queue.reviewQueueItemId]
+          .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+          .map((value) => value.trim());
+        if (storedQueueIds.some((value) => value !== input.queueItemId)) return false;
+        const currentQueueState = String(queue.queueState || "").trim().toLowerCase();
+        const legacyPendingState = !currentQueueState && String(queue.status || "").trim().toLowerCase() === "pending";
+        if (currentQueueState !== "review_pending" && !legacyPendingState) return false;
+        const productPayload = queue.productPayload && typeof queue.productPayload === "object"
+          ? queue.productPayload as Record<string, unknown>
+          : {};
+        const processedMediaUrls = Array.isArray(queue.mediaSourceImageUrls)
+          ? queue.mediaSourceImageUrls.filter((value): value is string => typeof value === "string")
+          : [];
+        const snapshotMediaGallery = Array.isArray(supplierSnapshot.mediaGallery)
+          ? supplierSnapshot.mediaGallery.filter((value): value is string => typeof value === "string")
+          : [];
+        const snapshotImageUrls = Array.isArray(supplierSnapshot.imageUrls)
+          ? supplierSnapshot.imageUrls.filter((value): value is string => typeof value === "string")
+          : [];
+        const sourceImageUrls = processedMediaUrls.length > 0
+          ? processedMediaUrls
+          : snapshotMediaGallery.length > 0
+          ? snapshotMediaGallery
+          : snapshotImageUrls.length > 0
+            ? snapshotImageUrls
+            : Array.isArray(productPayload.imageUrls)
+              ? productPayload.imageUrls.filter((value): value is string => typeof value === "string")
+              : [];
+        const readiness = classifySupplierMediaReadiness({
+          supplierId: input.supplierId,
+          sourceImageUrls,
+          managedMedia: queue.managedMedia,
+          mediaFailures: queue.mediaFailures,
+        });
+        return readiness.publicationSafe
           && queue.mediaProcessedAt === input.mediaProcessedAt;
       });
     } catch (error) {

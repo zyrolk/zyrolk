@@ -16,6 +16,7 @@ import {
   buildSupplierProductOffer,
 } from '../functions/src/api/suppliers/supplierOfferEngine';
 import { buildProductPayload } from '../functions/src/scheduled/supplierSync';
+import { SUPPLIER_MEDIA_FAILURE_CODE } from '../functions/src/api/suppliers/supplierMediaReadiness';
 import {
   buildProductSavePayload,
   createProductDraft,
@@ -49,6 +50,9 @@ const approvalInput = (overrides: Record<string, unknown> = {}) => ({
 
 const approvalQueueItem = (overrides: Record<string, unknown> = {}) => ({
   id: 'promotion-review-1',
+  supplierId: 'dropex',
+  sourceId: 'dropex',
+  mediaSourceImageUrls: ['https://supplier.example/promotion.jpg'],
   productPayload: {
     id: 'promotion-product-1',
     name: 'Promotion Contract Product',
@@ -67,8 +71,12 @@ const approvalQueueItem = (overrides: Record<string, unknown> = {}) => ({
     contentHash: 'a'.repeat(64),
     firebaseStorageUrl: managedImage,
     originalSupplierUrl: 'https://supplier.example/promotion.jpg',
+    imageStatus: 'ready',
+    isPrimary: true,
+    sortOrder: 0,
     variants: { large: { firebaseStorageUrl: managedImage } },
   }],
+  mediaStatus: 'ready',
   ...overrides,
 });
 
@@ -192,6 +200,32 @@ test('invalid explicit regular prices cannot create a promotion and stored disco
     parseSupplierApprovalDraft(approvalInput({ promotionEnabled: true }))!,
   );
   assert.equal(payload.discount, 38);
+});
+
+test('server approval accepts structured optional media warnings but rejects blocking media', () => {
+  const optionalWarningItem = approvalQueueItem({
+    mediaReadiness: 'publication_safe_with_media_warnings',
+    mediaSourceImageUrls: [
+      'https://supplier.example/promotion.jpg',
+      'https://supplier.example/oversized-gallery.jpg',
+    ],
+    mediaFailures: [{
+      code: SUPPLIER_MEDIA_FAILURE_CODE.IMAGE_TOO_LARGE,
+      originalSupplierUrl: 'https://supplier.example/oversized-gallery.jpg',
+      retryable: false,
+      sourceIndex: 2,
+      isPrimary: false,
+    }],
+  });
+  const parsed = parseSupplierApprovalDraft(approvalInput({ promotionEnabled: false }));
+  const payload = toPublicProductPayload(optionalWarningItem, parsed);
+  assert.deepEqual(payload.imageUrls, [managedImage]);
+
+  assert.throws(() => toPublicProductPayload({
+    ...approvalQueueItem(),
+    mediaStatus: 'partial',
+    mediaFailures: [{ originalSupplierUrl: 'https://supplier.example/unknown.jpg', reason: 'socket hang up' }],
+  }, parsed), /blocking image failure/u);
 });
 
 test('Dropex reseller cost and supplier selling price stay separate and non-promotional', () => {
