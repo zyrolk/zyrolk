@@ -75,7 +75,7 @@ const managedCanonicalImageUrlsForDraft = (item: SupplierReviewSourceItem): stri
 
 const managedMediaReadyForDraft = (item: SupplierReviewSourceItem, urls: string[]): boolean => {
   const readiness = String(item.mediaReadiness || '').trim().toLowerCase();
-  const legacyReady = !readiness && String(item.mediaStatus || '').trim().toLowerCase() === 'ready'
+  const legacyReady = (!readiness || readiness === 'ready') && String(item.mediaStatus || '').trim().toLowerCase() === 'ready'
     && (!Array.isArray(item.mediaFailures) || item.mediaFailures.length === 0);
   const candidates = [item.managedMedia, item.productPayload?.supplierMedia, item.productPayload?.media];
   const selected = candidates.find((value) => Array.isArray(value) && value.length > 0);

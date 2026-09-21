@@ -76,6 +76,7 @@ test('normal ready products are the only records eligible for quick approval', (
   assert.equal(supplierReviewCanQuickApprove(readyItem), true);
   assert.equal(supplierReviewCanQuickApprove({
     ...readyItem,
+    productPayload: { ...readyItem.productPayload, brand: 'inactive-brand' },
     productValidation: {
       readyToPublish: false,
       missingFields: ['brand'],
@@ -146,6 +147,7 @@ test('rendered quick actions follow ready, invalid, conflict, and removal gates'
 
   const invalid = supplierReviewCanQuickApprove({
     ...readyItem,
+    productPayload: { ...readyItem.productPayload, brand: 'inactive-brand' },
     productValidation: { readyToPublish: false, missingFields: ['brand'], errors: [] },
   });
   const conflict = supplierReviewCanQuickApprove({ ...readyItem, status: 'CONFLICT', queueState: 'conflict' });
@@ -156,6 +158,28 @@ test('rendered quick actions follow ready, invalid, conflict, and removal gates'
     assert.match(markup, /aria-label="Reject Rendered QA product"/u);
     assert.match(markup, />Review Product</u);
   }
+});
+
+test('missing canonical supplier brand is not rendered as a blocking review error', () => {
+  const missingBrand = {
+    ...readyItem,
+    productPayload: { ...readyItem.productPayload, brand: '' },
+    productValidation: {
+      readyToPublish: false,
+      missingFields: ['brand'],
+      errors: [{ field: 'brand', code: 'required', message: 'Select an active registered brand.' }],
+    },
+  };
+  const problems = supplierReviewOperatorProblems(missingBrand);
+  assert.deepEqual(problems, []);
+  assert.equal(supplierReviewCanQuickApprove(missingBrand), true);
+  assert.doesNotMatch(renderQuickCard({ blockingProblems: problems }), /Select an active registered brand/u);
+
+  const suppliedInvalidBrand = {
+    ...missingBrand,
+    productPayload: { ...missingBrand.productPayload, brand: 'inactive-brand' },
+  };
+  assert.match(supplierReviewOperatorProblems(suppliedInvalidBrand)[0] || '', /Select an active registered brand/u);
 });
 
 test('successful decisions render terminal state without stale Approve or Reject controls', () => {
@@ -395,6 +419,7 @@ test('operator review reasons dedupe field codes and surface media retry actiona
     status: 'Pending',
     queueState: 'retryable_failure',
     supplierOfferPendingRevision: 'a'.repeat(64),
+    productPayload: { brand: 'inactive-brand' },
     productValidation: {
       readyToPublish: false,
       missingFields: ['category', 'brand', 'images'],

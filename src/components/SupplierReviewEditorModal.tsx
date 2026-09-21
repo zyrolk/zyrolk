@@ -25,6 +25,7 @@ import {
   supplierReviewManagedMediaReady,
   supplierReviewManagedImageUrls,
   supplierReviewManagedCanonicalImageUrls,
+  supplierReviewManagedImageUrlForCanonical,
   supplierReviewSpecificationsRequired,
   supplierReviewSpecificationsSatisfied,
 } from '../services/supplierHubPresentation';
@@ -240,17 +241,21 @@ export default function SupplierReviewEditorModal({
     return images.filter((url) => isValidSupplierImageUrl(url));
   }, [draft.galleryImageUrls, draft.primaryImageUrl, isEditing, item, item.managedMedia, item.mediaStatus]);
   const managedMediaSignature = useMemo(
-    () => `${String(item.mediaStatus || '')}|${String(item.mediaProcessedAt || '')}|${supplierReviewManagedCanonicalImageUrls(item).join('|')}`,
+    () => `${String(item.mediaStatus || '')}|${String(item.mediaProcessedAt || '')}|${supplierReviewManagedCanonicalImageUrls(item).join('|')}|${supplierReviewManagedImageUrls(item).join('|')}`,
     [item],
   );
   useEffect(() => {
     setFailedMediaUrls(new Set());
   }, [managedMediaSignature]);
   const importWarnings = useMemo(() => {
+    const hasCanonicalBrand = Boolean(String(item.productPayload?.brand || '').trim());
     const warnings = [
       ...(item.productValidation?.errors || []),
       ...(item.productValidation?.warnings || []),
-    ];
+    ].filter((warning) => {
+      const field = String(warning.field || '').trim().toLowerCase();
+      return hasCanonicalBrand || field !== 'brand';
+    });
     if (specificationsRequired) return warnings;
     return warnings.filter((warning) => {
       const field = String(warning.field || '').trim().toLowerCase();
@@ -418,6 +423,15 @@ export default function SupplierReviewEditorModal({
     next.add(url);
     return next;
   });
+  const clearMediaFailure = (url: string) => setFailedMediaUrls((current) => {
+    if (!current.has(url)) return current;
+    const next = new Set(current);
+    next.delete(url);
+    return next;
+  });
+  const managedPreviewUrl = (url: string): string => (
+    supplierReviewManagedImageUrlForCanonical(item, url) || url
+  );
 
   return (
     <div className="fixed inset-0 z-[70] flex items-end justify-center bg-black/75 p-0 backdrop-blur-sm sm:items-center sm:p-4" role="presentation">
@@ -894,7 +908,7 @@ export default function SupplierReviewEditorModal({
               <div className="relative flex aspect-square items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
                 <span className="absolute left-2 top-2 z-10 rounded-full bg-emerald-600 px-2 py-1 text-[8px] font-black uppercase text-white shadow">Primary image</span>
                 {isValidSupplierImageUrl(draft.primaryImageUrl) ? (
-                  <img src={draft.primaryImageUrl.trim()} alt="Primary product preview" onError={() => markMediaFailure(draft.primaryImageUrl.trim())} className="h-full w-full object-contain" referrerPolicy="no-referrer" />
+                  <img src={managedPreviewUrl(draft.primaryImageUrl.trim())} alt="Primary product preview" onError={() => markMediaFailure(draft.primaryImageUrl.trim())} onLoad={() => clearMediaFailure(draft.primaryImageUrl.trim())} className="h-full w-full object-contain" referrerPolicy="no-referrer" />
                 ) : (
                   <div className="text-center text-slate-400"><Image className="mx-auto h-6 w-6" /><span className="mt-1 block text-[9px] font-bold">No valid preview</span></div>
                 )}
@@ -928,7 +942,7 @@ export default function SupplierReviewEditorModal({
                   <article key={`${imageUrl}-${index}`} className="rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
                     <div className="relative mb-2 flex aspect-square items-center justify-center overflow-hidden rounded-lg bg-slate-100 dark:bg-slate-950">
                       <span className="absolute left-1.5 top-1.5 z-10 rounded-md bg-black/60 px-1.5 py-0.5 text-[8px] font-black text-white">{index + 2}</span>
-                      {isValidSupplierImageUrl(imageUrl) ? <img src={imageUrl} alt={`Gallery preview ${index + 1}`} onError={() => markMediaFailure(imageUrl)} className="h-full w-full object-contain" referrerPolicy="no-referrer" /> : <Image className="h-6 w-6 text-red-400" />}
+                      {isValidSupplierImageUrl(imageUrl) ? <img src={managedPreviewUrl(imageUrl)} alt={`Gallery preview ${index + 1}`} onError={() => markMediaFailure(imageUrl)} onLoad={() => clearMediaFailure(imageUrl)} className="h-full w-full object-contain" referrerPolicy="no-referrer" /> : <Image className="h-6 w-6 text-red-400" />}
                     </div>
                     <p className="truncate text-[9px] text-slate-400" title={imageUrl}>{imageUrl}</p>
                     <div className="mt-2 flex justify-end gap-1">
@@ -961,7 +975,7 @@ export default function SupplierReviewEditorModal({
                 {previewImages.map((imageUrl, index) => (
                   <div key={`${imageUrl}-${index}`} className="relative flex aspect-square items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
                     {index === 0 ? <span className="absolute left-2 top-2 z-10 rounded-full bg-emerald-600 px-2 py-1 text-[8px] font-black uppercase text-white">Primary</span> : null}
-                    <img src={imageUrl} alt={`Product image ${index + 1}`} onError={() => markMediaFailure(imageUrl)} className="h-full w-full object-contain" referrerPolicy="no-referrer" />
+                    <img src={imageUrl} alt={`Product image ${index + 1}`} onError={() => markMediaFailure(imageUrl)} onLoad={() => clearMediaFailure(imageUrl)} className="h-full w-full object-contain" referrerPolicy="no-referrer" />
                   </div>
                 ))}
               </div>

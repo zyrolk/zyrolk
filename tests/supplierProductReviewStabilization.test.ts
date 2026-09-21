@@ -16,6 +16,7 @@ import {
   supplierReviewIsPreparing,
   supplierReviewManagedImageUrl,
   supplierReviewManagedImageUrls,
+  supplierReviewManagedImageUrlForCanonical,
   supplierReviewSpecificationCount,
   supplierReviewSpecificationsRequired,
   supplierReviewSpecificationsSatisfied,
@@ -245,6 +246,35 @@ test('PR-STAB-07b quick card and details share signed managed-media projection',
   const markup = modalMarkup({ item });
   assert.equal((markup.match(/<img[^>]+src="https:\/\/signed\.example\.test\/review-/gu) || []).length, 5);
   assert.doesNotMatch(markup, /No valid product images/u);
+});
+
+test('PR-STAB-07c edit drafts keep canonical identity while previews use healthy managed review URLs', () => {
+  const canonicalImages = supplierImages.slice(0, 4).map((_, index) => `https://firebasestorage.googleapis.com/v0/b/private/o/managed-${index}.webp`);
+  const reviewImages = canonicalImages.map((_, index) => `https://signed.example.test/review-${index}.webp`);
+  const item = {
+    ...baseItem,
+    mediaStatus: 'ready',
+    mediaReadiness: 'ready',
+    managedMedia: canonicalImages.map((firebaseStorageUrl, index) => ({
+      firebaseStorageUrl,
+      adminReviewUrl: reviewImages[index],
+      imageStatus: 'ready',
+      isPrimary: index === 0,
+      sortOrder: index,
+    })),
+    productPayload: {
+      ...baseItem.productPayload,
+      imageUrl: 'https://supplier.example.test/stale-primary.jpg',
+      imageUrls: ['https://supplier.example.test/stale-gallery.jpg'],
+    },
+  };
+  const draft = createSupplierReviewDraft(item as never);
+  assert.deepEqual([draft.primaryImageUrl, ...draft.galleryImageUrls], canonicalImages);
+  assert.deepEqual(canonicalImages.map((url) => supplierReviewManagedImageUrlForCanonical(item, url)), reviewImages);
+  const markup = modalMarkup({ item, draft });
+  const imageTags = markup.match(/<img[^>]+>/gu) || [];
+  assert.equal(imageTags.filter((tag) => tag.includes('https://signed.example.test/review-')).length, 4);
+  assert.doesNotMatch(imageTags.join('\n'), /stale-primary|stale-gallery/u);
 });
 
 test('PR-STAB-07c What Changed renders description values as plain text', () => {

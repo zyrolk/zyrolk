@@ -64,6 +64,19 @@ test('Business Settings project only existing synchronization, pricing, and cata
   assert.match(hub, /defaultSchedule = String\(supplierSettings\.syncInterval \|\| '1 Hour'\)/);
 });
 
+test('Category Mapping is reachable from Supplier Hub Settings and uses the existing admin API', () => {
+  const hub = projectFile('src/components/SupplierHubFiveStars.tsx');
+  assert.match(hub, /initialSubTab\?: SupplierHubSection/u);
+  assert.match(hub, /\{ id: 'settings', label: 'Settings'/u);
+  assert.match(hub, /activeSubTab === 'settings'/u);
+  assert.match(hub, /getSupplierApi\('\/api\/supplier-category-mappings'\)/u);
+  assert.match(hub, /postSupplierApi\('\/api\/supplier-category-mappings'/u);
+  assert.match(hub, /category\.isActive !== false/u);
+  assert.match(hub, /subcategory\.isActive !== false/u);
+  assert.match(hub, /targetCategoryId: draft\.targetCategoryId/u);
+  assert.match(hub, /targetSubcategoryId: draft\.targetSubcategoryId \|\| undefined/u);
+});
+
 test('Advanced Settings expose existing operations only to owner and super-admin claims', () => {
   const hub = projectFile('src/components/SupplierHubFiveStars.tsx');
   for (const setting of [

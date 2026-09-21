@@ -45,6 +45,7 @@ export interface SupplierReviewQuickApprovalItem extends ReviewPresentationItem 
   supplierOfferPendingRevision?: unknown;
   managedMedia?: unknown;
   productPayload?: {
+    brand?: unknown;
     specs?: unknown;
     media?: unknown;
     supplierMedia?: unknown;
@@ -198,17 +199,21 @@ const managedMediaRecords = (item: SupplierReviewQuickApprovalItem): Array<Recor
     : [];
 };
 
+const orderedManagedMediaRecords = (item: SupplierReviewQuickApprovalItem): Array<Record<string, unknown>> => (
+  [...managedMediaRecords(item)].sort((left, right) => {
+    const primaryDifference = Number(right.isPrimary === true) - Number(left.isPrimary === true);
+    if (primaryDifference !== 0) return primaryDifference;
+    return Number(left.sortOrder || 0) - Number(right.sortOrder || 0);
+  })
+);
+
 /**
  * Returns the response-only managed review image set in deterministic order.
  * Signed admin URLs are preferred; canonical Firebase URLs remain identity
  * metadata and are only a local fallback for legacy responses.
  */
 export function supplierReviewManagedImageUrls(item: SupplierReviewQuickApprovalItem): string[] {
-  const ordered = [...managedMediaRecords(item)].sort((left, right) => {
-    const primaryDifference = Number(right.isPrimary === true) - Number(left.isPrimary === true);
-    if (primaryDifference !== 0) return primaryDifference;
-    return Number(left.sortOrder || 0) - Number(right.sortOrder || 0);
-  });
+  const ordered = orderedManagedMediaRecords(item);
   const signed = ordered
     .map((record) => String(record.adminReviewUrl || '').trim())
     .filter((url) => /^https:\/\/\S+$/iu.test(url));
@@ -221,14 +226,26 @@ export function supplierReviewManagedImageUrls(item: SupplierReviewQuickApproval
 
 /** Canonical Firebase URLs used when an editable draft must remain publish-safe. */
 export function supplierReviewManagedCanonicalImageUrls(item: SupplierReviewQuickApprovalItem): string[] {
-  return [...managedMediaRecords(item)].sort((left, right) => {
-    const primaryDifference = Number(right.isPrimary === true) - Number(left.isPrimary === true);
-    if (primaryDifference !== 0) return primaryDifference;
-    return Number(left.sortOrder || 0) - Number(right.sortOrder || 0);
-  })
+  return orderedManagedMediaRecords(item)
     .map((record) => String(record.firebaseStorageUrl || '').trim())
     .filter((url) => /^https:\/\/\S+$/iu.test(url))
     .filter((url, index, values) => values.indexOf(url) === index);
+}
+
+/** Resolve a draft's canonical managed URL to the same admin-review URL used by read-only details. */
+export function supplierReviewManagedImageUrlForCanonical(
+  item: SupplierReviewQuickApprovalItem,
+  canonicalUrl: unknown,
+): string {
+  const canonical = String(canonicalUrl || '').trim();
+  if (!canonical) return '';
+  const record = orderedManagedMediaRecords(item).find(
+    (candidate) => String(candidate.firebaseStorageUrl || '').trim() === canonical,
+  );
+  if (!record) return '';
+  const reviewUrl = String(record.adminReviewUrl || '').trim();
+  if (/^https:\/\/\S+$/iu.test(reviewUrl)) return reviewUrl;
+  return /^https:\/\/\S+$/iu.test(canonical) ? canonical : '';
 }
 
 /** Returns the managed review URL, preferring the short-lived admin URL when present. */
@@ -244,7 +261,7 @@ export function supplierReviewManagedMediaReady(item: SupplierReviewQuickApprova
     && ['ready', 'published'].includes(String(record.imageStatus || '').trim().toLowerCase()));
   const serverSafe = ['publication_safe', 'publication_safe_with_media_warnings'].includes(mediaReadiness);
   const mediaFailures = Array.isArray(item.mediaFailures) ? item.mediaFailures : [];
-  const legacySafe = !mediaReadiness
+  const legacySafe = (!mediaReadiness || mediaReadiness === 'ready')
     && String(item.mediaStatus || '').toLowerCase() === 'ready'
     && mediaFailures.length === 0;
   return (serverSafe || legacySafe)
@@ -332,7 +349,7 @@ export function isSupplierReviewStaleObservationError(message: unknown): boolean
 }
 
 export function supplierReviewCanQuickApprove(item: SupplierReviewQuickApprovalItem): boolean {
-  const validation = item.productValidation;
+  const validation = supplierReviewEffectiveProductValidation(item);
   return validation?.readyToPublish === true
     && (validation.missingFields?.length || 0) === 0
     && (validation.errors?.length || 0) === 0
@@ -341,6 +358,35 @@ export function supplierReviewCanQuickApprove(item: SupplierReviewQuickApprovalI
     && !supplierReviewIsStale(item)
     && Boolean(supplierReviewManagedImageUrl(item));
 }
+
+/**
+ * Older queue documents may retain a brand-only validation result from before
+ * supplier brands became optional. Reconcile that stale presentation metadata
+ * without inventing a brand; the approval API remains authoritative.
+ */
+const supplierReviewEffectiveProductValidation = (item: SupplierReviewQuickApprovalItem) => {
+  const validation = item.productValidation || {};
+  const hasCanonicalBrand = Boolean(String(item.productPayload?.brand || '').trim());
+  const missingFields = (validation.missingFields || []).filter((field) => (
+    hasCanonicalBrand || String(field || '').trim().toLowerCase() !== 'brand'
+  ));
+  const errors = (validation.errors || []).filter((error) => {
+    const field = error && typeof error === 'object' ? String((error as { field?: unknown }).field || '') : '';
+    return hasCanonicalBrand || field.trim().toLowerCase() !== 'brand';
+  });
+  const hadStaleBrandValidation = !hasCanonicalBrand
+    && ((validation.missingFields || []).some((field) => String(field || '').trim().toLowerCase() === 'brand')
+      || (validation.errors || []).some((error) => {
+        const field = error && typeof error === 'object' ? String((error as { field?: unknown }).field || '') : '';
+        return field.trim().toLowerCase() === 'brand';
+      }));
+  return {
+    readyToPublish: validation.readyToPublish === true
+      || (validation.readyToPublish === false && hadStaleBrandValidation && missingFields.length === 0 && errors.length === 0),
+    missingFields,
+    errors,
+  };
+};
 
 /**
  * Resolves only a verified catalogue display name. The underlying identifier is
@@ -479,7 +525,7 @@ export function supplierReviewRawMetadata(item: {
 export function supplierReviewOperatorProblems(item: SupplierReviewQuickApprovalItem & {
   mediaFailures?: Array<{ reason?: string; retryable?: boolean }> | null;
 }): string[] {
-  const validation = item.productValidation || {};
+  const validation = supplierReviewEffectiveProductValidation(item);
   const missingFields = Array.isArray(validation.missingFields)
     ? validation.missingFields.map((field) => String(field || '').trim().toLowerCase()).filter(Boolean)
     : [];
