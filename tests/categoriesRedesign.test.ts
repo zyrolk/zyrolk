@@ -11,6 +11,7 @@ const categoriesPage = app.slice(
 
 test('Categories keeps the existing live-category filtering and selection behavior', () => {
   assert.match(app, /const storefrontCategories = useMemo\([\s\S]*categoryCounts\[category\.id\][\s\S]*> 0/);
+  assert.match(app, /loadStorefrontCatalogCounts\(db, categories\)[\s\S]*\}, \[categories, products\]\);/);
   assert.match(categoriesPage, /storefrontCategories\.map/);
   assert.match(categoriesPage, /categoryCounts\[cat\.id\] \|\| 0/);
   assert.match(categoriesPage, /categoryMatches\(product\.category, cat\.id\)/);

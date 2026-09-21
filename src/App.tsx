@@ -921,7 +921,7 @@ export default function App() {
       })
       .catch((error) => reportClientIssue('storefront-catalog-counts', error, 'warning'));
     return () => { cancelled = true; };
-  }, [categories]);
+  }, [categories, products]);
 
   const loadMoreProducts = useCallback((): Promise<boolean> => {
     if (nextProductPagePromiseRef.current) return nextProductPagePromiseRef.current;
