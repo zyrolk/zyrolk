@@ -217,6 +217,11 @@ test('P1 05A supplier payloads omit absent optional commerce fields before Fires
   assert.equal(validPayload.costPrice, 870);
   assert.equal(validPayload.price, 1650);
   assert.equal(validPayload.stock, 8);
+  const suppliedSpecificationPayload = buildPayloadFixture({
+    ...validProduct,
+    specifications: { ...validProduct.specifications, 'Product Type': 'Wireless Earbuds' },
+  });
+  assert.equal((suppliedSpecificationPayload.specs as Data)['Product Type'], 'Wireless Earbuds');
   assert.equal(validPayload.marketPrice, 0);
   assert.equal(Object.hasOwn(validPayload, 'originalPrice'), false);
   assert.equal(Object.hasOwn(validPayload, 'discount'), false);

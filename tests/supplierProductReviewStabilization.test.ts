@@ -11,12 +11,14 @@ import {
 } from '../src/services/supplierReviewEditor';
 import {
   isSupplierReviewStaleObservationError,
+  supplierReviewCanQuickApprove,
   supplierReviewDecisionReady,
   supplierReviewDisplayImageUrl,
   supplierReviewIsPreparing,
   supplierReviewManagedImageUrl,
   supplierReviewManagedImageUrls,
   supplierReviewManagedImageUrlForCanonical,
+  supplierReviewOperatorProblems,
   supplierReviewSpecificationCount,
   supplierReviewSpecificationsRequired,
   supplierReviewSpecificationsSatisfied,
@@ -292,36 +294,51 @@ test('PR-STAB-07c What Changed renders description values as plain text', () => 
   assert.doesNotMatch(changedSection, /&lt;\/?(?:p|strong)&gt;/iu);
 });
 
-// 8. zero valid specs => count 0 + warning + failed checklist WHEN specs required
-test('PR-STAB-08 zero structured specifications fail when server validation requires them', () => {
+// 8. supplier review specifications are optional even when the category template marks them required
+test('PR-STAB-08 missing supplier specifications do not block an otherwise valid review item', () => {
   assert.equal(countStructuredSupplierSpecifications({ Model: '', Colour: '' }), 0);
   assert.equal(supplierReviewSpecificationCount({ productPayload: { specs: { Model: '' } } }), 0);
 
   const draft = { ...createSupplierReviewDraft(baseItem as never), category: 'electronics' };
   const categories = [{ id: 'electronics', name: 'Electronics', specificationTemplate: [{ name: 'Model', required: true }] }];
-  const errors = validateSupplierReviewDraft(draft, ['electronics'], categories as never, [{ id: 'brand-1', name: 'Brand', isActive: true }] as never);
-  assert.equal(errors.specifications, 'Complete required specifications: Model.');
-  assert.equal(supplierReviewSpecificationsRequired(baseItem, categories, 'electronics'), true);
-  assert.equal(supplierReviewSpecificationsSatisfied(0, baseItem, categories, 'electronics'), false);
+  const errors = validateSupplierReviewDraft(draft, ['electronics'], categories as never, [{ id: 'brand-1', name: 'Brand', isActive: true }] as never, { supplierReview: true });
+  assert.equal(errors.specifications, undefined);
+  assert.equal(supplierReviewSpecificationsRequired(baseItem, categories, 'electronics'), false);
+  assert.equal(supplierReviewSpecificationsSatisfied(0, baseItem, categories, 'electronics'), true);
+
+  const legacyStaleValidationItem = {
+    ...baseItem,
+    mediaStatus: 'ready',
+    mediaReadiness: 'publication_safe',
+    managedMedia: [{ firebaseStorageUrl: managedImage, imageStatus: 'ready', isPrimary: true, sortOrder: 0 }],
+  };
+  assert.equal(supplierReviewCanQuickApprove(legacyStaleValidationItem as never), true);
+  assert.deepEqual(supplierReviewOperatorProblems(legacyStaleValidationItem as never), []);
 
   const markup = modalMarkup({
     categories,
     draft: { ...draft, specifications: {} },
   });
   assert.match(markup, /0 specifications/u);
-  assert.match(markup, /The supplier did not provide product specifications/u);
+  assert.match(markup, /Not required/u);
+  assert.doesNotMatch(markup, /The supplier did not provide product specifications/u);
+
+  const strictErrors = validateSupplierReviewDraft(draft, ['electronics'], categories as never, [{ id: 'brand-1', name: 'Brand', isActive: true }] as never);
+  assert.equal(strictErrors.specifications, 'Complete required specifications: Model.');
 });
 
-// 9. valid specs => correct count + passed checklist
-test('PR-STAB-09 valid structured specifications count and satisfy required validation', () => {
-  const specs = { Model: 'QA-1', Colour: 'Blue' };
-  assert.equal(countStructuredSupplierSpecifications(specs), 2);
-  assert.equal(supplierReviewSpecificationCount({ productPayload: { specs } }), 2);
+// 9. supplier-provided values are preserved and never fabricated
+test('PR-STAB-09 supplied specifications are preserved without fabricated defaults', () => {
+  const specs = { Model: 'QA-1', Colour: 'Blue', 'Product Type': 'Wireless Earbuds' };
+  assert.equal(countStructuredSupplierSpecifications(specs), 3);
+  assert.equal(supplierReviewSpecificationCount({ productPayload: { specs } }), 3);
 
   const draft = { ...createSupplierReviewDraft({ ...baseItem, productPayload: { ...baseItem.productPayload, specs } } as never), category: 'electronics', brand: 'brand-1' };
   const categories = [{ id: 'electronics', name: 'Electronics', specificationTemplate: [{ name: 'Model', required: true }] }];
   const brands = [{ id: 'brand-1', name: 'Brand', isActive: true }];
-  const errors = validateSupplierReviewDraft(draft, ['electronics'], categories as never, brands as never);
+  assert.equal(draft.specifications?.['Product Type'], 'Wireless Earbuds');
+  assert.equal(Object.hasOwn(createSupplierReviewDraft(baseItem as never).specifications || {}, 'Product Type'), false);
+  const errors = validateSupplierReviewDraft(draft, ['electronics'], categories as never, brands as never, { supplierReview: true });
   assert.equal(errors.specifications, undefined);
   assert.equal(supplierReviewSpecificationsSatisfied(2, baseItem, categories, 'electronics'), true);
 });
@@ -340,7 +357,7 @@ test('PR-STAB-10 read-only modal hides mutation controls and image editor worksp
 
 // 11. edit/save refreshes category validation while treating brand as optional
 test('PR-STAB-11 edit mode revalidates category and optional brand through the shared draft validator', () => {
-  assert.match(editor, /validateSupplierReviewDraft\(draft, validCategoryIds, categories, brands\)/u);
+  assert.match(editor, /validateSupplierReviewDraft\(draft, validCategoryIds, categories, brands, \{ supplierReview: true \}\)/u);
   assert.match(editor, /if \(!isEditing\) setDraft\(initialDraft\)/u);
   const draft = { ...createSupplierReviewDraft(baseItem as never), category: '', brand: '' };
   const categories = [{ id: 'electronics', name: 'Electronics', specificationTemplate: [] }];
@@ -424,22 +441,48 @@ test('PR-STAB-14 sync status labels avoid contradictory waiting and in-progress 
   assert.doesNotMatch(formatSupplierSyncProgress(waitingWhileScanning), /Waiting · In progress/u);
 });
 
-// 15. category server gate remains enforced while brand is optional
-test('PR-STAB-15 category server approval validation remains enforced while brand is optional', () => {
-  const categories = [{ id: 'electronics', name: 'Electronics', isActive: true, subcategories: [], specificationTemplate: [] }];
+// 15. real launch gates remain enforced while supplier specifications are optional
+test('PR-STAB-15 supplier approval keeps real launch gates while specs remain optional', () => {
+  const categories = [{ id: 'electronics', name: 'Electronics', isActive: true, subcategories: [], specificationTemplate: [{ name: 'Product Type', required: true }] }];
   const brands = [{ id: 'brand-1', name: 'Brand', isActive: true }];
-  const errors = validateSupplierProductForApproval({
+  const validWithoutSpecs = {
     name: 'Phone',
     imageUrl: 'https://cdn.example.test/product.jpg',
     price: 100,
     description: 'Description',
     stock: 5,
     isActive: true,
-    category: '',
+    category: 'electronics',
+    subcategory: '',
+    brand: '',
+    specs: {},
+  };
+  const errors = validateSupplierProductForApproval(validWithoutSpecs, categories, brands, { supplierReview: true });
+  assert.equal(errors.some((error) => error.field.startsWith('specs.')), false);
+  assert.deepEqual(validateSupplierProductForApproval({ ...validWithoutSpecs, category: '' }, categories, brands, { supplierReview: true })
+    .map((error) => error.field), ['category']);
+  assert.ok(validateSupplierProductForApproval({ ...validWithoutSpecs, name: '' }, categories, brands, { supplierReview: true })
+    .some((error) => error.field === 'name'));
+  assert.ok(validateSupplierProductForApproval({ ...validWithoutSpecs, description: '' }, categories, brands, { supplierReview: true })
+    .some((error) => error.field === 'description'));
+  assert.ok(validateSupplierProductForApproval({ ...validWithoutSpecs, imageUrl: '' }, categories, brands, { supplierReview: true })
+    .some((error) => error.field === 'imageUrl'));
+  assert.ok(validateSupplierProductForApproval({ ...validWithoutSpecs, price: 0 }, categories, brands, { supplierReview: true })
+    .some((error) => error.field === 'price'));
+  assert.ok(validateSupplierProductForApproval({ ...validWithoutSpecs, stock: -1 }, categories, brands, { supplierReview: true })
+    .some((error) => error.field === 'stock'));
+  const strictErrors = validateSupplierProductForApproval({
+    name: 'Phone',
+    imageUrl: 'https://cdn.example.test/product.jpg',
+    price: 100,
+    description: 'Description',
+    stock: 5,
+    isActive: true,
+    category: 'electronics',
     brand: '',
     specs: {},
   }, categories, brands);
-  assert.ok(errors.some((error) => error.field === 'category'));
-  assert.equal(errors.some((error) => error.field === 'brand'), false);
+  assert.ok(strictErrors.some((error) => error.field === 'specs.Product Type'));
+  assert.equal(strictErrors.some((error) => error.field === 'brand'), false);
   assert.match(projectFile('tests/supplierIntelligentMappingSprint4.test.ts'), /validateSupplierProductForApproval/);
 });

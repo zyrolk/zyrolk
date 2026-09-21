@@ -195,13 +195,13 @@ test('POST-DEPLOY-09 zero specs and not required is non-blocking', () => {
   assert.equal(required, false);
 });
 
-test('POST-DEPLOY-10 zero specs and required fails checklist semantics', () => {
+test('POST-DEPLOY-10 zero supplier specs remain non-blocking despite category templates', () => {
   const required = supplierReviewSpecificationsRequired(
     { productValidation: { missingFields: ['specifications'] } },
     [{ id: 'cat-1', specificationTemplate: [{ required: true }] }],
     'cat-1',
   );
-  assert.equal(required, true);
+  assert.equal(required, false);
 });
 
 test('POST-DEPLOY-11 totalProductLimit=5 scans at most five products', async () => {

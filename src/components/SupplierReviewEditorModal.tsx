@@ -26,7 +26,6 @@ import {
   supplierReviewManagedImageUrls,
   supplierReviewManagedCanonicalImageUrls,
   supplierReviewManagedImageUrlForCanonical,
-  supplierReviewSpecificationsRequired,
   supplierReviewSpecificationsSatisfied,
 } from '../services/supplierHubPresentation';
 import {
@@ -152,7 +151,7 @@ export default function SupplierReviewEditorModal({
   const onCloseRef = useRef(onClose);
   const isPublishingRef = useRef(isPublishing);
   const validationErrors = useMemo(
-    () => validateSupplierReviewDraft(draft, validCategoryIds, categories, brands),
+    () => validateSupplierReviewDraft(draft, validCategoryIds, categories, brands, { supplierReview: true }),
     [brands, categories, draft, validCategoryIds],
   );
   const selectedCategory = useMemo(
@@ -185,10 +184,7 @@ export default function SupplierReviewEditorModal({
     () => brands.find((brand) => brand.id === draft.brand),
     [brands, draft.brand],
   );
-  const specificationsRequired = useMemo(
-    () => supplierReviewSpecificationsRequired(item, categories, draft.category),
-    [categories, draft.category, item],
-  );
+  const specificationsRequired = false;
   const validationChecklist = useMemo(() => {
     const checks: Array<{ label: string; fields: Array<keyof typeof validationErrors> }> = [
       { label: 'Images', fields: ['primaryImageUrl', 'galleryImageUrls'] },
@@ -829,7 +825,7 @@ export default function SupplierReviewEditorModal({
               <legend className="sr-only">Category specifications</legend>
               {(selectedCategory?.specificationTemplate || []).map((field) => (
                 <label key={field.name} className="space-y-1.5 text-xs">
-                  <span className="font-bold text-slate-600 dark:text-slate-300">{field.name}{field.required ? ' *' : ''}</span>
+                  <span className="font-bold text-slate-600 dark:text-slate-300">{field.name}</span>
                   <input value={(draft.specifications || {})[field.name] || ''} onChange={(event) => setSpecification(field.name, event.target.value)} className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 dark:border-slate-700 dark:bg-slate-900" />
                 </label>
               ))}

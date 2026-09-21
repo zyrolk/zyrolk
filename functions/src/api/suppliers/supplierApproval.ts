@@ -973,6 +973,7 @@ export async function decideSupplierQueueItem(
           name: stringValue(brandData.name) || brandSnapshot.id,
           isActive: brandData.isActive !== false,
         }] : [],
+        { supplierReview: true },
       );
       if (validationErrors.length > 0) {
         throw new ApiError(

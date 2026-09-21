@@ -307,25 +307,13 @@ export function supplierReviewSpecificationCount(item: SupplierReviewQuickApprov
 }
 
 export function supplierReviewSpecificationsRequired(
-  item: Pick<SupplierReviewQuickApprovalItem, 'productValidation'>,
-  categories: readonly { id?: unknown; specificationTemplate?: Array<{ required?: boolean }> }[] | undefined,
-  categoryId: string,
+  _item: Pick<SupplierReviewQuickApprovalItem, 'productValidation'>,
+  _categories: readonly { id?: unknown; specificationTemplate?: Array<{ required?: boolean }> }[] | undefined,
+  _categoryId: string,
 ): boolean {
-  const selectedCategory = categories?.find((candidate) => String(candidate.id || '').trim() === categoryId.trim());
-  if ((selectedCategory?.specificationTemplate || []).some((field) => field.required === true)) return true;
-
-  const missingFields = Array.isArray(item.productValidation?.missingFields)
-    ? item.productValidation.missingFields.map((field) => String(field || '').trim().toLowerCase())
-    : [];
-  if (missingFields.includes('specifications')) return true;
-
-  const errors = Array.isArray(item.productValidation?.errors) ? item.productValidation.errors : [];
-  return errors.some((error) => {
-    const record = error && typeof error === 'object' ? error as { field?: unknown; code?: unknown } : {};
-    const field = String(record.field || '').trim().toLowerCase();
-    const code = String(record.code || '').trim().toLowerCase();
-    return field === 'specifications' || field.startsWith('specs.') || code === 'missing_specifications';
-  });
+  // Supplier Review treats category specifications as optional supplier data.
+  // Category/subcategory selection remains a separate approval requirement.
+  return false;
 }
 
 export function supplierReviewSpecificationsSatisfied(
@@ -367,12 +355,22 @@ export function supplierReviewCanQuickApprove(item: SupplierReviewQuickApprovalI
 const supplierReviewEffectiveProductValidation = (item: SupplierReviewQuickApprovalItem) => {
   const validation = item.productValidation || {};
   const hasCanonicalBrand = Boolean(String(item.productPayload?.brand || '').trim());
+  const isOptionalSupplierSpecification = (field: unknown, code?: unknown): boolean => {
+    const normalizedField = String(field || '').trim().toLowerCase();
+    const normalizedCode = String(code || '').trim().toLowerCase();
+    return normalizedField === 'specifications'
+      || normalizedField.startsWith('specs.')
+      || normalizedCode === 'missing_specifications';
+  };
   const missingFields = (validation.missingFields || []).filter((field) => (
-    hasCanonicalBrand || String(field || '').trim().toLowerCase() !== 'brand'
+    (hasCanonicalBrand || String(field || '').trim().toLowerCase() !== 'brand')
+      && !isOptionalSupplierSpecification(field)
   ));
   const errors = (validation.errors || []).filter((error) => {
     const field = error && typeof error === 'object' ? String((error as { field?: unknown }).field || '') : '';
-    return hasCanonicalBrand || field.trim().toLowerCase() !== 'brand';
+    const code = error && typeof error === 'object' ? (error as { code?: unknown }).code : undefined;
+    return (hasCanonicalBrand || field.trim().toLowerCase() !== 'brand')
+      && !isOptionalSupplierSpecification(field, code);
   });
   const hadStaleBrandValidation = !hasCanonicalBrand
     && ((validation.missingFields || []).some((field) => String(field || '').trim().toLowerCase() === 'brand')
@@ -380,9 +378,17 @@ const supplierReviewEffectiveProductValidation = (item: SupplierReviewQuickAppro
         const field = error && typeof error === 'object' ? String((error as { field?: unknown }).field || '') : '';
         return field.trim().toLowerCase() === 'brand';
       }));
+  const hadStaleSpecificationValidation = (validation.missingFields || []).some((field) => isOptionalSupplierSpecification(field))
+    || (validation.errors || []).some((error) => {
+      const record = error && typeof error === 'object' ? error as { field?: unknown; code?: unknown } : {};
+      return isOptionalSupplierSpecification(record.field, record.code);
+    });
   return {
     readyToPublish: validation.readyToPublish === true
-      || (validation.readyToPublish === false && hadStaleBrandValidation && missingFields.length === 0 && errors.length === 0),
+      || (validation.readyToPublish === false
+        && (hadStaleBrandValidation || hadStaleSpecificationValidation)
+        && missingFields.length === 0
+        && errors.length === 0),
     missingFields,
     errors,
   };

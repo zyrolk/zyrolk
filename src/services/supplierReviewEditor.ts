@@ -519,6 +519,7 @@ export function validateSupplierReviewDraft(
     specificationTemplate?: Array<{ name: string; required?: boolean }>;
   }>,
   brands?: ReadonlyArray<{ id: string; isActive?: boolean }>,
+  options: { supplierReview?: boolean } = {},
 ): SupplierReviewValidationErrors {
   const errors: SupplierReviewValidationErrors = {};
 
@@ -580,16 +581,18 @@ export function validateSupplierReviewDraft(
   if (brand && brands && !brands.some((candidate) => candidate.id === brand && candidate.isActive !== false)) {
     errors.brand = 'Select an active registered brand.';
   }
-  const normalizedSpecifications = new Map(Object.entries(draft.specifications || {})
-    .map(([key, value]) => [key.normalize('NFKC').trim().toLocaleLowerCase(), value.trim()]));
-  const missingSpecifications = (selectedCategory?.specificationTemplate || [])
-    .filter((field) => field.required && !normalizedSpecifications.get(field.name.normalize('NFKC').trim().toLocaleLowerCase()))
-    .map((field) => field.name);
-  if (missingSpecifications.length > 0) {
-    errors.specifications = `Complete required specifications: ${missingSpecifications.join(', ')}.`;
-  } else if (countStructuredSupplierSpecifications(draft.specifications) === 0
-    && (selectedCategory?.specificationTemplate || []).some((field) => field.required === true)) {
-    errors.specifications = 'Complete required specifications before publishing.';
+  if (options.supplierReview !== true) {
+    const normalizedSpecifications = new Map(Object.entries(draft.specifications || {})
+      .map(([key, value]) => [key.normalize('NFKC').trim().toLocaleLowerCase(), value.trim()]));
+    const missingSpecifications = (selectedCategory?.specificationTemplate || [])
+      .filter((field) => field.required && !normalizedSpecifications.get(field.name.normalize('NFKC').trim().toLocaleLowerCase()))
+      .map((field) => field.name);
+    if (missingSpecifications.length > 0) {
+      errors.specifications = `Complete required specifications: ${missingSpecifications.join(', ')}.`;
+    } else if (countStructuredSupplierSpecifications(draft.specifications) === 0
+      && (selectedCategory?.specificationTemplate || []).some((field) => field.required === true)) {
+      errors.specifications = 'Complete required specifications before publishing.';
+    }
   }
 
   return errors;

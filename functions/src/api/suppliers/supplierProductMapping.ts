@@ -433,6 +433,7 @@ export function validateSupplierProductForApproval(
   product: Record<string, unknown>,
   categories: readonly StoreCategoryMappingCandidate[],
   brands: readonly StoreBrandMappingCandidate[],
+  options: { supplierReview?: boolean } = {},
 ): SupplierProductValidationError[] {
   const errors: SupplierProductValidationError[] = [];
   const add = (field: string, code: string, message: string) => errors.push({ field, code, message });
@@ -480,11 +481,13 @@ export function validateSupplierProductForApproval(
     if (activeSubcategories.length > 0 && !activeSubcategories.some((subcategory) => subcategory.id === subcategoryId)) {
       add("subcategory", "invalid", "Select an active subcategory belonging to the category.");
     }
-    const specs = asRecord(product.specs);
-    const normalizedSpecs = new Map(Object.entries(specs).map(([key, value]) => [normalizeSupplierMappingValue(key), String(value || "").trim()]));
-    for (const field of category.specificationTemplate || []) {
-      if (field.required && !normalizedSpecs.get(normalizeSupplierMappingValue(field.name))) {
-        add(`specs.${field.name}`, "required", `Required specification "${field.name}" must have a value.`);
+    if (options.supplierReview !== true) {
+      const specs = asRecord(product.specs);
+      const normalizedSpecs = new Map(Object.entries(specs).map(([key, value]) => [normalizeSupplierMappingValue(key), String(value || "").trim()]));
+      for (const field of category.specificationTemplate || []) {
+        if (field.required && !normalizedSpecs.get(normalizeSupplierMappingValue(field.name))) {
+          add(`specs.${field.name}`, "required", `Required specification "${field.name}" must have a value.`);
+        }
       }
     }
   }

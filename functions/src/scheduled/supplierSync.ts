@@ -2091,7 +2091,7 @@ export async function refreshActiveSupplierReviewItem(
     source,
     refreshProductId || undefined,
   );
-  const productValidationErrors = validateSupplierProductForApproval(productPayload, storeCategories, storeBrands);
+  const productValidationErrors = validateSupplierProductForApproval(productPayload, storeCategories, storeBrands, { supplierReview: true });
   const productImportWarnings = buildSupplierImportWarnings(product, productPayload);
   const observedAt = new Date().toISOString();
   const refreshTraversalId = `review-refresh-${createHash("sha256").update(`${queueItemId}|${observedAt}`).digest("hex").slice(0, 24)}`;
@@ -3900,7 +3900,7 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
             targetProductId,
             !inventoryAutomated && reactivation.reactivating,
           );
-          const productValidationErrors = validateSupplierProductForApproval(productPayload, storeCategories, storeBrands);
+          const productValidationErrors = validateSupplierProductForApproval(productPayload, storeCategories, storeBrands, { supplierReview: true });
           const productImportWarnings = buildSupplierImportWarnings(product, productPayload);
           const supplierSnapshot = omitAbsentSupplierSnapshotFields(product, {
             ...product,
