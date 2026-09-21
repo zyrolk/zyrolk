@@ -246,7 +246,21 @@ test('approval remains blocked until required mappings are valid', () => {
     clientTaxonomy.brands,
   );
   assert.match(unresolved.category || '', /required/i);
-  assert.match(unresolved.brand || '', /active registered brand/i);
+  assert.equal(unresolved.brand, undefined);
+});
+
+test('a supplied canonical brand still requires an active registered brand', () => {
+  const draft = createSupplierReviewDraft({
+    ...reviewItem,
+    productPayload: { ...reviewItem.productPayload, category: 'electronics', brand: 'inactive-brand' },
+  });
+  const errors = validateSupplierReviewDraft(
+    draft,
+    supplierReviewValidCategoryIds(clientTaxonomy.categories),
+    clientTaxonomy.categories,
+    clientTaxonomy.brands,
+  );
+  assert.match(errors.brand || '', /active registered brand/i);
 });
 
 test('supplier hub loads review catalog through the admin API instead of direct Firestore listeners', () => {

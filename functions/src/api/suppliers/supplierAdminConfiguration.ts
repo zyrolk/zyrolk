@@ -482,7 +482,7 @@ export async function saveSupplierSource(
     }
     return {
       transitionId,
-      globalAutoSyncEnabled: settingsSnapshot?.data()?.autoSyncEnabled !== false,
+      globalAutoSyncEnabled: settingsSnapshot?.data()?.autoSyncEnabled === true,
       autoSyncEnabled: nextAutoSync !== "off",
     };
   });
@@ -540,7 +540,7 @@ export function sanitizeSupplierHubSettings(value: unknown): Record<string, unkn
     : {};
   return {
     websiteSyncEnabled: settings.websiteSyncEnabled !== false,
-    autoSyncEnabled: settings.autoSyncEnabled !== false,
+    autoSyncEnabled: settings.autoSyncEnabled === true,
     syncInterval,
     maxProducts,
     enabledSupplierIds: cleanStringList(settings.enabledSupplierIds, "enabledSupplierIds", 1_000, MAX_ID_LENGTH),

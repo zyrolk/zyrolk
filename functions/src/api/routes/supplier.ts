@@ -62,6 +62,7 @@ import {
   selectSupplierProductOffer,
 } from "../suppliers/supplierOfferEngine";
 import { activateSupplierTaxonomyCandidate } from "../suppliers/supplierTaxonomy";
+import { listSupplierCategoryMappings, saveSupplierCategoryMapping } from "../suppliers/supplierCategoryMappingAdmin";
 import {
   recordSupplierOperationalAlertSafely,
   resolveSupplierOperationalAlertSafely,
@@ -565,6 +566,30 @@ export function registerSupplierRoutes(app: express.Express): void {
         logMessage: "Supplier review catalog lookup failed.",
         fallbackMessage: "Active Zyro categories and brands could not be loaded.",
         context: { route: "/api/supplier-review-catalog" },
+      });
+    }
+  });
+
+  app.get("/api/supplier-category-mappings", requireSupplierHubAdmin, async (req, res) => {
+    try {
+      res.status(200).json({ success: true, mappings: await listSupplierCategoryMappings(adminDb, req.query.sourceId) });
+    } catch (error: unknown) {
+      sendSupplierFailure(res, error, {
+        logMessage: "Supplier category mapping lookup failed.",
+        fallbackMessage: "Supplier category mappings could not be loaded.",
+        context: { route: req.path },
+      });
+    }
+  });
+
+  app.post("/api/supplier-category-mappings", requireSupplierHubAdmin, async (req, res) => {
+    try {
+      res.status(200).json({ success: true, mapping: await saveSupplierCategoryMapping(adminDb, req.body, reviewerFor(res)) });
+    } catch (error: unknown) {
+      sendSupplierFailure(res, error, {
+        logMessage: "Supplier category mapping save failed.",
+        fallbackMessage: "Supplier category mapping could not be saved.",
+        context: { route: req.path },
       });
     }
   });

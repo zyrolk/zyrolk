@@ -308,8 +308,8 @@ test('PR-STAB-10 read-only modal hides mutation controls and image editor worksp
   assert.doesNotMatch(markup, /<textarea[^>]*>[\s\S]*<p><strong>Product Description<\/strong>/u);
 });
 
-// 11. edit/save refreshes category/brand validation immediately
-test('PR-STAB-11 edit mode revalidates category and brand through the shared draft validator', () => {
+// 11. edit/save refreshes category validation while treating brand as optional
+test('PR-STAB-11 edit mode revalidates category and optional brand through the shared draft validator', () => {
   assert.match(editor, /validateSupplierReviewDraft\(draft, validCategoryIds, categories, brands\)/u);
   assert.match(editor, /if \(!isEditing\) setDraft\(initialDraft\)/u);
   const draft = { ...createSupplierReviewDraft(baseItem as never), category: '', brand: '' };
@@ -317,7 +317,7 @@ test('PR-STAB-11 edit mode revalidates category and brand through the shared dra
   const brands = [{ id: 'brand-1', name: 'Brand', isActive: true }];
   const before = validateSupplierReviewDraft(draft, ['electronics'], categories as never, brands as never);
   assert.ok(before.category);
-  assert.ok(before.brand);
+  assert.equal(before.brand, undefined);
   const after = validateSupplierReviewDraft(
     { ...draft, category: 'electronics', brand: 'brand-1' },
     ['electronics'],
@@ -394,8 +394,8 @@ test('PR-STAB-14 sync status labels avoid contradictory waiting and in-progress 
   assert.doesNotMatch(formatSupplierSyncProgress(waitingWhileScanning), /Waiting · In progress/u);
 });
 
-// 15. category/brand server approval gate remains enforced
-test('PR-STAB-15 category and brand server approval validation remains enforced', () => {
+// 15. category server gate remains enforced while brand is optional
+test('PR-STAB-15 category server approval validation remains enforced while brand is optional', () => {
   const categories = [{ id: 'electronics', name: 'Electronics', isActive: true, subcategories: [], specificationTemplate: [] }];
   const brands = [{ id: 'brand-1', name: 'Brand', isActive: true }];
   const errors = validateSupplierProductForApproval({
@@ -410,6 +410,6 @@ test('PR-STAB-15 category and brand server approval validation remains enforced'
     specs: {},
   }, categories, brands);
   assert.ok(errors.some((error) => error.field === 'category'));
-  assert.ok(errors.some((error) => error.field === 'brand'));
+  assert.equal(errors.some((error) => error.field === 'brand'), false);
   assert.match(projectFile('tests/supplierIntelligentMappingSprint4.test.ts'), /validateSupplierProductForApproval/);
 });

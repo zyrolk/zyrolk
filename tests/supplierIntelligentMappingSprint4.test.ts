@@ -133,6 +133,15 @@ test('Sprint 4 approval validation enforces category-specific templates and all 
   assert.deepEqual(shoesErrors.map((error) => error.field), ['specs.Material']);
 });
 
+test('Sprint 4 approval validation allows an absent supplier brand without inventing Generic', () => {
+  const valid = {
+    name: 'Unbranded Phone', imageUrl: 'https://supplier.example/phone.jpg', category: 'phones', subcategory: 'smartphones',
+    brand: '', price: 120_000, stock: 4, visible: true, description: 'Full phone description.',
+    specs: { RAM: '8 GB', Storage: '128 GB' },
+  };
+  assert.deepEqual(validateSupplierProductForApproval(valid, categories, brands), []);
+});
+
 test('Sprint 4 approval drafts accept bounded subcategory and specification overrides', () => {
   const draft = parseSupplierApprovalDraft({
     productName: 'Galaxy Phone', sellingPrice: 120_000, comparePrice: 130_000, stock: 4,
@@ -187,4 +196,21 @@ test('Sprint 4 mapping collections remain server-authoritative', () => {
     assert.match(block, /allow read: if isSupplierHubAdmin\(\)/);
     assert.match(block, /allow create, update, delete: if false/);
   }
+});
+
+test('Sprint 4 admin category mapping workflow persists exact category and subcategory authority', () => {
+  const adminMapping = readFileSync('functions/src/api/suppliers/supplierCategoryMappingAdmin.ts', 'utf8');
+  const queue = readFileSync('functions/src/scheduled/supplierReviewQueue.ts', 'utf8');
+  const approval = readFileSync('functions/src/api/suppliers/supplierApproval.ts', 'utf8');
+  const hub = readFileSync('src/components/SupplierHubFiveStars.tsx', 'utf8');
+  assert.match(adminMapping, /targetSubcategoryId/);
+  assert.match(adminMapping, /target subcategory does not belong to the selected active category/i);
+  assert.match(adminMapping, /target category must be an active canonical category/i);
+  assert.match(adminMapping, /supplierMappingDocumentId\(sourceId, normalizedCategory\)/);
+  assert.match(queue, /applyTrustedCategoryMappingsForReview/);
+  assert.match(approval, /existingCategoryMappingSnapshot/);
+  assert.match(approval, /mappedCategorySnapshot/);
+  assert.match(hub, /Map supplier category/);
+  assert.match(hub, /Map supplier subcategory/);
+  assert.match(hub, /category\.isActive !== false/);
 });

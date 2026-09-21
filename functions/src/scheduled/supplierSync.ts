@@ -458,7 +458,7 @@ function toMillis(value: unknown): number | null {
 }
 
 export function isSupplierAutomaticSyncEnabled(settings: Pick<SupplierSettings, "autoSyncEnabled">): boolean {
-  return settings.autoSyncEnabled !== false;
+  return settings.autoSyncEnabled === true;
 }
 
 function isSyncDue(settings: SupplierSettings): boolean {
@@ -466,7 +466,7 @@ function isSyncDue(settings: SupplierSettings): boolean {
 }
 
 function getNextSyncIso(settings: SupplierSettings, finishedAtMs: number): string | null {
-  return settings.autoSyncEnabled !== false
+  return settings.autoSyncEnabled === true
     ? new Date(finishedAtMs + DEFAULT_SCHEDULER_INTERVAL_MS).toISOString()
     : null;
 }
@@ -2915,7 +2915,7 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
 
   appLogger.info("Scheduled supplier sync evaluated.", {
     batchId,
-    autoSyncEnabled: !!settings.autoSyncEnabled,
+    autoSyncEnabled: settings.autoSyncEnabled === true,
     scheduler: SUPPLIER_SCHEDULER_SCHEDULE,
   });
 

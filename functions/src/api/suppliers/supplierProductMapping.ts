@@ -490,8 +490,10 @@ export function validateSupplierProductForApproval(
   }
 
   const brandId = String(product.brand || "").trim();
-  const brand = brands.find((candidate) => candidate.id === brandId);
-  if (!brand || brand.isActive === false) add("brand", "invalid", "Select an active registered brand.");
+  if (brandId) {
+    const brand = brands.find((candidate) => candidate.id === brandId);
+    if (!brand || brand.isActive === false) add("brand", "invalid", "Select an active registered brand.");
+  }
   return errors;
 }
 

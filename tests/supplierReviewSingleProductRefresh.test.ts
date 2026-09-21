@@ -582,7 +582,7 @@ test('active NEW_PRODUCT refresh reuses the review and offer without creating a 
     assert.equal(resultPayload.published, true);
     assert.equal(Object.hasOwn(resultPayload, 'originalPrice'), false);
     assert.equal(Object.hasOwn(resultPayload, 'discount'), false);
-    assert.equal((result.item.productValidation as Record<string, unknown>).readyToPublish, false);
+    assert.equal((result.item.productValidation as Record<string, unknown>).readyToPublish, true);
     assert.equal(result.stockAutomated, false);
     assert.equal(refreshedOffer.id, offerId);
     assert.equal(refreshedOffer.productId, null);

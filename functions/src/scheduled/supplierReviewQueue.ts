@@ -25,6 +25,7 @@ import {
 import { classifySupplierMediaReadiness } from "../api/suppliers/supplierMediaReadiness";
 import { recordSupplierQueueProcessingDurationMetric } from "../api/suppliers/supplierCloudMonitoring";
 import { appLogger } from "../api/logging";
+import { normalizeSupplierMappingValue, supplierMappingDocumentId } from "../api/suppliers/supplierProductMapping";
 
 export const SUPPLIER_QUEUE_STATES = [
   "queued",
@@ -93,6 +94,73 @@ const asRecord = (value: unknown): Record<string, unknown> => value && typeof va
   : {};
 
 const asString = (value: unknown): string => typeof value === "string" ? value.trim() : "";
+
+const applyTrustedCategoryMappingsForReview = async (
+  db: Firestore,
+  records: Array<Record<string, unknown> & { id: string }>,
+): Promise<Array<Record<string, unknown> & { id: string }>> => {
+  const mappingKeys = new Map<string, { sourceId: string; supplierCategory: string }>();
+  for (const record of records) {
+    const snapshot = asRecord(record.supplierSnapshot);
+    const hierarchy = Array.isArray(snapshot.categoryHierarchy) ? snapshot.categoryHierarchy : [];
+    const sourceId = asString(record.sourceId) || asString(snapshot.sourceId);
+    const supplierCategory = asString(hierarchy[0]);
+    const normalizedCategory = normalizeSupplierMappingValue(supplierCategory);
+    if (sourceId && normalizedCategory) mappingKeys.set(`${sourceId}\u0000${normalizedCategory}`, { sourceId, supplierCategory });
+  }
+  if (mappingKeys.size === 0) return records;
+  const mappingEntries = [...mappingKeys.entries()];
+  const mappingSnapshots = await Promise.all(mappingEntries.map(([, value]) => db.collection("supplier_category_mappings")
+    .doc(supplierMappingDocumentId(value.sourceId, normalizeSupplierMappingValue(value.supplierCategory))).get()));
+  const categoryIds = [...new Set(mappingSnapshots.map((snapshot) => asString(snapshot.data()?.targetCategoryId)).filter(Boolean))];
+  const categorySnapshots = await Promise.all(categoryIds.map((id) => db.collection("categories").doc(id).get()));
+  const categories = new Map(categorySnapshots.map((snapshot) => [snapshot.id, snapshot.exists ? snapshot.data() || {} : null]));
+  const mappings = new Map(mappingEntries.map(([key], index) => [key, mappingSnapshots[index].exists ? mappingSnapshots[index].data() || {} : null]));
+  return records.map((record) => {
+    const snapshot = asRecord(record.supplierSnapshot);
+    const hierarchy = Array.isArray(snapshot.categoryHierarchy) ? snapshot.categoryHierarchy : [];
+    const sourceId = asString(record.sourceId) || asString(snapshot.sourceId);
+    const supplierCategory = asString(hierarchy[0]);
+    const supplierSubcategory = asString(hierarchy[1]);
+    const normalizedCategory = normalizeSupplierMappingValue(supplierCategory);
+    const mapping = mappings.get(`${sourceId}\u0000${normalizedCategory}`);
+    if (!mapping) return record;
+    const targetCategoryId = asString(mapping.targetCategoryId);
+    const targetSubcategoryId = asString(mapping.targetSubcategoryId);
+    const category = categories.get(targetCategoryId);
+    if (!category || category.isActive === false) return record;
+    const activeSubcategories = Array.isArray(category.subcategories)
+      ? category.subcategories.filter((entry): entry is Record<string, unknown> => Boolean(entry && typeof entry === "object") && (entry as Record<string, unknown>).isActive !== false)
+      : [];
+    if ((targetSubcategoryId && !activeSubcategories.some((entry) => String(entry.id || "") === targetSubcategoryId))
+      || (activeSubcategories.length > 0 && !targetSubcategoryId)) return record;
+    const payload = asRecord(record.productPayload);
+    const currentCategory = asString(payload.category);
+    const currentSubcategory = asString(payload.subcategory);
+    if (currentCategory && currentCategory !== targetCategoryId) return record;
+    if (currentSubcategory && currentSubcategory !== targetSubcategoryId) return record;
+    return {
+      ...record,
+      categoryMapping: {
+        ...asRecord(record.categoryMapping),
+        supplierCategory,
+        supplierSubcategory,
+        targetCategoryId,
+        targetSubcategoryId,
+        confidence: 100,
+        mappingType: asString(mapping.mappingType) || "manual",
+        mappingSource: "source",
+        autoSelected: true,
+        requiresManualSelection: false,
+      },
+      productPayload: {
+        ...payload,
+        category: targetCategoryId,
+        subcategory: targetSubcategoryId,
+      },
+    };
+  });
+};
 
 const stringList = (value: unknown): string[] => Array.isArray(value)
   ? value.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0).map((entry) => entry.trim())
@@ -1230,10 +1298,14 @@ export async function listSupplierQueuePage(
       nextQuery = query.startAfter(lastScannedDocument);
     }
 
+    const rawDocuments = documents.map((document) => ({ id: document.id, ...document.data() }));
+    const mappedDocuments = options.view === "review"
+      ? await applyTrustedCategoryMappingsForReview(db, rawDocuments)
+      : rawDocuments;
     return {
       view: options.view,
       state,
-      items: await decorateSupplierReviewQueueAdminMedia(documents.map((document) => ({ id: document.id, ...document.data() }))),
+      items: await decorateSupplierReviewQueueAdminMedia(mappedDocuments),
       nextCursor,
     };
   }
@@ -1245,10 +1317,14 @@ export async function listSupplierQueuePage(
   const cursorDocument = pageDocuments.length === pageLimit
     ? pageDocuments.at(-1)
     : snapshot.size === scanLimit ? snapshot.docs.at(-1) : null;
+  const rawDocuments = pageDocuments.map((document) => ({ id: document.id, ...document.data() }));
+  const mappedDocuments = options.view === "review"
+    ? await applyTrustedCategoryMappingsForReview(db, rawDocuments)
+    : rawDocuments;
   return {
     view: options.view,
     state,
-    items: await decorateSupplierReviewQueueAdminMedia(pageDocuments.map((document) => ({ id: document.id, ...document.data() }))),
+    items: await decorateSupplierReviewQueueAdminMedia(mappedDocuments),
     nextCursor: cursorDocument?.id || null,
   };
 }

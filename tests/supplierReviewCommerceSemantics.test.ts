@@ -9,6 +9,7 @@ import { ProductParser } from "../functions/src/api/suppliers/a2z/ProductParser"
 import { ProductParser as DropexProductParser } from "../functions/src/api/suppliers/dropex/ProductParser";
 import { buildSupplierImportWarnings } from "../functions/src/api/suppliers/supplierProductImport";
 import { validateSupplierProductForApproval } from "../functions/src/api/suppliers/supplierProductMapping";
+import { parseSupplierApprovalDraft, toPublicProductPayload } from "../functions/src/api/suppliers/supplierApproval";
 import {
   calculateSupplierInitialPricing,
 } from "../functions/src/scheduled/supplierSyncSettings";
@@ -162,6 +163,69 @@ test("supplier approval validation rejects a customer price below supplier cost"
     code: "below_supplier_cost",
     message: "Selling price must be at least the supplier cost.",
   }]);
+});
+
+test("missing supplier brand remains approvable and is omitted from the public payload", () => {
+  const media = [{
+    firebaseStorageUrl: "https://storage.example/brandless.webp",
+    originalSupplierUrl: "https://supplier.example/brandless.jpg",
+    imageStatus: "ready",
+    isPrimary: true,
+    sortOrder: 0,
+    contentHash: "brandless-hash",
+    variants: { large: { storageUrl: "https://storage.example/brandless.webp" } },
+  }];
+  const draft = parseSupplierApprovalDraft({
+    productName: "Brandless product",
+    description: "A valid description.",
+    sellingPrice: 150,
+    costPrice: 100,
+    stock: 2,
+    category: "electronics",
+    brand: "",
+    specifications: {},
+    primaryImageUrl: media[0].firebaseStorageUrl,
+    galleryImageUrls: [],
+    promotionEnabled: false,
+    isActive: true,
+  });
+  assert.ok(draft);
+  const validation = validateSupplierProductForApproval({
+    name: "Brandless product",
+    imageUrl: media[0].firebaseStorageUrl,
+    price: 150,
+    costPrice: 100,
+    stock: 2,
+    category: "electronics",
+    description: "A valid description.",
+    brand: "",
+    specs: {},
+    isActive: true,
+  }, [{ id: "electronics", name: "Electronics" }], []);
+  assert.deepEqual(validation, []);
+  const payload = toPublicProductPayload({
+    id: "review-brandless",
+    sourceId: "dropex",
+    supplierId: "dropex",
+    comparisonStatus: "NEW_PRODUCT",
+    productName: "Brandless product",
+    productPayload: {
+      id: "brandless-product",
+      name: "Brandless product",
+      price: 150,
+      costPrice: 100,
+      stock: 2,
+      category: "electronics",
+      brand: "Raw Supplier Brand",
+      specs: { Brand: "Raw Supplier Brand" },
+    },
+    managedMedia: media,
+    mediaSourceImageUrls: [media[0].originalSupplierUrl],
+    brandMapping: { autoSelected: false, mappedBrandId: "" },
+  } as never, draft);
+  assert.equal(Object.hasOwn(payload, "brand"), false);
+  assert.equal(Object.hasOwn(payload.specs as object, "Brand"), false);
+  assert.equal(payload.price, 150);
 });
 
 test("explicit stock zero is preserved and labeled Out of stock", () => {

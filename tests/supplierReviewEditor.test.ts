@@ -65,7 +65,7 @@ test('supplier review draft projects editable product values with safe defaults'
     stock: 5,
     category: 'electronics',
     subcategory: '',
-    brand: 'Supplier Brand',
+    brand: '',
     specifications: { Brand: 'Supplier Brand' },
     isActive: true,
     isNew: false,
@@ -85,6 +85,29 @@ test('supplier review draft projects editable product values with safe defaults'
     supplierCostAvailable: true,
     supplierStockAvailable: true,
   });
+});
+
+test('review edit drafts use the same healthy managed media as read-only review', () => {
+  const managed = [
+    { firebaseStorageUrl: 'https://storage.example/primary.webp', originalSupplierUrl: 'https://supplier.example/primary.jpg', imageStatus: 'ready', isPrimary: true, sortOrder: 0 },
+    { firebaseStorageUrl: 'https://storage.example/gallery.webp', originalSupplierUrl: 'https://supplier.example/gallery.jpg', imageStatus: 'ready', isPrimary: false, sortOrder: 1 },
+  ];
+  const draft = createSupplierReviewDraft({
+    ...queueItem,
+    sourceId: 'dropex',
+    imageUrl: 'https://supplier.example/raw-primary.jpg',
+    managedMedia: managed,
+    mediaStatus: 'partial',
+    mediaReadiness: 'publication_safe_with_media_warnings',
+    mediaFailures: [{ code: 'IMAGE_TOO_LARGE', retryable: false, sourceIndex: 2, isPrimary: false }],
+    productPayload: {
+      ...queueItem.productPayload,
+      imageUrl: 'https://supplier.example/raw-primary.jpg',
+      imageUrls: ['https://supplier.example/raw-primary.jpg', 'https://supplier.example/raw-gallery.jpg'],
+    },
+  });
+  assert.equal(draft.primaryImageUrl, managed[0].firebaseStorageUrl);
+  assert.deepEqual(draft.galleryImageUrls, [managed[1].firebaseStorageUrl]);
 });
 
 test('supplier profit and margin update from selling price', () => {

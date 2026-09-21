@@ -219,6 +219,18 @@ export function supplierReviewManagedImageUrls(item: SupplierReviewQuickApproval
     .filter((url, index, values) => values.indexOf(url) === index);
 }
 
+/** Canonical Firebase URLs used when an editable draft must remain publish-safe. */
+export function supplierReviewManagedCanonicalImageUrls(item: SupplierReviewQuickApprovalItem): string[] {
+  return [...managedMediaRecords(item)].sort((left, right) => {
+    const primaryDifference = Number(right.isPrimary === true) - Number(left.isPrimary === true);
+    if (primaryDifference !== 0) return primaryDifference;
+    return Number(left.sortOrder || 0) - Number(right.sortOrder || 0);
+  })
+    .map((record) => String(record.firebaseStorageUrl || '').trim())
+    .filter((url) => /^https:\/\/\S+$/iu.test(url))
+    .filter((url, index, values) => values.indexOf(url) === index);
+}
+
 /** Returns the managed review URL, preferring the short-lived admin URL when present. */
 export function supplierReviewManagedImageUrl(item: SupplierReviewQuickApprovalItem): string {
   return supplierReviewManagedImageUrls(item)[0] || '';

@@ -450,6 +450,38 @@ test("SH-3 new and updated products use the real review worker and approval tran
     assert.ok((await auditActions(review.id)).includes("approve"));
   });
 
+  await t.test("brandless supplier products can be approved without a fabricated canonical brand", async () => {
+    const identity = identityFor("brandless-approve");
+    const { sourceId } = await seedSource(identity);
+    const observed = supplierProduct(identity, {
+      brand: "",
+      specifications: { Model: identity, RAM: "8 GB" },
+    });
+    configureConnector(sourceId, [observed]);
+
+    const sync = await runFullSync(sourceId, "brandless-approve-sync");
+    assert.equal(sync.status, "Success");
+    const review = await activeReviewForSource(sourceId);
+    const ready = await prepareReview(review.id, identity);
+    const revision = await pendingRevisionForReview(review);
+    const draft = approvalDraft(review.id, ready, {
+      category: "electronics",
+      subcategory: "phones",
+      brand: "",
+      specifications: { Model: identity, RAM: "8 GB" },
+      isActive: true,
+      isNew: true,
+    });
+    const result = await decideSupplierQueueItem(adminDb, review.id, "approved", {
+      uid: "sh3-brandless-admin",
+      email: "brandless-admin@example.test",
+    }, { draft, expectedPendingRevision: revision });
+    assert.equal(result.success, true);
+    const product = (await adminDb.collection("products").doc(result.productId!).get()).data()!;
+    assert.equal(Object.hasOwn(product, "brand"), false);
+    assert.equal(Object.hasOwn((product.specs || {}) as Record<string, unknown>, "Brand"), false);
+  });
+
   await t.test("refreshed latest observation accepts client-local review edits while stale revisions still fail closed", async () => {
     const identity = identityFor("refresh-edit-approve");
     const roundTripTimestamp = Timestamp.fromMillis(Date.parse("2026-09-18T10:00:00.123Z"));
@@ -951,10 +983,11 @@ test("SH-3 approval drafts are allowlisted and invalid values fail closed", () =
     ...parsed,
     sellingPrice: -1,
   }), /Selling price is invalid/i);
-  assert.throws(() => parseSupplierApprovalDraft({
+  const blankCategoryDraft = parseSupplierApprovalDraft({
     ...parsed,
     category: "",
-  }), /Category is required/i);
+  });
+  assert.equal(blankCategoryDraft.category, "");
   assert.throws(() => parseSupplierApprovalDraft({
     ...parsed,
     keywords: Array.from({ length: 41 }, (_, index) => `keyword-${index}`),

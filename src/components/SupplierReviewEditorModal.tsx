@@ -24,6 +24,7 @@ import {
   supplierReviewRawMetadata,
   supplierReviewManagedMediaReady,
   supplierReviewManagedImageUrls,
+  supplierReviewManagedCanonicalImageUrls,
   supplierReviewSpecificationsRequired,
   supplierReviewSpecificationsSatisfied,
 } from '../services/supplierHubPresentation';
@@ -207,6 +208,9 @@ export default function SupplierReviewEditorModal({
       if (check.label === 'Specifications' && !specificationsRequired && specificationCount === 0) {
         return { label: check.label, valid: true, note: 'Not required' };
       }
+      if (check.label === 'Brand' && !draft.brand.trim()) {
+        return { label: check.label, valid: true, note: 'Optional — no canonical supplier brand selected.' };
+      }
       const optionalMediaWarnings = String(item.mediaReadiness || '').trim().toLowerCase() === 'publication_safe_with_media_warnings';
       const error = check.label === 'Images'
         ? (supplierReviewManagedMediaReady(item) ? undefined : 'Managed supplier media is not ready for publication.')
@@ -235,6 +239,13 @@ export default function SupplierReviewEditorModal({
       .filter((url, index, list) => Boolean(url) && list.indexOf(url) === index);
     return images.filter((url) => isValidSupplierImageUrl(url));
   }, [draft.galleryImageUrls, draft.primaryImageUrl, isEditing, item, item.managedMedia, item.mediaStatus]);
+  const managedMediaSignature = useMemo(
+    () => `${String(item.mediaStatus || '')}|${String(item.mediaProcessedAt || '')}|${supplierReviewManagedCanonicalImageUrls(item).join('|')}`,
+    [item],
+  );
+  useEffect(() => {
+    setFailedMediaUrls(new Set());
+  }, [managedMediaSignature]);
   const importWarnings = useMemo(() => {
     const warnings = [
       ...(item.productValidation?.errors || []),
@@ -463,8 +474,8 @@ export default function SupplierReviewEditorModal({
               {item.categoryMapping?.candidateCategoryId || item.categoryMapping?.candidateSubcategoryId ? (
                 <div className="mt-3 rounded-lg border border-amber-500/20 bg-amber-500/10 p-2 text-[10px] font-semibold text-amber-700 dark:text-amber-200">
                   <p>{item.categoryMapping?.candidateCategoryId
-                    ? 'Supplier taxonomy is available as an inactive candidate and must be activated or mapped before publishing.'
-                    : 'Supplier subcategory is available as an inactive candidate and must be activated or mapped before publishing.'}</p>
+                    ? 'Supplier taxonomy is available as an inactive candidate. Map supplier category to an existing Zyro category before publishing; activate only when it is intentionally a new canonical category.'
+                    : 'Supplier subcategory is available as an inactive candidate. Map supplier category to an existing Zyro category before publishing.'}</p>
                   {isEditing ? <button
                     type="button"
                     onClick={() => void onActivateTaxonomyCandidate(
@@ -472,7 +483,7 @@ export default function SupplierReviewEditorModal({
                       item.categoryMapping?.candidateSubcategoryId,
                     )}
                     className="mt-2 rounded-lg bg-amber-600 px-3 py-2 text-[10px] font-black text-white"
-                  >Activate supplier taxonomy</button> : null}
+                  >Activate as new canonical category</button> : null}
                 </div>
               ) : null}
               {item.categoryMapping?.targetCategoryId ? <><div className="mt-2 flex flex-wrap items-center gap-2"><span className="text-[10px] text-slate-500">Suggested Category</span><strong className="text-xs text-blue-700 dark:text-blue-300">{suggestedCategory?.name || item.categoryMapping.targetCategoryId}</strong><span className="rounded-full bg-blue-500/10 px-2 py-0.5 text-[9px] font-black text-blue-600">{Math.round(Number(item.categoryMapping.confidence || 0))}% confidence</span></div>{isEditing ? <button type="button" onClick={() => setDraft((current) => ({ ...current, category: item.categoryMapping?.targetCategoryId || '', subcategory: item.categoryMapping?.targetSubcategoryId || '' }))} disabled={draft.category === item.categoryMapping.targetCategoryId && draft.subcategory === (item.categoryMapping.targetSubcategoryId || '')} className="mt-2 rounded-lg bg-blue-600 px-3 py-2 text-[10px] font-black text-white disabled:cursor-not-allowed disabled:opacity-40">Apply</button> : null}</> : <p className="mt-2 rounded-lg border border-dashed border-blue-500/20 p-3 text-[10px] text-slate-500">No category suggestion is available. Select a category manually.</p>}
@@ -666,7 +677,7 @@ export default function SupplierReviewEditorModal({
             </label>
 
             <label className="space-y-1.5 text-xs">
-              <span className="font-bold text-slate-600 dark:text-slate-300">Registered brand</span>
+              <span className="font-bold text-slate-600 dark:text-slate-300">Registered brand (optional)</span>
               {isEditing && brands.filter((brand) => brand.isActive !== false).length === 0 && (
                 <p className="text-[10px] font-semibold text-amber-700 dark:text-amber-300">No active registered brands are configured yet.</p>
               )}

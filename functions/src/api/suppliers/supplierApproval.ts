@@ -216,7 +216,7 @@ export function parseSupplierApprovalDraft(value: unknown): SupplierApprovalDraf
   const productType = cleanOptionalText(draft.productType, "Product type", 160);
   const slug = cleanOptionalText(draft.slug, "SEO slug", 160);
   const metaDescription = cleanOptionalText(draft.metaDescription, "Meta description", 500);
-  const category = cleanText(draft.category, "Category", 160);
+  const category = cleanOptionalText(draft.category, "Category", 160);
   const subcategory = typeof draft.subcategory === "string" ? cleanText(draft.subcategory, "Subcategory", 160, false) : undefined;
   const specifications = draft.specifications === undefined ? undefined : cleanSpecifications(draft.specifications);
   const brand = cleanText(draft.brand, "Brand", 160, false);
@@ -348,6 +348,10 @@ export const supplierReviewAllowsRemoval = (queueItem: QueueItemRecord): boolean
 
 const stringValue = (value: unknown): string => typeof value === "string" ? value.trim() : "";
 
+const definedProperty = (key: string, value: unknown): Record<string, unknown> => (
+  value === undefined ? {} : { [key]: value }
+);
+
 const cleanPendingRevision = (value: unknown): string => {
   if (value === undefined || value === null || value === "") return "";
   if (typeof value !== "string" || !/^[a-f0-9]{64}$/u.test(value.trim())) {
@@ -420,7 +424,6 @@ export const toPublicProductPayload = (queueItem: QueueItemRecord, draft: Suppli
   const stock = draft?.stock ?? Number(originalPayload.stock);
   if (!Number.isInteger(stock) || stock < 0) throw new ApiError("Supplier product stock is invalid.", 422);
   const category = draft?.category || stringValue(originalPayload.category);
-  if (!category) throw new ApiError("Category is required.", 422);
   const productName = draft?.productName || stringValue(originalPayload.name) || stringValue(queueItem.productName);
   if (!productName) throw new ApiError("Product name is required.", 422);
   const discount = promotionEnabled
@@ -434,7 +437,18 @@ export const toPublicProductPayload = (queueItem: QueueItemRecord, draft: Suppli
     promotionEnabled: _legacyPromotionEnabled,
     ...payloadWithoutPromotion
   } = originalPayload;
+  const brandMapping = record(queueItem.brandMapping);
+  const canonicalBrand = draft?.brand || (comparisonStatus === "NEW_PRODUCT" && brandMapping.autoSelected !== true
+    ? ""
+    : stringValue(originalPayload.brand));
+  if (!canonicalBrand) delete payloadWithoutPromotion.brand;
 
+  const publicSpecs = { ...specs, ...(draft?.specifications || {}) };
+  if (canonicalBrand) publicSpecs.Brand = canonicalBrand;
+  else {
+    delete publicSpecs.Brand;
+    delete publicSpecs.brand;
+  }
   return {
     ...payloadWithoutPromotion,
     id: productId,
@@ -443,21 +457,21 @@ export const toPublicProductPayload = (queueItem: QueueItemRecord, draft: Suppli
     media: toPublishedProductMedia(managedMedia),
     supplierMedia: managedMedia,
     name: productName,
-    shortDescription: draft?.shortDescription ?? originalPayload.shortDescription,
-    description: resolveSupplierFullDescription(
+    ...definedProperty("shortDescription", draft?.shortDescription ?? originalPayload.shortDescription),
+    ...definedProperty("description", resolveSupplierFullDescription(
       draft?.description,
       originalPayload.description,
       SUPPLIER_APPROVAL_FULL_DESCRIPTION_MAX_LENGTH,
-    ),
-    model: draft?.model ?? originalPayload.model,
-    barcode: draft?.barcode ?? originalPayload.barcode,
-    productType: draft?.productType ?? originalPayload.productType,
-    tags: draft?.tags ?? originalPayload.tags,
-    keyFeatures: draft?.keyFeatures ?? originalPayload.keyFeatures,
-    whatsIncluded: draft?.whatsIncluded ?? originalPayload.whatsIncluded,
-    slug: draft?.slug ?? originalPayload.slug,
-    metaDescription: draft?.metaDescription ?? originalPayload.metaDescription,
-    keywords: draft?.keywords ?? originalPayload.keywords,
+    )),
+    ...definedProperty("model", draft?.model ?? originalPayload.model),
+    ...definedProperty("barcode", draft?.barcode ?? originalPayload.barcode),
+    ...definedProperty("productType", draft?.productType ?? originalPayload.productType),
+    ...definedProperty("tags", draft?.tags ?? originalPayload.tags),
+    ...definedProperty("keyFeatures", draft?.keyFeatures ?? originalPayload.keyFeatures),
+    ...definedProperty("whatsIncluded", draft?.whatsIncluded ?? originalPayload.whatsIncluded),
+    ...definedProperty("slug", draft?.slug ?? originalPayload.slug),
+    ...definedProperty("metaDescription", draft?.metaDescription ?? originalPayload.metaDescription),
+    ...definedProperty("keywords", draft?.keywords ?? originalPayload.keywords),
     price,
     ...(promotionEnabled ? { originalPrice: comparePrice } : {}),
     costPrice: draft?.costPrice ?? Number(originalPayload.costPrice ?? 0),
@@ -466,8 +480,8 @@ export const toPublicProductPayload = (queueItem: QueueItemRecord, draft: Suppli
     stock,
     category,
     subcategory: draft?.subcategory || stringValue(originalPayload.subcategory),
-    brand: draft?.brand || stringValue(originalPayload.brand),
-    specs: { ...specs, ...(draft?.specifications || {}) },
+    ...(canonicalBrand ? { brand: canonicalBrand } : {}),
+    specs: publicSpecs,
     isActive,
     isNew: draft?.isNew ?? originalPayload.isNew === true,
     isFeatured: draft?.isFeatured ?? originalPayload.isFeatured === true,
@@ -638,7 +652,9 @@ export async function decideSupplierQueueItem(
     const isSupplierOfferRemoval = action === "approved"
       && stringValue(queueItem.reconciliationAction) === "supplier_offer_unavailable";
     let approvedPayload = action === "approved" ? toPublicProductPayload(queueItem, effectiveDraft) : undefined;
-    const categoryReference = approvedPayload ? db.collection("categories").doc(String(approvedPayload.category)) : null;
+    const categoryReference = approvedPayload && String(approvedPayload.category || "").trim()
+      ? db.collection("categories").doc(String(approvedPayload.category))
+      : null;
     const approvedBrandId = approvedPayload ? String(approvedPayload.brand || "").trim() : "";
     const brandReference = approvedBrandId ? db.collection("brands").doc(approvedBrandId) : null;
     const needsCategoryMapping = Boolean(approvedPayload && Array.isArray(record(queueItem.supplierSnapshot).categoryHierarchy));
@@ -664,7 +680,7 @@ export async function decideSupplierQueueItem(
       ? db.collection("supplier_brand_mappings").doc(supplierMappingDocumentId(sourceId, normalizedSupplierBrand))
       : null;
     const [
-      categorySnapshot,
+      initialCategorySnapshot,
       brandSnapshot,
       settingsSnapshot,
       existingProductSnapshot,
@@ -684,6 +700,34 @@ export async function decideSupplierQueueItem(
         ? transaction.get(db.collection(SUPPLIER_PRODUCT_OFFERS_COLLECTION).where("productId", "==", String(approvedPayload.id)).limit(100))
         : Promise.resolve(null),
     ]);
+    let categorySnapshot = initialCategorySnapshot;
+    const currentCategoryId = String(approvedPayload?.category || "").trim();
+    const currentCategoryIsUnresolved = Boolean(
+      approvedPayload
+      && (!currentCategoryId || !initialCategorySnapshot?.exists || initialCategorySnapshot.data()?.isActive === false),
+    );
+    if (currentCategoryIsUnresolved && existingCategoryMappingSnapshot?.exists) {
+      const mapping = existingCategoryMappingSnapshot.data() || {};
+      const mappedCategoryId = stringValue(mapping.targetCategoryId);
+      const mappedSubcategoryId = stringValue(mapping.targetSubcategoryId);
+      if (mappedCategoryId) {
+        const mappedCategorySnapshot = await transaction.get(db.collection("categories").doc(mappedCategoryId));
+        const mappedCategory = mappedCategorySnapshot.exists ? mappedCategorySnapshot.data() || {} : {};
+        const activeSubcategories = Array.isArray(mappedCategory.subcategories)
+          ? mappedCategory.subcategories.filter((entry): entry is Record<string, unknown> => Boolean(entry && typeof entry === "object") && (entry as Record<string, unknown>).isActive !== false)
+          : [];
+        const mappedSubcategoryValid = (!mappedSubcategoryId && activeSubcategories.length === 0)
+          || activeSubcategories.some((entry) => String(entry.id || "") === mappedSubcategoryId);
+        if (mappedCategorySnapshot.exists && mappedCategory.isActive !== false && mappedSubcategoryValid) {
+          approvedPayload = {
+            ...approvedPayload,
+            category: mappedCategoryId,
+            subcategory: mappedSubcategoryId,
+          };
+          categorySnapshot = mappedCategorySnapshot;
+        }
+      }
+    }
     const now = FieldValue.serverTimestamp();
     const previousState = reviewQueueState || "review_pending";
     const legacyAmbiguousPendingOffer = Boolean(
@@ -938,10 +982,13 @@ export async function decideSupplierQueueItem(
           { validationErrors },
         );
       }
-      approvedPayload.specs = {
-        ...record(approvedPayload.specs),
-        Brand: stringValue(brandData.name) || String(approvedPayload.brand),
-      };
+      const approvedSpecs = { ...record(approvedPayload.specs) };
+      if (approvedBrandId) approvedSpecs.Brand = stringValue(brandData.name) || approvedBrandId;
+      else {
+        delete approvedSpecs.Brand;
+        delete approvedSpecs.brand;
+      }
+      approvedPayload.specs = approvedSpecs;
     }
 
     let decidedProductId = "";

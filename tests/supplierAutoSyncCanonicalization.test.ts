@@ -4,6 +4,7 @@ import { buildSupplierOnboardingSource } from "../src/services/supplierSourceOnb
 import {
   projectSupplierSourceForAdmin,
   sanitizeSupplierSource,
+  sanitizeSupplierHubSettings,
 } from "../functions/src/api/suppliers/supplierAdminConfiguration";
 import {
   isSupplierAutomaticSyncEnabled,
@@ -72,6 +73,22 @@ test("Global OFF blocks scheduled traversal even when the source is Auto", () =>
       && isSupplierSourceEligibleForSync(scheduledSource, globalOff, "scheduled", Date.now()),
     false,
   );
+});
+
+test("missing, null, and malformed global Auto Sync settings fail closed", () => {
+  for (const settings of [{}, { autoSyncEnabled: null }, { autoSyncEnabled: "true" }, { autoSyncEnabled: 1 }]) {
+    assert.equal(isSupplierAutomaticSyncEnabled(settings as never), false);
+  }
+});
+
+test("saved global settings also default missing Auto Sync to OFF", () => {
+  const settings = sanitizeSupplierHubSettings({
+    maxProducts: 5,
+    defaultImageLimit: 5,
+    defaultMarkup: 10,
+    defaultProfitMargin: 15,
+  });
+  assert.equal(settings.autoSyncEnabled, false);
 });
 
 test("Global ON does not make a Manual source scheduled-eligible", () => {

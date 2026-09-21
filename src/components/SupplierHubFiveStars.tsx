@@ -150,6 +150,7 @@ export interface ReviewQueueItem {
   batchId?: string;
   createdAt?: string;
   updatedAt?: string;
+  mediaProcessedAt?: string;
   supplierSnapshot?: Record<string, unknown>;
   supplierOfferPendingRevision?: string;
   managedMedia?: Array<Record<string, unknown>>;
@@ -199,6 +200,17 @@ interface SupplierQueuePageResponse {
   items?: Array<Record<string, unknown> & { id: string }>;
   nextCursor?: string | null;
   error?: string;
+}
+
+interface SupplierCategoryMappingView {
+  id?: string;
+  sourceId: string;
+  supplierCategory: string;
+  normalizedCategory: string;
+  targetCategoryId: string;
+  targetSubcategoryId: string;
+  confidence?: number;
+  mappingType?: string;
 }
 
 const mergeSupplierQueuePage = <T extends { id: string }>(current: T[], page: T[]): T[] => {
@@ -413,19 +425,34 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
 
   const [categories, setCategories] = useState<any[]>([]);
   const [brands, setBrands] = useState<any[]>([]);
+  const [supplierCategoryMappings, setSupplierCategoryMappings] = useState<SupplierCategoryMappingView[]>([]);
+  const [supplierCategoryMappingDrafts, setSupplierCategoryMappingDrafts] = useState<Record<string, { targetCategoryId: string; targetSubcategoryId: string }>>({});
+  const [savingSupplierCategoryMapping, setSavingSupplierCategoryMapping] = useState<string | null>(null);
 
   const loadReviewCatalog = useCallback(async () => {
     try {
       const response = await getSupplierApi('/api/supplier-review-catalog');
-      if (!response.ok) {
-        throw new Error(`Supplier review catalog request failed with status ${response.status}`);
-      }
+      if (!response.ok) throw new Error(`Supplier review catalog request failed with status ${response.status}`);
       const payload = await response.json();
       const taxonomy = projectSupplierReviewCatalogTaxonomy(payload);
       setCategories(sortCategoriesAlphabetically(
         taxonomy.categories.map((category) => normalizeCategoryBlueprint(category)),
       ));
       setBrands(sortBrandsAlphabetically(taxonomy.brands));
+      try {
+        const mappingsResponse = await getSupplierApi('/api/supplier-category-mappings');
+        const mappingsPayload = mappingsResponse.ok
+          ? await mappingsResponse.json() as { mappings?: SupplierCategoryMappingView[] }
+          : {};
+        const mappings = Array.isArray(mappingsPayload.mappings) ? mappingsPayload.mappings : [];
+        setSupplierCategoryMappings(mappings);
+        setSupplierCategoryMappingDrafts(Object.fromEntries(mappings.map((mapping) => [
+          `${mapping.sourceId}::${mapping.normalizedCategory}`,
+          { targetCategoryId: mapping.targetCategoryId, targetSubcategoryId: mapping.targetSubcategoryId || '' },
+        ])));
+      } catch {
+        setSupplierCategoryMappings([]);
+      }
     } catch (error) {
       console.error('Supplier review catalog fetch error:', error);
       setCategories([]);
@@ -473,21 +500,22 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
   );
   const validCategoryIds = useMemo(() => supplierReviewValidCategoryIds(categories), [categories]);
   const supplierCategoryOptions = useMemo(() => {
-    const values = new Map<string, string>();
-    const addCategories = (source: unknown) => {
+    const values = new Map<string, { key: string; sourceId: string; supplierCategory: string; label: string }>();
+    const addCategories = (sourceId: string, source: unknown, sourceLabel?: string) => {
       if (!Array.isArray(source)) return;
       source.forEach((value) => {
         const label = String(value || '').trim();
         const normalized = normalizeSupplierCategory(label);
-        if (normalized && !values.has(normalized)) values.set(normalized, label);
+        if (normalized && sourceId) {
+          const key = `${sourceId}::${normalized}`;
+          if (!values.has(key)) values.set(key, { key, sourceId, supplierCategory: label, label: `${sourceLabel || sourceId} · ${label}` });
+        }
       });
     };
 
-    reviewQueue.forEach((item) => addCategories(item.supplierSnapshot?.categoryHierarchy));
-    supplierSources.forEach((source) => addCategories(source.settings?.discoveredCategories));
-    return Array.from(values.entries())
-      .map(([key, label]) => ({ key, label }))
-      .sort((left, right) => left.label.localeCompare(right.label));
+    reviewQueue.forEach((item) => addCategories(String(item.sourceId || item.supplierId || ''), item.supplierSnapshot?.categoryHierarchy, item.supplierName));
+    supplierSources.forEach((source) => addCategories(String(source.id || ''), source.settings?.discoveredCategories, source.supplierName || source.name));
+    return Array.from(values.values()).sort((left, right) => left.label.localeCompare(right.label));
   }, [reviewQueue, supplierSources]);
   const supplierSourceById = useMemo(
     () => new Map(supplierSources.map((source) => [String(source.id), source])),
@@ -576,7 +604,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
   const [reviewAuditError, setReviewAuditError] = useState<string | null>(null);
   // 3. Settings states
   const [supplierSettings, setSupplierSettings] = useState<any>({
-    autoSyncEnabled: true,
+    autoSyncEnabled: false,
     syncInterval: '1 Hour',
     maxProducts: 5,
     lastSync: "",
@@ -1520,7 +1548,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
       }
 
       const payload = {
-        autoSyncEnabled: supplierSettings.autoSyncEnabled !== false,
+        autoSyncEnabled: supplierSettings.autoSyncEnabled === true,
         syncInterval: String(supplierSettings.syncInterval || '1 Hour'),
         maxProducts,
         defaultImageLimit: imageLimit,
@@ -1535,7 +1563,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
           : supplierSettings.categoryMappings || {},
       };
       submittedSettings = {
-        autoSyncEnabled: payload.autoSyncEnabled !== false,
+        autoSyncEnabled: payload.autoSyncEnabled === true,
         syncInterval: payload.syncInterval,
         maxProducts: payload.maxProducts,
         defaultProfitMargin: payload.defaultProfitMargin,
@@ -1563,6 +1591,36 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
       setErrorMsg(error.message || "Failed to save supplier settings.");
       setTimeout(() => setErrorMsg(null), 4000);
       setSavingSupplierSettings(false);
+    }
+  };
+
+  const handleSaveSupplierCategoryMapping = async (option: { key: string; sourceId: string; supplierCategory: string }) => {
+    const draft = supplierCategoryMappingDrafts[option.key] || { targetCategoryId: '', targetSubcategoryId: '' };
+    if (!draft.targetCategoryId) {
+      setErrorMsg('Select an active Zyro category before saving the supplier mapping.');
+      return;
+    }
+    setSavingSupplierCategoryMapping(option.key);
+    try {
+      const response = await postSupplierApi('/api/supplier-category-mappings', {
+        sourceId: option.sourceId,
+        supplierCategory: option.supplierCategory,
+        targetCategoryId: draft.targetCategoryId,
+        targetSubcategoryId: draft.targetSubcategoryId || undefined,
+      });
+      const result = await response.json().catch(() => ({})) as { success?: boolean; mapping?: SupplierCategoryMappingView; error?: string };
+      if (!response.ok || result.success !== true || !result.mapping) throw new Error(result.error || 'Supplier category mapping could not be saved.');
+      setSupplierCategoryMappings((current) => [
+        ...current.filter((mapping) => !(mapping.sourceId === result.mapping!.sourceId && mapping.normalizedCategory === result.mapping!.normalizedCategory)),
+        result.mapping!,
+      ]);
+      setSuccessMsg(`Mapped ${option.supplierCategory} to the selected Zyro category.`);
+      setErrorMsg(null);
+      setTimeout(() => setSuccessMsg(null), 3000);
+    } catch (error: any) {
+      setErrorMsg(error instanceof Error ? error.message : 'Supplier category mapping could not be saved.');
+    } finally {
+      setSavingSupplierCategoryMapping(null);
     }
   };
 
@@ -2522,13 +2580,13 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                 <div>
                   <h4 className="text-[10px] font-black uppercase text-blue-500 tracking-wider">Catalogue</h4>
                   <h5 className="mt-2 text-xs font-bold text-slate-800 dark:text-slate-100">Category Mapping</h5>
-                  <p className="mt-1 text-[10px] text-slate-400">Choose where supplier categories appear in the Zyro catalog.</p>
+                  <p className="mt-1 text-[10px] text-slate-400">Map each supplier taxonomy to an active canonical Zyro category and, when required, its active subcategory.</p>
                 </div>
                 <div className="grid gap-3 md:grid-cols-2">
                   <div className="rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-[#111928]">
                     <span className="block text-[10px] font-bold text-slate-400">Brand Mapping</span>
                     <strong className="mt-1 block text-xs text-slate-800 dark:text-slate-100">Brand Registry with Product Review override</strong>
-                    <p className="mt-1 text-[10px] text-slate-400">Unknown brands require an administrator decision before approval.</p>
+                    <p className="mt-1 text-[10px] text-slate-400">Unknown brands remain optional and never receive a fabricated canonical brand.</p>
                   </div>
                   <div className="rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-[#111928]">
                     <span className="block text-[10px] font-bold text-slate-400">Default Category</span>
@@ -2537,36 +2595,33 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                   </div>
                 </div>
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                  {supplierSources.length > 0 && supplierCategoryOptions.map(({ key, label }) => (
-                    <label key={key} className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-[#111928]">
-                      <span className="truncate font-bold text-slate-700 dark:text-slate-200" title={label}>{label}</span>
-                      <ArrowRight className="h-3.5 w-3.5 text-slate-400" />
-                      <select
-                        aria-label={`Map supplier category ${label}`}
-                        value={supplierSettings.categoryMappings?.[key] || ''}
-                        onChange={(event) => setSupplierSettings((current: any) => ({
-                          ...current,
-                          categoryMappings: {
-                            ...(current.categoryMappings || {}),
-                            [key]: event.target.value,
-                          },
-                        }))}
-                        className="min-w-0 rounded-lg border border-slate-200 bg-slate-50 px-2 py-2 text-xs dark:border-slate-700 dark:bg-slate-900"
-                      >
-                        <option value="">Select Zyro category</option>
-                        {categories.map((category) => (
-                          <option key={category.id} value={category.id}>{category.name || category.id}</option>
-                        ))}
-                      </select>
-                    </label>
-                  ))}
-                  {(supplierSources.length === 0 || supplierCategoryOptions.length === 0) && (
-                    <div className="rounded-xl border border-dashed border-slate-200 p-4 text-[11px] text-slate-400 dark:border-slate-800 md:col-span-2">
-                      {supplierSources.length === 0
-                        ? 'Connect a supplier to configure category mapping.'
-                        : 'Update a supplier to discover categories for mapping.'}
-                    </div>
-                  )}
+                  {supplierCategoryOptions.map((option) => {
+                    const draft = supplierCategoryMappingDrafts[option.key] || { targetCategoryId: '', targetSubcategoryId: '' };
+                    const selectedCategory = categories.find((category) => category.id === draft.targetCategoryId);
+                    const activeSubcategories = (selectedCategory?.subcategories || []).filter((subcategory: any) => subcategory.isActive !== false);
+                    const requiresSubcategory = activeSubcategories.length > 0;
+                    const mapping = supplierCategoryMappings.find((candidate) => candidate.sourceId === option.sourceId && candidate.normalizedCategory === option.key.split('::')[1]);
+                    return <div key={option.key} className="rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-[#111928]">
+                      <div className="flex items-center gap-2">
+                        <span className="truncate font-bold text-slate-700 dark:text-slate-200" title={option.label}>{option.label}</span>
+                        {mapping ? <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[9px] font-black text-emerald-600">Mapped</span> : null}
+                      </div>
+                      <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                        <select aria-label={`Map supplier category ${option.label}`} value={draft.targetCategoryId} onChange={(event) => setSupplierCategoryMappingDrafts((current) => ({ ...current, [option.key]: { targetCategoryId: event.target.value, targetSubcategoryId: '' } }))} className="min-w-0 rounded-lg border border-slate-200 bg-slate-50 px-2 py-2 text-xs dark:border-slate-700 dark:bg-slate-900">
+                          <option value="">Select Zyro category</option>
+                          {categories.filter((category) => category.isActive !== false).map((category) => <option key={category.id} value={category.id}>{category.name || category.id}</option>)}
+                        </select>
+                        <select aria-label={`Map supplier subcategory ${option.label}`} value={draft.targetSubcategoryId} onChange={(event) => setSupplierCategoryMappingDrafts((current) => ({ ...current, [option.key]: { ...draft, targetSubcategoryId: event.target.value } }))} disabled={!selectedCategory || activeSubcategories.length === 0} className="min-w-0 rounded-lg border border-slate-200 bg-slate-50 px-2 py-2 text-xs disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900">
+                          <option value={requiresSubcategory ? '' : ''}>{requiresSubcategory ? 'Select subcategory' : 'No subcategory required'}</option>
+                          {activeSubcategories.map((subcategory: any) => <option key={subcategory.id} value={subcategory.id}>{subcategory.name || subcategory.id}</option>)}
+                        </select>
+                      </div>
+                      <button type="button" onClick={() => void handleSaveSupplierCategoryMapping(option)} disabled={!draft.targetCategoryId || (requiresSubcategory && !draft.targetSubcategoryId) || savingSupplierCategoryMapping === option.key} className="mt-2 min-h-9 rounded-lg bg-blue-600 px-3 text-[10px] font-black text-white disabled:cursor-not-allowed disabled:opacity-40">
+                        {savingSupplierCategoryMapping === option.key ? 'Saving…' : 'Save mapping'}
+                      </button>
+                    </div>;
+                  })}
+                  {(supplierSources.length === 0 || supplierCategoryOptions.length === 0) && <div className="rounded-xl border border-dashed border-slate-200 p-4 text-[11px] text-slate-400 dark:border-slate-800 md:col-span-2">{supplierSources.length === 0 ? 'Connect a supplier to configure category mapping.' : 'Update a supplier to discover categories for mapping.'}</div>}
                 </div>
               </div>
 

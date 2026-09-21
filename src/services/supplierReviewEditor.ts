@@ -25,8 +25,9 @@ export interface SupplierReviewSourceItem {
   productPayload?: Product & Record<string, unknown>;
   supplierSnapshot?: Record<string, unknown>;
   managedMedia?: Array<Record<string, unknown>>;
-  mediaFailures?: Array<{ originalSupplierUrl?: string; reason?: string; retryable?: boolean; failedAt?: string }>;
+  mediaFailures?: Array<{ code?: string; originalSupplierUrl?: string; reason?: string; retryable?: boolean; sourceIndex?: number; isPrimary?: boolean; failedAt?: string }>;
   mediaStatus?: string;
+  mediaProcessedAt?: string;
   mediaReadiness?: string;
   categoryMapping?: {
     supplierCategory?: string;
@@ -59,6 +60,32 @@ export interface SupplierReviewSourceItem {
     fieldChanges?: SupplierReviewFieldChange[];
   };
 }
+
+const managedCanonicalImageUrlsForDraft = (item: SupplierReviewSourceItem): string[] => {
+  const candidates = [item.managedMedia, item.productPayload?.supplierMedia, item.productPayload?.media];
+  const selected = candidates.find((value) => Array.isArray(value) && value.length > 0);
+  if (!Array.isArray(selected)) return [];
+  return selected
+    .filter((value): value is Record<string, unknown> => Boolean(value) && typeof value === 'object' && !Array.isArray(value))
+    .sort((left, right) => Number(right.isPrimary === true) - Number(left.isPrimary === true) || Number(left.sortOrder || 0) - Number(right.sortOrder || 0))
+    .map((record) => String(record.firebaseStorageUrl || '').trim())
+    .filter((url) => /^https:\/\/\S+$/iu.test(url))
+    .filter((url, index, values) => values.indexOf(url) === index);
+};
+
+const managedMediaReadyForDraft = (item: SupplierReviewSourceItem, urls: string[]): boolean => {
+  const readiness = String(item.mediaReadiness || '').trim().toLowerCase();
+  const legacyReady = !readiness && String(item.mediaStatus || '').trim().toLowerCase() === 'ready'
+    && (!Array.isArray(item.mediaFailures) || item.mediaFailures.length === 0);
+  const candidates = [item.managedMedia, item.productPayload?.supplierMedia, item.productPayload?.media];
+  const selected = candidates.find((value) => Array.isArray(value) && value.length > 0);
+  if (!Array.isArray(selected) || urls.length === 0 || !(['publication_safe', 'publication_safe_with_media_warnings'].includes(readiness) || legacyReady)) return false;
+  const records = selected.filter((value): value is Record<string, unknown> => Boolean(value) && typeof value === 'object' && !Array.isArray(value));
+  const hasUsablePrimary = records.some((record) => record.isPrimary === true
+    && ['ready', 'published'].includes(String(record.imageStatus || '').trim().toLowerCase())
+    && /^https:\/\/\S+$/iu.test(String(record.firebaseStorageUrl || '').trim()));
+  return hasUsablePrimary && records.length > 0 && records.every((record) => /^https:\/\/\S+$/iu.test(String(record.firebaseStorageUrl || '').trim()));
+};
 
 export interface SupplierReviewFieldChange {
   field: string;
@@ -366,9 +393,13 @@ export function createSupplierReviewDraft(item: SupplierReviewSourceItem): Suppl
     if (!stockEditedByAdmin && Number.isFinite(resolvedStock)) supplierStockAvailable = true;
   }
   const specs = payload?.specs || {};
-  const primaryImageUrl = String(payload?.imageUrl || item.imageUrl || '').trim();
+  const managedImageUrlsCandidate = managedCanonicalImageUrlsForDraft(item);
+  const managedImageUrls = managedMediaReadyForDraft(item, managedImageUrlsCandidate)
+    ? managedImageUrlsCandidate
+    : [];
+  const primaryImageUrl = String(managedImageUrls[0] || payload?.imageUrl || item.imageUrl || '').trim();
   const galleryImageUrls = [...new Set(
-    (Array.isArray(payload?.imageUrls) ? payload.imageUrls : [])
+    (managedImageUrls.length > 0 ? managedImageUrls.slice(1) : (Array.isArray(payload?.imageUrls) ? payload.imageUrls : []))
       .filter((value): value is string => typeof value === 'string')
       .map((value) => value.trim())
       .filter((value) => Boolean(value) && value !== primaryImageUrl),
@@ -416,7 +447,7 @@ export function createSupplierReviewDraft(item: SupplierReviewSourceItem): Suppl
       : Math.max(0, Math.floor(finiteNumber(resolvedStock, Number.NaN))),
     category: String(payload?.category || (item.categoryMapping?.autoSelected ? item.categoryMapping.targetCategoryId : '') || ''),
     subcategory: String(payload?.subcategory || (item.categoryMapping?.autoSelected ? item.categoryMapping.targetSubcategoryId : '') || ''),
-    brand: String(payload?.brand || (item.brandMapping?.autoSelected ? item.brandMapping.mappedBrandId : '') || specs.brand || specs.Brand || ''),
+    brand: String(payload?.brand || (item.brandMapping?.autoSelected ? item.brandMapping.mappedBrandId : '') || ''),
     specifications: Object.fromEntries(Object.entries(specs).map(([key, value]) => [key, String(value || '')])),
     isActive: payload?.isActive !== false,
     isNew: payload?.isNew === true,
@@ -545,7 +576,8 @@ export function validateSupplierReviewDraft(
   if (activeSubcategories.length > 0 && !activeSubcategories.some((subcategory) => subcategory.id === String(draft.subcategory || '').trim())) {
     errors.subcategory = 'Select an active subcategory belonging to the category.';
   }
-  if (brands && !brands.some((brand) => brand.id === draft.brand.trim() && brand.isActive !== false)) {
+  const brand = draft.brand.trim();
+  if (brand && brands && !brands.some((candidate) => candidate.id === brand && candidate.isActive !== false)) {
     errors.brand = 'Select an active registered brand.';
   }
   const normalizedSpecifications = new Map(Object.entries(draft.specifications || {})
@@ -623,6 +655,16 @@ export function buildSupplierApprovalItem(
     ? Math.round(((comparePrice - sellingPrice) / comparePrice) * 100)
     : undefined;
   const brand = draft.brand.trim();
+  const originalSpecs = { ...(originalPayload.specs || {}) } as Record<string, unknown>;
+  const nextSpecs = { ...originalSpecs, ...(draft.specifications || {}) } as Record<string, unknown>;
+  if (brand) {
+    nextSpecs.brand = brand;
+    nextSpecs.Brand = brand;
+  }
+  else {
+    delete nextSpecs.Brand;
+    delete nextSpecs.brand;
+  }
   const supplierSnapshot = item.supplierSnapshot || {
     supplierName: item.supplierName || 'Unknown Supplier',
     supplierSku: item.supplierCode,
@@ -658,12 +700,8 @@ export function buildSupplierApprovalItem(
     stock: draft.stock,
     category: draft.category.trim(),
     subcategory: String(draft.subcategory || '').trim(),
-    brand,
-    specs: {
-      ...(originalPayload.specs || {}),
-      ...(draft.specifications || {}),
-      brand,
-    },
+    ...(brand ? { brand } : {}),
+    specs: nextSpecs,
     isActive: draft.isActive,
     isNew: draft.isNew,
     isFeatured: draft.isFeatured,
@@ -674,6 +712,7 @@ export function buildSupplierApprovalItem(
     published: true,
     ...(draft.fieldOwnership ? { supplierFieldOwnership: draft.fieldOwnership } : {}),
   };
+  if (!brand) delete approvedProductPayload.brand;
   if (!promotionEnabled) {
     delete approvedProductPayload.originalPrice;
     delete approvedProductPayload.discount;
