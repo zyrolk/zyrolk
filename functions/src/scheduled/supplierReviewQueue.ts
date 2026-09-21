@@ -384,6 +384,19 @@ const stateFor = (record: SupplierQueueRecord): SupplierQueueState => {
   return "queued";
 };
 
+/**
+ * One lifecycle interpretation for both review listing and server-authorized
+ * refresh. Legacy pending documents intentionally remain readable as
+ * review_pending until their normal write path adds current lifecycle fields.
+ */
+export const supplierReviewQueueStateFor = (record: Record<string, unknown>): SupplierQueueState => stateFor(record as SupplierQueueRecord);
+
+export const reviewRecordIsRefreshable = (record: Record<string, unknown>): boolean => (
+  !reviewRecordIsTerminalDecision(record as SupplierQueueRecord)
+  && supplierReviewQueueStateFor(record) === "review_pending"
+  && ["pending", ""].includes(normalizedReviewValue(record.status))
+);
+
 const nextRetryAt = (attempt: number, now: number): string => new Date(now + supplierMediaRetryDelayMs(attempt)).toISOString();
 
 export function buildSupplierQueueLifecycle(createdAt = new Date().toISOString()): Record<string, unknown> {

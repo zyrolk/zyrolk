@@ -743,6 +743,56 @@ test('legacy refresh compatibility remains fail closed for invalid envelopes and
   }
 });
 
+test('legacy pending review without queueState is accepted by the canonical review_pending refresh guard', async () => {
+  const fixture = createRefreshGuardFixture({ queuePatch: { queueState: undefined } });
+  const originalCreateConnector = SupplierRegistry.createConnectorForSourceRecord;
+  let lookupCount = 0;
+  try {
+    SupplierRegistry.createConnectorForSourceRecord = async () => ({
+      id: 'dropex',
+      name: 'Dropex',
+      connectorType: 'dropex',
+      enabled: true,
+      priority: 100,
+      capabilities: [],
+      fetchProducts: async () => ({ products: [], targetUrl: '' }),
+      fetchProductPage: async () => ({ products: [], targetUrl: '', nextCursor: null, complete: true }),
+      testConnection: async () => ({ success: true, status: 'Connected', productsCount: 0, sampleProduct: null }),
+      fetchExactProductForRefresh: async () => {
+        lookupCount += 1;
+        return {
+          supplierProductId: fixture.supplierProductId,
+          sku: fixture.supplierSku,
+          title: 'Fresh legacy review product',
+          longDescription: 'Fresh supplier description',
+          mediaGallery: ['https://supplier.example/legacy-review.jpg'],
+          wholesalePrice: 720,
+          recommendedRetailPrice: 1650,
+          price: 1650,
+          inventoryLevel: 8,
+          availability: 'in_stock',
+          supplierCategory: 'Vehicle Accessories',
+          categoryHierarchy: ['Vehicle Accessories'],
+          specifications: { Model: 'Legacy refresh' },
+          providedFields: ['costPrice', 'wholesalePrice', 'stock', 'inventoryLevel', 'title', 'longDescription', 'mediaGallery', 'price', 'categoryHierarchy', 'specifications'],
+        };
+      },
+    } as never);
+
+    const result = await withPatchedAdminDb(fixture.db, () => refreshActiveSupplierReviewItem(fixture.queueItemId));
+    const refreshedQueue = fixture.db.collections.get('supplier_review_queue')?.get(fixture.queueItemId) as Record<string, unknown>;
+    assert.equal(lookupCount, 1);
+    assert.equal(result.queueItemId, fixture.queueItemId);
+    // The normal refresh pipeline intentionally requeues incomplete media;
+    // acceptance uses effective review_pending eligibility, while the write
+    // moves the item into the existing queue worker path.
+    assert.equal(refreshedQueue.queueState, 'queued');
+    assert.equal(refreshedQueue.status, 'Pending');
+  } finally {
+    SupplierRegistry.createConnectorForSourceRecord = originalCreateConnector;
+  }
+});
+
 test('Dropex commercial parser never falls back to DTO price aliases for fulfillment cost', () => {
   const parsed = ProductParser.parseCatalogItem({
     productDetail: { id: '4970', sku: 'SHX2924', sellingPrice: 1400 },
@@ -934,7 +984,7 @@ test('refresh route and sync helper are identity-bound, bounded, and use the cur
   assert.match(routes, /app\.post\("\/api\/supplier-review-queue\/:queueItemId\/refresh", requireSupplierHubAdmin/u);
   assert.match(routes, /refreshActiveSupplierReviewItem\(queueItemId, reviewerFor\(res\)\)/u);
   assert.match(sync, /Only an active supplier review_pending item can be refreshed/u);
-  assert.match(sync, /reviewRecordIsTerminalDecision\(queueItem\)/u);
+  assert.match(sync, /reviewRecordIsRefreshable\(queueItem\)/u);
   assert.match(sync, /refreshReviewIsNewProduct\(queueItem\)/u);
   assert.match(sync, /buildSupplierOfferId\(sourceId, supplierProductId, supplierSku\)/u);
   assert.match(sync, /The canonical product for this review item could not be found/u);
@@ -971,7 +1021,7 @@ test('supplier review refresh reconciles the modal and list immediately with one
   const modal = read('src/components/SupplierReviewEditorModal.tsx');
   const hub = read('src/components/SupplierHubFiveStars.tsx');
   const start = hub.indexOf('const handleRefreshSupplierReviewItem');
-  const end = hub.indexOf('const handleRetryDeadLetterMedia', start);
+  const end = hub.indexOf('const handleRefreshPendingReviewBatch', start);
   const handler = hub.slice(start, end);
   assert.ok(start >= 0 && end > start);
 

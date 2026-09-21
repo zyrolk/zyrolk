@@ -64,6 +64,11 @@ import {
 import { activateSupplierTaxonomyCandidate } from "../suppliers/supplierTaxonomy";
 import { listSupplierCategoryMappings, saveSupplierCategoryMapping } from "../suppliers/supplierCategoryMappingAdmin";
 import {
+  admitPendingReviewBatch,
+  PENDING_REVIEW_BATCH_JOB_TYPE,
+  projectPendingReviewBatchJobForAdmin,
+} from "../suppliers/supplierReviewBatchRefresh";
+import {
   recordSupplierOperationalAlertSafely,
   resolveSupplierOperationalAlertSafely,
   transitionSupplierOperationalAlert,
@@ -688,6 +693,69 @@ export function registerSupplierRoutes(app: express.Express): void {
     }
   });
 
+  app.post("/api/supplier-review-queue/refresh-batch", requireSupplierHubAdmin, async (req, res) => {
+    try {
+      const result = await admitPendingReviewBatch(req.body, reviewerFor(res));
+      const job = projectPendingReviewBatchJobForAdmin(result.job);
+      res.status(202).json({
+        success: true,
+        accepted: true,
+        created: result.created,
+        deduplicated: result.deduplicated,
+        jobId: result.job.id,
+        status: job.state,
+        job,
+      });
+      if (result.created) startLocalSupplierSyncJob(result.job.id);
+    } catch (error: unknown) {
+      sendSupplierFailure(res, error, {
+        logMessage: "Pending supplier review batch refresh admission failed.",
+        fallbackMessage: "Pending supplier review refresh could not be started.",
+        context: { route: req.path, action: "refresh_batch" },
+      });
+    }
+  });
+
+  app.get("/api/supplier-review-queue/refresh-batch/jobs", requireSupplierHubAdmin, async (req, res) => {
+    try {
+      const limit = readBoundedLimit(req.query.limit, 10, 20);
+      const snapshot = await adminDb.collection("supplier_sync_jobs")
+        .orderBy("createdAt", "desc")
+        .limit(100)
+        .get();
+      const jobs = snapshot.docs
+        .map((document) => ({ id: document.id, ...document.data() }) as SupplierSyncJobRecord)
+        .filter((job) => job.jobType === PENDING_REVIEW_BATCH_JOB_TYPE)
+        .slice(0, limit)
+        .map(projectPendingReviewBatchJobForAdmin);
+      res.status(200).json({ success: true, jobs });
+    } catch (error: unknown) {
+      sendSupplierFailure(res, error, {
+        logMessage: "Pending supplier review batch job lookup failed.",
+        fallbackMessage: "Pending supplier review refresh jobs could not be loaded.",
+        context: { route: req.path },
+      });
+    }
+  });
+
+  app.get("/api/supplier-review-queue/refresh-batch/jobs/:jobId", requireSupplierHubAdmin, async (req, res) => {
+    try {
+      const jobId = readSyncJobId(req.params.jobId);
+      const snapshot = await adminDb.collection("supplier_sync_jobs").doc(jobId).get();
+      if (!snapshot.exists || snapshot.data()?.jobType !== PENDING_REVIEW_BATCH_JOB_TYPE) {
+        throw new ApiError("Pending supplier review refresh job was not found.", 404);
+      }
+      const job = { id: snapshot.id, ...snapshot.data() } as SupplierSyncJobRecord;
+      res.status(200).json({ success: true, job: projectPendingReviewBatchJobForAdmin(job) });
+    } catch (error: unknown) {
+      sendSupplierFailure(res, error, {
+        logMessage: "Pending supplier review batch job lookup failed.",
+        fallbackMessage: "The pending supplier review refresh job could not be loaded.",
+        context: { route: req.path },
+      });
+    }
+  });
+
   // The UI can use this endpoint for a chronological, server-authorized review
   // history without ever receiving permission to write audit records directly.
   app.get("/api/supplier-review-queue/:queueItemId/audit", requireSupplierHubAdmin, async (req, res) => {
@@ -886,6 +954,13 @@ export function registerSupplierRoutes(app: express.Express): void {
       const jobId = readSyncJobId(req.params.jobId);
       const snapshot = await adminDb.collection("supplier_sync_jobs").doc(jobId).get();
       if (!snapshot.exists) throw new ApiError("Supplier sync job was not found.", 404);
+      if (snapshot.data()?.jobType === PENDING_REVIEW_BATCH_JOB_TYPE) {
+        res.status(200).json({
+          success: true,
+          job: projectPendingReviewBatchJobForAdmin({ id: snapshot.id, ...snapshot.data() } as SupplierSyncJobRecord),
+        });
+        return;
+      }
       res.status(200).json({
         success: true,
         job: projectSupplierSyncJobForAdmin({ id: snapshot.id, ...snapshot.data() } as SupplierSyncJobRecord),

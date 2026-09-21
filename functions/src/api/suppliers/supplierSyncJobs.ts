@@ -15,6 +15,7 @@ export const SUPPLIER_SYNC_JOB_STATES = [
 
 export type SupplierSyncJobState = typeof SUPPLIER_SYNC_JOB_STATES[number];
 export type SupplierSyncJobTrigger = "manual" | "scheduled";
+export type SupplierSyncJobType = "supplier_sync" | "pending_review_refresh";
 export type SupplierSyncProgressDetermination = "determinate" | "indeterminate";
 export type SupplierSyncProgressBasis = "catalog_total" | "limit_upper_bound" | "unknown" | "completed";
 export type SupplierSyncProgressTotalReliability = "exact" | "reported" | "unknown";
@@ -46,6 +47,7 @@ export interface SupplierSyncJobProgress {
 export interface SupplierSyncJobRecord extends Record<string, unknown> {
   id: string;
   state: SupplierSyncJobState;
+  jobType?: SupplierSyncJobType;
   trigger: SupplierSyncJobTrigger;
   immediateAutoEnable?: boolean;
   sourceIds: string[];
@@ -63,15 +65,18 @@ export interface SupplierSyncJobRecord extends Record<string, unknown> {
   leaseExpiresAt?: string;
   cancellationRequestedAt?: string;
   cancellationRequestedBy?: string;
+  pendingReviewBatch?: Record<string, unknown>;
 }
 
 export interface CreateSupplierSyncJobInput {
   trigger: SupplierSyncJobTrigger;
+  jobType?: SupplierSyncJobType;
   sourceIds?: readonly string[];
   requestedBy?: { uid?: string; email?: string };
   dedupeKey?: string;
   syncRequest?: SupplierSyncRequest;
   immediateAutoEnable?: boolean;
+  pendingReviewBatch?: Record<string, unknown>;
 }
 
 export interface SupplierSyncJobAdmissionConflict {
@@ -182,6 +187,27 @@ const sameSyncRequest = (left?: SupplierSyncRequest, right?: SupplierSyncRequest
   fingerprintSupplierSyncRequest(left || { mode: "full" })
   === fingerprintSupplierSyncRequest(right || { mode: "full" })
 );
+
+const jobTypeFor = (job: Pick<SupplierSyncJobRecord, "jobType"> | Record<string, unknown>): SupplierSyncJobType => (
+  job.jobType === "pending_review_refresh" ? "pending_review_refresh" : "supplier_sync"
+);
+
+const selectedReviewQueueIdsFor = (value: unknown): string[] => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+  const selected = (value as Record<string, unknown>).selectedQueueItemIds;
+  if (!Array.isArray(selected)) return [];
+  return [...new Set(selected
+    .filter((id): id is string => typeof id === "string")
+    .map((id) => id.trim())
+    .filter((id) => id && !id.includes("/") && id.length <= 160))];
+};
+
+const samePendingReviewBatch = (left?: Record<string, unknown>, right?: Record<string, unknown>): boolean => {
+  const leftIds = selectedReviewQueueIdsFor(left);
+  const rightIds = selectedReviewQueueIdsFor(right);
+  return leftIds.length === rightIds.length && leftIds.every((id, index) => id === rightIds[index]);
+};
+
 
 const manualReservationPatch = (
   jobId: string,
@@ -406,10 +432,12 @@ export async function createSupplierSyncJob(
     : db.collection("supplier_sync_jobs").doc();
   const createdAt = new Date(now).toISOString();
   const sourceIds = cleanSourceIds(input.sourceIds);
+  const jobType = input.jobType || "supplier_sync";
   const record: SupplierSyncJobRecord = {
     id: reference.id,
     schemaVersion: 1,
     state: "pending",
+    jobType,
     trigger: input.trigger,
     sourceIds,
     requestedBy: {
@@ -425,6 +453,7 @@ export async function createSupplierSyncJob(
     progress: initialProgress(now),
     ...(input.syncRequest ? { syncRequest: input.syncRequest } : {}),
     ...(input.immediateAutoEnable ? { immediateAutoEnable: true } : {}),
+    ...(input.pendingReviewBatch ? { pendingReviewBatch: input.pendingReviewBatch } : {}),
   };
   const result = await db.runTransaction(async (transaction) => {
     const snapshot = await transaction.get(reference);
@@ -500,9 +529,11 @@ export async function createSupplierSyncJob(
           && reusableJob.trigger === "scheduled"
         )
       )
+      && jobTypeFor(reusableJob) === jobType
       && isActiveSupplierSyncJob(reusableJob)
       && sameSourceScope(reusableJob.sourceIds, sourceIds)
       && sameSyncRequest(reusableJob.syncRequest, input.syncRequest)
+      && (jobType !== "pending_review_refresh" || samePendingReviewBatch(reusableJob.pendingReviewBatch, input.pendingReviewBatch))
       && conflicts.every((conflict) => conflict.jobId === reusableJob.id)
     ) {
       lockReferences.forEach((lockReference, index) => transaction.set(lockReference, {
@@ -545,7 +576,7 @@ export async function createSupplierSyncJob(
     }, { merge: true }));
     return { created: true, deduplicated: false, job: record };
   });
-  if (input.trigger === "manual") {
+  if (input.trigger === "manual" && jobType === "supplier_sync") {
     recordSupplierManualSyncRequestMetric({
       jobId: result.job.id,
       sourceCount: record.sourceIds.length,
@@ -631,6 +662,46 @@ export async function heartbeatSupplierSyncJob(
       updatedAt: new Date(now).toISOString(),
     }, { merge: true });
     return { cancellationRequested };
+  });
+}
+
+/**
+ * Persists pending-review batch progress together with the worker lease. The
+ * review-refresh worker uses this narrower update so its per-item completion
+ * fence and heartbeat advance atomically.
+ */
+export async function updatePendingReviewRefreshJobProgress(
+  db: Firestore,
+  jobId: string,
+  workerId: string,
+  leaseId: string,
+  pendingReviewBatch: Record<string, unknown>,
+  progress: SupplierSyncJobProgress,
+  now = Date.now(),
+  leaseMs = SUPPLIER_SYNC_JOB_LEASE_MS,
+): Promise<void> {
+  const reference = db.collection("supplier_sync_jobs").doc(jobId);
+  await db.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(reference);
+    const data = snapshot.data() || {};
+    if (!snapshot.exists
+      || stateFor(data.state) !== "running"
+      || jobTypeFor(data) !== "pending_review_refresh"
+      || data.leaseOwner !== workerId
+      || data.leaseId !== leaseId) {
+      throw new Error("Pending supplier review refresh job lease is no longer owned by this worker.");
+    }
+    if (!samePendingReviewBatch(data.pendingReviewBatch as Record<string, unknown> | undefined, pendingReviewBatch)) {
+      throw new Error("Pending supplier review refresh job selected items are immutable.");
+    }
+    transaction.set(reference, {
+      pendingReviewBatch,
+      progress,
+      lastHeartbeatAt: new Date(now).toISOString(),
+      heartbeatCount: cleanCount(data.heartbeatCount) + 1,
+      leaseExpiresAt: new Date(now + leaseMs).toISOString(),
+      updatedAt: new Date(now).toISOString(),
+    }, { merge: true });
   });
 }
 
@@ -884,17 +955,22 @@ export async function listDueSupplierSyncJobIds(db: Firestore, now = Date.now(),
 export async function listSupplierSyncJobs(db: Firestore, limit = 20): Promise<SupplierSyncJobRecord[]> {
   const snapshot = await db.collection("supplier_sync_jobs")
     .orderBy("createdAt", "desc")
-    .limit(Math.max(1, Math.min(limit, 100)))
+    .limit(100)
     .get();
-  return snapshot.docs.map((document) => ({ id: document.id, ...document.data() }) as SupplierSyncJobRecord);
+  return snapshot.docs
+    .map((document) => ({ id: document.id, ...document.data() }) as SupplierSyncJobRecord)
+    .filter((job) => jobTypeFor(job) === "supplier_sync")
+    .slice(0, Math.max(1, Math.min(limit, 100)));
 }
 
 export function projectSupplierSyncJobForAdmin(job: SupplierSyncJobRecord): Record<string, unknown> {
   return {
     id: job.id,
+    jobType: jobTypeFor(job),
     state: stateFor(job.state),
     trigger: job.trigger,
     sourceIds: cleanSourceIds(job.sourceIds),
+    pendingReviewBatch: null,
     syncRequest: job.syncRequest || null,
     createdAt: job.createdAt,
     updatedAt: job.updatedAt,

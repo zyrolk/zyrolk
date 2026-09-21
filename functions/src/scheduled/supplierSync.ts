@@ -102,9 +102,11 @@ import {
 import {
   buildSupplierQueueLifecycle,
   classifySupplierQueueFailure,
+  reviewRecordIsRefreshable,
   reviewRecordIsTerminalDecision,
   resolveSupplierReviewQueueUpsertLifecycle,
   supplierReviewSourceImageUrls,
+  supplierReviewQueueStateFor,
 } from "./supplierReviewQueue";
 import {
   normalizeSupplierCatalogPageSize,
@@ -1719,7 +1721,7 @@ async function commitQueuedItems(items: SupplierSyncWrite[]): Promise<void> {
         if (fencedReview && reviewWrite) {
           const currentReviewData = currentReview?.data() || {};
           if (
-            String(currentReviewData.queueState || "").toLowerCase() !== fencedReview.queueState.toLowerCase()
+            supplierReviewQueueStateFor(currentReviewData) !== fencedReview.queueState.toLowerCase()
             || String(currentReviewData.status || "").toLowerCase() !== fencedReview.status.toLowerCase()
             || String(currentReviewData.supplierOfferPendingRevision || "") !== fencedReview.supplierOfferPendingRevision
             || String(currentReviewData.canonicalProductId || currentReviewData.productId || "") !== fencedReview.canonicalProductId
@@ -1853,15 +1855,11 @@ export async function refreshActiveSupplierReviewItem(
   const reviewSnapshot = await reviewReference.get();
   if (!reviewSnapshot.exists) throw new ApiError("Supplier review item could not be found.", 404);
   const queueItem = reviewSnapshot.data() || {};
-  const queueState = refreshIdentityValue(queueItem.queueState).toLocaleLowerCase();
   const queueStatus = refreshIdentityValue(queueItem.status).toLocaleLowerCase();
-  if (
-    reviewRecordIsTerminalDecision(queueItem)
-    || queueState !== "review_pending"
-    || !["pending", ""].includes(queueStatus)
-  ) {
+  if (!reviewRecordIsRefreshable(queueItem)) {
     throw new ApiError("Only an active supplier review_pending item can be refreshed.", 409);
   }
+  const queueState = supplierReviewQueueStateFor(queueItem);
 
   const identity = getSupplierQueueIdentityCandidate(queueItem);
   const sourceId = refreshIdentityValue(identity.sourceId);
@@ -2144,7 +2142,10 @@ export async function refreshActiveSupplierReviewItem(
   const queueCreatedAt = refreshIdentityValue(queueItem.queueCreatedAt || queueItem.createdAt || observedAt);
   const sourceImageUrls = supplierReviewSourceImageUrls(product);
   const queueLifecycle = resolveSupplierReviewQueueUpsertLifecycle({
-    existing: queueItem,
+    // Feed the lifecycle helper the canonical effective state so a legacy
+    // status-only pending record is refreshed as review_pending without a
+    // separate migration or blind document rewrite.
+    existing: { ...queueItem, queueState },
     sourceUrls: sourceImageUrls,
     queueCreatedAt,
   });
@@ -4492,12 +4493,12 @@ export async function getSupplierSyncSchedulerStatus(): Promise<Record<string, u
     adminDb.collection("supplier_sync_locks").doc(LOCK_ID).get(),
     adminDb.collection("supplier_sync_history").orderBy("createdAt", "desc").limit(1).get(),
     adminDb.collection("supplierSources").where("currentlySyncing", "==", true).count().get(),
-    adminDb.collection("supplier_sync_jobs").orderBy("createdAt", "desc").limit(1).get(),
+    adminDb.collection("supplier_sync_jobs").orderBy("createdAt", "desc").limit(25).get(),
   ]);
   const settings = settingsSnapshot.data() || {};
   const lock = lockSnapshot.data() || {};
   const lastRun = historySnapshot.docs[0];
-  const latestJob = latestJobSnapshot.docs[0];
+  const latestJob = latestJobSnapshot.docs.find((document) => document.data()?.jobType !== "pending_review_refresh");
   return {
     schedule: SUPPLIER_SCHEDULER_SCHEDULE,
     status: settings.schedulerStatus || lock.status || "idle",

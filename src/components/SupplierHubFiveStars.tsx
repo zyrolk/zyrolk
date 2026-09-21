@@ -51,9 +51,12 @@ import {
 import {
   formatSupplierSyncEta,
   formatSupplierSyncProgress,
+  clearPendingReviewBatchPollTimer,
   isSupplierSyncJobActive,
   isSupplierSyncJobTerminal,
+  isPendingReviewBatchJobActive,
   isSupplierSyncProgressDeterminate,
+  pendingReviewBatchPollDelayMs,
   selectSupplierSyncJobViews,
   supplierSyncJobDetailLine,
   supplierSyncJobHeadline,
@@ -102,6 +105,8 @@ interface SupplierHubFiveStarsProps {
 }
 
 const SUPPLIER_AUTO_SYNC_SCHEDULES = ['1 Hour', '3 Hours', '6 Hours', 'Daily'] as const;
+const PENDING_REVIEW_BATCH_SIZES = [25, 50, 100] as const;
+type PendingReviewBatchSize = typeof PENDING_REVIEW_BATCH_SIZES[number];
 
 export interface ComparisonResult {
   matchFound: boolean;
@@ -202,6 +207,32 @@ interface SupplierQueuePageResponse {
   error?: string;
 }
 
+interface PendingReviewBatchResponse {
+  success?: boolean;
+  job?: PendingReviewBatchJobView;
+  error?: string;
+}
+
+interface PendingReviewBatchJobView {
+  jobId: string;
+  jobType?: 'pending_review_refresh';
+  state: 'pending' | 'running' | 'waiting' | 'completed' | 'failed' | 'cancelled' | string;
+  status?: string;
+  batchSize: PendingReviewBatchSize;
+  selected?: number;
+  attempted?: number;
+  completed?: number;
+  refreshedSuccessfully?: number;
+  nowReadyToPublish?: number;
+  stillBlocked?: number;
+  supplierRemovedOrNotFound?: number;
+  failed?: number;
+  unchanged?: number;
+  items?: Array<{ queueItemId: string; outcome: string; error?: string }>;
+  updatedAt?: string;
+  finishedAt?: string | null;
+}
+
 interface SupplierCategoryMappingView {
   id?: string;
   sourceId: string;
@@ -264,6 +295,10 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
   const [canAccessAdvanced, setCanAccessAdvanced] = useState(false);
   const [reviewFilter, setReviewFilter] = useState<ProductReviewFilter>('new_products');
   const [reviewSort, setReviewSort] = useState<'created' | 'updated'>('created');
+  const [pendingReviewBatchSize, setPendingReviewBatchSize] = useState<PendingReviewBatchSize>(25);
+  const [pendingReviewBatchRefreshing, setPendingReviewBatchRefreshing] = useState(false);
+  const [pendingReviewBatchJob, setPendingReviewBatchJob] = useState<PendingReviewBatchJobView | null>(null);
+  const [pendingReviewBatchResult, setPendingReviewBatchResult] = useState<PendingReviewBatchJobView | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [reviewSearch, setReviewSearch] = useState<string>('');
 
@@ -707,6 +742,34 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
   }, [activeSubTab, reviewFilter, reviewSort]);
 
   useEffect(() => {
+    if (activeSubTab !== 'review' || !auth.currentUser) return;
+    let cancelled = false;
+    let timer: number | null = null;
+    let lastObserved: PendingReviewBatchJobView | null = null;
+    const poll = async () => {
+      try {
+        const response = await getSupplierApi('/api/supplier-review-queue/refresh-batch/jobs?limit=10');
+        const result = await response.json().catch(() => ({})) as { success?: boolean; jobs?: PendingReviewBatchJobView[] };
+        if (!response.ok || result.success !== true || !Array.isArray(result.jobs)) throw new Error('Pending review refresh status could not be loaded.');
+        if (cancelled) return;
+        const active = result.jobs.find((job) => isPendingReviewBatchJobActive(job)) || result.jobs[0] || null;
+        lastObserved = active;
+        setPendingReviewBatchJob(active);
+        if (active) setPendingReviewBatchResult(active);
+        const delay = pendingReviewBatchPollDelayMs(active);
+        if (delay !== null) timer = window.setTimeout(poll, delay);
+      } catch {
+        if (!cancelled && pendingReviewBatchPollDelayMs(lastObserved) !== null) timer = window.setTimeout(poll, 10_000);
+      }
+    };
+    void poll();
+    return () => {
+      cancelled = true;
+      clearPendingReviewBatchPollTimer(timer, window.clearTimeout);
+    };
+  }, [activeSubTab]);
+
+  useEffect(() => {
     if (!editingReviewItem) return;
     const fresh = reviewQueue.find((item) => item.id === editingReviewItem.id);
     if (!fresh) {
@@ -972,6 +1035,30 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
         refreshingReviewItemIdRef.current = null;
         setRefreshingReviewItemId(null);
       }
+    }
+  };
+
+  const handleRefreshPendingReviewBatch = async (): Promise<void> => {
+    if (pendingReviewBatchRefreshing || isPendingReviewBatchJobActive(pendingReviewBatchJob)) return;
+    const confirmed = window.confirm(
+      `Refresh up to ${pendingReviewBatchSize} existing pending Supplier Review items from their suppliers? No item will be approved or published.`,
+    );
+    if (!confirmed) return;
+    setPendingReviewBatchRefreshing(true);
+    setPendingReviewBatchResult(null);
+    try {
+      const response = await postSupplierApi('/api/supplier-review-queue/refresh-batch', { limit: pendingReviewBatchSize });
+      const result = await response.json().catch(() => ({})) as PendingReviewBatchResponse;
+      if (!response.ok || result.success !== true || !result.job) {
+        throw new Error(result.error || 'Pending supplier reviews could not be refreshed.');
+      }
+      setPendingReviewBatchJob(result.job);
+      setPendingReviewBatchResult(result.job);
+      await refreshSupplierQueueViews();
+    } catch (error) {
+      setErrorMsg(error instanceof Error ? error.message : 'Pending supplier reviews could not be refreshed.');
+    } finally {
+      setPendingReviewBatchRefreshing(false);
     }
   };
 
@@ -1975,6 +2062,40 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                     <option value="updated">Recently updated</option>
                   </select>
                 </label>
+              </div>
+              <div className="mt-4 flex flex-col gap-3 rounded-2xl border border-blue-100 bg-blue-50/60 p-3 dark:border-blue-900/40 dark:bg-blue-950/20 sm:flex-row sm:items-center sm:justify-between" aria-label="Refresh pending reviews">
+                <div>
+                  <p className="text-xs font-black text-slate-800 dark:text-slate-100">Refresh pending reviews</p>
+                  <p className="mt-1 text-[10px] text-slate-500 dark:text-slate-400">Refreshes existing pending items only. Review and approve them separately.</p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <label className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                    <span className="sr-only">Pending review refresh batch size</span>
+                    <select
+                      value={pendingReviewBatchSize}
+                      onChange={(event) => setPendingReviewBatchSize(Number(event.target.value) as PendingReviewBatchSize)}
+                      aria-label="Pending review refresh batch size"
+                      disabled={pendingReviewBatchRefreshing || isPendingReviewBatchJobActive(pendingReviewBatchJob)}
+                      className="min-h-10 rounded-xl border border-blue-200 bg-white px-3 text-xs font-semibold normal-case tracking-normal text-slate-700 dark:border-blue-800 dark:bg-slate-900 dark:text-slate-200"
+                    >
+                      {PENDING_REVIEW_BATCH_SIZES.map((size) => <option key={size} value={size}>{size} items</option>)}
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => void handleRefreshPendingReviewBatch()}
+                    disabled={pendingReviewBatchRefreshing || isPendingReviewBatchJobActive(pendingReviewBatchJob)}
+                    className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-blue-600 px-3 text-[11px] font-black text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <RefreshCw className={`h-3.5 w-3.5 ${pendingReviewBatchRefreshing ? 'animate-spin' : ''}`} aria-hidden="true" />
+                    {pendingReviewBatchRefreshing || isPendingReviewBatchJobActive(pendingReviewBatchJob) ? 'Refresh in progress…' : 'Refresh pending reviews'}
+                  </button>
+                </div>
+                {pendingReviewBatchResult && (
+                  <p role="status" className="basis-full text-[10px] font-semibold text-slate-600 dark:text-slate-300">
+                    {pendingReviewBatchResult.state} · selected {pendingReviewBatchResult.selected ?? 0}; attempted {pendingReviewBatchResult.attempted ?? 0}; completed {pendingReviewBatchResult.completed ?? 0}; refreshed {pendingReviewBatchResult.refreshedSuccessfully ?? 0}; ready {pendingReviewBatchResult.nowReadyToPublish ?? 0}; blocked {pendingReviewBatchResult.stillBlocked ?? 0}; removed/not found {pendingReviewBatchResult.supplierRemovedOrNotFound ?? 0}; failed {pendingReviewBatchResult.failed ?? 0}; unchanged {pendingReviewBatchResult.unchanged ?? 0}.
+                  </p>
+                )}
               </div>
               <p className="mt-2 text-[10px] text-slate-400">Search is intentionally limited to the products loaded on this page. Use Load more products to extend the bounded search.</p>
               <div className="mt-4 flex flex-wrap gap-2 pb-1" role="tablist" aria-label="Product review filters">

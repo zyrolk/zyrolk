@@ -58,6 +58,19 @@ export const isSupplierSyncJobTerminal = (job: SupplierSyncJobView | null | unde
   job?.state === 'completed' || job?.state === 'failed' || job?.state === 'cancelled'
 );
 
+export const isPendingReviewBatchJobActive = (job: { state?: unknown } | null | undefined): boolean => (
+  ['pending', 'running', 'waiting'].includes(String(job?.state || '').trim().toLowerCase())
+);
+
+/** Returns null for terminal/absent jobs so callers do not schedule another poll. */
+export const pendingReviewBatchPollDelayMs = (job: { state?: unknown } | null | undefined): number | null => (
+  isPendingReviewBatchJobActive(job) ? 2_000 : null
+);
+
+export const clearPendingReviewBatchPollTimer = (timer: number | null, clearTimer: (value: number) => void): void => {
+  if (timer !== null) clearTimer(timer);
+};
+
 const syncJobTime = (value: string | null | undefined, fallback: number): number => {
   const parsed = Date.parse(String(value || ''));
   return Number.isFinite(parsed) ? parsed : fallback;

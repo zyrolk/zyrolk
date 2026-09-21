@@ -20,6 +20,7 @@ import { API_SECRETS } from "../config/secrets";
 import { runSupplierSync } from "./supplierSync";
 import { recordSupplierOperationalAlertSafely } from "../api/suppliers/supplierOperationalAlerts";
 import { recordSupplierSyncOutcomeMetric } from "../api/suppliers/supplierCloudMonitoring";
+import { processPendingReviewRefreshJob, PENDING_REVIEW_BATCH_JOB_TYPE } from "../api/suppliers/supplierReviewBatchRefresh";
 
 const JOB_HEARTBEAT_INTERVAL_MS = 30_000;
 export const SUPPLIER_SYNC_JOB_DISPATCH_SCHEDULE = String(process.env.SUPPLIER_SYNC_JOB_DISPATCH_SCHEDULE || "every 1 minutes").trim() || "every 1 minutes";
@@ -134,6 +135,38 @@ export async function processSupplierSyncJob(jobId: string, now = Date.now()): P
     if (cancellationRequested) {
       await cancelRunningSupplierSyncJob(adminDb, jobId, workerId, lease.leaseId, progress);
       return { jobId, outcome: "cancelled" };
+    }
+    if (lease.job.jobType === PENDING_REVIEW_BATCH_JOB_TYPE) {
+      const batchResult = await processPendingReviewRefreshJob(lease.job, {
+        db: adminDb,
+        workerId,
+        leaseId: lease.leaseId,
+        shouldCancel: () => cancellationRequested || leaseLost,
+      });
+      if (batchResult.status === "cancelled") {
+        await cancelRunningSupplierSyncJob(adminDb, jobId, workerId, lease.leaseId, batchResult.progress);
+        return { jobId, outcome: "cancelled" };
+      }
+      if (batchResult.status === "waiting") {
+        await waitSupplierSyncJob(
+          adminDb,
+          jobId,
+          workerId,
+          lease.leaseId,
+          batchResult.progress,
+          "Pending Supplier Review batch continues from its durable item checkpoint.",
+        );
+        return { jobId, outcome: "waiting" };
+      }
+      await completeSupplierSyncJob(
+        adminDb,
+        jobId,
+        workerId,
+        lease.leaseId,
+        { pendingReviewBatch: batchResult.state },
+        batchResult.progress,
+      );
+      return { jobId, outcome: "completed" };
     }
     const result = await runSupplierSync({
       trigger: lease.job.trigger,
