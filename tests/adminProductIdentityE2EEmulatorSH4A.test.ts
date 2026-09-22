@@ -8,6 +8,7 @@ import {
   updateAdminProduct,
 } from "../functions/src/api/products/adminProductManagement";
 import { buildZyroSkuClaimId } from "../functions/src/api/suppliers/supplierProductIdentity";
+import { buildSupplierProductOffer } from "../functions/src/api/suppliers/supplierOfferEngine";
 
 const canRun = Boolean(process.env.FIRESTORE_EMULATOR_HOST);
 const runPrefix = randomUUID().slice(0, 8);
@@ -236,5 +237,146 @@ test("SH-4A manual products share one transactional identity and SKU boundary", 
       assert.equal(document.data().zyroSku, legacySku);
       assert.equal(typeof document.data().timestamp, "string");
     });
+  });
+
+  await t.test("brandless published supplier edits preserve routing and allow media changes", async () => {
+    const suffix = randomUUID().replaceAll("-", "").slice(0, 12);
+    const productId = `brandless-supplier-${suffix}`;
+    const sku = `ZY-BRANDLESS${suffix.toUpperCase()}`;
+    const sourceId = `brandless-source-${suffix}`;
+    const supplierId = "dropex";
+    const supplierAccountId = `brandless-account-${suffix}`;
+    const supplierItemCode = "SHX945";
+    const now = new Date().toISOString();
+    const brandlessBarcode = `9${String(Date.now()).slice(-12)}`;
+    const preservedBarcode = `8${String(Date.now() + 1).slice(-12)}`;
+    const offer = buildSupplierProductOffer({
+      sourceId,
+      supplierId,
+      supplierProductId: "945",
+      sku: supplierItemCode,
+      barcode: "1234567890123",
+      productId,
+      price: 1_500,
+      cost: 800,
+      stock: 8,
+      availability: "in_stock",
+      priority: 100,
+      health: { availability: "available", sourceAvailability: "available" },
+      lastSyncAt: now,
+      enabled: true,
+      reviewStatus: "approved",
+      stateVersion: 1,
+      catalogPayload: { name: "Brandless supplier product" },
+      supplierSnapshot: { supplierProductId: "945" },
+      timestamp: now,
+    });
+    const offerId = offer.id;
+
+    const seededDraft = draft("brandless", {
+      id: productId,
+      sku,
+      brand: "",
+      imageUrl: "https://cdn.example.test/brandless-primary.jpg",
+      imageUrls: ["https://cdn.example.test/brandless-primary.jpg", "https://cdn.example.test/brandless-gallery.jpg"],
+      barcode: brandlessBarcode,
+      supplierId,
+      supplierItemCode,
+    });
+    const brandlessPublic = { ...seededDraft };
+    delete brandlessPublic.brand;
+    await Promise.all([
+      adminDb.collection("products").doc(productId).set(brandlessPublic),
+      adminDb.collection("product_private").doc(productId).set({
+        productId,
+        sku,
+        fulfilmentMode: "supplier",
+        supplierId,
+        supplierSourceId: sourceId,
+        supplierItemCode,
+        supplierOfferSelection: { activeOfferId: offerId, lockedOfferId: null, failoverEnabled: true },
+      }),
+      adminDb.collection("supplier_product_offers").doc(offerId).set(offer),
+      adminDb.collection("supplierSources").doc(sourceId).set({
+        supplierId,
+        supplierAccountId,
+        supplierName: "Dropex",
+        connectorType: "http",
+        supplierType: "dropex",
+        sourceStatus: "active",
+        enabled: true,
+        authentication: { mode: "none" },
+      }),
+      adminDb.collection("users").doc(supplierAccountId).set({ role: "supplier", email: `${supplierAccountId}@example.test` }),
+      adminDb.collection("supplier_profiles").doc(supplierAccountId).set({ supplierId: supplierAccountId, profileStatus: "active" }),
+      adminDb.collection("brands").doc(`inactive-${suffix}`).set({ name: "Inactive Brand", isActive: false }),
+    ]);
+
+    const replacementPrimary = "https://cdn.example.test/brandless-replacement.jpg";
+    const replacementGallery = "https://cdn.example.test/brandless-gallery-kept.jpg";
+    const editedDraft = {
+      ...seededDraft,
+      brand: "",
+      imageUrl: replacementPrimary,
+      imageUrls: [replacementPrimary, replacementGallery],
+    };
+    const updated = await updateAdminProduct(adminDb, productId, actor, editedDraft);
+    assert.equal(updated.productId, productId);
+
+    const [updatedPublic, updatedPrivate, persistedOffer] = await Promise.all([
+      adminDb.collection("products").doc(productId).get(),
+      adminDb.collection("product_private").doc(productId).get(),
+      adminDb.collection("supplier_product_offers").doc(offerId).get(),
+    ]);
+    const publicData = updatedPublic.data()!;
+    const privateData = updatedPrivate.data()!;
+    assert.equal(Object.hasOwn(publicData, "brand"), false);
+    assert.equal((publicData.specs as Record<string, unknown>).Brand, undefined);
+    assert.equal(publicData.imageUrl, replacementPrimary);
+    assert.deepEqual(publicData.imageUrls, [replacementPrimary, replacementGallery]);
+    assert.equal(publicData.isActive, true);
+    assert.equal(privateData.supplierId, supplierId);
+    assert.equal(privateData.supplierItemCode, supplierItemCode);
+    assert.equal(privateData.supplierOfferSelection.activeOfferId, offerId);
+    assert.equal(persistedOffer.data()?.id, offerId);
+
+    await updateAdminProduct(adminDb, productId, actor, {
+      ...editedDraft,
+      imageUrl: replacementPrimary,
+      imageUrls: [replacementGallery, replacementPrimary],
+    });
+    const reorderedProduct = await adminDb.collection("products").doc(productId).get();
+    assert.equal(reorderedProduct.data()?.imageUrl, replacementPrimary);
+    assert.deepEqual(reorderedProduct.data()?.imageUrls, [replacementGallery, replacementPrimary]);
+
+    await updateAdminProduct(adminDb, productId, actor, {
+      ...editedDraft,
+      imageUrl: replacementGallery,
+      imageUrls: [replacementPrimary],
+    });
+    const promotedProduct = await adminDb.collection("products").doc(productId).get();
+    assert.equal(promotedProduct.data()?.imageUrl, replacementGallery);
+    assert.deepEqual(promotedProduct.data()?.imageUrls, [replacementPrimary]);
+    assert.equal((await adminDb.collection("product_private").doc(productId).get()).data()?.supplierOfferSelection.activeOfferId, offerId);
+    assert.equal((await adminDb.collection("supplier_product_offers").doc(offerId).get()).data()?.id, offerId);
+
+    await assert.rejects(
+      updateAdminProduct(adminDb, productId, actor, { ...editedDraft, brand: `inactive-${suffix}` }),
+      /active brand/u,
+    );
+
+    const branded = await createAdminProduct(adminDb, actor, randomUUID(), draft("preserve-brand", { barcode: preservedBarcode }));
+    const brandOmittedDraft = draft("preserve-brand-update", { id: branded.productId, sku: branded.sku, barcode: preservedBarcode });
+    delete brandOmittedDraft.brand;
+    await updateAdminProduct(adminDb, branded.productId, actor, brandOmittedDraft);
+    assert.equal((await adminDb.collection("products").doc(branded.productId).get()).data()?.brand, brandId);
+
+    const brandNullDraft = draft("preserve-brand-null", { id: branded.productId, sku: branded.sku, barcode: preservedBarcode, brand: null });
+    await updateAdminProduct(adminDb, branded.productId, actor, brandNullDraft);
+    assert.equal((await adminDb.collection("products").doc(branded.productId).get()).data()?.brand, brandId);
+
+    const brandUndefinedDraft = draft("preserve-brand-undefined", { id: branded.productId, sku: branded.sku, barcode: preservedBarcode, brand: undefined });
+    await updateAdminProduct(adminDb, branded.productId, actor, brandUndefinedDraft);
+    assert.equal((await adminDb.collection("products").doc(branded.productId).get()).data()?.brand, brandId);
   });
 });

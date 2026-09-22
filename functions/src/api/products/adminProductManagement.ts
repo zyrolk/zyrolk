@@ -155,6 +155,7 @@ export interface AdminProductDraft {
   category: string;
   subcategory: string;
   brand: string;
+  brandProvided: boolean;
   model: string;
   barcode: string;
   productType: string;
@@ -227,7 +228,8 @@ export function parseAdminProductDraft(value: unknown): AdminProductDraft {
     imageUrls: cleanUrlList(input.imageUrls, "Product gallery", MAX_GALLERY_ITEMS),
     category: cleanDocumentId(input.category, "Product category"),
     subcategory: cleanDocumentId(input.subcategory, "Product subcategory", false),
-    brand: cleanDocumentId(input.brand, "Product brand"),
+    brand: cleanDocumentId(input.brand, "Product brand", false),
+    brandProvided: Object.hasOwn(input, "brand") && input.brand !== null && input.brand !== undefined,
     model: cleanText(input.model, "Product model", 200),
     barcode,
     productType: cleanText(input.productType, "Product type", 200),
@@ -254,14 +256,14 @@ export function parseAdminProductDraft(value: unknown): AdminProductDraft {
 const validateCatalogRelationships = (
   draft: AdminProductDraft,
   categorySnapshot: FirebaseFirestore.DocumentSnapshot,
-  brandSnapshot: FirebaseFirestore.DocumentSnapshot,
+  brandSnapshot?: FirebaseFirestore.DocumentSnapshot,
 ): void => {
   if (!categorySnapshot.exists) throw new ApiError("Select an existing product category.", 422);
-  if (!brandSnapshot.exists) throw new ApiError("Select an existing product brand.", 422);
   const category = categorySnapshot.data() || {};
-  const brand = brandSnapshot.data() || {};
+  const brand = brandSnapshot?.data() || {};
+  if (draft.brand && !brandSnapshot?.exists) throw new ApiError("Select an existing product brand.", 422);
   if (draft.isActive && category.isActive === false) throw new ApiError("Published products must use an active category.", 422);
-  if (draft.isActive && brand.isActive === false) throw new ApiError("Published products must use an active brand.", 422);
+  if (draft.brand && draft.isActive && brand.isActive === false) throw new ApiError("Published products must use an active brand.", 422);
 
   const subcategories = Array.isArray(category.subcategories)
     ? category.subcategories.filter((entry): entry is Record<string, unknown> => Boolean(entry && typeof entry === "object"))
@@ -320,7 +322,7 @@ export const productProjection = (
     imageUrls: draft.imageUrls,
     category: draft.category,
     subcategory: draft.subcategory || undefined,
-    brand: draft.brand,
+    brand: draft.brand || undefined,
     model: draft.model || undefined,
     barcode: draft.barcode || undefined,
     productType: draft.productType || undefined,
@@ -378,7 +380,7 @@ const publicUpdate = (
   updating: boolean,
 ): Record<string, unknown> => {
   if (!updating) return data;
-  const optionalFields = ["shortDescription", "originalPrice", "discount", "subcategory", "model", "barcode", "productType"];
+  const optionalFields = ["shortDescription", "originalPrice", "discount", "subcategory", "brand", "model", "barcode", "productType"];
   return {
     ...data,
     ...Object.fromEntries(optionalFields
@@ -424,6 +426,7 @@ export async function createAdminProduct(
   const draft = parseAdminProductDraft(draftValue);
   if (draft.requestedId) throw new ApiError("Product ID is assigned by the server during product creation.", 400);
   if (draft.requestedSku) throw new ApiError("Zyro SKU is assigned by the server during product creation.", 400);
+  if (!draft.brand) throw new ApiError("Select an existing product brand.", 422);
   if (draft.supplierId || draft.supplierItemCode) {
     throw new ApiError("Manual products are internal. Supplier routing must be established through an approved supplier offer.", 422);
   }
@@ -521,6 +524,10 @@ export async function updateAdminProduct(
     if (!productSnapshot.exists) throw new ApiError("Product not found.", 404);
     const existingPublic = productSnapshot.data() || {};
     const existingPrivate = privateSnapshot.data() || {};
+    const existingBrand = cleanDocumentId(existingPublic.brand, "Product brand", false);
+    const draftForUpdate: AdminProductDraft = draft.brandProvided
+      ? draft
+      : { ...draft, brand: existingBrand };
     const existingSku = typeof existingPrivate.sku === "string" && existingPrivate.sku.trim()
       ? existingPrivate.sku.trim()
       : typeof existingPublic.sku === "string" ? existingPublic.sku.trim() : "";
@@ -547,15 +554,16 @@ export async function updateAdminProduct(
       throw new ApiError("Supplier routing is managed by the approved supplier offer and cannot be edited here.", 409);
     }
 
-    const categoryReference = db.collection("categories").doc(draft.category);
-    const brandReference = db.collection("brands").doc(draft.brand);
-    const [categorySnapshot, brandSnapshot] = await Promise.all([
-      transaction.get(categoryReference),
-      transaction.get(brandReference),
-    ]);
-    validateCatalogRelationships(draft, categorySnapshot, brandSnapshot);
-    await assertZyroBarcodeAvailable(db, transaction, productId, draft.barcode);
-    const brandName = cleanText(brandSnapshot.data()?.name, "Product brand", 200, true);
+    const categoryReference = db.collection("categories").doc(draftForUpdate.category);
+    const categorySnapshot = await transaction.get(categoryReference);
+    const brandSnapshot = draftForUpdate.brand
+      ? await transaction.get(db.collection("brands").doc(draftForUpdate.brand))
+      : undefined;
+    validateCatalogRelationships(draftForUpdate, categorySnapshot, brandSnapshot);
+    await assertZyroBarcodeAvailable(db, transaction, productId, draftForUpdate.barcode);
+    const brandName = brandSnapshot?.exists
+      ? cleanText(brandSnapshot.data()?.name, "Product brand", 200, true)
+      : "";
     const reservation = existingSku ? null : await reserveZyroSku(
       db,
       transaction,
@@ -563,12 +571,12 @@ export async function updateAdminProduct(
       identityDependencies.buildSkuCandidates?.(productId),
     );
     const sku = existingSku || reservation!.sku;
-    const projection = productProjection(productId, sku, draft, brandName, now, existingPublic, supplierBacked ? {
+    const projection = productProjection(productId, sku, draftForUpdate, brandName, now, existingPublic, supplierBacked ? {
       fulfilmentMode: "supplier",
       supplierId: existingSupplierId,
       supplierItemCode: existingSupplierItemCode,
     } : { fulfilmentMode: "internal" });
-    if (draft.isActive && supplierBacked) {
+    if (draftForUpdate.isActive && supplierBacked) {
       const routingLines = await resolveOrderPrivateAttributionLines(
         db as FirebaseFirestore.Firestore,
         transaction as FirebaseFirestore.Transaction,
@@ -593,7 +601,7 @@ export async function updateAdminProduct(
     transaction.set(productReference, {
       ...publicUpdate(projection.publicData, true),
       ...Object.fromEntries(COMMERCIAL_PRODUCT_FIELDS.map((field) => [field, FieldValue.delete()])),
-      ...(draft.isActive ? {
+      ...(draftForUpdate.isActive ? {
         visible: FieldValue.delete(),
         archivedAt: FieldValue.delete(),
         archivedBy: FieldValue.delete(),
@@ -606,7 +614,7 @@ export async function updateAdminProduct(
       ...(reservation ? { zyroSkuClaimId: reservation.claimId } : {}),
       supplierFieldOwnership: ownership,
       updatedAt: now,
-    }, draft, supplierBacked ? "supplier" : "internal"), { merge: true });
+    }, draftForUpdate, supplierBacked ? "supplier" : "internal"), { merge: true });
     transaction.create(auditReference, {
       action: "update",
       productId,

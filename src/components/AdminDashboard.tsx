@@ -5218,15 +5218,15 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                       <div className="space-y-1">
                         <label className="flex items-center font-bold text-slate-400">
-                          Brand <span className="ml-0.5 text-red-500">*</span>
+                          Brand {!editingProduct && <span className="ml-0.5 text-red-500">*</span>}
                         </label>
                         <select
-                          required
+                          required={!editingProduct}
                           value={newProduct.brand || ''}
                           onChange={(event) => setNewProduct((previous) => ({ ...previous, brand: event.target.value }))}
                           className="w-full cursor-pointer rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs transition-colors focus:border-blue-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-900"
                         >
-                          <option value="">Select a registered brand</option>
+                          <option value="">{editingProduct ? 'No brand (optional)' : 'Select a registered brand'}</option>
                           {brands.map((brand) => <option key={brand.id} value={brand.id}>{brand.name}{brand.isActive === false ? ' (Inactive)' : ''}</option>)}
                         </select>
                       </div>

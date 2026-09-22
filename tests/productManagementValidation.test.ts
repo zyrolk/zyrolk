@@ -7,6 +7,10 @@ const categories: Category[] = [
   { id: 'electronics', name: 'Electronics', icon: 'Layers', isActive: true },
   { id: 'hidden', name: 'Hidden', icon: 'Layers', isActive: false },
 ];
+const brands = [
+  { id: 'registered-brand', name: 'Registered Brand', isActive: true },
+  { id: 'inactive-brand', name: 'Inactive Brand', isActive: false },
+];
 const product = (overrides: Partial<Product> = {}): Product => ({
   id: 'phone', name: 'Phone', description: '', price: 100, originalPrice: 120,
   imageUrl: 'https://example.com/phone.jpg', imageUrls: ['https://example.com/phone-2.jpg'],
@@ -34,4 +38,25 @@ test('published products require valid prices, stock, images, existing active ca
 
 test('draft products may remain assigned to an inactive category', () => {
   assert.deepEqual(validateProductForSave({ product: product({ category: 'hidden', isActive: false }), products: [], categories }), []);
+});
+
+test('published brandless product edits remain valid when no brand is selected', () => {
+  assert.deepEqual(validateProductForSave({
+    product: product({ brand: undefined, imageUrl: 'https://example.com/replacement.jpg', imageUrls: [] }),
+    products: [],
+    categories,
+    brands,
+    editingProductId: 'phone',
+  }), []);
+});
+
+test('published edits still reject an explicitly selected unknown or inactive brand', () => {
+  const unknown = validateProductForSave({ product: product({ brand: 'missing-brand' }), products: [], categories, brands, editingProductId: 'phone' });
+  const inactive = validateProductForSave({ product: product({ brand: 'inactive-brand' }), products: [], categories, brands, editingProductId: 'phone' });
+  assert.deepEqual(unknown, ['Select an existing product brand.']);
+  assert.deepEqual(inactive, ['Published products must use an active brand.']);
+});
+
+test('new product creation remains brand-required', () => {
+  assert.deepEqual(validateProductForSave({ product: product({ brand: undefined }), products: [], categories, brands }), ['Select an existing product brand.']);
 });
