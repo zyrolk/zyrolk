@@ -64,6 +64,56 @@ test("SH-4A manual products share one transactional identity and SKU boundary", 
   assert.match(process.env.FIRESTORE_EMULATOR_HOST || "", /^(127\.0\.0\.1|localhost):\d+$/u);
   await seedCatalog();
 
+  await t.test("manual products may be created without a brand", async () => {
+    const created = await createAdminProduct(adminDb, actor, randomUUID(), draft("brandless-manual", {
+      brand: undefined,
+      barcode: `7${String(Date.now()).slice(-12)}`,
+      model: undefined,
+      productType: undefined,
+      specs: {},
+    }));
+    const createdPublic = (await adminDb.collection("products").doc(created.productId).get()).data()!;
+    assert.equal(createdPublic.brand, undefined);
+    assert.equal((createdPublic.specs as Record<string, unknown>).Brand, undefined);
+  });
+
+  await t.test("category template metadata stays optional for create and patch edits", async () => {
+    const created = await createAdminProduct(adminDb, actor, randomUUID(), draft("optional-spec", {
+      model: undefined,
+      productType: undefined,
+      barcode: `6${String(Date.now()).slice(-12)}`,
+      specs: {},
+    }));
+    const createdPublic = (await adminDb.collection("products").doc(created.productId).get()).data()!;
+    assert.equal((createdPublic.specs as Record<string, unknown>).Model, undefined);
+
+    await updateAdminProduct(adminDb, created.productId, actor, {
+      imageUrl: "https://cdn.example.test/optional-spec-edited.jpg",
+    });
+    const updatedPublic = (await adminDb.collection("products").doc(created.productId).get()).data()!;
+    assert.equal(updatedPublic.imageUrl, "https://cdn.example.test/optional-spec-edited.jpg");
+    assert.equal((updatedPublic.specs as Record<string, unknown>).Model, undefined);
+    await updateAdminProduct(adminDb, created.productId, actor, { name: "Optional spec renamed" });
+    await updateAdminProduct(adminDb, created.productId, actor, { price: 1_300 });
+    const sparseEdited = (await adminDb.collection("products").doc(created.productId).get()).data()!;
+    assert.equal(sparseEdited.name, "Optional spec renamed");
+    assert.equal(sparseEdited.price, 1_300);
+    assert.equal(sparseEdited.imageUrl, "https://cdn.example.test/optional-spec-edited.jpg");
+    assert.equal((sparseEdited.specs as Record<string, unknown>).Model, undefined);
+    await assert.rejects(
+      updateAdminProduct(adminDb, created.productId, actor, { imageUrl: "" }),
+      /Primary product image is required/u,
+    );
+    await assert.rejects(
+      updateAdminProduct(adminDb, created.productId, actor, { category: "missing-category" }),
+      /Select an existing product category/u,
+    );
+    await assert.rejects(
+      updateAdminProduct(adminDb, created.productId, actor, { subcategory: "missing-subcategory" }),
+      /does not belong to the selected category/u,
+    );
+  });
+
   await t.test("two simultaneous manual creates receive independent server identities and SKUs", async () => {
     const [left, right] = await Promise.all([
       createAdminProduct(adminDb, actor, randomUUID(), draft("concurrent-a")),
@@ -294,6 +344,7 @@ test("SH-4A manual products share one transactional identity and SKU boundary", 
         supplierId,
         supplierSourceId: sourceId,
         supplierItemCode,
+        costPrice: 800,
         supplierOfferSelection: { activeOfferId: offerId, lockedOfferId: null, failoverEnabled: true },
       }),
       adminDb.collection("supplier_product_offers").doc(offerId).set(offer),
@@ -314,6 +365,27 @@ test("SH-4A manual products share one transactional identity and SKU boundary", 
 
     const replacementPrimary = "https://cdn.example.test/brandless-replacement.jpg";
     const replacementGallery = "https://cdn.example.test/brandless-gallery-kept.jpg";
+    await updateAdminProduct(adminDb, productId, actor, {
+      imageUrl: "https://cdn.example.test/brandless-sparse.jpg",
+    });
+    const [sparsePublic, sparsePrivate] = await Promise.all([
+      adminDb.collection("products").doc(productId).get(),
+      adminDb.collection("product_private").doc(productId).get(),
+    ]);
+    assert.equal(sparsePublic.data()?.imageUrl, "https://cdn.example.test/brandless-sparse.jpg");
+    assert.equal(sparsePublic.data()?.stock, 10);
+    assert.equal(sparsePrivate.data()?.costPrice, 800);
+    assert.equal(sparsePrivate.data()?.supplierId, supplierId);
+    assert.equal(sparsePrivate.data()?.supplierItemCode, supplierItemCode);
+    assert.equal(sparsePrivate.data()?.supplierOfferSelection.activeOfferId, offerId);
+    await assert.rejects(
+      updateAdminProduct(adminDb, productId, actor, { costPrice: 801 }),
+      /Supplier-managed cost cannot be edited/u,
+    );
+    await assert.rejects(
+      updateAdminProduct(adminDb, productId, actor, { stock: 9 }),
+      /Supplier-managed stock cannot be edited/u,
+    );
     const editedDraft = {
       ...seededDraft,
       brand: "",
@@ -331,6 +403,7 @@ test("SH-4A manual products share one transactional identity and SKU boundary", 
     const publicData = updatedPublic.data()!;
     const privateData = updatedPrivate.data()!;
     assert.equal(Object.hasOwn(publicData, "brand"), false);
+    assert.notEqual(publicData.brand, "Generic");
     assert.equal((publicData.specs as Record<string, unknown>).Brand, undefined);
     assert.equal(publicData.imageUrl, replacementPrimary);
     assert.deepEqual(publicData.imageUrls, [replacementPrimary, replacementGallery]);

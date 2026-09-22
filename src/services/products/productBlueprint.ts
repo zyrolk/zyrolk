@@ -142,7 +142,7 @@ export const normalizeProductForEditor = (
     keyFeatures: normalizeTextList(product.keyFeatures),
     whatsIncluded: normalizeTextList(product.whatsIncluded),
     imageUrls: normalizeTextList(product.imageUrls),
-    specs: applySpecificationTemplate(product.specs, category?.specificationTemplate),
+    specs: { ...(product.specs ?? {}) },
   };
 };
 

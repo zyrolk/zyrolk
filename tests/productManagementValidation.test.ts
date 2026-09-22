@@ -57,6 +57,30 @@ test('published edits still reject an explicitly selected unknown or inactive br
   assert.deepEqual(inactive, ['Published products must use an active brand.']);
 });
 
-test('new product creation remains brand-required', () => {
-  assert.deepEqual(validateProductForSave({ product: product({ brand: undefined }), products: [], categories, brands }), ['Select an existing product brand.']);
+test('manual product creation treats brand as optional metadata', () => {
+  assert.deepEqual(validateProductForSave({ product: product({ brand: undefined }), products: [], categories, brands }), []);
+});
+
+test('category template specifications are optional metadata for existing and new product saves', () => {
+  const categoryWithTemplate = [{
+    ...categories[0],
+    specificationTemplate: [
+      { name: 'Product Type', required: true },
+      { name: 'Material', required: true },
+    ],
+  }];
+  assert.deepEqual(validateProductForSave({
+    product: product({ specs: {}, brand: undefined }),
+    products: [],
+    categories: categoryWithTemplate,
+    brands,
+    editingProductId: 'phone',
+  }), []);
+  assert.deepEqual(validateProductForSave({
+    product: product({ specs: {}, brand: 'registered-brand' }),
+    products: [],
+    categories: categoryWithTemplate,
+    brands,
+    serverAssignedIdentity: true,
+  }), []);
 });

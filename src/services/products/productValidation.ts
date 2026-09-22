@@ -3,7 +3,6 @@ import { categoryMatches } from '../categories/categoryUtils';
 import { isHttpUrl } from '../settings/storeSettingsValidation';
 import {
   getActiveSubcategories,
-  normalizeSpecificationTemplate,
   normalizeSubcategories,
 } from './productBlueprint';
 
@@ -62,18 +61,12 @@ export const validateProductForSave = ({
       errors.push('Published products must use an active sub category.');
     }
 
-    for (const field of normalizeSpecificationTemplate(category.specificationTemplate)) {
-      if (field.required && !product.specs?.[field.name]?.trim()) {
-        errors.push(`Required specification "${field.name}" must have a value.`);
-      }
-    }
   }
 
   if (brands !== undefined) {
     const selectedBrand = brands.find((brand) => brand.id === product.brand?.trim());
     if (product.brand?.trim() && !selectedBrand) errors.push('Select an existing product brand.');
     else if (selectedBrand && product.isActive !== false && selectedBrand.isActive === false) errors.push('Published products must use an active brand.');
-    else if (!product.brand?.trim() && !editingProductId) errors.push('Select an existing product brand.');
   }
 
   if (product.barcode?.trim() && !/^\d{8,14}$/u.test(product.barcode.trim())) {

@@ -142,6 +142,7 @@ const compact = (value: Record<string, unknown>): Record<string, unknown> => Obj
 );
 
 export interface AdminProductDraft {
+  providedFields: readonly string[];
   requestedId: string;
   requestedSku: string;
   name: string;
@@ -190,43 +191,62 @@ export interface AdminProductIdentityDependencies {
   buildSkuCandidates?: (productId: string) => readonly string[];
 }
 
+const validatePromotionContract = (draft: Pick<AdminProductDraft, "price" | "originalPrice" | "promotionEnabled">): void => {
+  if (draft.originalPrice !== undefined && draft.originalPrice < draft.price) {
+    throw new ApiError("Regular price cannot be lower than the sale price.", 400);
+  }
+  if (draft.promotionEnabled === true && (draft.originalPrice === undefined || draft.originalPrice <= draft.price)) {
+    throw new ApiError("Regular price must be greater than the sale price when promotion is enabled.", 400);
+  }
+};
+
+const validateEffectiveRequiredFields = (draft: AdminProductDraft): void => {
+  cleanText(draft.name, "Product name", 200, true);
+  cleanNumber(draft.price, "Sale price", { required: true, minimum: 0.01, maximum: 1_000_000_000 });
+  cleanUrl(draft.imageUrl, "Primary product image", true);
+  cleanNumber(draft.stock, "Stock", { required: true, minimum: 0, maximum: MAX_STOCK, integer: true });
+  cleanDocumentId(draft.category, "Product category", true);
+  cleanDocumentId(draft.subcategory, "Product subcategory", false);
+};
+
 const validateActor = (actor: AdminProductActor): AdminProductActor => ({
   uid: cleanText(actor.uid, "Admin identity", 160, true),
   email: cleanText(actor.email, "Admin email", 320) || "unknown",
 });
 
-export function parseAdminProductDraft(value: unknown): AdminProductDraft {
+export function parseAdminProductDraft(
+  value: unknown,
+  options: { partial?: boolean } = {},
+): AdminProductDraft {
+  const partial = options.partial === true;
   const input = record(value);
+  const hasField = (field: string): boolean => Object.hasOwn(input, field) && input[field] !== undefined;
   const unknownFields = Object.keys(input).filter((field) => !MANUAL_PRODUCT_DRAFT_FIELDS.has(field));
   if (unknownFields.length > 0) throw new ApiError(`Unsupported product field: ${unknownFields[0]}.`, 400);
 
-  const price = cleanNumber(input.price, "Sale price", { required: true, minimum: 0.01, maximum: 1_000_000_000 })!;
+  const price = cleanNumber(input.price, "Sale price", { required: !partial || hasField("price"), minimum: 0.01, maximum: 1_000_000_000 }) ?? 0;
   const originalPrice = cleanNumber(input.originalPrice, "Regular price", { minimum: 0.01, maximum: 1_000_000_000 });
-  if (originalPrice !== undefined && originalPrice < price) {
-    throw new ApiError("Regular price cannot be lower than the sale price.", 400);
-  }
   if (input.promotionEnabled !== undefined && typeof input.promotionEnabled !== "boolean") {
     throw new ApiError("Promotion setting is invalid.", 400);
   }
   const promotionEnabled = input.promotionEnabled === undefined ? undefined : input.promotionEnabled === true;
-  if (promotionEnabled === true && (originalPrice === undefined || originalPrice <= price)) {
-    throw new ApiError("Regular price must be greater than the sale price when promotion is enabled.", 400);
-  }
+  if (!partial) validatePromotionContract({ price, originalPrice, promotionEnabled });
   const barcode = cleanText(input.barcode, "Barcode", 32);
   if (barcode && !/^\d{8,14}$/u.test(barcode)) throw new ApiError("Barcode must contain 8 to 14 digits.", 400);
 
-  return {
+  const parsedDraft: AdminProductDraft = {
     requestedId: cleanText(input.id, "Product ID", 180),
     requestedSku: cleanText(input.sku, "Product SKU", 40),
-    name: cleanText(input.name, "Product name", 200, true),
+    providedFields: Object.keys(input).filter(hasField),
+    name: cleanText(input.name, "Product name", 200, !partial || hasField("name")),
     description: cleanText(input.description, "Product description", 20_000),
     shortDescription: cleanText(input.shortDescription, "Short description", 500),
     price,
     ...(originalPrice !== undefined ? { originalPrice } : {}),
     ...(promotionEnabled !== undefined ? { promotionEnabled } : {}),
-    imageUrl: cleanUrl(input.imageUrl, "Primary product image", true),
+    imageUrl: cleanUrl(input.imageUrl, "Primary product image", !partial || hasField("imageUrl")),
     imageUrls: cleanUrlList(input.imageUrls, "Product gallery", MAX_GALLERY_ITEMS),
-    category: cleanDocumentId(input.category, "Product category"),
+    category: cleanDocumentId(input.category, "Product category", !partial || hasField("category")),
     subcategory: cleanDocumentId(input.subcategory, "Product subcategory", false),
     brand: cleanDocumentId(input.brand, "Product brand", false),
     brandProvided: Object.hasOwn(input, "brand") && input.brand !== null && input.brand !== undefined,
@@ -236,7 +256,7 @@ export function parseAdminProductDraft(value: unknown): AdminProductDraft {
     tags: cleanTextList(input.tags, "Product tags"),
     keyFeatures: cleanTextList(input.keyFeatures, "Key features"),
     whatsIncluded: cleanTextList(input.whatsIncluded, "What's included"),
-    stock: cleanNumber(input.stock, "Stock", { required: true, minimum: 0, maximum: MAX_STOCK, integer: true })!,
+    stock: cleanNumber(input.stock, "Stock", { required: !partial || hasField("stock"), minimum: 0, maximum: MAX_STOCK, integer: true }) ?? 0,
     specs: cleanSpecifications(input.specs),
     isNew: cleanBoolean(input.isNew, false),
     isFeatured: cleanBoolean(input.isFeatured, false),
@@ -251,6 +271,19 @@ export function parseAdminProductDraft(value: unknown): AdminProductDraft {
       ? { marketPrice: cleanNumber(input.marketPrice, "Market price", { minimum: 0, maximum: 1_000_000_000 }) }
       : {}),
   };
+  Object.defineProperty(parsedDraft, "providedFields", {
+    configurable: false,
+    enumerable: false,
+    value: parsedDraft.providedFields,
+    writable: false,
+  });
+  Object.defineProperty(parsedDraft, "brandProvided", {
+    configurable: false,
+    enumerable: false,
+    value: parsedDraft.brandProvided,
+    writable: false,
+  });
+  return parsedDraft;
 }
 
 const validateCatalogRelationships = (
@@ -280,15 +313,6 @@ const validateCatalogRelationships = (
     throw new ApiError("Published products must use an active sub category.", 422);
   }
 
-  const specificationTemplate = Array.isArray(category.specificationTemplate)
-    ? category.specificationTemplate.filter((entry): entry is Record<string, unknown> => Boolean(entry && typeof entry === "object"))
-    : [];
-  for (const field of specificationTemplate) {
-    const name = typeof field.name === "string" ? field.name.trim() : "";
-    if (field.required === true && name && !draft.specs[name]?.trim()) {
-      throw new ApiError(`Required specification "${name}" must have a value.`, 422);
-    }
-  }
 };
 
 export const productProjection = (
@@ -426,7 +450,6 @@ export async function createAdminProduct(
   const draft = parseAdminProductDraft(draftValue);
   if (draft.requestedId) throw new ApiError("Product ID is assigned by the server during product creation.", 400);
   if (draft.requestedSku) throw new ApiError("Zyro SKU is assigned by the server during product creation.", 400);
-  if (!draft.brand) throw new ApiError("Select an existing product brand.", 422);
   if (draft.supplierId || draft.supplierItemCode) {
     throw new ApiError("Manual products are internal. Supplier routing must be established through an approved supplier offer.", 422);
   }
@@ -461,14 +484,15 @@ export async function createAdminProduct(
     }
 
     const categoryReference = db.collection("categories").doc(draft.category);
-    const brandReference = db.collection("brands").doc(draft.brand);
-    const [categorySnapshot, brandSnapshot] = await Promise.all([
-      transaction.get(categoryReference),
-      transaction.get(brandReference),
-    ]);
+    const categorySnapshot = await transaction.get(categoryReference);
+    const brandSnapshot = draft.brand
+      ? await transaction.get(db.collection("brands").doc(draft.brand))
+      : undefined;
     validateCatalogRelationships(draft, categorySnapshot, brandSnapshot);
     await assertZyroBarcodeAvailable(db, transaction, productId, draft.barcode);
-    const brandName = cleanText(brandSnapshot.data()?.name, "Product brand", 200, true);
+    const brandName = brandSnapshot?.exists
+      ? cleanText(brandSnapshot.data()?.name, "Product brand", 200, true)
+      : "";
     const reservation = await reserveZyroSku(
       db,
       transaction,
@@ -509,7 +533,7 @@ export async function updateAdminProduct(
 ): Promise<AdminProductMutationResult> {
   const validatedActor = validateActor(actor);
   const productId = cleanDocumentId(productIdValue, "Product ID");
-  const draft = parseAdminProductDraft(draftValue);
+  const draft = parseAdminProductDraft(draftValue, { partial: true });
   if (draft.requestedId && draft.requestedId !== productId) throw new ApiError("Product ID is immutable.", 409);
   const now = new Date().toISOString();
   const auditReference = db.collection(ADMIN_PRODUCT_AUDIT_COLLECTION).doc();
@@ -524,10 +548,8 @@ export async function updateAdminProduct(
     if (!productSnapshot.exists) throw new ApiError("Product not found.", 404);
     const existingPublic = productSnapshot.data() || {};
     const existingPrivate = privateSnapshot.data() || {};
+    const currentProduct = mergeProductData(existingPublic, existingPrivate);
     const existingBrand = cleanDocumentId(existingPublic.brand, "Product brand", false);
-    const draftForUpdate: AdminProductDraft = draft.brandProvided
-      ? draft
-      : { ...draft, brand: existingBrand };
     const existingSku = typeof existingPrivate.sku === "string" && existingPrivate.sku.trim()
       ? existingPrivate.sku.trim()
       : typeof existingPublic.sku === "string" ? existingPublic.sku.trim() : "";
@@ -541,6 +563,7 @@ export async function updateAdminProduct(
     const legacySupplierRouting = existingPrivate.fulfilmentMode !== "internal"
       && Boolean(activeOfferId && existingSupplierId && existingSupplierItemCode);
     const supplierBacked = existingPrivate.fulfilmentMode === "supplier" || legacySupplierRouting;
+    const provided = new Set(draft.providedFields);
     if (supplierBacked && !existingSku) {
       throw new ApiError("Supplier-backed product identity is incomplete and must be repaired before publication.", 409);
     }
@@ -548,10 +571,58 @@ export async function updateAdminProduct(
       throw new ApiError("Internal products cannot be converted by entering supplier fields. Attach an approved supplier offer instead.", 422);
     }
     if (supplierBacked && (
-      (draft.supplierId && draft.supplierId !== existingSupplierId)
-      || (draft.supplierItemCode && draft.supplierItemCode !== existingSupplierItemCode)
+      (provided.has("supplierId") && draft.supplierId !== existingSupplierId)
+      || (provided.has("supplierItemCode") && draft.supplierItemCode !== existingSupplierItemCode)
     )) {
       throw new ApiError("Supplier routing is managed by the approved supplier offer and cannot be edited here.", 409);
+    }
+    const sameOptionalNumber = (left: number | undefined, right: unknown): boolean => {
+      const rightNumber = right === undefined || right === null || right === "" ? undefined : Number(right);
+      return left === rightNumber || (left === undefined && rightNumber === undefined);
+    };
+    if (supplierBacked && provided.has("costPrice") && !sameOptionalNumber(existingPrivate.costPrice, draft.costPrice)) {
+      throw new ApiError("Supplier-managed cost cannot be edited here.", 409);
+    }
+    if (supplierBacked && provided.has("stock") && Number(currentProduct.stock) !== draft.stock) {
+      throw new ApiError("Supplier-managed stock cannot be edited here.", 409);
+    }
+    const patchValue = <T>(field: string, current: T, next: T): T => provided.has(field) ? next : current;
+    const draftForUpdate: AdminProductDraft = {
+      ...draft,
+      requestedSku: draft.requestedSku || existingSku,
+      name: patchValue("name", String(currentProduct.name || ""), draft.name),
+      description: patchValue("description", String(currentProduct.description || ""), draft.description),
+      shortDescription: patchValue("shortDescription", String(currentProduct.shortDescription || ""), draft.shortDescription),
+      price: patchValue("price", Number(currentProduct.price), draft.price),
+      originalPrice: patchValue("originalPrice", currentProduct.originalPrice as number | undefined, draft.originalPrice),
+      promotionEnabled: patchValue("promotionEnabled", currentProduct.promotionEnabled as boolean | undefined, draft.promotionEnabled),
+      imageUrl: patchValue("imageUrl", String(currentProduct.imageUrl || ""), draft.imageUrl),
+      imageUrls: patchValue("imageUrls", Array.isArray(currentProduct.imageUrls) ? currentProduct.imageUrls as string[] : [], draft.imageUrls),
+      category: patchValue("category", String(currentProduct.category || ""), draft.category),
+      subcategory: patchValue("subcategory", String(currentProduct.subcategory || ""), draft.subcategory),
+      brand: draft.brandProvided ? draft.brand : existingBrand,
+      brandProvided: true,
+      model: patchValue("model", String(currentProduct.model || ""), draft.model),
+      barcode: patchValue("barcode", String(currentProduct.barcode || ""), draft.barcode),
+      productType: patchValue("productType", String(currentProduct.productType || ""), draft.productType),
+      tags: patchValue("tags", Array.isArray(currentProduct.tags) ? currentProduct.tags as string[] : [], draft.tags),
+      keyFeatures: patchValue("keyFeatures", Array.isArray(currentProduct.keyFeatures) ? currentProduct.keyFeatures as string[] : [], draft.keyFeatures),
+      whatsIncluded: patchValue("whatsIncluded", Array.isArray(currentProduct.whatsIncluded) ? currentProduct.whatsIncluded as string[] : [], draft.whatsIncluded),
+      stock: patchValue("stock", Number(currentProduct.stock), draft.stock),
+      specs: patchValue("specs", record(currentProduct.specs) as Record<string, string>, draft.specs),
+      isNew: patchValue("isNew", currentProduct.isNew === true, draft.isNew),
+      isFeatured: patchValue("isFeatured", currentProduct.isFeatured === true, draft.isFeatured),
+      isBestSeller: patchValue("isBestSeller", currentProduct.isBestSeller === true, draft.isBestSeller),
+      isActive: patchValue("isActive", currentProduct.isActive !== false, draft.isActive),
+      supplierId: patchValue("supplierId", existingSupplierId, draft.supplierId),
+      supplierItemCode: patchValue("supplierItemCode", existingSupplierItemCode, draft.supplierItemCode),
+      costPrice: patchValue("costPrice", existingPrivate.costPrice as number | undefined, draft.costPrice),
+      marketPrice: patchValue("marketPrice", existingPrivate.marketPrice as number | undefined, draft.marketPrice),
+    };
+
+    validateEffectiveRequiredFields(draftForUpdate);
+    if (["price", "originalPrice", "promotionEnabled"].some((field) => provided.has(field))) {
+      validatePromotionContract(draftForUpdate);
     }
 
     const categoryReference = db.collection("categories").doc(draftForUpdate.category);
@@ -591,7 +662,6 @@ export async function updateAdminProduct(
         throw new ApiError("Published supplier products require a valid approved offer and active supplier account.", 422);
       }
     }
-    const currentProduct = mergeProductData(existingPublic, existingPrivate);
     const nextProduct = mergeProductData(projection.publicData, projection.commercialData);
     const ownership = changedOwnership(currentProduct, nextProduct, existingPrivate.supplierFieldOwnership, validatedActor, now);
     const changedFields = MANUAL_OWNERSHIP_FIELDS.filter((field) => (

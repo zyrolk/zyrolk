@@ -34,7 +34,6 @@ import {
   sortBrandsAlphabetically,
 } from '../services/brands/brandUtils';
 import {
-  applySpecificationTemplate,
   createProductDraft,
   getActiveSubcategories,
   getSelectedCategory,
@@ -645,6 +644,11 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
   const selectedProductSpecificationTemplate = useMemo(
     () => normalizeSpecificationTemplate(selectedProductCategory?.specificationTemplate),
     [selectedProductCategory],
+  );
+  const isExistingProductEdit = Boolean(editingProduct);
+  const { supplierId: editorSupplierId, supplierItemCode: editorSupplierItemCode } = newProduct;
+  const isSupplierBackedEdit = Boolean(
+    isExistingProductEdit && editorSupplierId?.trim() && editorSupplierItemCode?.trim(),
   );
 
   const restoreCategoryFocus = () => {
@@ -3127,7 +3131,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                     const category = getSelectedCategory(categories, categoryId);
                     setNewProduct({
                       ...createProductDraft(categoryId, ''),
-                      specs: applySpecificationTemplate({}, category?.specificationTemplate),
+                      specs: {},
                     });
                     setSpecKey("");
                     setSpecVal("");
@@ -5218,15 +5222,14 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                       <div className="space-y-1">
                         <label className="flex items-center font-bold text-slate-400">
-                          Brand {!editingProduct && <span className="ml-0.5 text-red-500">*</span>}
+                          Brand <span className="ml-1 font-normal text-slate-400">(optional)</span>
                         </label>
                         <select
-                          required={!editingProduct}
                           value={newProduct.brand || ''}
                           onChange={(event) => setNewProduct((previous) => ({ ...previous, brand: event.target.value }))}
                           className="w-full cursor-pointer rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs transition-colors focus:border-blue-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-900"
                         >
-                          <option value="">{editingProduct ? 'No brand (optional)' : 'Select a registered brand'}</option>
+                          <option value="">No brand (optional)</option>
                           {brands.map((brand) => <option key={brand.id} value={brand.id}>{brand.name}{brand.isActive === false ? ' (Inactive)' : ''}</option>)}
                         </select>
                       </div>
@@ -5268,6 +5271,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                         Category <span className="text-red-500 ml-0.5">*</span>
                       </label>
                       <select
+                        required
                         value={newProduct.category || "electronics"}
                         onChange={(event) => {
                           const category = getSelectedCategory(categories, event.target.value);
@@ -5275,7 +5279,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                             ...previous,
                             category: event.target.value,
                             subcategory: '',
-                            specs: applySpecificationTemplate(previous.specs, category?.specificationTemplate),
+                            specs: { ...(previous.specs || {}) },
                           }));
                         }}
                         className="w-full px-3 py-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-hidden focus:border-blue-500 transition-colors text-xs cursor-pointer"
@@ -5290,6 +5294,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                         Sub Category {selectedProductSubcategories.length > 0 && <span className="ml-0.5 text-red-500">*</span>}
                       </label>
                       <select
+                        required={selectedProductSubcategories.length > 0}
                         value={newProduct.subcategory || ''}
                         disabled={selectedProductSubcategories.length === 0}
                         onChange={(event) => setNewProduct((previous) => ({ ...previous, subcategory: event.target.value }))}
@@ -5531,11 +5536,14 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
 
                     <div className="space-y-1">
                       <label className="text-slate-400 font-bold flex items-center">
-                        Stock Quantity <span className="text-red-500 ml-0.5">*</span>
+                        Stock Quantity {isSupplierBackedEdit
+                          ? <span className="font-normal text-slate-400">(Supplier-managed, read-only)</span>
+                          : <span className="text-red-500 ml-0.5">*</span>}
                       </label>
                       <input
                         type="number"
-                        required
+                        required={!isSupplierBackedEdit}
+                        readOnly={isSupplierBackedEdit}
                         min="0"
                         step="1"
                         placeholder="15"
@@ -5552,9 +5560,10 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                     <p className="text-[10px] text-slate-400">Manual products are fulfilled internally. Supplier routing is established only through an approved Supplier Product Review offer.</p>
                     <div className="grid grid-cols-3 gap-2.5">
                       <div className="space-y-1">
-                        <label className="text-slate-400 font-bold">Cost (LKR) <span className="font-normal">(Admin Only)</span></label>
+                        <label className="text-slate-400 font-bold">Cost (LKR) <span className="font-normal">{isSupplierBackedEdit ? '(Supplier-managed, read-only)' : '(Admin Only)'}</span></label>
                         <input
                           type="number"
+                          readOnly={isSupplierBackedEdit}
                           value={newProduct.costPrice || ""}
                           onChange={(e) => setNewProduct(prev => ({ ...prev, costPrice: e.target.value ? Number(e.target.value) : undefined }))}
                           className="w-full text-xs px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-hidden"
@@ -5579,16 +5588,13 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                       <div className="space-y-3 rounded-xl border border-blue-500/15 bg-blue-500/5 p-3">
                         <div>
                           <span className="text-[10px] font-bold uppercase tracking-wider text-blue-500">Category Template</span>
-                          <p className="mt-1 text-[10px] text-slate-400">These fields are generated from the selected category.</p>
+                          <p className="mt-1 text-[10px] text-slate-400">These optional fields come from the selected category; blank values are allowed.</p>
                         </div>
                         {selectedProductSpecificationTemplate.map((field) => (
                           <div key={field.name} className="space-y-1">
-                            <label className="flex items-center font-bold text-slate-500 dark:text-slate-300">
-                              {field.name}{field.required && <span className="ml-0.5 text-red-500">*</span>}
-                            </label>
+                            <label className="flex items-center font-bold text-slate-500 dark:text-slate-300">{field.name}</label>
                             <input
                               type="text"
-                              required={field.required}
                               value={newProduct.specs?.[field.name] || ''}
                               onChange={(event) => setNewProduct((previous) => ({
                                 ...previous,
@@ -5666,6 +5672,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                     <div className="space-y-2">
                       <input
                         type="text"
+                        required
                         placeholder="Paste image URL here..."
                         value={newProduct.imageUrl || ""}
                         onChange={(e) => setNewProduct(prev => ({ ...prev, imageUrl: e.target.value }))}

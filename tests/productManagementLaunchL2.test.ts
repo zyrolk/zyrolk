@@ -115,7 +115,7 @@ test('legacy products receive safe editor defaults without changing the storefro
   assert.deepEqual(draft.whatsIncluded, []);
   assert.deepEqual(draft.imageUrls, []);
   assert.equal(draft.specs?.Display, 'LCD');
-  assert.equal(draft.specs?.Battery, '');
+  assert.equal(draft.specs?.Battery, undefined);
 });
 
 test('product save payload protects system fields and derives launch metadata', () => {
@@ -153,7 +153,7 @@ test('product save payload protects system fields and derives launch metadata', 
   assert.equal(updated.updatedAt, now);
 });
 
-test('launch validation requires registered brand, matching subcategory and required specifications', () => {
+test('product validation requires registered brand and matching subcategory while metadata stays optional', () => {
   const valid = product();
   assert.deepEqual(validateProductForSave({ product: valid, products: [valid], categories, brands, editingProductId: valid.id }), []);
 
@@ -163,7 +163,6 @@ test('launch validation requires registered brand, matching subcategory and requ
   });
   assert.deepEqual(errors, [
     'Selected sub category does not belong to the selected category.',
-    'Required specification "Display" must have a value.',
     'Select an existing product brand.',
     'Barcode must contain 8 to 14 digits.',
   ]);
@@ -176,7 +175,7 @@ test('launch validation requires registered brand, matching subcategory and requ
 test('Sprint L2 Admin UI preserves controlled registries while product mutations use the trusted API', () => {
   const admin = readFileSync('src/components/AdminDashboard.tsx', 'utf8');
   assert.match(admin, /Brand Registry/);
-  assert.match(admin, /Select a registered brand/);
+  assert.match(admin, /No brand \(optional\)/);
   assert.match(admin, /Specification Template/);
   assert.match(admin, /Sub Categories/);
   assert.match(admin, /createAdminProduct\(/);
