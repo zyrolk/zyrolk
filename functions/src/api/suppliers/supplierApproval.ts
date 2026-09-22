@@ -11,7 +11,12 @@ import { classifySupplierMediaReadiness } from "./supplierMediaReadiness";
 import { createSupplierAuditEvent } from "./supplierAuditTrail";
 import {
   normalizeSupplierMappingValue,
+  isExplicitSupplierChildMapping,
+  supplierSubcategoryMatchesMapping,
+  selectSupplierCategoryMapping,
+  supplierChildMappingDocumentId,
   supplierMappingDocumentId,
+  SupplierCategoryMappingRecord,
   validateSupplierProductForApproval,
 } from "./supplierProductMapping";
 import {
@@ -30,6 +35,7 @@ import { ensureSupplierReviewQueueManagedMedia } from "../../scheduled/supplierR
 import {
   applySupplierProductFieldOwnership,
   parseSupplierProductEditedFields,
+  parseSupplierProductFieldOwnership,
   parseSupplierProductFieldOwnershipDecision,
   SupplierProductFieldOwnershipDecision,
 } from "./supplierFieldOwnership";
@@ -370,6 +376,15 @@ const normalizeSupplierCategory = (value: unknown): string => String(value || ""
   .toLocaleLowerCase("en")
   .replace(/[\s_-]+/g, " ");
 
+export const resolveSupplierApprovalMappedSubcategoryId = (
+  mapping: SupplierCategoryMappingRecord,
+  supplierSubcategory?: string,
+  supplierSubcategoryId?: string,
+): string => isExplicitSupplierChildMapping(mapping)
+  && supplierSubcategoryMatchesMapping(mapping, supplierSubcategory, supplierSubcategoryId)
+  ? stringValue(mapping.targetSubcategoryId)
+  : "";
+
 export const toPublicProductPayload = (queueItem: QueueItemRecord, draft: SupplierApprovalDraft | undefined): Record<string, unknown> => {
   const originalPayload = record(queueItem.productPayload);
   const productId = cleanText(originalPayload.id, "Product payload ID", 160);
@@ -479,7 +494,7 @@ export const toPublicProductPayload = (queueItem: QueueItemRecord, draft: Suppli
     ...(discount !== undefined ? { discount } : {}),
     stock,
     category,
-    subcategory: draft?.subcategory || stringValue(originalPayload.subcategory),
+    subcategory: draft?.subcategory !== undefined ? draft.subcategory : stringValue(originalPayload.subcategory),
     ...(canonicalBrand ? { brand: canonicalBrand } : {}),
     specs: publicSpecs,
     isActive,
@@ -668,13 +683,27 @@ export async function decideSupplierQueueItem(
     const supplierSnapshot = record(queueItem.supplierSnapshot);
     const categoryHierarchy = supplierSnapshot.categoryHierarchy;
     const supplierCategory = Array.isArray(categoryHierarchy) ? stringValue(categoryHierarchy[0]) : "";
+    const supplierSubcategory = Array.isArray(categoryHierarchy) ? stringValue(categoryHierarchy[1]) : "";
     const normalizedSupplierCategory = normalizeSupplierMappingValue(supplierCategory);
+    const normalizedSupplierSubcategory = normalizeSupplierMappingValue(supplierSubcategory);
+    const supplierSubcategoryId = stringValue(
+      supplierSnapshot.supplierSubcategoryId || record(supplierSnapshot.extraAttributes).supplierSubcategoryId,
+    );
+    const hasSupplierSubcategoryBinding = Boolean(normalizedSupplierSubcategory || supplierSubcategoryId);
     const supplierSpecifications = record(supplierSnapshot.specifications);
     const supplierBrand = stringValue(supplierSnapshot.brand || supplierSpecifications.brand || supplierSpecifications.Brand);
     const normalizedSupplierBrand = normalizeSupplierMappingValue(supplierBrand);
     const sourceId = stringValue(queueItem.sourceId) || stringValue(supplierSnapshot.sourceId);
     const categoryMappingReference = sourceId && normalizedSupplierCategory
       ? db.collection("supplier_category_mappings").doc(supplierMappingDocumentId(sourceId, normalizedSupplierCategory))
+      : null;
+    const childCategoryMappingReference = sourceId && normalizedSupplierCategory && hasSupplierSubcategoryBinding
+      ? db.collection("supplier_category_mappings").doc(supplierChildMappingDocumentId(
+        sourceId,
+        normalizedSupplierCategory,
+        supplierSubcategory,
+        supplierSubcategoryId,
+      ))
       : null;
     const brandMappingReference = sourceId && normalizedSupplierBrand
       ? db.collection("supplier_brand_mappings").doc(supplierMappingDocumentId(sourceId, normalizedSupplierBrand))
@@ -686,6 +715,7 @@ export async function decideSupplierQueueItem(
       existingProductSnapshot,
       existingPrivateProductSnapshot,
       existingCategoryMappingSnapshot,
+      existingChildCategoryMappingSnapshot,
       existingBrandMappingSnapshot,
       productOffersSnapshot,
     ] = await Promise.all([
@@ -695,6 +725,7 @@ export async function decideSupplierQueueItem(
       decisionProductReference ? transaction.get(decisionProductReference) : Promise.resolve(null),
       privateProductReference ? transaction.get(privateProductReference) : Promise.resolve(null),
       categoryMappingReference ? transaction.get(categoryMappingReference) : Promise.resolve(null),
+      childCategoryMappingReference ? transaction.get(childCategoryMappingReference) : Promise.resolve(null),
       brandMappingReference ? transaction.get(brandMappingReference) : Promise.resolve(null),
       approvedPayload
         ? transaction.get(db.collection(SUPPLIER_PRODUCT_OFFERS_COLLECTION).where("productId", "==", String(approvedPayload.id)).limit(100))
@@ -702,30 +733,60 @@ export async function decideSupplierQueueItem(
     ]);
     let categorySnapshot = initialCategorySnapshot;
     const currentCategoryId = String(approvedPayload?.category || "").trim();
-    const currentCategoryIsUnresolved = Boolean(
+    const categoryMappingSelection = selectSupplierCategoryMapping({
+      sourceId,
+      normalizedCategory: normalizedSupplierCategory,
+      supplierSubcategory,
+      supplierSubcategoryId,
+      mappings: [
+        ...(existingCategoryMappingSnapshot?.exists ? [existingCategoryMappingSnapshot.data() as SupplierCategoryMappingRecord] : []),
+        ...(existingChildCategoryMappingSnapshot?.exists ? [existingChildCategoryMappingSnapshot.data() as SupplierCategoryMappingRecord] : []),
+      ],
+    });
+    const persistedOwnership = parseSupplierProductFieldOwnership(existingPrivateProductSnapshot?.data()?.supplierFieldOwnership);
+    const editedFields = new Set(effectiveDraft?.editedFields || []);
+    const hasPersistedAdminOwnership = (field: "category" | "subcategory"): boolean => {
+      const entry = persistedOwnership[field];
+      return entry?.owner === "admin" && entry.reason !== "legacy_default";
+    };
+    const categoryIsExplicit = editedFields.has("category") || hasPersistedAdminOwnership("category");
+    const subcategoryIsExplicit = editedFields.has("subcategory") || hasPersistedAdminOwnership("subcategory");
+    const selectedMappingCategoryId = stringValue(categoryMappingSelection?.mapping.targetCategoryId);
+    const selectedMappingSubcategoryId = categoryMappingSelection
+      ? resolveSupplierApprovalMappedSubcategoryId(categoryMappingSelection.mapping, supplierSubcategory, supplierSubcategoryId)
+      : "";
+    const currentSubcategoryId = stringValue(approvedPayload?.subcategory);
+    const resolvedCategoryId = categoryIsExplicit
+      ? currentCategoryId
+      : selectedMappingCategoryId || currentCategoryId;
+    const resolvedSubcategoryId = subcategoryIsExplicit
+      ? currentSubcategoryId
+      : categoryIsExplicit
+        ? ""
+        : selectedMappingCategoryId
+          ? selectedMappingSubcategoryId
+          : currentSubcategoryId;
+    const shouldReprojectSupplierTaxonomy = Boolean(
       approvedPayload
-      && (!currentCategoryId || !initialCategorySnapshot?.exists || initialCategorySnapshot.data()?.isActive === false),
+      && (currentCategoryId !== resolvedCategoryId || currentSubcategoryId !== resolvedSubcategoryId),
     );
-    if (currentCategoryIsUnresolved && existingCategoryMappingSnapshot?.exists) {
-      const mapping = existingCategoryMappingSnapshot.data() || {};
-      const mappedCategoryId = stringValue(mapping.targetCategoryId);
-      const mappedSubcategoryId = stringValue(mapping.targetSubcategoryId);
-      if (mappedCategoryId) {
-        const mappedCategorySnapshot = await transaction.get(db.collection("categories").doc(mappedCategoryId));
-        const mappedCategory = mappedCategorySnapshot.exists ? mappedCategorySnapshot.data() || {} : {};
-        const activeSubcategories = Array.isArray(mappedCategory.subcategories)
-          ? mappedCategory.subcategories.filter((entry): entry is Record<string, unknown> => Boolean(entry && typeof entry === "object") && (entry as Record<string, unknown>).isActive !== false)
-          : [];
-        const mappedSubcategoryValid = (!mappedSubcategoryId && activeSubcategories.length === 0)
-          || activeSubcategories.some((entry) => String(entry.id || "") === mappedSubcategoryId);
-        if (mappedCategorySnapshot.exists && mappedCategory.isActive !== false && mappedSubcategoryValid) {
-          approvedPayload = {
-            ...approvedPayload,
-            category: mappedCategoryId,
-            subcategory: mappedSubcategoryId,
-          };
-          categorySnapshot = mappedCategorySnapshot;
-        }
+    if (shouldReprojectSupplierTaxonomy && approvedPayload && resolvedCategoryId) {
+      const mappedCategorySnapshot = currentCategoryId === resolvedCategoryId
+        ? initialCategorySnapshot
+        : await transaction.get(db.collection("categories").doc(resolvedCategoryId));
+      const resolvedCategory = mappedCategorySnapshot?.exists ? mappedCategorySnapshot.data() || {} : {};
+      const activeSubcategories = Array.isArray(resolvedCategory.subcategories)
+        ? resolvedCategory.subcategories.filter((entry): entry is Record<string, unknown> => Boolean(entry && typeof entry === "object") && (entry as Record<string, unknown>).isActive !== false)
+        : [];
+      const resolvedSubcategoryValid = !resolvedSubcategoryId
+        || activeSubcategories.some((entry) => String(entry.id || "") === resolvedSubcategoryId);
+      if (mappedCategorySnapshot?.exists && resolvedCategory.isActive !== false && resolvedSubcategoryValid) {
+        approvedPayload = {
+          ...approvedPayload,
+          category: resolvedCategoryId,
+          subcategory: resolvedSubcategoryId,
+        };
+        categorySnapshot = mappedCategorySnapshot;
       }
     }
     const now = FieldValue.serverTimestamp();
@@ -918,17 +979,25 @@ export async function decideSupplierQueueItem(
         ...existingProductSnapshot.data(),
         ...(existingPrivateProductSnapshot?.data() || {}),
       } : undefined;
+      const requestedOwnership = effectiveDraft?.fieldOwnership
+        ? Object.fromEntries(Object.entries(effectiveDraft.fieldOwnership).filter(([field]) => (
+          field !== "category" && field !== "subcategory"
+            || editedFields.has(field)
+        )))
+        : undefined;
       const ownershipResult = applySupplierProductFieldOwnership({
         proposedProduct: approvedPayload,
         currentProduct,
         existingOwnership: resolvedOwnership,
-        requestedOwnership: effectiveDraft?.fieldOwnership,
+        requestedOwnership,
         editedFields: effectiveDraft?.editedFields,
         sourceId,
         reviewerId: reviewer.uid,
         timestamp: now,
       });
       resolvedOwnership = ownershipResult.ownership;
+      if (!categoryIsExplicit) delete resolvedOwnership.category;
+      if (!subcategoryIsExplicit) delete resolvedOwnership.subcategory;
       if (shouldProjectApprovedOffer || !existingProductSnapshot?.exists) {
         approvedPayload = ownershipResult.product;
       } else {
@@ -1072,32 +1141,72 @@ export async function decideSupplierQueueItem(
         }
       }
       if (categoryMappingReference && normalizedSupplierCategory) {
-        const previous = existingCategoryMappingSnapshot?.data() || {};
-        const changed = previous.targetCategoryId !== approvedPayload.category
-          || previous.targetSubcategoryId !== approvedPayload.subcategory;
-        if (changed) {
-          const version = Math.max(0, Number(previous.version) || 0) + 1;
-          const mapping = {
-            sourceId,
-            supplierCategory,
-            normalizedCategory: normalizedSupplierCategory,
-            targetCategoryId: String(approvedPayload.category),
-            targetSubcategoryId: String(approvedPayload.subcategory || ""),
-            confidence: 100,
-            mappingType: "learned",
-            version,
-            updatedBy: reviewer.uid,
-            updatedAt: now,
-          };
-          transaction.set(categoryMappingReference, mapping, { merge: true });
-          transaction.create(db.collection("supplier_mapping_audit").doc(), {
+        const previousParent = existingCategoryMappingSnapshot?.data() || {};
+        const previousChild = existingChildCategoryMappingSnapshot?.data() || {};
+        const parentHasLegacyBinding = Boolean(
+          stringValue(previousParent.supplierSubcategory)
+          || stringValue(previousParent.normalizedSupplierSubcategory)
+          || stringValue(previousParent.supplierSubcategoryId),
+        );
+        const parentTargetSubcategoryId = parentHasLegacyBinding
+          ? stringValue(previousParent.targetSubcategoryId)
+          : "";
+        const parentMapping = {
+          sourceId,
+          supplierCategory,
+          normalizedCategory: normalizedSupplierCategory,
+          targetCategoryId: String(approvedPayload.category),
+          targetSubcategoryId: parentTargetSubcategoryId,
+          mappingScope: "parent" as const,
+          confidence: 100,
+          mappingType: "learned",
+          version: Math.max(0, Number(previousParent.version) || 0) + 1,
+          updatedBy: reviewer.uid,
+          updatedAt: now,
+          ...(parentHasLegacyBinding ? {
+            ...(stringValue(previousParent.supplierSubcategory) ? { supplierSubcategory: stringValue(previousParent.supplierSubcategory) } : {}),
+            ...(stringValue(previousParent.normalizedSupplierSubcategory) ? { normalizedSupplierSubcategory: stringValue(previousParent.normalizedSupplierSubcategory) } : {}),
+            ...(stringValue(previousParent.supplierSubcategoryId) ? { supplierSubcategoryId: stringValue(previousParent.supplierSubcategoryId) } : {}),
+          } : {}),
+        };
+        const parentChanged = !existingCategoryMappingSnapshot?.exists
+          || previousParent.targetCategoryId !== parentMapping.targetCategoryId
+          || (!parentHasLegacyBinding && stringValue(previousParent.targetSubcategoryId) !== "");
+        const childTargetSubcategoryId = stringValue(approvedPayload.subcategory);
+        const childMapping = childCategoryMappingReference && childTargetSubcategoryId ? {
+          sourceId,
+          supplierCategory,
+          normalizedCategory: normalizedSupplierCategory,
+          supplierSubcategory,
+          normalizedSupplierSubcategory,
+          ...(supplierSubcategoryId ? { supplierSubcategoryId } : {}),
+          targetCategoryId: String(approvedPayload.category),
+          targetSubcategoryId: childTargetSubcategoryId,
+          mappingScope: "child" as const,
+          confidence: 100,
+          mappingType: "learned",
+          version: Math.max(0, Number(previousChild.version) || 0) + 1,
+          updatedBy: reviewer.uid,
+          updatedAt: now,
+        } : null;
+        const childChanged = Boolean(childMapping && (!existingChildCategoryMappingSnapshot?.exists
+          || previousChild.targetCategoryId !== childMapping.targetCategoryId
+          || previousChild.targetSubcategoryId !== childMapping.targetSubcategoryId));
+        if (parentChanged) transaction.set(categoryMappingReference, parentMapping, { merge: true });
+        if (childMapping && childChanged && childCategoryMappingReference) {
+          transaction.set(childCategoryMappingReference, childMapping, { merge: true });
+        }
+        if (parentChanged || childChanged) {
+          const auditReference = db.collection("supplier_mapping_audit").doc();
+          const auditedMapping = childMapping && childChanged ? childMapping : parentMapping;
+          transaction.create(auditReference, {
             mappingKind: "category",
-            mappingId: categoryMappingReference.id,
+            mappingId: childMapping && childChanged ? childCategoryMappingReference?.id : categoryMappingReference.id,
             sourceId,
             queueItemId: reviewQueueItemId,
             action: "learned_after_approval",
-            previous: previous.targetCategoryId ? previous : null,
-            current: mapping,
+            previous: childMapping && childChanged ? (previousChild.targetCategoryId ? previousChild : null) : (previousParent.targetCategoryId ? previousParent : null),
+            current: auditedMapping,
             adminUserId: reviewer.uid,
             adminEmail: reviewer.email,
             timestamp: now,

@@ -271,7 +271,7 @@ const resolveSupplierReviewEditedFields = (item: SupplierReviewSourceItem): stri
   const fields = new Set<string>();
   for (const change of buildSupplierReviewFieldChanges(item)) {
     for (const path of SUPPLIER_FIELD_PRODUCT_PATHS[change.field] || []) {
-      if (SUPPLIER_REVIEW_EDITABLE_PRODUCT_FIELDS.has(path)) fields.add(path);
+      if (SUPPLIER_REVIEW_EDITABLE_PRODUCT_FIELDS.has(path) && path !== 'category' && path !== 'subcategory') fields.add(path);
     }
   }
   return [...fields];
@@ -417,7 +417,10 @@ export function createSupplierReviewDraft(item: SupplierReviewSourceItem): Suppl
     : legacyPromotionEnabled;
   const fieldOwnership = Object.fromEntries(SUPPLIER_REVIEW_EDITABLE_FIELDS.map((field) => [
     field,
-    storedOwnership[field]?.owner || (isNewProduct && !ADMIN_ONLY_REVIEW_FIELDS.has(field) ? 'supplier' : 'admin'),
+    storedOwnership[field]?.owner
+      || (field === 'category' || field === 'subcategory'
+        ? 'supplier'
+        : (isNewProduct && !ADMIN_ONLY_REVIEW_FIELDS.has(field) ? 'supplier' : 'admin')),
   ])) as Record<string, SupplierProductFieldOwner>;
 
   return {

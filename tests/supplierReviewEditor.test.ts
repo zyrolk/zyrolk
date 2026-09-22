@@ -4,6 +4,7 @@ import {
   buildSupplierApprovalItem,
   calculateSupplierProfit,
   createSupplierReviewDraft,
+  updateSupplierReviewDraftField,
   validateSupplierPublishPayload,
   validateSupplierReviewDraft,
 } from '../src/services/supplierReviewEditor';
@@ -77,7 +78,7 @@ test('supplier review draft projects editable product values with safe defaults'
       name: 'admin', shortDescription: 'admin', description: 'admin', model: 'admin', barcode: 'admin',
       productType: 'admin', tags: 'admin', keyFeatures: 'admin', whatsIncluded: 'admin', slug: 'admin',
       metaDescription: 'admin', keywords: 'admin',
-      price: 'admin', originalPrice: 'admin', costPrice: 'admin', marketPrice: 'admin', stock: 'admin', category: 'admin', subcategory: 'admin',
+      price: 'admin', originalPrice: 'admin', costPrice: 'admin', marketPrice: 'admin', stock: 'admin', category: 'supplier', subcategory: 'supplier',
       brand: 'admin', specs: 'admin', isActive: 'admin', isNew: 'admin', isFeatured: 'admin',
       isBestSeller: 'admin', imageUrl: 'admin', imageUrls: 'admin',
     },
@@ -85,6 +86,39 @@ test('supplier review draft projects editable product values with safe defaults'
     supplierCostAvailable: true,
     supplierStockAvailable: true,
   });
+});
+
+test('legacy taxonomy provenance stays ambiguous until the admin edits it', () => {
+  const draft = createSupplierReviewDraft(queueItem);
+  assert.equal(draft.fieldOwnership.category, 'supplier');
+  assert.equal(draft.fieldOwnership.subcategory, 'supplier');
+  assert.deepEqual(draft.editedFields, []);
+
+  const categoryEdited = updateSupplierReviewDraftField(draft, 'category', { category: 'wearables' });
+  assert.equal(categoryEdited.fieldOwnership.category, 'admin');
+  assert.deepEqual(categoryEdited.editedFields, ['category']);
+
+  const subcategoryEdited = updateSupplierReviewDraftField(categoryEdited, 'subcategory', { subcategory: 'fitness' });
+  assert.equal(subcategoryEdited.fieldOwnership.subcategory, 'admin');
+  assert.deepEqual(subcategoryEdited.editedFields, ['category', 'subcategory']);
+});
+
+test('supplier taxonomy comparison changes do not masquerade as current admin edits', () => {
+  const draft = createSupplierReviewDraft({
+    ...queueItem,
+    comparison: {
+      comparisonStatus: 'DESCRIPTION_CHANGED',
+      fieldChanges: [
+        { field: 'categoryHierarchy', label: 'Category', before: 'Old', after: 'New' },
+        { field: 'supplierCategory', label: 'Supplier category', before: 'Old', after: 'New' },
+        { field: 'supplierSubcategory', label: 'Supplier subcategory', before: 'Old', after: 'New' },
+        { field: 'longDescription', label: 'Description', before: 'Old', after: 'New' },
+      ],
+    },
+  });
+  assert.deepEqual(draft.editedFields, ['description']);
+  const explicitlyEdited = updateSupplierReviewDraftField(draft, 'category', { category: 'wearables' });
+  assert.deepEqual(explicitlyEdited.editedFields, ['description', 'category']);
 });
 
 test('review edit drafts use the same healthy managed media as read-only review', () => {

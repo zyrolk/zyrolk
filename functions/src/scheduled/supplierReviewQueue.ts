@@ -25,7 +25,15 @@ import {
 import { classifySupplierMediaReadiness } from "../api/suppliers/supplierMediaReadiness";
 import { recordSupplierQueueProcessingDurationMetric } from "../api/suppliers/supplierCloudMonitoring";
 import { appLogger } from "../api/logging";
-import { normalizeSupplierMappingValue, supplierMappingDocumentId } from "../api/suppliers/supplierProductMapping";
+import {
+  normalizeSupplierMappingValue,
+  isExplicitSupplierChildMapping,
+  selectSupplierCategoryMapping,
+  supplierChildMappingDocumentId,
+  supplierMappingDocumentId,
+  supplierSubcategoryMatchesMapping,
+  SupplierCategoryMappingRecord,
+} from "../api/suppliers/supplierProductMapping";
 
 export const SUPPLIER_QUEUE_STATES = [
   "queued",
@@ -95,70 +103,150 @@ const asRecord = (value: unknown): Record<string, unknown> => value && typeof va
 
 const asString = (value: unknown): string => typeof value === "string" ? value.trim() : "";
 
+const hasAdminTaxonomyOwnership = (payload: Record<string, unknown>): boolean => {
+  const ownership = asRecord(payload.supplierFieldOwnership);
+  return ["category", "subcategory"].some((field) => {
+    const entry = ownership[field];
+    return entry === "admin" || asString(asRecord(entry).owner) === "admin";
+  });
+};
+
+export const projectSupplierReviewTaxonomy = (
+  record: Record<string, unknown> & { id: string },
+  selection: { mapping: SupplierCategoryMappingRecord; scope: "source" | "global" },
+  category: Record<string, unknown>,
+  supplierCategory: string,
+  supplierSubcategory: string,
+  targetCategoryId: string,
+  targetSubcategoryId: string,
+): Record<string, unknown> & { id: string } => {
+  const payload = asRecord(record.productPayload);
+  if (hasAdminTaxonomyOwnership(payload)) return record;
+  const activeSubcategories = Array.isArray(category.subcategories)
+    ? category.subcategories.filter((entry): entry is Record<string, unknown> => Boolean(entry && typeof entry === "object") && (entry as Record<string, unknown>).isActive !== false)
+    : [];
+  return {
+    ...record,
+    categoryMapping: {
+      ...asRecord(record.categoryMapping),
+      supplierCategory,
+      supplierSubcategory,
+      targetCategoryId,
+      targetSubcategoryId,
+      confidence: 100,
+      mappingType: asString(selection.mapping.mappingType) || "manual",
+      mappingSource: selection.scope,
+      autoSelected: true,
+      requiresManualSelection: activeSubcategories.length > 0 && !targetSubcategoryId,
+    },
+    productPayload: {
+      ...payload,
+      category: targetCategoryId,
+      subcategory: targetSubcategoryId,
+    },
+  };
+};
+
 const applyTrustedCategoryMappingsForReview = async (
   db: Firestore,
   records: Array<Record<string, unknown> & { id: string }>,
 ): Promise<Array<Record<string, unknown> & { id: string }>> => {
-  const mappingKeys = new Map<string, { sourceId: string; supplierCategory: string }>();
+  const mappingKeys = new Map<string, {
+    sourceId: string;
+    supplierCategory: string;
+    supplierSubcategory: string;
+    supplierSubcategoryId: string;
+  }>();
   for (const record of records) {
     const snapshot = asRecord(record.supplierSnapshot);
     const hierarchy = Array.isArray(snapshot.categoryHierarchy) ? snapshot.categoryHierarchy : [];
     const sourceId = asString(record.sourceId) || asString(snapshot.sourceId);
     const supplierCategory = asString(hierarchy[0]);
+    const supplierSubcategory = asString(hierarchy[1]);
+    const supplierSubcategoryId = asString(record.supplierSubcategoryId)
+      || asString(snapshot.supplierSubcategoryId)
+      || asString(asRecord(snapshot.extraAttributes).supplierSubcategoryId);
     const normalizedCategory = normalizeSupplierMappingValue(supplierCategory);
-    if (sourceId && normalizedCategory) mappingKeys.set(`${sourceId}\u0000${normalizedCategory}`, { sourceId, supplierCategory });
+    const childBinding = supplierChildMappingDocumentId(sourceId, normalizedCategory, supplierSubcategory, supplierSubcategoryId);
+    if (sourceId && normalizedCategory) {
+      mappingKeys.set(`${sourceId}\u0000${normalizedCategory}\u0000${childBinding || "parent"}`, {
+        sourceId,
+        supplierCategory,
+        supplierSubcategory,
+        supplierSubcategoryId,
+      });
+    }
   }
   if (mappingKeys.size === 0) return records;
   const mappingEntries = [...mappingKeys.entries()];
-  const mappingSnapshots = await Promise.all(mappingEntries.map(([, value]) => db.collection("supplier_category_mappings")
-    .doc(supplierMappingDocumentId(value.sourceId, normalizeSupplierMappingValue(value.supplierCategory))).get()));
-  const categoryIds = [...new Set(mappingSnapshots.map((snapshot) => asString(snapshot.data()?.targetCategoryId)).filter(Boolean))];
+  const mappingSnapshots = await Promise.all(mappingEntries.map(async ([, value]) => {
+    const collection = db.collection("supplier_category_mappings");
+    const parentSnapshot = await collection.doc(supplierMappingDocumentId(value.sourceId, normalizeSupplierMappingValue(value.supplierCategory))).get();
+    const childId = supplierChildMappingDocumentId(
+      value.sourceId,
+      normalizeSupplierMappingValue(value.supplierCategory),
+      value.supplierSubcategory,
+      value.supplierSubcategoryId,
+    );
+    const childSnapshot = childId ? await collection.doc(childId).get() : null;
+    return { parentSnapshot, childSnapshot };
+  }));
+  const categoryIds = [...new Set(mappingSnapshots.flatMap(({ parentSnapshot, childSnapshot }) => [
+    asString(parentSnapshot.data()?.targetCategoryId),
+    asString(childSnapshot?.data()?.targetCategoryId),
+  ]).filter(Boolean))];
   const categorySnapshots = await Promise.all(categoryIds.map((id) => db.collection("categories").doc(id).get()));
   const categories = new Map(categorySnapshots.map((snapshot) => [snapshot.id, snapshot.exists ? snapshot.data() || {} : null]));
-  const mappings = new Map(mappingEntries.map(([key], index) => [key, mappingSnapshots[index].exists ? mappingSnapshots[index].data() || {} : null]));
+  const mappings = new Map(mappingEntries.map(([key], index) => {
+    const { parentSnapshot, childSnapshot } = mappingSnapshots[index];
+    return [key, [
+      ...(parentSnapshot.exists ? [parentSnapshot.data() as SupplierCategoryMappingRecord] : []),
+      ...(childSnapshot?.exists ? [childSnapshot.data() as SupplierCategoryMappingRecord] : []),
+    ]];
+  }));
   return records.map((record) => {
     const snapshot = asRecord(record.supplierSnapshot);
     const hierarchy = Array.isArray(snapshot.categoryHierarchy) ? snapshot.categoryHierarchy : [];
     const sourceId = asString(record.sourceId) || asString(snapshot.sourceId);
     const supplierCategory = asString(hierarchy[0]);
     const supplierSubcategory = asString(hierarchy[1]);
+    const supplierSubcategoryId = asString(record.supplierSubcategoryId)
+      || asString(snapshot.supplierSubcategoryId)
+      || asString(asRecord(snapshot.extraAttributes).supplierSubcategoryId);
     const normalizedCategory = normalizeSupplierMappingValue(supplierCategory);
-    const mapping = mappings.get(`${sourceId}\u0000${normalizedCategory}`);
-    if (!mapping) return record;
+    const childBinding = supplierChildMappingDocumentId(sourceId, normalizedCategory, supplierSubcategory, supplierSubcategoryId);
+    const mappingCandidates = mappings.get(`${sourceId}\u0000${normalizedCategory}\u0000${childBinding || "parent"}`) || [];
+    const selection = selectSupplierCategoryMapping({
+      sourceId,
+      normalizedCategory,
+      supplierSubcategory,
+      supplierSubcategoryId,
+      mappings: mappingCandidates,
+    });
+    if (!selection) return record;
+    const mapping = selection.mapping;
     const targetCategoryId = asString(mapping.targetCategoryId);
-    const targetSubcategoryId = asString(mapping.targetSubcategoryId);
+    const targetSubcategoryId = isExplicitSupplierChildMapping(mapping)
+      && supplierSubcategoryMatchesMapping(
+        mapping as SupplierCategoryMappingRecord,
+        supplierSubcategory,
+        supplierSubcategoryId,
+      ) ? asString(mapping.targetSubcategoryId) : "";
     const category = categories.get(targetCategoryId);
     if (!category || category.isActive === false) return record;
     const activeSubcategories = Array.isArray(category.subcategories)
       ? category.subcategories.filter((entry): entry is Record<string, unknown> => Boolean(entry && typeof entry === "object") && (entry as Record<string, unknown>).isActive !== false)
       : [];
-    if ((targetSubcategoryId && !activeSubcategories.some((entry) => String(entry.id || "") === targetSubcategoryId))
-      || (activeSubcategories.length > 0 && !targetSubcategoryId)) return record;
-    const payload = asRecord(record.productPayload);
-    const currentCategory = asString(payload.category);
-    const currentSubcategory = asString(payload.subcategory);
-    if (currentCategory && currentCategory !== targetCategoryId) return record;
-    if (currentSubcategory && currentSubcategory !== targetSubcategoryId) return record;
-    return {
-      ...record,
-      categoryMapping: {
-        ...asRecord(record.categoryMapping),
-        supplierCategory,
-        supplierSubcategory,
-        targetCategoryId,
-        targetSubcategoryId,
-        confidence: 100,
-        mappingType: asString(mapping.mappingType) || "manual",
-        mappingSource: "source",
-        autoSelected: true,
-        requiresManualSelection: false,
-      },
-      productPayload: {
-        ...payload,
-        category: targetCategoryId,
-        subcategory: targetSubcategoryId,
-      },
-    };
+    if (targetSubcategoryId && !activeSubcategories.some((entry) => String(entry.id || "") === targetSubcategoryId)) return record;
+    return projectSupplierReviewTaxonomy(
+      record,
+      selection,
+      category,
+      supplierCategory,
+      supplierSubcategory,
+      targetCategoryId,
+      targetSubcategoryId,
+    );
   });
 };
 

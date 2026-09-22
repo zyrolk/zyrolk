@@ -21,9 +21,13 @@ import {
 import {
   buildSupplierTaxonomyCandidateId,
   planSupplierTaxonomyCandidates,
+  selectSupplierCategoryMapping,
+  supplierChildMappingDocumentId,
   suggestSupplierCategory,
   validateSupplierProductForApproval,
 } from '../functions/src/api/suppliers/supplierProductMapping';
+import { resolveSupplierApprovalMappedSubcategoryId } from '../functions/src/api/suppliers/supplierApproval';
+import { projectSupplierReviewTaxonomy } from '../functions/src/scheduled/supplierReviewQueue';
 import {
   activateSupplierTaxonomyCandidate,
   upsertSupplierTaxonomyCandidate,
@@ -164,7 +168,10 @@ const applyStock = async (stock: number, offer = approvedOffer(), product: Data 
 };
 
 const categories = [
-  { id: 'kitchen', name: 'Kitchen', isActive: true, subcategories: [{ id: 'cookware', name: 'Cookware', isActive: true }] },
+  { id: 'kitchen', name: 'Kitchen', isActive: true, subcategories: [
+    { id: 'cookware', name: 'Cookware', isActive: true },
+    { id: 'bakeware', name: 'Bakeware', isActive: true },
+  ] },
   { id: 'inactive-kitchen', name: 'Old Kitchen', isActive: false },
 ];
 
@@ -466,13 +473,211 @@ test('P1 15 category matching normalizes case and spacing', () => {
   assert.equal(result.mappingType, 'normalized');
 });
 
-test('P1 16 persistent supplier category mapping is reused with its valid subcategory', () => {
+test('P1 16 persistent supplier category mapping reuses a bound supplier subcategory', () => {
   const result = suggestSupplierCategory({
-    sourceId: 'dropex', supplierCategories: ['Home Cooking'], categories,
-    mappings: [{ sourceId: 'dropex', supplierCategory: 'Home Cooking', normalizedCategory: 'home cooking', targetCategoryId: 'kitchen', targetSubcategoryId: 'cookware', confidence: 100, mappingType: 'learned', version: 2, updatedBy: 'admin' }],
+    sourceId: 'dropex', supplierCategories: ['Home Cooking', 'Cookware'], categories,
+    mappings: [
+      { sourceId: 'dropex', supplierCategory: 'Home Cooking', normalizedCategory: 'home cooking', mappingScope: 'parent' as const, targetCategoryId: 'kitchen', targetSubcategoryId: '', confidence: 100, mappingType: 'learned' as const, version: 2, updatedBy: 'admin' },
+      { sourceId: 'dropex', supplierCategory: 'Home Cooking', normalizedCategory: 'home cooking', supplierSubcategory: 'Cookware', normalizedSupplierSubcategory: 'cookware', mappingScope: 'child', targetCategoryId: 'kitchen', targetSubcategoryId: 'cookware', confidence: 100, mappingType: 'learned', version: 2, updatedBy: 'admin' },
+    ],
   });
   assert.equal(result.targetCategoryId, 'kitchen');
   assert.equal(result.targetSubcategoryId, 'cookware');
+});
+
+test('P1 16A legacy unbound subcategory mapping remains category-only', () => {
+  const absent = suggestSupplierCategory({
+    sourceId: 'dropex', supplierCategories: ['Home Cooking'], categories,
+    mappings: [{ sourceId: 'dropex', supplierCategory: 'Home Cooking', normalizedCategory: 'home cooking', targetCategoryId: 'kitchen', targetSubcategoryId: 'cookware', confidence: 100, mappingType: 'learned', version: 2, updatedBy: 'admin' }],
+  });
+  const different = suggestSupplierCategory({
+    sourceId: 'dropex', supplierCategories: ['Home Cooking', 'Bakeware'], categories,
+    mappings: [{ sourceId: 'dropex', supplierCategory: 'Home Cooking', normalizedCategory: 'home cooking', targetCategoryId: 'kitchen', targetSubcategoryId: 'cookware', confidence: 100, mappingType: 'learned', version: 2, updatedBy: 'admin' }],
+  });
+  const differentFromBound = suggestSupplierCategory({
+    sourceId: 'dropex', supplierCategories: ['Home Cooking', 'Bakeware'], categories,
+    mappings: [
+      { sourceId: 'dropex', supplierCategory: 'Home Cooking', normalizedCategory: 'home cooking', targetCategoryId: 'kitchen', targetSubcategoryId: '', confidence: 100, mappingType: 'learned', version: 3, updatedBy: 'admin' },
+      { sourceId: 'dropex', supplierCategory: 'Home Cooking', normalizedCategory: 'home cooking', supplierSubcategory: 'Cookware', normalizedSupplierSubcategory: 'cookware', mappingScope: 'child', targetCategoryId: 'kitchen', targetSubcategoryId: 'cookware', confidence: 100, mappingType: 'learned', version: 2, updatedBy: 'admin' },
+    ],
+  });
+  const legacyBound = suggestSupplierCategory({
+    sourceId: 'dropex', supplierCategories: ['Home Cooking', 'Cookware'], categories,
+    mappings: [{ sourceId: 'dropex', supplierCategory: 'Home Cooking', normalizedCategory: 'home cooking', supplierSubcategory: 'Cookware', normalizedSupplierSubcategory: 'cookware', targetCategoryId: 'kitchen', targetSubcategoryId: 'cookware', confidence: 100, mappingType: 'learned', version: 2, updatedBy: 'legacy' }],
+  });
+  assert.equal(absent.targetCategoryId, 'kitchen');
+  assert.equal(absent.targetSubcategoryId, '');
+  assert.equal(absent.requiresManualSelection, true);
+  assert.equal(different.targetCategoryId, 'kitchen');
+  assert.equal(different.targetSubcategoryId, '');
+  assert.equal(differentFromBound.targetCategoryId, 'kitchen');
+  assert.equal(differentFromBound.targetSubcategoryId, '');
+  assert.equal(legacyBound.targetCategoryId, 'kitchen');
+  assert.equal(legacyBound.targetSubcategoryId, '');
+});
+
+test('P1 16A1 malformed child-scoped mappings never become parent mappings', () => {
+  const malformedWithTarget = {
+    sourceId: 'dropex', supplierCategory: 'Home Cooking', normalizedCategory: 'home cooking',
+    mappingScope: 'child' as const, targetCategoryId: 'kitchen', targetSubcategoryId: 'cookware',
+    confidence: 100, mappingType: 'learned' as const, version: 9, updatedBy: 'admin',
+  };
+  const malformedWithoutTarget = {
+    sourceId: 'dropex', supplierCategory: 'Home Cooking', normalizedCategory: 'home cooking',
+    mappingScope: 'child' as const, supplierSubcategory: 'Cookware', normalizedSupplierSubcategory: 'cookware',
+    targetCategoryId: 'kitchen', targetSubcategoryId: '', confidence: 100,
+    mappingType: 'learned' as const, version: 10, updatedBy: 'admin',
+  };
+  const noParent = selectSupplierCategoryMapping({
+    sourceId: 'dropex', normalizedCategory: 'home cooking', supplierSubcategory: 'Cookware',
+    mappings: [malformedWithTarget, malformedWithoutTarget],
+  });
+  assert.equal(noParent, undefined);
+
+  const validParent = {
+    sourceId: 'dropex', supplierCategory: 'Home Cooking', normalizedCategory: 'home cooking',
+    mappingScope: 'parent' as const, targetCategoryId: 'kitchen', targetSubcategoryId: '',
+    confidence: 100, mappingType: 'manual' as const, version: 1, updatedBy: 'admin',
+  };
+  const selected = selectSupplierCategoryMapping({
+    sourceId: 'dropex', normalizedCategory: 'home cooking', supplierSubcategory: 'Cookware',
+    mappings: [malformedWithTarget, malformedWithoutTarget, validParent],
+  });
+  assert.equal(selected?.mapping.targetCategoryId, 'kitchen');
+  assert.equal(selected?.mapping.mappingScope, 'parent');
+});
+
+test('P1 16A2 approval uses the shared child ID-first/name-fallback matcher', () => {
+  const mapping = {
+    sourceId: 'dropex', supplierCategory: 'Health & Beauty', normalizedCategory: 'health beauty',
+    supplierSubcategory: 'Hair Care', normalizedSupplierSubcategory: 'hair care', supplierSubcategoryId: '123',
+    mappingScope: 'child' as const, targetCategoryId: 'health', targetSubcategoryId: 'hair-care',
+    confidence: 100, mappingType: 'learned' as const, version: 1, updatedBy: 'admin',
+  };
+  assert.equal(resolveSupplierApprovalMappedSubcategoryId(mapping, 'Hair Care'), 'hair-care');
+  assert.equal(resolveSupplierApprovalMappedSubcategoryId(mapping, 'Hair Care', '999'), '');
+  assert.equal(resolveSupplierApprovalMappedSubcategoryId(mapping, 'Different Name', '123'), 'hair-care');
+  assert.equal(resolveSupplierApprovalMappedSubcategoryId({ ...mapping, sourceId: 'other-source' }, 'Hair Care'), 'hair-care');
+  assert.equal(resolveSupplierApprovalMappedSubcategoryId({ ...mapping, supplierCategory: 'Other Parent' }, 'Hair Care'), 'hair-care');
+});
+
+test('P1 16A3 lazy review projection drops stale inherited taxonomy but preserves admin-owned taxonomy', () => {
+  const parentSelection = {
+    scope: 'source' as const,
+    mapping: {
+      sourceId: 'dropex', supplierCategory: 'Health & Beauty', normalizedCategory: 'health beauty',
+      mappingScope: 'parent' as const, targetCategoryId: 'cat-b', targetSubcategoryId: '',
+      confidence: 100, mappingType: 'manual' as const, version: 2, updatedBy: 'admin',
+    },
+  };
+  const stale = projectSupplierReviewTaxonomy(
+    { id: 'review-stale', productPayload: { category: 'cat-a', subcategory: 'massage-wellness' } },
+    parentSelection,
+    { id: 'cat-b', isActive: true, subcategories: [{ id: 'audio', isActive: true }] },
+    'Health & Beauty', '', 'cat-b', '',
+  );
+  assert.equal((stale.productPayload as Data).category, 'cat-b');
+  assert.equal((stale.productPayload as Data).subcategory, '');
+
+  const explicit = projectSupplierReviewTaxonomy(
+    {
+      id: 'review-explicit',
+      productPayload: {
+        category: 'cat-a', subcategory: 'massage-wellness',
+        supplierFieldOwnership: { category: { owner: 'admin' }, subcategory: { owner: 'admin' } },
+      },
+    },
+    parentSelection,
+    { id: 'cat-b', isActive: true, subcategories: [{ id: 'audio', isActive: true }] },
+    'Health & Beauty', '', 'cat-b', '',
+  );
+  assert.equal((explicit.productPayload as Data).category, 'cat-a');
+  assert.equal((explicit.productPayload as Data).subcategory, 'massage-wellness');
+});
+
+test('P1 16B child mappings coexist under one supplier parent and resolve exact children first', () => {
+  const mappings = [
+    { sourceId: 'dropex', supplierCategory: 'Home Cooking', normalizedCategory: 'home cooking', supplierSubcategory: 'Cookware', normalizedSupplierSubcategory: 'cookware', supplierSubcategoryId: 'child-a', mappingScope: 'child' as const, targetCategoryId: 'kitchen', targetSubcategoryId: 'cookware', confidence: 100, mappingType: 'learned' as const, version: 1, updatedBy: 'admin' },
+    { sourceId: 'dropex', supplierCategory: 'Home Cooking', normalizedCategory: 'home cooking', supplierSubcategory: 'Bakeware', normalizedSupplierSubcategory: 'bakeware', supplierSubcategoryId: 'child-b', mappingScope: 'child' as const, targetCategoryId: 'kitchen', targetSubcategoryId: 'bakeware', confidence: 100, mappingType: 'learned' as const, version: 1, updatedBy: 'admin' },
+    { sourceId: 'dropex', supplierCategory: 'Home Cooking', normalizedCategory: 'home cooking', mappingScope: 'parent' as const, targetCategoryId: 'kitchen', targetSubcategoryId: '', confidence: 100, mappingType: 'manual' as const, version: 2, updatedBy: 'admin' },
+  ];
+  const cookware = suggestSupplierCategory({ sourceId: 'dropex', supplierCategories: ['Home Cooking', 'Cookware'], supplierSubcategoryId: 'child-a', categories, mappings });
+  const bakeware = suggestSupplierCategory({ sourceId: 'dropex', supplierCategories: ['Home Cooking', 'Bakeware'], supplierSubcategoryId: 'child-b', categories, mappings });
+  const parentOnly = suggestSupplierCategory({ sourceId: 'dropex', supplierCategories: ['Home Cooking'], categories, mappings });
+  assert.equal(cookware.targetSubcategoryId, 'cookware');
+  assert.equal(bakeware.targetSubcategoryId, 'bakeware');
+  assert.equal(parentOnly.targetSubcategoryId, '');
+  assert.notEqual(
+    supplierChildMappingDocumentId('dropex', 'home cooking', 'Cookware', 'child-a'),
+    supplierChildMappingDocumentId('dropex', 'home cooking', 'Bakeware', 'child-b'),
+  );
+});
+
+test('P1 16C stable child IDs take precedence over same-name fallback and source mappings stay isolated', () => {
+  const mappings = [
+    { sourceId: 'dropex', supplierCategory: 'Home Cooking', normalizedCategory: 'home cooking', supplierSubcategory: 'Shared', normalizedSupplierSubcategory: 'shared', supplierSubcategoryId: 'child-a', mappingScope: 'child' as const, targetCategoryId: 'kitchen', targetSubcategoryId: 'cookware', confidence: 100, mappingType: 'manual' as const, version: 1, updatedBy: 'admin' },
+    { sourceId: 'dropex', supplierCategory: 'Home Cooking', normalizedCategory: 'home cooking', supplierSubcategory: 'Shared', normalizedSupplierSubcategory: 'shared', supplierSubcategoryId: 'child-b', mappingScope: 'child' as const, targetCategoryId: 'kitchen', targetSubcategoryId: 'bakeware', confidence: 100, mappingType: 'manual' as const, version: 1, updatedBy: 'admin' },
+    { sourceId: 'other-source', supplierCategory: 'Home Cooking', normalizedCategory: 'home cooking', supplierSubcategory: 'Shared', normalizedSupplierSubcategory: 'shared', supplierSubcategoryId: 'child-a', targetCategoryId: 'kitchen', targetSubcategoryId: 'wrong', confidence: 100, mappingType: 'manual' as const, version: 9, updatedBy: 'admin' },
+    { sourceId: 'dropex', supplierCategory: 'Home Cooking', normalizedCategory: 'home cooking', mappingScope: 'parent' as const, targetCategoryId: 'kitchen', targetSubcategoryId: '', confidence: 100, mappingType: 'manual' as const, version: 2, updatedBy: 'admin' },
+  ];
+  const selected = suggestSupplierCategory({ sourceId: 'dropex', supplierCategories: ['Home Cooking', 'Shared'], supplierSubcategoryId: 'child-b', categories, mappings });
+  const nameFallback = suggestSupplierCategory({
+    sourceId: 'dropex', supplierCategories: ['Home Cooking', 'Shared'], categories,
+    mappings: [mappings[1], { sourceId: 'dropex', supplierCategory: 'Home Cooking', normalizedCategory: 'home cooking', mappingScope: 'parent' as const, targetCategoryId: 'kitchen', targetSubcategoryId: '', confidence: 100, mappingType: 'manual' as const, version: 2, updatedBy: 'admin' }],
+  });
+  assert.equal(selected.targetSubcategoryId, 'bakeware');
+  assert.equal(nameFallback.targetSubcategoryId, 'bakeware');
+});
+
+test('P1 16D parent retarget fences stale children and orphan children', () => {
+  const retargetedCategories = [
+    { id: 'cat-a', name: 'Category A', isActive: true, subcategories: [{ id: 'a1', name: 'A1', isActive: true }] },
+    { id: 'cat-b', name: 'Category B', isActive: true, subcategories: [{ id: 'b1', name: 'B1', isActive: true }] },
+  ];
+  const staleChild = {
+    sourceId: 'dropex', supplierCategory: 'Health & Beauty', normalizedCategory: 'health beauty',
+    supplierSubcategory: 'Hair Care', normalizedSupplierSubcategory: 'hair care', supplierSubcategoryId: 'hair-1',
+    mappingScope: 'child' as const, targetCategoryId: 'cat-a', targetSubcategoryId: 'a1', confidence: 100,
+    mappingType: 'manual' as const, version: 1, updatedBy: 'admin',
+  };
+  const parent = {
+    sourceId: 'dropex', supplierCategory: 'Health & Beauty', normalizedCategory: 'health beauty',
+    mappingScope: 'parent' as const, targetCategoryId: 'cat-b', targetSubcategoryId: '', confidence: 100,
+    mappingType: 'manual' as const, version: 2, updatedBy: 'admin',
+  };
+  const stale = suggestSupplierCategory({
+    sourceId: 'dropex', supplierCategories: ['Health & Beauty', 'Hair Care'], supplierSubcategoryId: 'hair-1',
+    categories: retargetedCategories, mappings: [parent, staleChild],
+  });
+  assert.equal(stale.targetCategoryId, 'cat-b');
+  assert.equal(stale.targetSubcategoryId, '');
+  const orphan = suggestSupplierCategory({
+    sourceId: 'dropex', supplierCategories: ['Health & Beauty', 'Hair Care'], supplierSubcategoryId: 'hair-1',
+    categories: retargetedCategories, mappings: [staleChild],
+  });
+  assert.equal(orphan.targetCategoryId, '');
+  assert.equal(orphan.targetSubcategoryId, '');
+});
+
+test('P1 16E remapped child restores only itself and name fallback remains explicit', () => {
+  const retargetedCategories = [
+    { id: 'cat-a', name: 'Category A', isActive: true, subcategories: [{ id: 'a1', name: 'A1', isActive: true }] },
+    { id: 'cat-b', name: 'Category B', isActive: true, subcategories: [{ id: 'b1', name: 'B1', isActive: true }, { id: 'b2', name: 'B2', isActive: true }] },
+  ];
+  const mappings = [
+    { sourceId: 'dropex', supplierCategory: 'Health & Beauty', normalizedCategory: 'health beauty', mappingScope: 'parent' as const, targetCategoryId: 'cat-b', targetSubcategoryId: '', confidence: 100, mappingType: 'manual' as const, version: 2, updatedBy: 'admin' },
+    { sourceId: 'dropex', supplierCategory: 'Health & Beauty', normalizedCategory: 'health beauty', supplierSubcategory: 'Shared', normalizedSupplierSubcategory: 'shared', supplierSubcategoryId: 'child-a', mappingScope: 'child' as const, targetCategoryId: 'cat-b', targetSubcategoryId: 'b1', confidence: 100, mappingType: 'manual' as const, version: 2, updatedBy: 'admin' },
+    { sourceId: 'dropex', supplierCategory: 'Health & Beauty', normalizedCategory: 'health beauty', supplierSubcategory: 'Shared', normalizedSupplierSubcategory: 'shared', supplierSubcategoryId: 'child-b', mappingScope: 'child' as const, targetCategoryId: 'cat-a', targetSubcategoryId: 'a1', confidence: 100, mappingType: 'manual' as const, version: 1, updatedBy: 'admin' },
+  ];
+  const remapped = suggestSupplierCategory({ sourceId: 'dropex', supplierCategories: ['Health & Beauty', 'Shared'], supplierSubcategoryId: 'child-a', categories: retargetedCategories, mappings });
+  const fencedSibling = suggestSupplierCategory({ sourceId: 'dropex', supplierCategories: ['Health & Beauty', 'Shared'], supplierSubcategoryId: 'child-b', categories: retargetedCategories, mappings });
+  assert.equal(remapped.targetCategoryId, 'cat-b');
+  assert.equal(remapped.targetSubcategoryId, 'b1');
+  assert.equal(fencedSibling.targetCategoryId, 'cat-b');
+  assert.equal(fencedSibling.targetSubcategoryId, '');
+  assert.equal(mappings[2].targetCategoryId, 'cat-a');
+  assert.equal(supplierChildMappingDocumentId('dropex', 'health beauty', 'Shared', 'child-a'), supplierChildMappingDocumentId('dropex', 'health beauty', 'Different', 'child-a'));
+  assert.notEqual(supplierChildMappingDocumentId('dropex', 'health beauty', 'Shared', 'child-a'), supplierChildMappingDocumentId('dropex', 'health beauty', 'Shared', 'child-b'));
 });
 
 test('P1 17 repeated supplier category matching is deterministic and needs no repeated mapping', () => {

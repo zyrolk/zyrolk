@@ -6,6 +6,10 @@ export interface SupplierCategoryMappingRecord {
   sourceId: string;
   supplierCategory: string;
   normalizedCategory: string;
+  supplierSubcategory?: string;
+  normalizedSupplierSubcategory?: string;
+  supplierSubcategoryId?: string;
+  mappingScope?: "parent" | "child";
   targetCategoryId: string;
   targetSubcategoryId: string;
   confidence: number;
@@ -13,6 +17,11 @@ export interface SupplierCategoryMappingRecord {
   version: number;
   updatedBy: string;
   updatedAt?: unknown;
+}
+
+export interface SupplierCategoryMappingSelection {
+  mapping: SupplierCategoryMappingRecord;
+  scope: "source" | "global";
 }
 
 export interface SupplierBrandMappingRecord {
@@ -68,6 +77,40 @@ export interface SupplierCategorySuggestion {
   autoSelected: boolean;
   requiresManualSelection: boolean;
 }
+
+export function supplierSubcategoryMatchesMapping(
+  mapping: Pick<SupplierCategoryMappingRecord, "supplierSubcategory" | "normalizedSupplierSubcategory" | "supplierSubcategoryId">,
+  supplierSubcategory?: string,
+  supplierSubcategoryId?: string,
+): boolean {
+  const incomingName = normalizeSupplierMappingValue(supplierSubcategory || "");
+  const mappedName = normalizeSupplierMappingValue(mapping.normalizedSupplierSubcategory || mapping.supplierSubcategory || "");
+  const incomingId = String(supplierSubcategoryId || "").trim();
+  const mappedId = String(mapping.supplierSubcategoryId || "").trim();
+  if (incomingId) return Boolean(mappedId && incomingId === mappedId);
+  return Boolean(incomingName && mappedName && incomingName === mappedName);
+}
+
+export const supplierSubcategoryBindingKey = (
+  supplierSubcategory?: string,
+  supplierSubcategoryId?: string,
+): string => {
+  const id = String(supplierSubcategoryId || "").trim();
+  if (id) return `id:${id}`;
+  const name = normalizeSupplierMappingValue(supplierSubcategory || "");
+  return name ? `name:${name}` : "";
+};
+
+export const supplierChildMappingDocumentId = (
+  sourceId: string,
+  normalizedCategory: string,
+  supplierSubcategory?: string,
+  supplierSubcategoryId?: string,
+): string => {
+  const binding = supplierSubcategoryBindingKey(supplierSubcategory, supplierSubcategoryId);
+  if (!binding) return "";
+  return supplierMappingDocumentId(sourceId, `child:${normalizeSupplierMappingValue(normalizedCategory)}:${binding}`);
+};
 
 export interface SupplierBrandSuggestion {
   supplierBrand: string;
@@ -133,6 +176,51 @@ const mappingScope = (mappingSourceId: string, sourceId: string): "source" | "gl
   return ["*", "global"].includes(mappingSourceId) ? "global" : null;
 };
 
+export const hasSupplierSubcategoryBinding = (
+  mapping: Pick<SupplierCategoryMappingRecord, "supplierSubcategory" | "normalizedSupplierSubcategory" | "supplierSubcategoryId">,
+): boolean => Boolean(supplierSubcategoryBindingKey(mapping.supplierSubcategory || mapping.normalizedSupplierSubcategory, mapping.supplierSubcategoryId));
+
+export const isExplicitSupplierChildScope = (
+  mapping: Pick<SupplierCategoryMappingRecord, "mappingScope">,
+): boolean => mapping.mappingScope === "child";
+
+export const isExplicitSupplierChildMapping = (
+  mapping: Pick<SupplierCategoryMappingRecord, "mappingScope" | "supplierSubcategory" | "normalizedSupplierSubcategory" | "supplierSubcategoryId" | "targetSubcategoryId">,
+): boolean => isExplicitSupplierChildScope(mapping)
+  && hasSupplierSubcategoryBinding(mapping)
+  && Boolean(String(mapping.targetSubcategoryId || "").trim());
+
+export function selectSupplierCategoryMapping(input: {
+  sourceId: string;
+  normalizedCategory: string;
+  supplierSubcategory?: string;
+  supplierSubcategoryId?: string;
+  mappings?: readonly SupplierCategoryMappingRecord[];
+}): SupplierCategoryMappingSelection | undefined {
+  const candidates = (input.mappings || [])
+    .map((mapping) => ({ mapping, scope: mappingScope(mapping.sourceId, input.sourceId) }))
+    .filter((entry): entry is SupplierCategoryMappingSelection => Boolean(entry.scope))
+    .filter(({ mapping }) => normalizeSupplierMappingValue(mapping.normalizedCategory || mapping.supplierCategory) === input.normalizedCategory)
+    .sort((left, right) => Number(right.scope === "source") - Number(left.scope === "source") || right.mapping.version - left.mapping.version);
+  if (candidates.length === 0) return undefined;
+
+  const parentCandidates = candidates.filter(({ mapping }) => !isExplicitSupplierChildScope(mapping)
+    && Boolean(String(mapping.targetCategoryId || "").trim()));
+  const effectiveParent = parentCandidates.find(({ scope }) => scope === "source")
+    || parentCandidates.find(({ scope }) => scope === "global");
+  if (!effectiveParent) return undefined;
+
+  const matchesExactChild = ({ mapping }: SupplierCategoryMappingSelection): boolean => isExplicitSupplierChildMapping(mapping)
+    && String(mapping.targetCategoryId || "").trim() === String(effectiveParent.mapping.targetCategoryId || "").trim()
+    && supplierSubcategoryMatchesMapping(mapping, input.supplierSubcategory, input.supplierSubcategoryId);
+  const exactSourceChild = candidates.find((candidate) => candidate.scope === "source" && matchesExactChild(candidate));
+  if (exactSourceChild) return exactSourceChild;
+  const exactGlobalChild = candidates.find((candidate) => candidate.scope === "global" && matchesExactChild(candidate));
+  if (exactGlobalChild) return exactGlobalChild;
+
+  return effectiveParent;
+}
+
 const validMappedSubcategory = (
   category: StoreCategoryMappingCandidate,
   subcategoryId: string,
@@ -153,6 +241,7 @@ const overlapScore = (evidence: string, candidate: string): number => {
 export function suggestSupplierCategory(input: {
   sourceId: string;
   supplierCategories: readonly string[];
+  supplierSubcategoryId?: string;
   productTitle?: string;
   keywords?: readonly string[];
   productType?: string;
@@ -177,26 +266,47 @@ export function suggestSupplierCategory(input: {
     ...(input.keywords || []),
     input.productType || "",
   ].join(" "));
-  const manualMappings = (input.mappings || [])
-    .map((mapping) => ({ mapping, scope: mappingScope(mapping.sourceId, input.sourceId) }))
-    .filter((entry): entry is { mapping: SupplierCategoryMappingRecord; scope: "source" | "global" } => Boolean(entry.scope))
-    .filter(({ mapping }) => normalizeSupplierMappingValue(mapping.normalizedCategory || mapping.supplierCategory) === normalizedCategory)
-    .sort((left, right) => Number(right.scope === "source") - Number(left.scope === "source") || right.mapping.version - left.mapping.version);
-
-  for (const { mapping, scope } of manualMappings) {
+  const selectedMapping = selectSupplierCategoryMapping({
+    sourceId: input.sourceId,
+    normalizedCategory,
+    supplierSubcategory,
+    supplierSubcategoryId: input.supplierSubcategoryId,
+    mappings: input.mappings,
+  });
+  if (selectedMapping) {
+    const { mapping, scope } = selectedMapping;
     const category = categoryById.get(mapping.targetCategoryId);
-    if (!category) continue;
+    if (!category) return {
+      supplierCategory,
+      supplierSubcategory,
+      normalizedCategory,
+      targetCategoryId: "",
+      targetSubcategoryId: "",
+      confidence: 0,
+      mappingType: "unmapped",
+      mappingSource: "none",
+      autoSelected: false,
+      requiresManualSelection: true,
+    };
+    const mappedSubcategoryId = isExplicitSupplierChildMapping(mapping)
+      && supplierSubcategoryMatchesMapping(mapping, supplierSubcategory, input.supplierSubcategoryId)
+      ? validMappedSubcategory(category, mapping.targetSubcategoryId)
+      : "";
+    const targetSubcategoryId = mappedSubcategoryId;
     return {
       supplierCategory,
       supplierSubcategory,
       normalizedCategory,
       targetCategoryId: category.id,
-      targetSubcategoryId: validMappedSubcategory(category, mapping.targetSubcategoryId) || exactSubcategoryId(category),
+      targetSubcategoryId,
       confidence: 100,
       mappingType: mapping.mappingType === "learned" ? "learned" : "manual",
       mappingSource: scope,
       autoSelected: true,
-      requiresManualSelection: false,
+      requiresManualSelection: Boolean(
+        category.subcategories?.some((subcategory) => subcategory.isActive !== false)
+        && !targetSubcategoryId,
+      ),
     };
   }
 

@@ -56,21 +56,27 @@ test('Sprint 4 exact and normalized category matches auto-select with production
 test('Sprint 4 source-specific manual mapping outranks global fallback and preserves subcategory', () => {
   const mappings = [
     {
+      sourceId: 'global', supplierCategory: 'Handsets', normalizedCategory: 'handsets', mappingScope: 'parent' as const, targetCategoryId: 'shoes', targetSubcategoryId: '', confidence: 100, mappingType: 'manual' as const, version: 8, updatedBy: 'admin-global',
+    },
+    {
       sourceId: 'global', supplierCategory: 'Handsets', normalizedCategory: 'handsets', targetCategoryId: 'shoes',
-      targetSubcategoryId: 'sports-shoes', confidence: 100, mappingType: 'manual' as const, version: 8, updatedBy: 'admin-global',
+      supplierSubcategory: 'Phones', normalizedSupplierSubcategory: 'phones', mappingScope: 'child' as const, targetSubcategoryId: 'sports-shoes', confidence: 100, mappingType: 'manual' as const, version: 8, updatedBy: 'admin-global',
     },
     {
       sourceId: 'a2z', supplierCategory: 'Handsets', normalizedCategory: 'handsets', targetCategoryId: 'phones',
-      targetSubcategoryId: 'smartphones', confidence: 100, mappingType: 'learned' as const, version: 2, updatedBy: 'admin-source',
+      supplierSubcategory: 'Phones', normalizedSupplierSubcategory: 'phones', mappingScope: 'child' as const, targetSubcategoryId: 'smartphones', confidence: 100, mappingType: 'learned' as const, version: 2, updatedBy: 'admin-source',
+    },
+    {
+      sourceId: 'a2z', supplierCategory: 'Handsets', normalizedCategory: 'handsets', mappingScope: 'parent' as const, targetCategoryId: 'phones', targetSubcategoryId: '', confidence: 100, mappingType: 'learned' as const, version: 2, updatedBy: 'admin-source',
     },
   ];
-  const source = suggestSupplierCategory({ sourceId: 'a2z', supplierCategories: ['Handsets'], categories, mappings });
+  const source = suggestSupplierCategory({ sourceId: 'a2z', supplierCategories: ['Handsets', 'Phones'], categories, mappings });
   assert.equal(source.targetCategoryId, 'phones');
   assert.equal(source.targetSubcategoryId, 'smartphones');
   assert.equal(source.mappingSource, 'source');
   assert.equal(source.mappingType, 'learned');
 
-  const fallback = suggestSupplierCategory({ sourceId: 'another-source', supplierCategories: ['Handsets'], categories, mappings });
+  const fallback = suggestSupplierCategory({ sourceId: 'another-source', supplierCategories: ['Handsets', 'Phones'], categories, mappings });
   assert.equal(fallback.targetCategoryId, 'shoes');
   assert.equal(fallback.mappingSource, 'global');
 });

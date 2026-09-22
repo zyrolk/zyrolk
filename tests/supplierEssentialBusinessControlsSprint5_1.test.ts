@@ -74,7 +74,7 @@ test('Category Mapping is reachable from Supplier Hub Settings and uses the exis
   assert.match(hub, /category\.isActive !== false/u);
   assert.match(hub, /subcategory\.isActive !== false/u);
   assert.match(hub, /targetCategoryId: draft\.targetCategoryId/u);
-  assert.match(hub, /targetSubcategoryId: draft\.targetSubcategoryId \|\| undefined/u);
+  assert.match(hub, /targetSubcategoryId: option\.supplierSubcategory \|\| option\.supplierSubcategoryId\s*\n?\s*\? draft\.targetSubcategoryId \|\| undefined/u);
 });
 
 test('Advanced Settings expose existing operations only to owner and super-admin claims', () => {

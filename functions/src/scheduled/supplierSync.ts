@@ -1991,6 +1991,7 @@ export async function refreshActiveSupplierReviewItem(
   const categoryMappingSuggestion = suggestSupplierCategory({
     sourceId,
     supplierCategories: supplierCategoryValues,
+    supplierSubcategoryId: String(categoryMetadata.supplierSubcategoryId || ""),
     productTitle: product.title,
     keywords: supplierKeywords,
     productType,
@@ -3838,16 +3839,17 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
             : [product.supplierCategory, product.supplierSubcategory].filter((value): value is string => Boolean(String(value || "").trim()));
           const supplierCategory = String(product.supplierCategory || supplierCategoryValues[0] || "").trim();
           const supplierSubcategory = String(product.supplierSubcategory || supplierCategoryValues[1] || "").trim();
+          const categoryMetadata = asRecord(product.extraAttributes);
           const categoryMappingSuggestion = suggestSupplierCategory({
             sourceId: source.id,
             supplierCategories: supplierCategoryValues,
+            supplierSubcategoryId: String(categoryMetadata.supplierSubcategoryId || ""),
             productTitle: product.title,
             keywords: supplierKeywords,
             productType,
             categories: storeCategories,
             mappings: categoryMappingRecords,
           });
-          const categoryMetadata = asRecord(product.extraAttributes);
           const taxonomyPlan = planSupplierTaxonomyCandidates({
             sourceId: source.id,
             supplierCategory,
