@@ -10,7 +10,10 @@ import {
   transitionSupplierOperationalAlert,
 } from '../functions/src/api/suppliers/supplierOperationalAlerts';
 import { evaluateSupplierOperationalAlerts } from '../functions/src/scheduled/supplierOperationalAlerts';
-import type { SupplierMediaPipelineDependencies } from '../functions/src/api/suppliers/supplierMediaPipeline';
+import type {
+  SupplierManagedMediaAsset,
+  SupplierMediaPipelineDependencies,
+} from '../functions/src/api/suppliers/supplierMediaPipeline';
 import {
   classifySupplierMediaReadiness,
   SUPPLIER_MEDIA_FAILURE_CODE,
@@ -430,6 +433,135 @@ test('managed Firebase URLs are not re-ingested when only managed provenance rem
   });
 
   assert.deepEqual(fetchedUrls, [supplierUrl]);
+});
+
+test('approval media selection reuses managed assets and acquires only a new raw supplier URL', async () => {
+  const managedUrl = 'https://firebasestorage.googleapis.com/v0/b/zyro/o/managed.webp?alt=media';
+  const supplierUrl = 'https://dropex.example/new-gallery.png';
+  const existingAsset = {
+    assetId: 'approval-existing',
+    supplierId: 'dropex',
+    sourceId: 'dropex',
+    productId: 'approval-mixed-product',
+    originalSupplierUrl: 'https://dropex.example/existing.png',
+    originalStoragePath: 'supplier-media/approval-existing/original.png',
+    originalStorageUrl: 'https://storage.example/approval-existing/original.png',
+    firebaseStorageUrl: managedUrl,
+    contentHash: 'approval-existing-hash',
+    width: 2,
+    height: 2,
+    mimeType: 'image/png',
+    fileSize: pngBody.length,
+    uploadTimestamp: new Date().toISOString(),
+    imageStatus: 'ready',
+    isPrimary: true,
+    sortOrder: 0,
+    variants: {
+      thumbnail: { storagePath: 'approval-existing/thumbnail' },
+      medium: { storagePath: 'approval-existing/medium' },
+      large: { storagePath: 'approval-existing/large' },
+    },
+  } as unknown as SupplierManagedMediaAsset;
+  const fetchedUrls: string[] = [];
+  const { db, documents } = createFakeFirestore({
+    'supplier_review_queue/dropex-approval-mixed': {
+      queueState: 'review_pending',
+      sourceId: 'dropex',
+      supplierSnapshot: { supplierId: 'dropex', imageUrls: [existingAsset.originalSupplierUrl, supplierUrl] },
+      productPayload: { id: 'approval-mixed-product', imageUrls: [managedUrl] },
+      managedMedia: [existingAsset],
+      mediaStatus: 'partial',
+      mediaFailures: [],
+    },
+  });
+
+  await ensureSupplierReviewQueueManagedMedia(db as never, 'dropex-approval-mixed', {
+    approvalImageUrls: [managedUrl, supplierUrl],
+    dependencies: mediaDependencies(pngBody, undefined, fetchedUrls),
+  });
+
+  const queue = documents.get('supplier_review_queue/dropex-approval-mixed')!;
+  assert.deepEqual(fetchedUrls, [supplierUrl]);
+  assert.equal((queue.managedMedia as unknown[]).length, 2);
+  assert.equal((queue.managedMedia as Array<Record<string, unknown>>)[0].firebaseStorageUrl, managedUrl);
+  assert.equal((queue.managedMedia as Array<Record<string, unknown>>)[1].originalSupplierUrl, supplierUrl);
+  assert.deepEqual(queue.mediaSourceImageUrls, [existingAsset.originalSupplierUrl, supplierUrl]);
+  assert.deepEqual(queue.mediaFailures, []);
+  assert.equal(queue.mediaStatus, 'ready');
+});
+
+test('approval media composition preserves requested order across managed and raw assets', async () => {
+  const rawUrl = 'https://dropex.example/mixed-order-raw.png';
+  const makeAsset = (label: string, contentHash: string, sortOrder: number): SupplierManagedMediaAsset => ({
+    assetId: `mixed-${label}`,
+    supplierId: 'dropex',
+    sourceId: 'dropex',
+    productId: 'mixed-order-product',
+    originalSupplierUrl: `https://dropex.example/mixed-${label}.png`,
+    originalStoragePath: `supplier-media/mixed-${label}/original.png`,
+    originalStorageUrl: `https://storage.example/mixed-${label}-original.png`,
+    firebaseStorageUrl: `https://storage.example/mixed-${label}.webp`,
+    contentHash,
+    width: 2,
+    height: 2,
+    mimeType: 'image/png',
+    fileSize: pngBody.length,
+    uploadTimestamp: new Date().toISOString(),
+    imageStatus: 'ready',
+    isPrimary: sortOrder === 0,
+    sortOrder,
+    variants: {
+      thumbnail: { storagePath: `mixed-${label}/thumbnail` },
+      medium: { storagePath: `mixed-${label}/medium` },
+      large: { storagePath: `mixed-${label}/large` },
+    },
+  } as unknown as SupplierManagedMediaAsset);
+  const run = async (queueItemId: string, existingAssets: SupplierManagedMediaAsset[], requestedUrls: string[]) => {
+    const fetchedUrls: string[] = [];
+    const { db, documents } = createFakeFirestore({
+      [`supplier_review_queue/${queueItemId}`]: {
+        queueState: 'review_pending',
+        sourceId: 'dropex',
+        supplierSnapshot: { supplierId: 'dropex', imageUrls: requestedUrls },
+        productPayload: { id: `${queueItemId}-product`, imageUrls: existingAssets.map((asset) => asset.firebaseStorageUrl) },
+        managedMedia: existingAssets,
+        mediaStatus: 'ready',
+        mediaFailures: [],
+      },
+    });
+    await ensureSupplierReviewQueueManagedMedia(db as never, queueItemId, {
+      approvalImageUrls: requestedUrls,
+      dependencies: mediaDependencies(pngBody, undefined, fetchedUrls),
+    });
+    return {
+      queue: documents.get(`supplier_review_queue/${queueItemId}`)!,
+      fetchedUrls,
+    };
+  };
+  const assetA = makeAsset('a', 'f'.repeat(64), 0);
+  const assetB = makeAsset('b', 'd'.repeat(64), 1);
+  const assetC = makeAsset('c', 'e'.repeat(64), 2);
+  const originalA = assetA.originalSupplierUrl;
+  const originalC = assetC.originalSupplierUrl;
+
+  const adversarial = await run('dropex-mixed-order-adversarial', [assetA], [assetA.firebaseStorageUrl, rawUrl]);
+  assert.deepEqual((adversarial.queue.managedMedia as SupplierManagedMediaAsset[]).map((asset) => asset.originalSupplierUrl), [originalA, rawUrl]);
+  assert.equal((adversarial.queue.managedMedia as SupplierManagedMediaAsset[])[0].isPrimary, true);
+  assert.deepEqual(adversarial.fetchedUrls, [rawUrl]);
+
+  const threeItem = await run('dropex-mixed-order-three', [assetA, assetC], [assetA.firebaseStorageUrl, rawUrl, assetC.firebaseStorageUrl]);
+  assert.deepEqual((threeItem.queue.managedMedia as SupplierManagedMediaAsset[]).map((asset) => asset.originalSupplierUrl), [originalA, rawUrl, originalC]);
+  assert.equal((threeItem.queue.managedMedia as SupplierManagedMediaAsset[])[0].isPrimary, true);
+
+  const rawFirst = await run('dropex-mixed-order-raw-first', [assetA], [rawUrl, assetA.firebaseStorageUrl]);
+  assert.deepEqual((rawFirst.queue.managedMedia as SupplierManagedMediaAsset[]).map((asset) => asset.originalSupplierUrl), [rawUrl, originalA]);
+  assert.equal((rawFirst.queue.managedMedia as SupplierManagedMediaAsset[])[0].originalSupplierUrl, rawUrl);
+
+  const mixedSubset = await run('dropex-mixed-order-subset', [assetA, assetB, assetC], [assetC.firebaseStorageUrl, rawUrl, assetA.firebaseStorageUrl]);
+  assert.deepEqual((mixedSubset.queue.managedMedia as SupplierManagedMediaAsset[]).map((asset) => asset.originalSupplierUrl), [originalC, rawUrl, originalA]);
+  assert.equal((mixedSubset.queue.managedMedia as SupplierManagedMediaAsset[]).some((asset) => asset.originalSupplierUrl === assetB.originalSupplierUrl), false);
+  assert.deepEqual(mixedSubset.fetchedUrls, [rawUrl]);
+  assert.equal((mixedSubset.queue.managedMedia as SupplierManagedMediaAsset[])[0].isPrimary, true);
 });
 
 test('managed media URLs are filtered from every candidate source before fallback', async () => {

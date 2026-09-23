@@ -11,7 +11,11 @@ import {
   getSupplierQueueIdentityCandidate,
   resolveSupplierQueueIdentity,
 } from '../functions/src/api/suppliers/supplierQueueIdentity';
-import { retryDeadLetterSupplierReviewQueueItem } from '../functions/src/scheduled/supplierReviewQueue';
+import {
+  resolveSupplierReviewApprovalMediaSelection,
+  retryDeadLetterSupplierReviewQueueItem,
+} from '../functions/src/scheduled/supplierReviewQueue';
+import type { SupplierMediaPipelineDependencies } from '../functions/src/api/suppliers/supplierMediaPipeline';
 
 type StoredDocument = Record<string, unknown>;
 type Filter = { field: string; operator: string; value: unknown };
@@ -21,6 +25,7 @@ type DocumentReference = {
   id: string;
   key: string;
   get: () => Promise<DocumentSnapshot>;
+  set: (data: StoredDocument, options?: { merge?: boolean }) => Promise<void>;
 };
 type QueryReference = {
   kind: 'query';
@@ -45,6 +50,10 @@ const createFakeFirestore = (initial: Record<string, StoredDocument>) => {
       id,
       key: `${collectionName}/${id}`,
       get: async () => documentSnapshot(reference),
+      set: async (data: StoredDocument, options?: { merge?: boolean }) => {
+        writes.push({ operation: 'set', key: reference.key, data });
+        mergeWrite(reference, data, options?.merge === true);
+      },
     };
     return reference;
   };
@@ -411,6 +420,167 @@ test('review approval resolves the canonical product through the deterministic S
   assert.equal(documents.get(`supplier_product_offers/${sourceA.id}`)?.reviewStatus, 'approved');
   assert.equal(documents.get('supplier_review_queue/review-1')?.canonicalProductId, 'canonical-product');
   assert.equal(documents.get('supplier_review_queue/review-1')?.supplierOfferId, sourceB.id);
+});
+
+test('approval reuses the current queue managed-media selection in the requested order', async () => {
+  const fixture = decisionFixture();
+  const selectedAssets = [0, 1, 2, 3].map((index) => ({
+    ...managedMedia[0],
+    assetId: `${index + 1}`.repeat(64),
+    contentHash: `${index + 1}`.repeat(64),
+    productId: 'stale-product',
+    originalSupplierUrl: `https://supplier.example/product-${index}.jpg`,
+    firebaseStorageUrl: `https://storage.example/large-${index}.webp`,
+    isPrimary: index === 0,
+    sortOrder: index,
+  }));
+  const queued = fixture.documents.get('supplier_review_queue/review-1') || {};
+  fixture.documents.set('supplier_review_queue/review-1', {
+    ...queued,
+    managedMedia: selectedAssets,
+    mediaSourceImageUrls: selectedAssets.map((asset) => asset.originalSupplierUrl),
+    mediaStatus: 'ready',
+    mediaFailures: [],
+    productPayload: {
+      ...((queued.productPayload || {}) as StoredDocument),
+      imageUrl: selectedAssets[0].firebaseStorageUrl,
+      imageUrls: selectedAssets.map((asset) => asset.firebaseStorageUrl),
+    },
+  });
+
+  const selection = resolveSupplierReviewApprovalMediaSelection(
+    fixture.documents.get('supplier_review_queue/review-1') as never,
+    [selectedAssets[2].firebaseStorageUrl, selectedAssets[0].firebaseStorageUrl, selectedAssets[3].firebaseStorageUrl],
+  );
+  assert.deepEqual(selection.rawSupplierUrls, []);
+  assert.deepEqual(selection.selectedManagedMedia.map((asset) => asset.assetId), [selectedAssets[2].assetId, selectedAssets[0].assetId, selectedAssets[3].assetId]);
+  const result = await decideSupplierQueueItem(fixture.db as never, 'review-1', 'approved', {
+    uid: 'admin-1', email: 'admin@zyro.lk',
+  }, {
+    draft: {
+      productName: 'Canonical product',
+      sellingPrice: 145,
+      costPrice: 125,
+      stock: 20,
+      category: 'category-1',
+      subcategory: 'subcategory-1',
+      brand: 'brand-1',
+      specifications: {},
+      isActive: true,
+      primaryImageUrl: selectedAssets[2].firebaseStorageUrl,
+      galleryImageUrls: [selectedAssets[0].firebaseStorageUrl, selectedAssets[3].firebaseStorageUrl],
+      editedFields: ['imageUrl', 'imageUrls'],
+    },
+    expectedPendingRevision: fixture.pendingRevision,
+  });
+
+  assert.equal(result.success, true, JSON.stringify(result));
+  const approved = fixture.documents.get('products/canonical-product') || {};
+  const expectedAssetIds = [selectedAssets[2].assetId, selectedAssets[0].assetId, selectedAssets[3].assetId];
+  assert.deepEqual(approved.imageUrls, expectedAssetIds.map((assetId) => selectedAssets.find((asset) => asset.assetId === assetId)?.firebaseStorageUrl));
+  assert.deepEqual((fixture.documents.get('product_private/canonical-product')?.supplierMedia as StoredDocument[]).map((asset) => asset.assetId), expectedAssetIds);
+  assert.equal(fixture.documents.get(`supplier_product_offers/${fixture.sourceB.id}`)?.reviewStatus, 'approved');
+});
+
+test('approval rejects an arbitrary foreign managed URL before any publication write', async () => {
+  const fixture = decisionFixture();
+  const beforeProduct = fixture.documents.get('products/canonical-product');
+  await assert.rejects(decideSupplierQueueItem(fixture.db as never, 'review-1', 'approved', {
+    uid: 'admin-1', email: 'admin@zyro.lk',
+  }, {
+    draft: {
+      productName: 'Canonical product',
+      sellingPrice: 145,
+      costPrice: 125,
+      stock: 20,
+      category: 'category-1',
+      subcategory: 'subcategory-1',
+      brand: 'brand-1',
+      specifications: {},
+      isActive: true,
+      primaryImageUrl: 'https://firebasestorage.googleapis.com/v0/b/foreign/o/not-owned.webp?alt=media',
+      galleryImageUrls: [],
+    },
+    expectedPendingRevision: fixture.pendingRevision,
+  }), /does not belong to this supplier review item/i);
+  assert.deepEqual(fixture.documents.get('products/canonical-product'), beforeProduct);
+  assert.equal(fixture.documents.get('supplier_review_queue/review-1')?.queueState, 'review_pending');
+  assert.equal(fixture.documents.get(`supplier_product_offers/${fixture.sourceB.id}`)?.reviewStatus, 'review_pending');
+  assert.equal(fixture.writes.length, 0);
+});
+
+test('approval selection keeps existing managed assets separate from raw supplier URLs', () => {
+  const fixture = decisionFixture();
+  const queue = fixture.documents.get('supplier_review_queue/review-1') as never;
+  const rawUrl = 'https://supplier.example/new-gallery.jpg';
+  const selection = resolveSupplierReviewApprovalMediaSelection(queue, [managedMedia[0].firebaseStorageUrl, rawUrl]);
+  assert.deepEqual(selection.selectedManagedMedia.map((asset) => asset.assetId), [managedMedia[0].assetId]);
+  assert.deepEqual(selection.rawSupplierUrls, [rawUrl]);
+  assert.deepEqual(selection.sourceImageUrls, [managedMedia[0].originalSupplierUrl, rawUrl]);
+});
+
+test('mixed approval acquisition failure preserves managed media and does not publish', async () => {
+  const fixture = decisionFixture();
+  const queueBefore = fixture.documents.get('supplier_review_queue/review-1');
+  const productBefore = fixture.documents.get('products/canonical-product');
+  const rawUrl = 'https://supplier.example/failing-gallery.jpg';
+  const queued = {
+    ...(queueBefore || {}),
+    managedMedia,
+    mediaSourceImageUrls: [managedMedia[0].originalSupplierUrl, rawUrl],
+    mediaStatus: 'partial',
+    mediaFailures: [],
+    supplierSnapshot: {
+      ...((queueBefore?.supplierSnapshot || {}) as StoredDocument),
+      imageUrls: [managedMedia[0].originalSupplierUrl, rawUrl],
+    },
+    productPayload: {
+      ...((queueBefore?.productPayload || {}) as StoredDocument),
+      imageUrl: managedMedia[0].firebaseStorageUrl,
+      imageUrls: [managedMedia[0].firebaseStorageUrl],
+    },
+  };
+  fixture.documents.set('supplier_review_queue/review-1', queued);
+  const mediaDependencies: Partial<SupplierMediaPipelineDependencies> = {
+    fetchImage: async () => ({
+      status: 400,
+      ok: false,
+      headers: new Headers(),
+      text: async () => '',
+      arrayBuffer: async () => new ArrayBuffer(0),
+      json: async <T>() => ({} as T),
+    }),
+    recordAudit: async () => undefined,
+  };
+
+  await assert.rejects(decideSupplierQueueItem(fixture.db as never, 'review-1', 'approved', {
+    uid: 'admin-1', email: 'admin@zyro.lk',
+  }, {
+    draft: {
+      productName: 'Canonical product',
+      sellingPrice: 145,
+      costPrice: 125,
+      stock: 20,
+      category: 'category-1',
+      subcategory: 'subcategory-1',
+      brand: 'brand-1',
+      specifications: {},
+      isActive: true,
+      primaryImageUrl: managedMedia[0].firebaseStorageUrl,
+      galleryImageUrls: [rawUrl],
+      editedFields: ['imageUrl', 'imageUrls'],
+    },
+    expectedPendingRevision: fixture.pendingRevision,
+    mediaDependencies,
+  }), /blocking image failure|media/i);
+
+  const queueAfter = fixture.documents.get('supplier_review_queue/review-1') || {};
+  assert.deepEqual(queueAfter.managedMedia, managedMedia);
+  assert.equal(queueAfter.queueState, 'review_pending');
+  assert.equal(fixture.documents.get(`supplier_product_offers/${fixture.sourceB.id}`)?.reviewStatus, 'review_pending');
+  assert.deepEqual(fixture.documents.get('products/canonical-product'), productBefore);
+  assert.equal(fixture.writes.some((write) => write.key === 'products/canonical-product'), false);
+  assert.equal((queueAfter.mediaFailures as Array<Record<string, unknown>>).some((failure) => failure.originalSupplierUrl === rawUrl), true);
 });
 
 test('approval stores edited commercial values and auto SKU only in the private product record', async () => {

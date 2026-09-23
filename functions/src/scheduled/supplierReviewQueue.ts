@@ -1,11 +1,13 @@
 import { FieldPath, FieldValue, Firestore } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
+import { ApiError } from "../api/errors";
 import { createSupplierAuditEvent, SupplierAuditActor } from "../api/suppliers/supplierAuditTrail";
 import {
   acquireSupplierManagedMedia,
   applyManagedMediaToProductPayload,
   extractSupplierMediaFromRecord,
   MAX_SUPPLIER_GALLERY_IMAGES,
+  orderSupplierManagedMedia,
   SupplierManagedMediaAsset,
   SupplierMediaFailure,
   SupplierMediaPipelineDependencies,
@@ -354,6 +356,105 @@ export interface SupplierQueueManagedMediaResult {
   mediaProcessedAt?: string;
 }
 
+export interface SupplierReviewApprovalMediaSelection {
+  requestedUrls: string[];
+  selectedManagedMedia: SupplierManagedMediaAsset[];
+  rawSupplierUrls: string[];
+  sourceImageUrls: string[];
+}
+
+const supplierReviewApprovalAssetBelongsToQueue = (
+  asset: SupplierManagedMediaAsset,
+  queueItem: SupplierQueueRecord,
+): boolean => {
+  const snapshot = asRecord(queueItem.supplierSnapshot);
+  const expectedSupplierId = asString(queueItem.supplierId) || asString(snapshot.supplierId) || asString(queueItem.sourceId);
+  const expectedSourceId = asString(queueItem.sourceId) || asString(snapshot.sourceId) || expectedSupplierId;
+  return (!asset.supplierId || !expectedSupplierId || asset.supplierId === expectedSupplierId)
+    && (!asset.sourceId || !expectedSourceId || asset.sourceId === expectedSourceId);
+};
+
+const supplierReviewApprovalManagedUrl = (value: string): boolean => {
+  try {
+    const hostname = new URL(value).hostname.toLowerCase();
+    return hostname === "firebasestorage.googleapis.com"
+      || hostname === "storage.googleapis.com"
+      || hostname.endsWith(".firebasestorage.app");
+  } catch {
+    return false;
+  }
+};
+
+const orderedSupplierReviewApprovalAssets = (
+  assets: readonly SupplierManagedMediaAsset[],
+  requestedUrls: readonly string[] = [],
+): SupplierManagedMediaAsset[] => {
+  const requestedIndexFor = (asset: SupplierManagedMediaAsset, fallbackIndex: number): number => {
+    if (requestedUrls.length === 0) return Number.isFinite(asset.sortOrder) ? asset.sortOrder : fallbackIndex;
+    const requestedIndex = requestedUrls.findIndex((url) => (
+      url === asset.firebaseStorageUrl || url === asset.originalSupplierUrl
+    ));
+    return requestedIndex >= 0 ? requestedIndex : requestedUrls.length + fallbackIndex;
+  };
+  const candidates = assets
+    .map((asset, inputIndex) => ({ asset, requestedIndex: requestedIndexFor(asset, inputIndex), inputIndex }))
+    .sort((left, right) => left.requestedIndex - right.requestedIndex || left.inputIndex - right.inputIndex);
+  const seen = new Set<string>();
+  const deduplicated: SupplierManagedMediaAsset[] = [];
+  for (const { asset } of candidates) {
+    const identity = asset.contentHash || asset.assetId;
+    if (!identity || seen.has(identity)) continue;
+    seen.add(identity);
+    deduplicated.push({ ...asset, isPrimary: false, sortOrder: deduplicated.length });
+  }
+  return orderSupplierManagedMedia(deduplicated);
+};
+
+export const resolveSupplierReviewApprovalMediaSelection = (
+  queueItem: SupplierQueueRecord,
+  requestedUrlsInput: readonly string[],
+): SupplierReviewApprovalMediaSelection => {
+  const requestedUrls = [...new Set(requestedUrlsInput.map((url) => String(url || "").trim()).filter(Boolean))];
+  const existingAssets = extractSupplierMediaFromRecord(queueItem.managedMedia);
+  const assetsByUrl = new Map<string, SupplierManagedMediaAsset>();
+  existingAssets.forEach((asset) => {
+    for (const url of [asset.firebaseStorageUrl, asset.originalSupplierUrl]) {
+      if (url) assetsByUrl.set(url, asset);
+    }
+  });
+  const selected: SupplierManagedMediaAsset[] = [];
+  const rawSupplierUrls: string[] = [];
+  const sourceImageUrls: string[] = [];
+  const selectedAssetIds = new Set<string>();
+
+  for (const url of requestedUrls) {
+    const managedAsset = assetsByUrl.get(url);
+    if (managedAsset) {
+      if (!supplierReviewApprovalAssetBelongsToQueue(managedAsset, queueItem)) {
+        throw new ApiError("Selected managed media does not belong to this supplier review item.", 422);
+      }
+      if (!selectedAssetIds.has(managedAsset.assetId)) {
+        selected.push(managedAsset);
+        selectedAssetIds.add(managedAsset.assetId);
+      }
+      sourceImageUrls.push(asString(managedAsset.originalSupplierUrl) || url);
+      continue;
+    }
+    if (supplierReviewApprovalManagedUrl(url)) {
+      throw new ApiError("Selected managed media does not belong to this supplier review item.", 422);
+    }
+    rawSupplierUrls.push(url);
+    sourceImageUrls.push(url);
+  }
+
+  return {
+    requestedUrls,
+    selectedManagedMedia: orderedSupplierReviewApprovalAssets(selected, requestedUrls),
+    rawSupplierUrls,
+    sourceImageUrls,
+  };
+};
+
 /**
  * Acquires supplier media before a queue item can enter review. The same helper
  * is reused by approval when an administrator changes image URLs in the draft.
@@ -363,6 +464,7 @@ export async function ensureSupplierReviewQueueManagedMedia(
   queueItemId: string,
   options: {
     imageUrls?: readonly string[];
+    approvalImageUrls?: readonly string[];
     maxImages?: number;
     reprocessIncomplete?: boolean;
     dependencies?: Partial<SupplierMediaPipelineDependencies>;
@@ -373,9 +475,23 @@ export async function ensureSupplierReviewQueueManagedMedia(
   if (!snapshot.exists) throw new Error("Supplier review queue item no longer exists.");
   const queueItem = snapshot.data() as SupplierQueueRecord;
   const existingAssets = extractSupplierMediaFromRecord(queueItem.managedMedia);
+  const approvalSelection = options.approvalImageUrls === undefined
+    ? undefined
+    : resolveSupplierReviewApprovalMediaSelection(queueItem, options.approvalImageUrls);
   const requestedUrls = options.imageUrls === undefined ? undefined : [...options.imageUrls].map((url) => String(url || "").trim()).filter(Boolean);
   const existingUrls = existingAssets.map((asset) => asset.firebaseStorageUrl);
-  const imageUrls = requestedUrls === undefined ? sourceImageUrls(queueItem) : requestedUrls;
+  const imageUrls = approvalSelection
+    ? approvalSelection.rawSupplierUrls
+    : requestedUrls === undefined ? sourceImageUrls(queueItem) : requestedUrls;
+  const sourceUrlsForReadiness = approvalSelection?.sourceImageUrls || imageUrls;
+  const selectedApprovalAssets = approvalSelection?.selectedManagedMedia || [];
+  if (approvalSelection && approvalSelection.rawSupplierUrls.length === 0) {
+    return {
+      assets: selectedApprovalAssets,
+      failures: Array.isArray(queueItem.mediaFailures) ? queueItem.mediaFailures as SupplierMediaFailure[] : [],
+      reusedExistingQueueMedia: true,
+    };
+  }
   const requestedExistingMedia = requestedUrls !== undefined
     && requestedUrls.length === existingUrls.length
     && requestedUrls.every((url, index) => (
@@ -386,7 +502,7 @@ export async function ensureSupplierReviewQueueManagedMedia(
     ? supplierReviewQueueMediaIsHealthy(queueItem)
       && supplierManagedMediaMatchesSourceUrls(existingAssets, imageUrls)
     : existingAssets.length > 0;
-  if ((options.imageUrls === undefined || requestedExistingMedia) && canReuseExistingMedia) {
+  if (!approvalSelection && (options.imageUrls === undefined || requestedExistingMedia) && canReuseExistingMedia) {
     return {
       assets: existingAssets,
       failures: Array.isArray(queueItem.mediaFailures) ? queueItem.mediaFailures as SupplierMediaFailure[] : [],
@@ -416,7 +532,7 @@ export async function ensureSupplierReviewQueueManagedMedia(
       await reference.set({
         managedMedia: existingAssets,
         mediaFailures: error.failures,
-        mediaSourceImageUrls: imageUrls,
+        mediaSourceImageUrls: sourceUrlsForReadiness,
         mediaStatus: "failed",
         mediaReadiness: "blocked",
         mediaProcessedAt: new Date().toISOString(),
@@ -452,13 +568,18 @@ export async function ensureSupplierReviewQueueManagedMedia(
       : [];
   const initialReadiness = classifySupplierMediaReadiness({
     supplierId,
-    sourceImageUrls: imageUrls,
-    managedMedia: result.assets,
+    sourceImageUrls: sourceUrlsForReadiness,
+    managedMedia: approvalSelection
+      ? orderedSupplierReviewApprovalAssets([...selectedApprovalAssets, ...result.assets], approvalSelection.requestedUrls)
+      : result.assets,
     mediaFailures: freshFailures,
   });
   const preserveExistingManagedMedia = existingAssets.length > 0
     && (!initialReadiness.publicationSafe || result.assets.length === 0);
-  const effectiveManagedMedia = preserveExistingManagedMedia ? existingAssets : result.assets;
+  const acquiredAndSelectedMedia = approvalSelection
+    ? orderedSupplierReviewApprovalAssets([...selectedApprovalAssets, ...result.assets], approvalSelection.requestedUrls)
+    : result.assets;
+  const effectiveManagedMedia = preserveExistingManagedMedia ? existingAssets : acquiredAndSelectedMedia;
   const managedPayload = applyManagedMediaToProductPayload(productPayload, effectiveManagedMedia);
   // Keep the source URLs in mediaSourceImageUrls/supplierSnapshot for audit;
   // the review payload itself exposes only successful managed URLs.
@@ -475,7 +596,7 @@ export async function ensureSupplierReviewQueueManagedMedia(
   const existingErrors = Array.isArray(validation.errors) ? validation.errors : [];
   const mediaReadiness = classifySupplierMediaReadiness({
     supplierId,
-    sourceImageUrls: imageUrls,
+    sourceImageUrls: sourceUrlsForReadiness,
     managedMedia: effectiveManagedMedia,
     mediaFailures: freshFailures,
   });
@@ -499,7 +620,7 @@ export async function ensureSupplierReviewQueueManagedMedia(
     productPayload: nextPayload,
     managedMedia: effectiveManagedMedia,
     mediaFailures: freshFailures,
-    mediaSourceImageUrls: imageUrls,
+    mediaSourceImageUrls: sourceUrlsForReadiness,
     mediaReadiness: mediaReadiness.status,
     mediaStatus: mediaReadiness.publicationSafe ? "ready" : effectiveManagedMedia.length === 0 ? "failed" : "partial",
     mediaProcessedAt,

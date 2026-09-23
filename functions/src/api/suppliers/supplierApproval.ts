@@ -32,6 +32,7 @@ import {
   SupplierApprovalConflict,
 } from "./supplierApprovalConcurrency";
 import { ensureSupplierReviewQueueManagedMedia } from "../../scheduled/supplierReviewQueue";
+import type { SupplierManagedMediaAsset, SupplierMediaPipelineDependencies } from "./supplierMediaPipeline";
 import {
   applySupplierProductFieldOwnership,
   parseSupplierProductEditedFields,
@@ -385,16 +386,24 @@ export const resolveSupplierApprovalMappedSubcategoryId = (
   ? stringValue(mapping.targetSubcategoryId)
   : "";
 
-export const toPublicProductPayload = (queueItem: QueueItemRecord, draft: SupplierApprovalDraft | undefined): Record<string, unknown> => {
+export const toPublicProductPayload = (
+  queueItem: QueueItemRecord,
+  draft: SupplierApprovalDraft | undefined,
+  managedMediaOverride?: readonly SupplierManagedMediaAsset[],
+): Record<string, unknown> => {
   const originalPayload = record(queueItem.productPayload);
   const productId = cleanText(originalPayload.id, "Product payload ID", 160);
   const fallbackPrimaryImage = stringValue(originalPayload.imageUrl);
   const fallbackGallery = Array.isArray(originalPayload.imageUrls)
     ? originalPayload.imageUrls.filter((imageUrl): imageUrl is string => typeof imageUrl === "string")
     : [];
-  const managedMedia = extractSupplierMediaFromRecord(queueItem.managedMedia || record(queueItem.supplierSnapshot).managedMedia);
+  const managedMedia = managedMediaOverride
+    ? [...managedMediaOverride]
+    : extractSupplierMediaFromRecord(queueItem.managedMedia || record(queueItem.supplierSnapshot).managedMedia);
   const supplierSnapshot = record(queueItem.supplierSnapshot);
-  const sourceImageUrls = Array.isArray(queueItem.mediaSourceImageUrls)
+  const sourceImageUrls = managedMediaOverride
+    ? managedMedia.map((asset) => asset.originalSupplierUrl)
+    : Array.isArray(queueItem.mediaSourceImageUrls)
     ? queueItem.mediaSourceImageUrls.filter((value): value is string => typeof value === "string")
     : Array.isArray(supplierSnapshot.mediaGallery)
     ? supplierSnapshot.mediaGallery.filter((value): value is string => typeof value === "string")
@@ -402,7 +411,7 @@ export const toPublicProductPayload = (queueItem: QueueItemRecord, draft: Suppli
       ? supplierSnapshot.imageUrls.filter((value): value is string => typeof value === "string")
       : (Array.isArray(originalPayload.imageUrls)
         ? originalPayload.imageUrls.filter((value): value is string => typeof value === "string")
-        : []);
+      : []);
   const mediaReadiness = classifySupplierMediaReadiness({
     supplierId: queueItem.supplierId || supplierSnapshot.supplierId || queueItem.sourceId,
     sourceImageUrls,
@@ -523,6 +532,7 @@ export async function decideSupplierQueueItem(
     deletionReason?: unknown;
     resolveConflict?: boolean;
     expectedPendingRevision?: unknown;
+    mediaDependencies?: Partial<SupplierMediaPipelineDependencies>;
   } = {},
   identityDependencies: SupplierApprovalIdentityDependencies = {},
 ): Promise<SupplierQueueDecisionResult> {
@@ -536,18 +546,22 @@ export async function decideSupplierQueueItem(
     : "";
   const requestedPendingRevision = cleanPendingRevision(options.expectedPendingRevision);
   let effectiveDraft = options.draft;
+  let approvedManagedMedia: SupplierManagedMediaAsset[] | undefined;
   if (action === "approved") {
     const preApprovalSnapshot = await db.collection("supplier_review_queue").doc(reviewQueueItemId).get();
     const preApprovalQueueState = String(preApprovalSnapshot.data()?.queueState || "").toLowerCase();
-    const queueReadyForApproval = preApprovalQueueState === "review_pending" || preApprovalQueueState === "conflict";
+    const queueReadyForApproval = preApprovalQueueState === "review_pending"
+      || (preApprovalQueueState === "conflict" && options.resolveConflict === true);
     if (queueReadyForApproval) {
     const requestedImages = options.draft
       ? normalizeImages(options.draft.primaryImageUrl, options.draft.galleryImageUrls)
       : undefined;
     const media = await ensureSupplierReviewQueueManagedMedia(db, reviewQueueItemId, {
-      ...(requestedImages ? { imageUrls: requestedImages } : {}),
+      ...(requestedImages ? { approvalImageUrls: requestedImages } : {}),
       maxImages: MAX_GALLERY_IMAGES,
+      dependencies: options.mediaDependencies,
     });
+    approvedManagedMedia = media.assets;
     if (media.assets.length === 0) throw new ApiError("A valid managed product image is required before publishing.", 422);
     if (options.draft) {
       const managedUrls = media.assets.map((asset) => asset.firebaseStorageUrl);
@@ -666,7 +680,7 @@ export async function decideSupplierQueueItem(
     }
     const isSupplierOfferRemoval = action === "approved"
       && stringValue(queueItem.reconciliationAction) === "supplier_offer_unavailable";
-    let approvedPayload = action === "approved" ? toPublicProductPayload(queueItem, effectiveDraft) : undefined;
+    let approvedPayload = action === "approved" ? toPublicProductPayload(queueItem, effectiveDraft, approvedManagedMedia) : undefined;
     const categoryReference = approvedPayload && String(approvedPayload.category || "").trim()
       ? db.collection("categories").doc(String(approvedPayload.category))
       : null;
