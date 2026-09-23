@@ -531,7 +531,7 @@ test("Supplier category mapping API, lazy review projection, and approval author
 
     await t.test("legacy stale supplier-derived subcategory fails closed at approval", async () => {
       const staleQueueId = `mapping-stale-approval-${suffix}`;
-      await seedOfferAndQueue(staleQueueId, supplierCategory, "");
+      const seeded = await seedOfferAndQueue(staleQueueId, supplierCategory, "");
       await adminDb.collection("supplier_review_queue").doc(staleQueueId).set({
         productPayload: { category: otherCategoryId, subcategory: otherSubcategoryId },
       }, { merge: true });
@@ -557,7 +557,7 @@ test("Supplier category mapping API, lazy review projection, and approval author
         () => decideSupplierQueueItem(adminDb, staleQueueId, "approved", {
           uid: `mapping-admin-${suffix}`,
           email: `mapping-admin-${suffix}@example.test`,
-        }, { draft: staleDraft }),
+        }, { draft: staleDraft, expectedPendingRevision: seeded.revision }),
         /subcategory|validation/i,
       );
       assert.equal((await adminDb.collection("supplier_review_queue").doc(staleQueueId).get()).data()?.queueState, "review_pending");
