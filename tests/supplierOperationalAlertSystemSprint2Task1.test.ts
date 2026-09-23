@@ -20,6 +20,7 @@ import {
   ensureSupplierReviewQueueManagedMedia,
   processSupplierReviewQueueItem,
   resolveSupplierReviewQueueUpsertLifecycle,
+  supplierReviewQueueSourceImageUrls,
 } from '../functions/src/scheduled/supplierReviewQueue';
 
 type StoredDocument = Record<string, unknown>;
@@ -334,6 +335,278 @@ test('same-source partial media is reprocessed while healthy same-source media i
   );
   assert.equal(failedHealthyResult.reusedExistingQueueMedia, false);
   assert.deepEqual(failedHealthyFetched, [imageUrl]);
+});
+
+test('fresh supplier snapshot media overrides stale derived queue media and preserves source order', async () => {
+  const freshUrls = Array.from({ length: 7 }, (_, index) => `https://dropex.example/shx2124-${index + 1}.png`);
+  const staleFirebaseUrl = 'https://firebasestorage.googleapis.com/v0/b/zyro/o/stale.webp?alt=media';
+  const fetchedUrls: string[] = [];
+  const managedAsset = {
+    assetId: 'stale-managed',
+    contentHash: 'stale-hash',
+    firebaseStorageUrl: staleFirebaseUrl,
+    originalSupplierUrl: 'https://dropex.example/old-shx2124.png',
+    originalStorageUrl: 'https://storage.example/stale/original.webp',
+    imageStatus: 'ready',
+    isPrimary: true,
+    sortOrder: 0,
+    variants: { large: { storagePath: 'supplier-media/stale/large.webp' } },
+  };
+  const { db, documents } = createFakeFirestore({
+    'supplier_review_queue/dropex-shx2124-source-precedence': {
+      queueState: 'review_pending',
+      sourceId: 'dropex',
+      supplierSnapshot: { supplierId: 'dropex', mediaGallery: freshUrls },
+      productPayload: { id: 'shx2124-source-precedence', imageUrls: [staleFirebaseUrl] },
+      mediaSourceImageUrls: [staleFirebaseUrl],
+      managedMedia: [managedAsset],
+      mediaStatus: 'partial',
+      mediaFailures: [{ reason: 'stale derived media', retryable: true }],
+    },
+  });
+
+  assert.deepEqual(supplierReviewQueueSourceImageUrls({
+    supplierSnapshot: { supplierId: 'dropex', mediaGallery: freshUrls },
+    mediaSourceImageUrls: [staleFirebaseUrl],
+    managedMedia: [managedAsset],
+  }), freshUrls);
+
+  await ensureSupplierReviewQueueManagedMedia(db as never, 'dropex-shx2124-source-precedence', {
+    reprocessIncomplete: true,
+    dependencies: mediaDependencies(pngBody, undefined, fetchedUrls),
+  });
+
+  assert.deepEqual(fetchedUrls, freshUrls);
+  const queue = documents.get('supplier_review_queue/dropex-shx2124-source-precedence')!;
+  assert.deepEqual(queue.mediaSourceImageUrls, freshUrls);
+  assert.equal(queue.mediaStatus, 'ready');
+  assert.equal((queue.mediaFailures as unknown[]).length, 0);
+  assert.equal((queue.managedMedia as unknown[]).length, freshUrls.length);
+  assert.equal((queue.managedMedia as Array<Record<string, unknown>>)[0].originalSupplierUrl, freshUrls[0]);
+});
+
+test('managed Firebase URLs are not re-ingested when only managed provenance remains', async () => {
+  const supplierUrl = 'https://dropex.example/provenance-source.png';
+  const managedUrl = 'https://firebasestorage.googleapis.com/v0/b/zyro/o/managed.webp?alt=media';
+  const fetchedUrls: string[] = [];
+  const managedAsset = {
+    assetId: 'provenance-managed',
+    contentHash: 'provenance-hash',
+    firebaseStorageUrl: managedUrl,
+    originalSupplierUrl: supplierUrl,
+    originalStorageUrl: 'https://storage.example/provenance/original.webp',
+    imageStatus: 'ready',
+    isPrimary: true,
+    sortOrder: 0,
+    variants: { large: { storagePath: 'supplier-media/provenance/large.webp' } },
+  };
+  const { db } = createFakeFirestore({
+    'supplier_review_queue/dropex-provenance-fallback': {
+      queueState: 'review_pending',
+      sourceId: 'dropex',
+      supplierSnapshot: {},
+      productPayload: { id: 'provenance-fallback' },
+      mediaSourceImageUrls: [managedUrl],
+      managedMedia: [managedAsset],
+      mediaStatus: 'partial',
+      mediaFailures: [{ reason: 'stale failure', retryable: true }],
+    },
+  });
+
+  assert.deepEqual(supplierReviewQueueSourceImageUrls({
+    supplierSnapshot: {},
+    productPayload: { id: 'provenance-fallback' },
+    mediaSourceImageUrls: [managedUrl],
+    managedMedia: [managedAsset],
+  }), [supplierUrl]);
+  assert.deepEqual(supplierReviewQueueSourceImageUrls({
+    supplierSnapshot: {},
+    productPayload: { imageUrl: supplierUrl, imageUrls: [] },
+  }), [supplierUrl]);
+
+  await ensureSupplierReviewQueueManagedMedia(db as never, 'dropex-provenance-fallback', {
+    reprocessIncomplete: true,
+    dependencies: mediaDependencies(pngBody, undefined, fetchedUrls),
+  });
+
+  assert.deepEqual(fetchedUrls, [supplierUrl]);
+});
+
+test('managed media URLs are filtered from every candidate source before fallback', async () => {
+  const managedUrl = 'https://firebasestorage.googleapis.com/v0/b/zyro/o/managed.webp?alt=media';
+  const staleManagedUrl = 'https://storage.googleapis.com/zyro/stale.webp';
+  const supplierUrl = 'https://dropex.example/current.png';
+
+  assert.deepEqual(supplierReviewQueueSourceImageUrls({
+    supplierSnapshot: {},
+    productPayload: { imageUrls: [managedUrl] },
+    mediaSourceImageUrls: [staleManagedUrl],
+  }), []);
+  assert.deepEqual(supplierReviewQueueSourceImageUrls({
+    supplierSnapshot: {},
+    productPayload: { supplierMetadata: { imageUrls: [managedUrl] } },
+    mediaSourceImageUrls: [staleManagedUrl],
+  }), []);
+  assert.deepEqual(supplierReviewQueueSourceImageUrls({
+    supplierSnapshot: {},
+    productPayload: { imageUrls: [managedUrl, supplierUrl] },
+  }), [supplierUrl]);
+  assert.deepEqual(supplierReviewQueueSourceImageUrls({
+    supplierSnapshot: { imageUrls: [managedUrl] },
+    productPayload: { imageUrls: [supplierUrl] },
+    mediaSourceImageUrls: [staleManagedUrl],
+  }), []);
+
+  const fetchedUrls: string[] = [];
+  const { db, documents } = createFakeFirestore({
+    'supplier_review_queue/dropex-managed-candidate': {
+      queueState: 'review_pending',
+      sourceId: 'dropex',
+      supplierSnapshot: {},
+      productPayload: { id: 'managed-candidate', imageUrls: [managedUrl] },
+      mediaSourceImageUrls: [staleManagedUrl],
+      managedMedia: [],
+      mediaStatus: 'partial',
+      mediaFailures: [],
+    },
+  });
+  await ensureSupplierReviewQueueManagedMedia(db as never, 'dropex-managed-candidate', {
+    reprocessIncomplete: true,
+    dependencies: mediaDependencies(pngBody, undefined, fetchedUrls),
+  });
+  assert.deepEqual(fetchedUrls, []);
+  assert.deepEqual(documents.get('supplier_review_queue/dropex-managed-candidate')?.mediaSourceImageUrls, []);
+});
+
+test('all retryable media failures preserve last-known-good managed media while remaining blocked', async () => {
+  const primaryUrl = 'https://dropex.example/retry-primary.png';
+  const galleryUrl = 'https://dropex.example/retry-gallery.png';
+  const existingAssets = [
+    {
+      assetId: 'retry-existing-primary',
+      contentHash: 'retry-existing-primary-hash',
+      firebaseStorageUrl: 'https://storage.example/retry-primary.webp',
+      originalSupplierUrl: 'https://dropex.example/old-primary.png',
+      originalStorageUrl: 'https://storage.example/retry-primary/original.webp',
+      imageStatus: 'ready',
+      isPrimary: true,
+      sortOrder: 0,
+      variants: { large: { storagePath: 'supplier-media/retry-primary/large.webp' } },
+    },
+    {
+      assetId: 'retry-existing-gallery',
+      contentHash: 'retry-existing-gallery-hash',
+      firebaseStorageUrl: 'https://storage.example/retry-gallery.webp',
+      originalSupplierUrl: 'https://dropex.example/old-gallery.png',
+      originalStorageUrl: 'https://storage.example/retry-gallery/original.webp',
+      imageStatus: 'ready',
+      isPrimary: false,
+      sortOrder: 1,
+      variants: { large: { storagePath: 'supplier-media/retry-gallery/large.webp' } },
+    },
+  ];
+  const fetchedUrls: string[] = [];
+  const dependencies = mediaDependencies(pngBody, undefined, fetchedUrls);
+  dependencies.fetchImage = async (url) => {
+    fetchedUrls.push(url);
+    return mediaResponse(Buffer.from('temporary upstream failure'), 'text/plain', 503);
+  };
+  const { db, documents } = createFakeFirestore({
+    'supplier_review_queue/dropex-retry-preserve': {
+      queueState: 'review_pending',
+      sourceId: 'dropex',
+      supplierSnapshot: { supplierId: 'dropex', imageUrls: [primaryUrl, galleryUrl] },
+      productPayload: { id: 'retry-preserve', imageUrls: existingAssets.map((asset) => asset.firebaseStorageUrl) },
+      mediaSourceImageUrls: [primaryUrl, galleryUrl],
+      managedMedia: existingAssets,
+      mediaStatus: 'partial',
+      mediaFailures: [{ reason: 'previous failure', retryable: true }],
+    },
+  });
+
+  await assert.rejects(() => ensureSupplierReviewQueueManagedMedia(db as never, 'dropex-retry-preserve', {
+    reprocessIncomplete: true,
+    dependencies,
+  }), /retry|media/i);
+
+  const queue = documents.get('supplier_review_queue/dropex-retry-preserve')!;
+  assert.deepEqual(fetchedUrls, [primaryUrl, galleryUrl]);
+  assert.deepEqual(queue.managedMedia, existingAssets);
+  assert.equal(queue.mediaStatus, 'failed');
+  assert.equal(queue.mediaReadiness, 'blocked');
+  assert.equal((queue.productValidation as StoredDocument).readyToPublish, false);
+  assert.equal((queue.mediaFailures as unknown[]).length, 2);
+});
+
+test('failed or incomplete fresh media preserves last-known-good managed assets and diagnostics', async () => {
+  const existingUrl = 'https://dropex.example/last-known-good.png';
+  const existingAsset = {
+    assetId: 'last-known-good',
+    contentHash: 'last-known-good-hash',
+    firebaseStorageUrl: 'https://storage.example/last-known-good.webp',
+    originalSupplierUrl: existingUrl,
+    originalStorageUrl: 'https://storage.example/last-known-good/original.webp',
+    imageStatus: 'ready',
+    isPrimary: true,
+    sortOrder: 0,
+    variants: { large: { storagePath: 'supplier-media/last-known-good/large.webp' } },
+  };
+  const cases = [
+    { id: 'dropex-empty-preserve', snapshot: { mediaGallery: [] as string[] }, failure: { reason: 'previous failure', retryable: true } },
+    { id: 'dropex-malformed-preserve', snapshot: { mediaGallery: { malformed: true } }, failure: { reason: 'previous malformed response', retryable: false } },
+  ];
+
+  for (const entry of cases) {
+    const { db, documents } = createFakeFirestore({
+      [`supplier_review_queue/${entry.id}`]: {
+        queueState: 'review_pending',
+        sourceId: 'dropex',
+        supplierSnapshot: { supplierId: 'dropex', ...entry.snapshot },
+        productPayload: { id: entry.id },
+        mediaSourceImageUrls: [existingUrl],
+        managedMedia: [existingAsset],
+        mediaStatus: 'partial',
+        mediaFailures: [entry.failure],
+      },
+    });
+
+    await ensureSupplierReviewQueueManagedMedia(db as never, entry.id, {
+      reprocessIncomplete: true,
+      dependencies: mediaDependencies(pngBody),
+    });
+
+    const queue = documents.get(`supplier_review_queue/${entry.id}`)!;
+    assert.deepEqual(queue.managedMedia, [existingAsset], entry.id);
+    assert.deepEqual(queue.mediaSourceImageUrls, [], entry.id);
+    assert.deepEqual(queue.mediaFailures, [entry.failure], entry.id);
+    assert.equal(queue.mediaStatus, 'partial', entry.id);
+    assert.equal(queue.mediaReadiness, 'blocked', entry.id);
+  }
+
+  const freshUrl = 'https://dropex.example/blocking-gallery.png';
+  const fetchedUrls: string[] = [];
+  const { db, documents } = createFakeFirestore({
+    'supplier_review_queue/dropex-partial-blocking-preserve': {
+      queueState: 'review_pending',
+      sourceId: 'dropex',
+      supplierSnapshot: { supplierId: 'dropex', mediaGallery: [existingUrl, freshUrl] },
+      productPayload: { id: 'partial-blocking-preserve' },
+      mediaSourceImageUrls: [existingUrl],
+      managedMedia: [existingAsset],
+      mediaStatus: 'partial',
+      mediaFailures: [{ reason: 'old failure', retryable: true }],
+    },
+  });
+  await ensureSupplierReviewQueueManagedMedia(db as never, 'dropex-partial-blocking-preserve', {
+    reprocessIncomplete: true,
+    dependencies: mediaDependencies(pngBody, freshUrl, fetchedUrls),
+  });
+  const queue = documents.get('supplier_review_queue/dropex-partial-blocking-preserve')!;
+  assert.deepEqual(fetchedUrls, [existingUrl, freshUrl]);
+  assert.deepEqual(queue.managedMedia, [existingAsset]);
+  assert.equal((queue.mediaFailures as Array<Record<string, unknown>>).length, 1);
+  assert.equal(queue.mediaStatus, 'partial');
+  assert.equal(queue.mediaReadiness, 'blocked');
 });
 
 test('media readiness allows only structured optional gallery warnings', () => {

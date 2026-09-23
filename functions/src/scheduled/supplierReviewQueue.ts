@@ -250,22 +250,102 @@ const applyTrustedCategoryMappingsForReview = async (
   });
 };
 
-const stringList = (value: unknown): string[] => Array.isArray(value)
-  ? value.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0).map((entry) => entry.trim())
-  : [];
+const isCandidateSupplierMediaUrl = (value: string): boolean => {
+  try {
+    const parsed = new URL(value);
+    return (parsed.protocol === "https:" || parsed.protocol === "http:")
+      && Boolean(parsed.hostname)
+      && !parsed.username
+      && !parsed.password;
+  } catch {
+    return false;
+  }
+};
 
-const sourceImageUrls = (record: SupplierQueueRecord): string[] => {
-  const processedUrls = stringList(record.mediaSourceImageUrls);
-  if (processedUrls.length) return processedUrls;
+const normalizedSupplierMediaUrls = (
+  value: unknown,
+  managedUrls: ReadonlySet<string> = new Set(),
+  trustedOriginalSupplierUrls: ReadonlySet<string> = new Set(),
+): string[] => [...new Set(
+  (Array.isArray(value) ? value : typeof value === "string" ? [value] : [])
+    .filter((entry): entry is string => typeof entry === "string")
+    .map((url) => url.trim())
+    .filter((url): url is string => isCandidateSupplierMediaUrl(url))
+    .filter((url) => trustedOriginalSupplierUrls.has(url)
+      || (!managedUrls.has(url) && !isUnprovenManagedStorageUrl(url))),
+)];
+
+const supplierMediaFields = (
+  record: Record<string, unknown>,
+  managedUrls: ReadonlySet<string>,
+  trustedOriginalSupplierUrls: ReadonlySet<string>,
+): { present: boolean; urls: string[] } => {
+  const fields = ["mediaGallery", "imageUrls", "imageUrl"] as const;
+  let present = false;
+  for (const field of fields) {
+    if (!Object.hasOwn(record, field)) continue;
+    present = true;
+    const urls = normalizedSupplierMediaUrls(record[field], managedUrls, trustedOriginalSupplierUrls);
+    if (urls.length > 0) return { present: true, urls };
+  }
+  return { present, urls: [] };
+};
+
+const knownManagedMediaUrls = (managedMedia: unknown): Set<string> => {
+  const urls = new Set<string>();
+  for (const asset of extractSupplierMediaFromRecord(managedMedia)) {
+    for (const value of [asset.firebaseStorageUrl, asset.originalStorageUrl]) {
+      const url = asString(value);
+      if (url) urls.add(url);
+    }
+  }
+  return urls;
+};
+
+const isUnprovenManagedStorageUrl = (url: string): boolean => {
+  try {
+    const hostname = new URL(url).hostname.toLowerCase();
+    return hostname === "firebasestorage.googleapis.com"
+      || hostname === "storage.googleapis.com"
+      || hostname.endsWith(".firebasestorage.app");
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Resolve source media from current supplier truth before falling back to
+ * derived queue fields. A processed/managed URL is never preferred over a
+ * current supplier snapshot, and an unproven Firebase Storage URL is not
+ * treated as supplier input when no authoritative source is available.
+ */
+export const supplierReviewQueueSourceImageUrls = (record: Record<string, unknown>): string[] => {
   const snapshot = asRecord(record.supplierSnapshot);
   const payload = asRecord(record.productPayload);
-  const snapshotUrls = stringList(snapshot.mediaGallery).length
-    ? stringList(snapshot.mediaGallery)
-    : stringList(snapshot.imageUrls);
-  const payloadUrls = stringList(payload.imageUrls);
-  const primary = asString(payload.imageUrl);
-  return [...new Set(snapshotUrls.length ? snapshotUrls : [...payloadUrls, ...(primary ? [primary] : [])])];
+  const supplierMetadata = asRecord(snapshot.supplierMetadata);
+  const payloadMetadata = asRecord(payload.supplierMetadata);
+  const managedMedia = extractSupplierMediaFromRecord(record.managedMedia);
+  const managedUrls = knownManagedMediaUrls(managedMedia);
+  const provenanceUrls = managedMedia
+    .map((asset) => asString(asset.originalSupplierUrl))
+    .filter((url): url is string => isCandidateSupplierMediaUrl(url));
+  const trustedOriginalSupplierUrls = new Set(provenanceUrls);
+
+  for (const candidate of [snapshot, supplierMetadata, payload, payloadMetadata]) {
+    const media = supplierMediaFields(candidate, managedUrls, trustedOriginalSupplierUrls);
+    if (media.present) return media.urls;
+  }
+
+  if (provenanceUrls.length > 0) return [...new Set(provenanceUrls)];
+
+  return normalizedSupplierMediaUrls(
+    record.mediaSourceImageUrls,
+    managedUrls,
+    trustedOriginalSupplierUrls,
+  );
 };
+
+const sourceImageUrls = (record: SupplierQueueRecord): string[] => supplierReviewQueueSourceImageUrls(record);
 
 export interface SupplierQueueManagedMediaResult {
   assets: SupplierManagedMediaAsset[];
@@ -304,6 +384,7 @@ export async function ensureSupplierReviewQueueManagedMedia(
     ));
   const canReuseExistingMedia = options.reprocessIncomplete === true
     ? supplierReviewQueueMediaIsHealthy(queueItem)
+      && supplierManagedMediaMatchesSourceUrls(existingAssets, imageUrls)
     : existingAssets.length > 0;
   if ((options.imageUrls === undefined || requestedExistingMedia) && canReuseExistingMedia) {
     return {
@@ -364,7 +445,21 @@ export async function ensureSupplierReviewQueueManagedMedia(
     }
     throw error;
   }
-  const managedPayload = applyManagedMediaToProductPayload(productPayload, result.assets);
+  const freshFailures = result.failures.length > 0
+    ? result.failures
+    : imageUrls.length === 0
+      ? (Array.isArray(queueItem.mediaFailures) ? queueItem.mediaFailures as SupplierMediaFailure[] : [])
+      : [];
+  const initialReadiness = classifySupplierMediaReadiness({
+    supplierId,
+    sourceImageUrls: imageUrls,
+    managedMedia: result.assets,
+    mediaFailures: freshFailures,
+  });
+  const preserveExistingManagedMedia = existingAssets.length > 0
+    && (!initialReadiness.publicationSafe || result.assets.length === 0);
+  const effectiveManagedMedia = preserveExistingManagedMedia ? existingAssets : result.assets;
+  const managedPayload = applyManagedMediaToProductPayload(productPayload, effectiveManagedMedia);
   // Keep the source URLs in mediaSourceImageUrls/supplierSnapshot for audit;
   // the review payload itself exposes only successful managed URLs.
   const nextPayload = {
@@ -381,8 +476,8 @@ export async function ensureSupplierReviewQueueManagedMedia(
   const mediaReadiness = classifySupplierMediaReadiness({
     supplierId,
     sourceImageUrls: imageUrls,
-    managedMedia: result.assets,
-    mediaFailures: result.failures,
+    managedMedia: effectiveManagedMedia,
+    mediaFailures: freshFailures,
   });
   const mediaError = !mediaReadiness.publicationSafe ? {
     field: "images",
@@ -402,11 +497,11 @@ export async function ensureSupplierReviewQueueManagedMedia(
   const mediaProcessedAt = new Date().toISOString();
   const patch: Record<string, unknown> = {
     productPayload: nextPayload,
-    managedMedia: result.assets,
-    mediaFailures: result.failures,
+    managedMedia: effectiveManagedMedia,
+    mediaFailures: freshFailures,
     mediaSourceImageUrls: imageUrls,
     mediaReadiness: mediaReadiness.status,
-    mediaStatus: mediaReadiness.publicationSafe ? "ready" : result.assets.length === 0 ? "failed" : "partial",
+    mediaStatus: mediaReadiness.publicationSafe ? "ready" : effectiveManagedMedia.length === 0 ? "failed" : "partial",
     mediaProcessedAt,
     mediaDuplicateCount: result.duplicateCount,
     productValidation: {
@@ -417,16 +512,16 @@ export async function ensureSupplierReviewQueueManagedMedia(
     },
     supplierSnapshot: {
       ...supplierSnapshot,
-      managedMedia: result.assets,
-      mediaFailures: result.failures,
+      managedMedia: effectiveManagedMedia,
+      mediaFailures: freshFailures,
     },
-    ...(Object.keys(importPayload).length > 0 ? { importPayload: { ...importPayload, managedMedia: result.assets, mediaFailures: result.failures } } : {}),
+    ...(Object.keys(importPayload).length > 0 ? { importPayload: { ...importPayload, managedMedia: effectiveManagedMedia, mediaFailures: freshFailures } } : {}),
     ...(Object.keys(pendingChangePayload).length > 0 ? {
       pendingChangePayload: {
         ...pendingChangePayload,
         productPayload: nextPayload,
-        managedMedia: result.assets,
-        mediaFailures: result.failures,
+        managedMedia: effectiveManagedMedia,
+        mediaFailures: freshFailures,
       },
     } : {}),
   };
@@ -436,7 +531,7 @@ export async function ensureSupplierReviewQueueManagedMedia(
   if (mediaReadiness.publicationSafe && String(queueItem.queueState || "").toLowerCase() !== "processing") {
     await resolveSupplierMediaOperationalAlertsSafely(db, { supplierId, queueItemId, mediaProcessedAt });
   }
-  return { assets: result.assets, failures: result.failures, reusedExistingQueueMedia: false, mediaProcessedAt };
+  return { assets: effectiveManagedMedia, failures: freshFailures, reusedExistingQueueMedia: false, mediaProcessedAt };
 }
 
 const toMillis = (value: unknown): number => {
