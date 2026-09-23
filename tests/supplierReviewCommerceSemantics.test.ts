@@ -157,7 +157,7 @@ test("supplier approval validation rejects a customer price below supplier cost"
     category: "vehicle-accessories",
     brand: "brand-1",
     specs: {},
-  }, [{ id: "vehicle-accessories", name: "Vehicle Accessories" }], [{ id: "brand-1", name: "Brand" }]);
+  }, [{ id: "vehicle-accessories", name: "Vehicle Accessories", isActive: true }], [{ id: "brand-1", name: "Brand" }]);
   assert.deepEqual(errors.filter((error) => error.code === "below_supplier_cost"), [{
     field: "price",
     code: "below_supplier_cost",
@@ -201,7 +201,7 @@ test("missing supplier brand remains approvable and is omitted from the public p
     brand: "",
     specs: {},
     isActive: true,
-  }, [{ id: "electronics", name: "Electronics" }], []);
+  }, [{ id: "electronics", name: "Electronics", isActive: true }], []);
   assert.deepEqual(validation, []);
   const payload = toPublicProductPayload({
     id: "review-brandless",

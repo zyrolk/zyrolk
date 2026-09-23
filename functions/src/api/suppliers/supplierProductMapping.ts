@@ -56,6 +56,15 @@ export interface StoreCategoryMappingCandidate {
   normalizedSupplierCategory?: string;
 }
 
+/**
+ * A category may only be used as a canonical Zyro target when its document is
+ * explicitly active and is not a supplier-taxonomy candidate. Callers must
+ * verify the Firestore document exists before applying this predicate.
+ */
+export const isCanonicalActiveCategory = (
+  category: Pick<StoreCategoryMappingCandidate, "isActive" | "taxonomyCandidate"> | null | undefined,
+): boolean => Boolean(category && category.isActive === true && category.taxonomyCandidate !== true);
+
 export interface StoreBrandMappingCandidate {
   id: string;
   name: string;
@@ -168,7 +177,7 @@ export const buildSupplierTaxonomyCandidateSubcategoryId = (
   .update([sourceId, categoryId, supplierSubcategoryId || normalizeSupplierMappingValue(supplierSubcategory)].join("\u001f"), "utf8")
   .digest("hex")}`;
 
-const activeCategories = (categories: readonly StoreCategoryMappingCandidate[]) => categories.filter((category) => category.isActive !== false);
+const activeCategories = (categories: readonly StoreCategoryMappingCandidate[]) => categories.filter(isCanonicalActiveCategory);
 const activeBrands = (brands: readonly StoreBrandMappingCandidate[]) => brands.filter((brand) => brand.isActive !== false);
 
 const mappingScope = (mappingSourceId: string, sourceId: string): "source" | "global" | null => {
@@ -411,10 +420,10 @@ export function planSupplierTaxonomyCandidates(input: {
   const supplierSubcategoryId = String(input.supplierSubcategoryId || "").trim();
   if (!supplierCategory || !normalizedCategory) return null;
 
-  const activeCategory = input.categories.find((category) => category.isActive !== false
+  const activeCategory = input.categories.find((category) => isCanonicalActiveCategory(category)
     && supplierCategoryMatches(category, normalizedCategory, supplierCategoryId));
   const mappedCategory = input.mapping?.autoSelected && input.mapping.targetCategoryId
-    ? input.categories.find((category) => category.isActive !== false && category.id === input.mapping?.targetCategoryId)
+    ? input.categories.find((category) => isCanonicalActiveCategory(category) && category.id === input.mapping?.targetCategoryId)
     : undefined;
   const safeParent = activeCategory || mappedCategory;
   if (safeParent) {
@@ -583,8 +592,8 @@ export function validateSupplierProductForApproval(
 
   const categoryId = String(product.category || "").trim();
   const category = categories.find((candidate) => candidate.id === categoryId);
-  if (!category || category.isActive === false) {
-    add("category", "invalid", "Select an active product category.");
+  if (!category || !isCanonicalActiveCategory(category)) {
+    add("category", "invalid", "Select an active canonical Zyro category.");
   } else {
     const activeSubcategories = (category.subcategories || []).filter((subcategory) => subcategory.isActive !== false);
     const subcategoryId = String(product.subcategory || "").trim();

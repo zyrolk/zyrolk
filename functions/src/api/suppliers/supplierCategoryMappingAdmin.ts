@@ -5,7 +5,9 @@ import {
   hasSupplierSubcategoryBinding,
   supplierChildMappingDocumentId,
   supplierMappingDocumentId,
+  isCanonicalActiveCategory,
   SupplierCategoryMappingRecord,
+  StoreCategoryMappingCandidate,
 } from "./supplierProductMapping";
 
 export interface SupplierCategoryMappingAdminActor {
@@ -99,7 +101,7 @@ export async function saveSupplierCategoryMapping(
     db.collection("categories").doc(targetCategoryId).get(),
   ]);
   if (!sourceSnapshot.exists) throw new ApiError("The supplier source was not found.", 404);
-  if (!categorySnapshot.exists || categorySnapshot.data()?.isActive === false) {
+  if (!categorySnapshot.exists || !isCanonicalActiveCategory(categorySnapshot.data() as StoreCategoryMappingCandidate | undefined)) {
     throw new ApiError("The target category must be an active canonical category.", 400);
   }
   if (targetSubcategoryId && !normalizedSupplierSubcategory && !supplierSubcategoryId) {

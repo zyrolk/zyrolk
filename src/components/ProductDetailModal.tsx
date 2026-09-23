@@ -9,6 +9,7 @@ import { onAuthStateChanged, User } from 'firebase/auth';
 import { auth } from '../firebase';
 import { Product, WebsiteSettings } from '../types';
 import { isProductExplicitlyActive } from '../services/storefront/productAvailability';
+import { sanitizeStorefrontCategoryId } from '../services/storefront/storefrontCatalog';
 import { sanitizeSupplierDescriptionHtml, supplierDescriptionLooksLikeHtml } from '../services/supplierReviewDescription';
 import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
 import {
@@ -633,7 +634,7 @@ export default function ProductDetailModal({
                   <div className="zy-product-experience-status flex flex-wrap items-center gap-2.5">
                     <span className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue bg-blue-50 border border-blue-100/50 px-3.5 py-1.5 rounded-full flex items-center gap-1.5">
                       <Sparkles className="h-3 w-3" />
-                      {product.category.replace('-', ' ')}
+                      {sanitizeStorefrontCategoryId(product.category).replace('-', ' ')}
                     </span>
                     
                     {product.stock > 0 ? (
@@ -960,7 +961,7 @@ export default function ProductDetailModal({
                       <div className="flex-grow flex flex-col justify-between space-y-2">
                         <div>
                           <span className="text-[9px] text-slate-400 font-black uppercase tracking-widest block mb-0.5">
-                            {item.category}
+                            {sanitizeStorefrontCategoryId(item.category)}
                           </span>
                           <h5 className="text-xs sm:text-sm font-bold text-slate-800 line-clamp-2 font-display group-hover:text-brand-blue transition-colors leading-tight">
                             {item.name}

@@ -1,5 +1,6 @@
 import { Category, Product, WebsiteSettings } from '../../types';
 import { absoluteStorefrontUrl } from '../navigation/storefrontRoutes';
+import { sanitizeStorefrontCategoryId } from '../storefront/storefrontCatalog';
 
 const DEFAULT_ORIGIN = 'https://zyro.lk';
 const DEFAULT_DESCRIPTION = 'Shop live collections across home, beauty, fashion, electronics, lifestyle, accessories and more from one trusted Sri Lankan marketplace.';
@@ -189,6 +190,7 @@ export const buildStorefrontSeo = ({
     ...(socialLinks.length > 0 ? { sameAs: socialLinks } : {}),
   };
 
+  const publicProductCategory = sanitizeStorefrontCategoryId(product?.category);
   const productData = isProduct && product ? {
     '@type': 'Product',
     '@id': `${canonical}#product`,
@@ -196,7 +198,7 @@ export const buildStorefrontSeo = ({
     description,
     image: [image].filter(Boolean),
     mainEntityOfPage: canonical,
-    category: cleanText(product.category),
+    category: cleanText(publicProductCategory),
     offers: {
       '@type': 'Offer',
       priceCurrency: 'LKR',
@@ -219,13 +221,13 @@ export const buildStorefrontSeo = ({
     '@type': 'BreadcrumbList',
     itemListElement: [
       { '@type': 'ListItem', position: 1, name: 'Home', item: `${resolvedOrigin}/` },
-      ...(cleanText(product.category) ? [{
+      ...(cleanText(publicProductCategory) ? [{
         '@type': 'ListItem',
         position: 2,
-        name: cleanText(product.category),
-        item: absoluteStorefrontUrl(resolvedOrigin, { page: 'products', categoryId: product.category }),
+        name: cleanText(publicProductCategory),
+        item: absoluteStorefrontUrl(resolvedOrigin, { page: 'products', categoryId: publicProductCategory }),
       }] : []),
-      { '@type': 'ListItem', position: cleanText(product.category) ? 3 : 2, name: productName, item: canonical },
+      { '@type': 'ListItem', position: cleanText(publicProductCategory) ? 3 : 2, name: productName, item: canonical },
     ],
   } : null;
 

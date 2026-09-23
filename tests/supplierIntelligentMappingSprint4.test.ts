@@ -16,6 +16,7 @@ const categories: StoreCategoryMappingCandidate[] = [
   {
     id: 'phones',
     name: 'Mobile Phones',
+    isActive: true,
     keywords: ['phone', 'smartphone', 'mobile'],
     subcategories: [{ id: 'smartphones', name: 'Smartphones' }, { id: 'feature-phones', name: 'Feature Phones' }],
     specificationTemplate: [
@@ -27,6 +28,7 @@ const categories: StoreCategoryMappingCandidate[] = [
   {
     id: 'shoes',
     name: 'Shoes',
+    isActive: true,
     keywords: ['shoe', 'footwear'],
     subcategories: [{ id: 'sports-shoes', name: 'Sports Shoes' }],
     specificationTemplate: [{ name: 'Size', required: true }, { name: 'Material', required: true }],

@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { BadgeDollarSign, Check, Eye, Star, ShoppingCart, Heart, Truck } from 'lucide-react';
 import { Product } from '../types';
 import { PRODUCT_IMAGE_FALLBACK } from '../features/product-experience/productExperience';
+import { sanitizeStorefrontCategoryId } from '../services/storefront/storefrontCatalog';
 
 interface ProductCardProps {
   key?: string | number;
@@ -161,7 +162,7 @@ function ProductCard({
         <div className="zy-product-card-info">
           {/* Category Label */}
           <span className="zy-product-card-category">
-            {product.category.replace('-', ' ')}
+            {sanitizeStorefrontCategoryId(product.category).replace('-', ' ')}
           </span>
 
           {/* Product Name */}

@@ -10,6 +10,7 @@ export interface SupplierReviewCatalogCategory {
   id: string;
   name: string;
   isActive: boolean;
+  taxonomyCandidate?: boolean;
   subcategories: SupplierReviewCatalogSubcategory[];
   specificationTemplate: Array<{ name: string; required?: boolean }>;
 }
@@ -73,11 +74,12 @@ export const projectSupplierReviewCatalogRecords = (
         id: document.id,
         name: normalizeCatalogText(data.name) || document.id,
         isActive: data.isActive !== false,
+        taxonomyCandidate: data.taxonomyCandidate === true,
         subcategories: projectSubcategories(data.subcategories),
         specificationTemplate: projectSpecificationTemplate(data.specificationTemplate),
       } satisfies SupplierReviewCatalogCategory;
     })
-    .filter((category) => category.isActive)
+    .filter((category) => category.isActive && category.taxonomyCandidate !== true)
     .sort((left, right) => left.name.localeCompare(right.name)),
   brands: brandDocs
     .map((document) => {

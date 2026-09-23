@@ -33,6 +33,17 @@ export interface StorefrontCatalogCounts {
 }
 
 const text = (value: unknown): string => typeof value === 'string' ? value.trim() : '';
+export const isSupplierTaxonomyCategoryId = (value: unknown): boolean => (
+  typeof value === 'string' && /^supplier-taxonomy(?:-sub)?-/iu.test(value.trim())
+);
+export const sanitizeStorefrontCategoryId = (value: unknown): string => {
+  const result = text(value);
+  return isSupplierTaxonomyCategoryId(result) ? '' : result;
+};
+export const isPublicStorefrontCategory = (category: Category): boolean => (
+  category.isActive !== false
+  && (category as Category & { taxonomyCandidate?: unknown }).taxonomyCandidate !== true
+);
 const finiteNumber = (value: unknown, fallback = 0): number => {
   const resolved = Number(value);
   return Number.isFinite(resolved) ? resolved : fallback;
@@ -72,7 +83,9 @@ const isFirestorePermissionDenied = (error: unknown): boolean => {
  * Projects a public product document through an explicit customer-safe boundary.
  * Commercial and supplier-only fields are intentionally never copied.
  */
-export const projectStorefrontProduct = (id: string, data: Record<string, unknown>): Product => ({
+export const projectStorefrontProduct = (id: string, data: Record<string, unknown>): Product => {
+  const category = sanitizeStorefrontCategoryId(data.category);
+  return {
   id,
   name: text(data.name),
   description: text(data.description),
@@ -81,8 +94,8 @@ export const projectStorefrontProduct = (id: string, data: Record<string, unknow
   discount: optionalNumber(data.discount),
   imageUrl: text(data.imageUrl),
   imageUrls: textList(data.imageUrls),
-  category: text(data.category),
-  subcategory: optionalText(data.subcategory),
+  category,
+  subcategory: category ? optionalText(sanitizeStorefrontCategoryId(data.subcategory)) : undefined,
   brand: optionalText(data.brand),
   model: optionalText(data.model),
   barcode: optionalText(data.barcode),
@@ -101,7 +114,8 @@ export const projectStorefrontProduct = (id: string, data: Record<string, unknow
   specs: publicSpecifications(data.specs),
   createdAt: timestampText(data.createdAt),
   updatedAt: timestampText(data.updatedAt),
-});
+  };
+};
 
 export const mergeStorefrontProducts = (
   current: readonly Product[],
@@ -208,14 +222,16 @@ export const loadStorefrontCatalogCounts = async (
   const activeProductsQuery = query(collection(firestore, 'products'), where('isActive', '==', true));
   const [activeProducts, categoryEntries] = await Promise.all([
     getCountFromServer(activeProductsQuery),
-    Promise.all(categories.map(async (category) => {
+    Promise.all(categories
+      .filter(isPublicStorefrontCategory)
+      .map(async (category) => {
       const countSnapshot = await getCountFromServer(query(
         collection(firestore, 'products'),
         where('category', '==', category.id),
         where('isActive', '==', true),
       ));
       return [category.id, countSnapshot.data().count] as const;
-    })),
+      })),
   ]);
   return {
     activeProducts: activeProducts.data().count,
@@ -233,10 +249,12 @@ export const subscribeToStorefrontCategories = (
     orderBy(documentId()),
     limit(STOREFRONT_CATEGORY_LIMIT),
   ),
-  (snapshot) => onCategories(snapshot.docs.map((document) => ({
-    id: document.id,
-    ...document.data(),
-  } as Category))),
+  (snapshot) => onCategories(snapshot.docs
+    .filter((document) => document.data().taxonomyCandidate !== true)
+    .map((document) => ({
+      id: document.id,
+      ...document.data(),
+    } as Category))),
   onError,
 );
 

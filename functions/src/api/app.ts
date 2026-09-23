@@ -152,7 +152,7 @@ export function createApiApp(): express.Express {
       const productUrls = productsSnapshot.docs.filter((product) => product.data().isActive === true).map((product) => (
         `<url><loc>${xmlEscape(`https://zyro.lk/products/${encodeURIComponent(product.id)}`)}</loc><changefreq>daily</changefreq><priority>0.8</priority></url>`
       ));
-      const categoryUrls = categoriesSnapshot.docs.filter((category) => category.data().isActive !== false).map((category) => (
+      const categoryUrls = categoriesSnapshot.docs.filter((category) => category.data().isActive !== false && category.data().taxonomyCandidate !== true).map((category) => (
         `<url><loc>${xmlEscape(`https://zyro.lk/categories/${encodeURIComponent(category.id)}`)}</loc><changefreq>weekly</changefreq><priority>0.7</priority></url>`
       ));
       const staticPaths = ["", "products", "categories", "about-us", "contact", "faq", "privacy-policy", "terms-conditions", "return-policy", "warranty-policy"];

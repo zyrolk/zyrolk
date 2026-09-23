@@ -24,10 +24,10 @@ const functionsHost = process.env.FUNCTIONS_EMULATOR_HOST;
 const projectId = process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT;
 const canRunEmulator = Boolean(firestoreHost && authHost && functionsHost && projectId?.startsWith("demo-"));
 
-const managedMedia = (identity: string) => [{
+const managedMedia = (identity: string, supplierId = `supplier-${identity}`, sourceId = `source-${identity}`) => [{
   assetId: `${identity}-asset`,
-  supplierId: `supplier-${identity}`,
-  sourceId: `source-${identity}`,
+  supplierId,
+  sourceId,
   productId: `product-${identity}`,
   originalSupplierUrl: `https://supplier.example/${identity}.jpg`,
   originalStoragePath: `supplier-media/${identity}/original.jpg`,
@@ -94,6 +94,10 @@ test("Supplier category mapping API, lazy review projection, and approval author
   const otherSubcategoryId = `home-audio-${suffix}`;
   const inactiveCategoryId = `inactive-${suffix}`;
   const inactiveSubcategoryId = `inactive-audio-${suffix}`;
+  const candidateCategoryId = `supplier-taxonomy-health-beauty-${suffix}`;
+  const candidateSubcategoryId = `supplier-taxonomy-sub-massage-${suffix}`;
+  const candidateSupplierCategory = `Candidate Health ${suffix}`;
+  const candidateMappingId = supplierMappingDocumentId(sourceId, candidateSupplierCategory.toLocaleLowerCase());
   const mappingId = supplierMappingDocumentId(sourceId, normalizedSupplierCategory);
   const childMappingId = supplierChildMappingDocumentId(sourceId, normalizedSupplierCategory, "Legacy Buds");
   const childMappingWithId = supplierChildMappingDocumentId(sourceId, normalizedSupplierCategory, "Legacy Buds", "legacy-buds-2");
@@ -142,7 +146,7 @@ test("Supplier category mapping API, lazy review projection, and approval author
         brand: "",
         specifications: { Model: id },
       },
-      managedMedia: managedMedia(id),
+      managedMedia: managedMedia(id, supplierId, sourceId),
       mediaFailures: [],
       mediaStatus: "ready",
       mediaReadiness: "ready",
@@ -272,6 +276,13 @@ test("Supplier category mapping API, lazy review projection, and approval author
         isActive: false,
         subcategories: [],
       }),
+      adminDb.collection("categories").doc(candidateCategoryId).set({
+        name: "Candidate Health",
+        isActive: true,
+        taxonomyCandidate: true,
+        taxonomyStatus: "active",
+        subcategories: [{ id: candidateSubcategoryId, name: "Massage", isActive: true, taxonomyCandidate: true }],
+      }),
       adminDb.collection("supplier_settings").doc("config").set({ categoryMappings: {}, autoSyncEnabled: false }),
     ]);
     await adminDb.collection("categories").doc(categoryId).set({
@@ -358,6 +369,7 @@ test("Supplier category mapping API, lazy review projection, and approval author
         [{ sourceId, supplierCategory: `Inactive Sub ${suffix}`, targetCategoryId: categoryId, targetSubcategoryId: inactiveSubcategoryId }, 400],
         [{ sourceId, supplierCategory: `Wrong Parent ${suffix}`, targetCategoryId: categoryId, targetSubcategoryId: otherSubcategoryId }, 400],
         [{ sourceId, supplierCategory: `Missing Sub ${suffix}`, supplierSubcategory: "Legacy Buds", targetCategoryId: categoryId }, 400],
+        [{ sourceId, supplierCategory: candidateSupplierCategory, targetCategoryId: candidateCategoryId }, 400],
         [{ sourceId: `missing-source-${suffix}`, supplierCategory: "Any", targetCategoryId: categoryId, targetSubcategoryId: subcategoryId }, 404],
         [{ sourceId: [sourceId], supplierCategory: "Array", targetCategoryId: categoryId, targetSubcategoryId: subcategoryId }, 400],
         [{ sourceId, supplierCategory: ["Array"], targetCategoryId: categoryId, targetSubcategoryId: subcategoryId }, 400],
@@ -425,6 +437,29 @@ test("Supplier category mapping API, lazy review projection, and approval author
       assert.equal(Object.hasOwn(after[0], "category"), false);
       assert.equal(Object.hasOwn((after[0].productPayload || {}) as Record<string, unknown>, "category"), true);
       assert.equal((after[0].productPayload as Record<string, unknown>).category, "");
+    });
+
+    await t.test("active supplier-taxonomy candidate mappings remain unresolved", async () => {
+      await adminDb.collection("supplier_category_mappings").doc(candidateMappingId).set({
+        sourceId,
+        supplierCategory: candidateSupplierCategory,
+        normalizedCategory: candidateSupplierCategory.toLocaleLowerCase(),
+        mappingScope: "parent",
+        targetCategoryId: candidateCategoryId,
+        targetSubcategoryId: candidateSubcategoryId,
+        confidence: 100,
+        mappingType: "learned",
+        version: 1,
+        updatedBy: "test",
+      });
+      const candidateQueueId = `mapping-candidate-review-${suffix}`;
+      await seedQueueItem(candidateQueueId, "", "", candidateSupplierCategory, "Massage");
+      const page = await listSupplierQueuePage(adminDb, { view: "review", state: "active", limit: 80 });
+      const candidate = page.items.find((item) => item.id === candidateQueueId) as Record<string, unknown> | undefined;
+      assert.ok(candidate);
+      assert.equal((candidate.productPayload as Record<string, unknown>).category, "");
+      assert.equal((candidate.productPayload as Record<string, unknown>).subcategory, "");
+      assert.equal((candidate.categoryMapping as Record<string, unknown> | undefined)?.targetCategoryId, undefined);
     });
 
     const { offerId, revision } = await seedOfferAndQueue();
@@ -632,6 +667,48 @@ test("Supplier category mapping API, lazy review projection, and approval author
       );
       assert.equal((await adminDb.collection("supplier_review_queue").doc(queueId).get()).data()?.queueState, "review_pending");
       assert.equal((await adminDb.collection("products").where("name", "==", `${queueId} approval`).get()).empty, true);
+    });
+
+    await t.test("approval rejects an active supplier-taxonomy candidate without writing a product", async () => {
+      const candidateQueueId = `mapping-candidate-approval-${suffix}`;
+      const seeded = await seedOfferAndQueue(candidateQueueId, candidateSupplierCategory, "");
+      await adminDb.collection("supplier_category_mappings").doc(candidateMappingId).set({
+        sourceId,
+        supplierCategory: candidateSupplierCategory,
+        normalizedCategory: candidateSupplierCategory.toLocaleLowerCase(),
+        mappingScope: "parent",
+        targetCategoryId: candidateCategoryId,
+        targetSubcategoryId: "",
+        confidence: 100,
+        mappingType: "learned",
+        version: 2,
+        updatedBy: "test",
+      });
+      const draft = parseSupplierApprovalDraft({
+        productName: `${candidateQueueId} blocked`,
+        description: "A valid supplier review product description.",
+        sellingPrice: 120,
+        costPrice: 80,
+        stock: 4,
+        category: candidateCategoryId,
+        subcategory: "",
+        brand: "",
+        specifications: { Model: candidateQueueId },
+        isActive: false,
+        primaryImageUrl: `https://storage.example/${candidateQueueId}-managed.webp`,
+        galleryImageUrls: [],
+      });
+      assert.ok(draft);
+      await assert.rejects(
+        () => decideSupplierQueueItem(adminDb, candidateQueueId, "approved", {
+          uid: `mapping-admin-${suffix}`,
+          email: `mapping-admin-${suffix}@example.test`,
+        }, { draft, expectedPendingRevision: seeded.revision }),
+        /active canonical Zyro category|validation failed/i,
+      );
+      assert.equal((await adminDb.collection("supplier_review_queue").doc(candidateQueueId).get()).data()?.queueState, "review_pending");
+      assert.equal((await adminDb.collection("supplier_product_offers").doc(seeded.offerId).get()).data()?.reviewStatus, "review_pending");
+      assert.equal((await adminDb.collection("products").where("name", "==", `${candidateQueueId} blocked`).get()).empty, true);
     });
   } finally {
     await deleteApp(adminApp);

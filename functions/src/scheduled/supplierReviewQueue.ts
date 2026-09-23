@@ -34,6 +34,7 @@ import {
   supplierChildMappingDocumentId,
   supplierMappingDocumentId,
   supplierSubcategoryMatchesMapping,
+  isCanonicalActiveCategory,
   SupplierCategoryMappingRecord,
 } from "../api/suppliers/supplierProductMapping";
 
@@ -122,6 +123,7 @@ export const projectSupplierReviewTaxonomy = (
   targetCategoryId: string,
   targetSubcategoryId: string,
 ): Record<string, unknown> & { id: string } => {
+  if (!isCanonicalActiveCategory(category)) return record;
   const payload = asRecord(record.productPayload);
   if (hasAdminTaxonomyOwnership(payload)) return record;
   const activeSubcategories = Array.isArray(category.subcategories)
@@ -235,7 +237,7 @@ const applyTrustedCategoryMappingsForReview = async (
         supplierSubcategoryId,
       ) ? asString(mapping.targetSubcategoryId) : "";
     const category = categories.get(targetCategoryId);
-    if (!category || category.isActive === false) return record;
+    if (!category || !isCanonicalActiveCategory(category)) return record;
     const activeSubcategories = Array.isArray(category.subcategories)
       ? category.subcategories.filter((entry): entry is Record<string, unknown> => Boolean(entry && typeof entry === "object") && (entry as Record<string, unknown>).isActive !== false)
       : [];

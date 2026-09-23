@@ -16,6 +16,7 @@ import {
   selectSupplierCategoryMapping,
   supplierChildMappingDocumentId,
   supplierMappingDocumentId,
+  isCanonicalActiveCategory,
   SupplierCategoryMappingRecord,
   validateSupplierProductForApproval,
 } from "./supplierProductMapping";
@@ -794,7 +795,7 @@ export async function decideSupplierQueueItem(
         : [];
       const resolvedSubcategoryValid = !resolvedSubcategoryId
         || activeSubcategories.some((entry) => String(entry.id || "") === resolvedSubcategoryId);
-      if (mappedCategorySnapshot?.exists && resolvedCategory.isActive !== false && resolvedSubcategoryValid) {
+      if (mappedCategorySnapshot?.exists && isCanonicalActiveCategory(resolvedCategory) && resolvedSubcategoryValid) {
         approvedPayload = {
           ...approvedPayload,
           category: resolvedCategoryId,
@@ -1047,7 +1048,8 @@ export async function decideSupplierQueueItem(
         categorySnapshot?.exists ? [{
           id: categorySnapshot.id,
           name: stringValue(categoryData.name) || categorySnapshot.id,
-          isActive: categoryData.isActive !== false,
+           isActive: categoryData.isActive === true,
+           taxonomyCandidate: categoryData.taxonomyCandidate === true,
           subcategories: Array.isArray(categoryData.subcategories) ? categoryData.subcategories : [],
           specificationTemplate: Array.isArray(categoryData.specificationTemplate) ? categoryData.specificationTemplate : [],
         }] : [],

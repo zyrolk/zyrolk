@@ -158,7 +158,7 @@ test('premium gallery retains live images while improving load, zoom, keyboard, 
 });
 
 test('product information continues to render existing pricing, inventory, category, and specification data', () => {
-  assert.match(modal, /product\.category\.replace/);
+  assert.match(modal, /sanitizeStorefrontCategoryId\(product\.category\)/);
   assert.match(modal, /product\.stock <= 5/);
   assert.match(modal, /formatPrice\(product\.price\)/);
   assert.match(modal, /product\.originalPrice > product\.price/);

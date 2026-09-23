@@ -1,5 +1,6 @@
 import type { CustomerProduct, Product } from '../../types';
 import { getProductBrand, getProductModel } from './productSearchMetadata';
+import { sanitizeStorefrontCategoryId } from '../storefront/storefrontCatalog';
 
 // TODO: Replace client-side projection with a backend DTO/customer-safe API when backend architecture permits it.
 // TODO: A dedicated migration sprint should sanitize legacy persisted cart and wishlist product payloads.
@@ -11,7 +12,7 @@ export const projectCustomerProduct = (product: Readonly<Product>): CustomerProd
   salePrice: typeof product.originalPrice === 'number' && product.originalPrice > product.price
     ? product.price
     : undefined,
-  category: product.category,
+  category: sanitizeStorefrontCategoryId(product.category),
   brand: getProductBrand(product),
   model: getProductModel(product),
   stock: product.stock,

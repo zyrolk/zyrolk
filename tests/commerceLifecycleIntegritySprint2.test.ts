@@ -16,7 +16,7 @@ const validProduct = {
   description: 'Full product description for approval.',
   isActive: true, category: 'electronics', subcategory: 'phones', brand: 'brand-1', specs: {},
 };
-const categories = [{ id: 'electronics', name: 'Electronics', subcategories: [{ id: 'phones', name: 'Phones' }] }];
+const categories = [{ id: 'electronics', name: 'Electronics', isActive: true, subcategories: [{ id: 'phones', name: 'Phones' }] }];
 const brands = [{ id: 'brand-1', name: 'Brand' }];
 
 test('Sprint 2 blocks only products that require unsupported variant selection', () => {
