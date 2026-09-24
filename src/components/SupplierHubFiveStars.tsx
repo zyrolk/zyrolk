@@ -186,6 +186,7 @@ export interface ReviewQueueItem {
     missingFields?: string[];
     errors?: Array<{ field: string; code: string; message: string }>;
     warnings?: Array<{ field: string; code: string; message: string; severity?: string }>;
+    lowStockHold?: boolean;
   };
   approvalConflict?: {
     reason?: string;

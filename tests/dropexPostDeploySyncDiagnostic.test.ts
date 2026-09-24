@@ -10,8 +10,8 @@ import {
   isSupplierSourceTerminallySuccessfulForJob,
   partitionSupplierSourcesForSyncJob,
   resolveSupplierSyncRunStatusForZeroScan,
-  shouldDeferNewSupplierProductForZeroStock,
 } from '../functions/src/scheduled/supplierSync';
+import { isLowStockHoldForNewSupplierProduct } from '../functions/src/api/suppliers/supplierLowStockPolicy';
 import {
   SupplierCatalogPageRequest,
   SupplierCatalogPageResult,
@@ -249,9 +249,9 @@ test('POST-DEPLOY-11 totalProductLimit=5 scans at most five products', async () 
   assert.equal(requests.length, 1);
 });
 
-test('POST-DEPLOY-12 zero-stock deferral remains intact', () => {
-  assert.equal(shouldDeferNewSupplierProductForZeroStock({ inventoryLevel: 0, providedFields: ['stock'] }, false), true);
-  assert.equal(shouldDeferNewSupplierProductForZeroStock({ inventoryLevel: 4, providedFields: ['stock'] }, false), false);
+test('POST-DEPLOY-12 explicit zero is classified as a new-product low-stock hold', () => {
+  assert.equal(isLowStockHoldForNewSupplierProduct({ isNewUnpublished: true, supplierSourceId: 'dropex', stock: 0, stockKnown: true }), true);
+  assert.equal(isLowStockHoldForNewSupplierProduct({ isNewUnpublished: true, supplierSourceId: 'dropex', stock: 4, stockKnown: true }), false);
 });
 
 test('POST-DEPLOY-13 terminal job helpers classify active vs terminal states', () => {

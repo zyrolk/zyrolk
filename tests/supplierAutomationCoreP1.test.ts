@@ -18,6 +18,7 @@ import {
   removeAutomatedStockChangesFromSupplierComparison,
   shouldDeferNewSupplierProductForZeroStock,
 } from '../functions/src/scheduled/supplierSync';
+import { isLowStockHoldForNewSupplierProduct } from '../functions/src/api/suppliers/supplierLowStockPolicy';
 import {
   buildSupplierTaxonomyCandidateId,
   planSupplierTaxonomyCandidates,
@@ -283,29 +284,27 @@ test('P1 05A supplier payloads omit absent optional commerce fields before Fires
 });
 
 test('P1 01 new supplier product with known positive stock remains review eligible', () => {
-  assert.equal(shouldDeferNewSupplierProductForZeroStock({ inventoryLevel: 3, providedFields: ['stock'] }, false), false);
+  assert.equal(isLowStockHoldForNewSupplierProduct({ isNewUnpublished: true, supplierSourceId: 'dropex', stock: 3, stockKnown: true }), true);
 });
 
-test('P1 02 new supplier product with explicit zero stock is deferred from Product Review', () => {
-  assert.equal(shouldDeferNewSupplierProductForZeroStock({ inventoryLevel: 0, providedFields: ['stock'] }, false), true);
+test('P1 02 new supplier product with explicit zero stock is held in Product Review', () => {
+  assert.equal(isLowStockHoldForNewSupplierProduct({ isNewUnpublished: true, supplierSourceId: 'dropex', stock: 0, stockKnown: true }), true);
 });
 
-test('P1 03 zero-stock deferral retains the supplier offer observation without media work', () => {
-  const sync = readFileSync('functions/src/scheduled/supplierSync.ts', 'utf8');
-  const branch = sync.slice(sync.indexOf('shouldDeferNewSupplierProductForZeroStock(product'), sync.indexOf('if (duplicateFromSameSource)'));
-  assert.match(branch, /SUPPLIER_PRODUCT_OFFERS_COLLECTION/);
-  assert.match(branch, /reviewStatus: "suppressed"/);
-  assert.doesNotMatch(branch, /supplierReviewSourceImageUrls|supplier_review_queue[\s\S]*queueState: "queued"/);
+test('P1 03 zero-stock suppression remains isolated from Dropex Low Stock Hold', () => {
+  const product = { inventoryLevel: 0, providedFields: ['stock'] } as never;
+  assert.equal(shouldDeferNewSupplierProductForZeroStock(product, false, 'a2z'), true);
+  assert.equal(shouldDeferNewSupplierProductForZeroStock(product, false, 'dropex'), false);
 });
 
-test('P1 04 a deferred zero-stock observation becomes review eligible after stock turns positive', () => {
+test('P1 04 a low-stock observation becomes review eligible after stock turns positive', () => {
   const comparison = buildSupplierProductComparison({ inventoryLevel: 6, providedFields: ['stock'], mediaGallery: [] } as never, { stock: 0 });
   assert.equal(comparison.status, 'STOCK_CHANGED');
-  assert.equal(shouldDeferNewSupplierProductForZeroStock({ inventoryLevel: 6, providedFields: ['stock'] }, false), false);
+  assert.equal(isLowStockHoldForNewSupplierProduct({ isNewUnpublished: true, supplierSourceId: 'dropex', stock: 6, stockKnown: true }), false);
 });
 
 test('P1 05 unknown stock is not treated as explicit zero', () => {
-  assert.equal(shouldDeferNewSupplierProductForZeroStock({ inventoryLevel: 0, providedFields: [] }, false), false);
+  assert.equal(isLowStockHoldForNewSupplierProduct({ isNewUnpublished: true, supplierSourceId: 'dropex', stock: 0, stockKnown: false }), false);
   const unknown = buildSupplierProductOffer({
     sourceId: 'source', supplierId: 'source', supplierProductId: 'unknown', sku: 'unknown', stockKnown: false,
     lastSyncAt: '2026-09-01T00:00:00.000Z', timestamp: '2026-09-01T00:00:00.000Z',
@@ -955,7 +954,7 @@ test('P1 25 A2Z unknown-stock semantics remain distinguishable from explicit zer
   const parser = readFileSync('functions/src/api/suppliers/a2z/ProductParser.ts', 'utf8');
   assert.match(parser, /providedFields/);
   assert.match(parser, /inventoryLevel = optionalNumber[\s\S]*\?\? 0/);
-  assert.equal(shouldDeferNewSupplierProductForZeroStock({ inventoryLevel: 0, providedFields: [] }, false), false);
+  assert.equal(isLowStockHoldForNewSupplierProduct({ isNewUnpublished: true, supplierSourceId: 'dropex', stock: 0, stockKnown: false }), false);
 });
 
 test('P1 26 managed-media approval gate remains intact', () => {

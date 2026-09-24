@@ -35,7 +35,7 @@ export interface ReviewPresentationItem {
   changedFields?: unknown[];
   fieldChanges?: unknown[];
   comparison?: { comparisonStatus?: unknown; changedFields?: unknown[]; fieldChanges?: unknown[] } | null;
-  productValidation?: { readyToPublish?: unknown; missingFields?: unknown[]; errors?: unknown[] } | null;
+  productValidation?: { readyToPublish?: unknown; missingFields?: unknown[]; errors?: unknown[]; lowStockHold?: unknown } | null;
 }
 
 export interface SupplierReviewQuickApprovalItem extends ReviewPresentationItem {
@@ -347,6 +347,14 @@ export function supplierReviewCanQuickApprove(item: SupplierReviewQuickApprovalI
     && Boolean(supplierReviewManagedImageUrl(item));
 }
 
+export function supplierReviewIsLowStockHold(item: Pick<ReviewPresentationItem, 'productValidation'>): boolean {
+  if (item.productValidation?.lowStockHold === true) return true;
+  return (item.productValidation?.errors || []).some((error) => (
+    error && typeof error === 'object'
+      && String((error as { code?: unknown }).code || '').trim().toUpperCase() === 'LOW_SUPPLIER_STOCK_FOR_PUBLICATION'
+  ));
+}
+
 /**
  * Older queue documents may retain a brand-only validation result from before
  * supplier brands became optional. Reconcile that stale presentation metadata
@@ -437,6 +445,7 @@ export function supplierReviewStatusLabel(item: ReviewPresentationItem): string 
   if (terminal === 'Suppressed') return 'Suppressed';
   if (terminal === 'Dismissed by admin') return 'Dismissed';
   if (state === 'queued' || state === 'leased' || state === 'processing') return 'Preparing';
+  if (state === 'review_pending' && supplierReviewIsLowStockHold(item)) return 'Low Stock Hold';
   if (state === 'review_pending') return 'Ready for Review';
   if (state === 'retryable_failure') return 'Needs Attention';
   if (state === 'dead_letter') return 'Needs Attention';
@@ -692,6 +701,7 @@ export function matchesProductReviewFilter(item: ReviewPresentationItem, filter:
     return item.productValidation?.readyToPublish === false
       || (item.productValidation?.missingFields?.length || 0) > 0
       || (item.productValidation?.errors?.length || 0) > 0
+      || supplierReviewIsLowStockHold(item)
       || ['failed', 'partial'].includes(normalized(item.mediaStatus))
       || ['retryable_failure', 'dead_letter'].includes(normalized(item.queueState));
   }

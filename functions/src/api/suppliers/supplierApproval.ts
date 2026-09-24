@@ -62,6 +62,30 @@ import {
   reserveZyroSku,
 } from "./supplierProductIdentity";
 import { shouldReleaseSupplierPortalSkuClaim } from "./supplierPortalSkuClaims";
+import {
+  isLowStockHoldForNewSupplierProduct,
+  lowSupplierStockValidationError,
+  LOW_SUPPLIER_STOCK_FOR_PUBLICATION_MESSAGE,
+} from "./supplierLowStockPolicy";
+
+export function assertNewSupplierPublicationStock(input: {
+  supplierSourceId: unknown;
+  stock: unknown;
+  stockKnown: boolean;
+}): void {
+  if (!isLowStockHoldForNewSupplierProduct({
+    isNewUnpublished: true,
+    supplierSourceId: input.supplierSourceId,
+    stock: input.stock,
+    stockKnown: input.stockKnown,
+  })) return;
+  throw new ApiError(
+    LOW_SUPPLIER_STOCK_FOR_PUBLICATION_MESSAGE,
+    422,
+    LOW_SUPPLIER_STOCK_FOR_PUBLICATION_MESSAGE,
+    { validationErrors: [lowSupplierStockValidationError()] },
+  );
+}
 
 // Every decision transaction appends an immutable supplier_approval_audit event
 // through the shared server-only audit trail helper.
@@ -679,6 +703,12 @@ export async function decideSupplierQueueItem(
     } else if (queuePendingRevision || requestedPendingRevision) {
       throw new ApiError("The supplier observation is no longer pending; reload Product Review.", 409);
     }
+    const trustedStockObservation = currentPendingObservation?.effective || resolvedQueueIdentity.offer;
+    if (action === "approved" && createsNewZyroProduct) assertNewSupplierPublicationStock({
+      supplierSourceId: trustedStockObservation?.sourceId || queueItem.sourceId,
+      stock: trustedStockObservation?.stock,
+      stockKnown: trustedStockObservation?.stockKnown === true,
+    });
     const isSupplierOfferRemoval = action === "approved"
       && stringValue(queueItem.reconciliationAction) === "supplier_offer_unavailable";
     let approvedPayload = action === "approved" ? toPublicProductPayload(queueItem, effectiveDraft, approvedManagedMedia) : undefined;

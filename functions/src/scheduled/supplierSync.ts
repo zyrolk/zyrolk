@@ -114,6 +114,11 @@ import {
   runSupplierCatalogTraversal,
   SupplierCatalogTraversalCheckpoint,
 } from "./supplierCatalogTraversal";
+import {
+  isLowStockHoldForNewSupplierProduct,
+  lowSupplierStockValidationError,
+  LOW_STOCK_HOLD_SOURCE_ID,
+} from "../api/suppliers/supplierLowStockPolicy";
 
 type SyncStatus = "Success" | "Failed" | "Partial" | "Skipped";
 
@@ -1252,8 +1257,10 @@ export function removeAutomatedStockChangesFromSupplierComparison(
 export function shouldDeferNewSupplierProductForZeroStock(
   product: Pick<RawA2ZProduct, "inventoryLevel" | "providedFields">,
   publishedProductExists: boolean,
+  supplierSourceId?: unknown,
 ): boolean {
-  return !publishedProductExists
+  return String(supplierSourceId || "").trim().toLowerCase() !== LOW_STOCK_HOLD_SOURCE_ID
+    && !publishedProductExists
     && supplierStockWasProvided(product)
     && Number(product.inventoryLevel) === 0;
 }
@@ -2091,6 +2098,13 @@ export async function refreshActiveSupplierReviewItem(
     refreshProductId || undefined,
   );
   const productValidationErrors = validateSupplierProductForApproval(productPayload, storeCategories, storeBrands, { supplierReview: true });
+  const refreshLowStockHold = isLowStockHoldForNewSupplierProduct({
+    isNewUnpublished: selectedComparison.status === "NEW_PRODUCT" && !effectiveMatch,
+    supplierSourceId: sourceId,
+    stock: product.inventoryLevel,
+    stockKnown: supplierStockWasProvided(product),
+  });
+  if (refreshLowStockHold) productValidationErrors.push(lowSupplierStockValidationError());
   const productImportWarnings = buildSupplierImportWarnings(product, productPayload);
   const observedAt = new Date().toISOString();
   const refreshTraversalId = `review-refresh-${createHash("sha256").update(`${queueItemId}|${observedAt}`).digest("hex").slice(0, 24)}`;
@@ -2194,6 +2208,7 @@ export async function refreshActiveSupplierReviewItem(
       missingFields: [...new Set(productValidationErrors.map((error) => error.field))],
       errors: productValidationErrors,
       warnings: productImportWarnings,
+      lowStockHold: refreshLowStockHold,
     },
     matchedProductId: effectiveMatch?.id || null,
     approvalBaseline: queueItem.approvalBaseline,
@@ -3602,7 +3617,7 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
             const record = buildSupplierConflictRecord(source, product, winner, reason, batchId);
             queuedWrites.push({ collection: "supplier_product_conflicts", id: record.id, data: record.data });
           }
-          if (shouldDeferNewSupplierProductForZeroStock(product, Boolean(match))) {
+          if (shouldDeferNewSupplierProductForZeroStock(product, Boolean(match), source.id)) {
             const wasAlreadyDeferred = ownOffer?.reviewStatus === "suppressed"
               && ownOffer.stockKnown !== false
               && ownOffer.stock === 0;
@@ -3904,6 +3919,13 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
             !inventoryAutomated && reactivation.reactivating,
           );
           const productValidationErrors = validateSupplierProductForApproval(productPayload, storeCategories, storeBrands, { supplierReview: true });
+          const lowStockHold = isLowStockHoldForNewSupplierProduct({
+            isNewUnpublished: comparison.status === "NEW_PRODUCT" && !effectiveMatch,
+            supplierSourceId: source.id,
+            stock: product.inventoryLevel,
+            stockKnown: supplierStockWasProvided(product),
+          });
+          if (lowStockHold) productValidationErrors.push(lowSupplierStockValidationError());
           const productImportWarnings = buildSupplierImportWarnings(product, productPayload);
           const supplierSnapshot = omitAbsentSupplierSnapshotFields(product, {
             ...product,
@@ -4001,6 +4023,7 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
               missingFields: [...new Set(productValidationErrors.map((error) => error.field))],
               errors: productValidationErrors,
               warnings: productImportWarnings,
+              lowStockHold,
             },
             matchedProductId: effectiveMatch?.id || effectiveOwnOffer?.productId || duplicateOffer?.productId || skuWinner?.productId || barcodeWinner?.productId || null,
             approvalBaseline: activeReviewQueueData?.approvalBaseline || buildSupplierProductApprovalBaseline(

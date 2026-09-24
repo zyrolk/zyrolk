@@ -37,6 +37,10 @@ import {
   isCanonicalActiveCategory,
   SupplierCategoryMappingRecord,
 } from "../api/suppliers/supplierProductMapping";
+import {
+  isLowStockHoldForNewSupplierProduct,
+  lowSupplierStockValidationError,
+} from "../api/suppliers/supplierLowStockPolicy";
 
 export const SUPPLIER_QUEUE_STATES = [
   "queued",
@@ -1454,6 +1458,72 @@ const reviewRecordMatchesState = (record: SupplierQueueRecord, state: SupplierRe
 
 const normalizedReviewValue = (value: unknown): string => String(value || "").trim().toLowerCase();
 
+const supplierReviewRecordStockKnown = (record: SupplierQueueRecord): boolean => {
+  const payload = asRecord(record.productPayload);
+  const snapshot = asRecord(record.supplierSnapshot);
+  const payloadMetadata = asRecord(payload.supplierMetadata);
+  const snapshotMetadata = asRecord(snapshot.supplierMetadata);
+  const providedFields = Array.isArray(snapshot.providedFields) ? snapshot.providedFields : [];
+  return payloadMetadata.supplierStockAvailable === true
+    || snapshotMetadata.supplierStockAvailable === true
+    || providedFields.includes("stock")
+    || providedFields.includes("inventoryLevel");
+};
+
+const supplierReviewRecordIsNewUnpublished = (record: SupplierQueueRecord): boolean => {
+  const comparison = asRecord(record.comparison);
+  const comparisonStatus = normalizedReviewValue(comparison.comparisonStatus || record.comparisonStatus);
+  const baseline = asRecord(record.approvalBaseline);
+  const matchedProductId = String(record.matchedProductId || comparison.matchedProductId || "").trim();
+  return comparisonStatus === "new_product"
+    && baseline.exists !== true
+    && !matchedProductId;
+};
+
+export const supplierReviewRecordIsLowStockHold = (record: SupplierQueueRecord): boolean => {
+  const payload = asRecord(record.productPayload);
+  const snapshot = asRecord(record.supplierSnapshot);
+  return isLowStockHoldForNewSupplierProduct({
+    isNewUnpublished: supplierReviewRecordIsNewUnpublished(record),
+    supplierSourceId: record.sourceId,
+    stock: record.stock ?? payload.stock ?? snapshot.inventoryLevel,
+    stockKnown: supplierReviewRecordStockKnown(record),
+  });
+};
+
+export const projectSupplierReviewLowStockHold = <T extends SupplierQueueRecord>(record: T): T => {
+  const lowStockHold = supplierReviewRecordIsLowStockHold(record);
+  const validation = asRecord(record.productValidation);
+  const existingErrors = Array.isArray(validation.errors) ? validation.errors : [];
+  const nonLowStockErrors = existingErrors.filter((error) => (
+    asRecord(error).code !== "LOW_SUPPLIER_STOCK_FOR_PUBLICATION"
+  ));
+  const existingMissingFields = Array.isArray(validation.missingFields)
+    ? validation.missingFields.map((field) => String(field))
+    : [];
+  const missingFields = lowStockHold
+    ? [...new Set([...existingMissingFields, "stock"])]
+    : validation.lowStockHold === true
+      ? existingMissingFields.filter((field) => field !== "stock")
+      : existingMissingFields;
+  const errors = lowStockHold
+    ? [...nonLowStockErrors, lowSupplierStockValidationError()]
+    : nonLowStockErrors;
+  const wasOnlyLowStockBlock = validation.lowStockHold === true
+    && missingFields.length === 0
+    && errors.length === 0;
+  return {
+    ...record,
+    productValidation: {
+      ...validation,
+      lowStockHold,
+      readyToPublish: lowStockHold ? false : wasOnlyLowStockBlock ? true : validation.readyToPublish,
+      missingFields,
+      errors,
+    },
+  } as T;
+};
+
 const reviewRecordIsConflict = (record: SupplierQueueRecord): boolean => (
   normalizedReviewValue(record.status) === "conflict"
   || normalizedReviewValue(record.reviewStatus) === "conflict"
@@ -1523,6 +1593,7 @@ export const reviewRecordMatchesBusinessFilter = (
     return validation.readyToPublish === false
       || (Array.isArray(validation.missingFields) && validation.missingFields.length > 0)
       || (Array.isArray(validation.errors) && validation.errors.length > 0)
+      || (supplierReviewQueueStateFor(record) === "review_pending" && supplierReviewRecordIsLowStockHold(record))
       || ["failed", "partial"].includes(normalizedReviewValue(record.mediaStatus))
       || ["retryable_failure", "dead_letter"].includes(normalizedReviewValue(record.queueState));
   }
@@ -1617,7 +1688,7 @@ export async function listSupplierQueuePage(
       nextQuery = query.startAfter(lastScannedDocument);
     }
 
-    const rawDocuments = documents.map((document) => ({ id: document.id, ...document.data() }));
+    const rawDocuments = documents.map((document) => projectSupplierReviewLowStockHold({ id: document.id, ...document.data() }));
     const mappedDocuments = options.view === "review"
       ? await applyTrustedCategoryMappingsForReview(db, rawDocuments)
       : rawDocuments;
@@ -1636,7 +1707,7 @@ export async function listSupplierQueuePage(
   const cursorDocument = pageDocuments.length === pageLimit
     ? pageDocuments.at(-1)
     : snapshot.size === scanLimit ? snapshot.docs.at(-1) : null;
-  const rawDocuments = pageDocuments.map((document) => ({ id: document.id, ...document.data() }));
+   const rawDocuments = pageDocuments.map((document) => projectSupplierReviewLowStockHold({ id: document.id, ...document.data() }));
   const mappedDocuments = options.view === "review"
     ? await applyTrustedCategoryMappingsForReview(db, rawDocuments)
     : rawDocuments;

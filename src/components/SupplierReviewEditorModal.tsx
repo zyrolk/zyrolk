@@ -27,6 +27,7 @@ import {
   supplierReviewManagedCanonicalImageUrls,
   supplierReviewManagedImageUrlForCanonical,
   supplierReviewSpecificationsSatisfied,
+  supplierReviewIsLowStockHold,
 } from '../services/supplierHubPresentation';
 import {
   supplierDescriptionPlainText,
@@ -154,11 +155,11 @@ export default function SupplierReviewEditorModal({
     () => validateSupplierReviewDraft(draft, validCategoryIds, categories, brands, { supplierReview: true }),
     [brands, categories, draft, validCategoryIds],
   );
+  const lowStockHold = supplierReviewIsLowStockHold(item);
   const selectedCategory = useMemo(
     () => categories.find((category) => category.id === draft.category),
     [categories, draft.category],
   );
-  const missingFields = useMemo(() => Object.keys(validationErrors), [validationErrors]);
   const profit = useMemo(
     () => calculateSupplierProfit(draft.sellingPrice, draft.costPrice, draft.supplierCostAvailable),
     [draft.costPrice, draft.sellingPrice, draft.supplierCostAvailable],
@@ -216,6 +217,8 @@ export default function SupplierReviewEditorModal({
           || (!specificationsSatisfied && specificationsRequired
             ? 'The supplier did not provide product specifications.'
             : undefined))
+        : check.label === 'Stock' && lowStockHold
+        ? 'Supplier stock must be at least 4 units before publication.'
         : check.fields.map((field) => validationErrors[field]).find(Boolean);
       return {
         label: check.label,
@@ -226,7 +229,8 @@ export default function SupplierReviewEditorModal({
         error,
       };
     });
-  }, [categories, draft.category, item, specificationCount, specificationsRequired, validationErrors]);
+  }, [categories, draft.category, item, lowStockHold, specificationCount, specificationsRequired, validationErrors]);
+  const hasChecklistBlocker = validationChecklist.some((check) => !check.valid);
   const previewImages = useMemo(() => {
     const managedPreviewImages = supplierReviewManagedImageUrls(item);
     const images = !isEditing && supplierReviewManagedMediaReady(item) && managedPreviewImages.length > 0
@@ -995,8 +999,8 @@ export default function SupplierReviewEditorModal({
             </div>
           </div>
 
-          <section id="supplier-publish-readiness" className={`order-[55] rounded-2xl border p-4 text-xs ${missingFields.length === 0 ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-700' : 'border-amber-500/20 bg-amber-500/10 text-amber-700'}`} aria-live="polite" aria-labelledby="supplier-publish-readiness-title">
-            <h4 id="supplier-publish-readiness-title" className="flex items-center gap-2 font-black">{missingFields.length === 0 ? <Check className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}{missingFields.length === 0 ? 'Ready to publish' : 'Complete required product details'}</h4>
+          <section id="supplier-publish-readiness" className={`order-[55] rounded-2xl border p-4 text-xs ${!hasChecklistBlocker ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-700' : 'border-amber-500/20 bg-amber-500/10 text-amber-700'}`} aria-live="polite" aria-labelledby="supplier-publish-readiness-title">
+             <h4 id="supplier-publish-readiness-title" className="flex items-center gap-2 font-black">{!hasChecklistBlocker ? <Check className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}{!hasChecklistBlocker ? 'Ready to publish' : 'Complete required product details'}</h4>
             <ul className="mt-3 grid gap-2 sm:grid-cols-2">
               {validationChecklist.map((check) => (
                 <li key={check.label} className="flex items-start gap-2 rounded-xl bg-white/60 px-3 py-2 dark:bg-slate-950/30">
@@ -1005,7 +1009,7 @@ export default function SupplierReviewEditorModal({
                 </li>
               ))}
             </ul>
-            {validationChecklist.some((check) => !check.valid) && <p id="supplier-publish-blocked-reason" className="mt-3 text-[10px] font-bold">Approve & Publish is unavailable until every failed checklist item is completed.</p>}
+             {hasChecklistBlocker && <p id="supplier-publish-blocked-reason" className="mt-3 text-[10px] font-bold">Approve & Publish is unavailable until every failed checklist item is completed.</p>}
           </section>
           </fieldset>
           </div>
@@ -1037,7 +1041,7 @@ export default function SupplierReviewEditorModal({
             ) : (
               <>
                 <button type="button" onClick={cancelEditing} disabled={isPublishing} className="min-h-11 w-full rounded-xl border border-slate-200 px-4 text-xs font-bold text-slate-600 disabled:opacity-50 dark:border-slate-700 dark:text-slate-300 sm:w-auto">Cancel editing</button>
-                <button type="submit" disabled={isPublishing || validationChecklist.some((check) => !check.valid)} aria-describedby={validationChecklist.some((check) => !check.valid) ? 'supplier-publish-blocked-reason' : undefined} title={validationChecklist.some((check) => !check.valid) ? `Publishing blocked: ${Object.values(validationErrors).join(' ')}` : 'Approve and publish this product'} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 text-xs font-black text-white disabled:cursor-not-allowed disabled:bg-slate-600 sm:w-auto">
+                 <button type="submit" disabled={isPublishing || hasChecklistBlocker} aria-describedby={hasChecklistBlocker ? 'supplier-publish-blocked-reason' : undefined} title={hasChecklistBlocker ? `Publishing blocked: ${[...Object.values(validationErrors), ...(lowStockHold ? ['Supplier stock must be at least 4 units before publication.'] : [])].join(' ')}` : 'Approve and publish this product'} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 text-xs font-black text-white disabled:cursor-not-allowed disabled:bg-slate-600 sm:w-auto">
                   <Check className="h-4 w-4" />{isPublishing ? 'Publishing...' : 'Approve & Publish'}
                 </button>
               </>

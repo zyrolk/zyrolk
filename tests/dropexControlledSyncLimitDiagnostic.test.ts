@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { suggestSupplierCategory } from '../functions/src/api/suppliers/supplierProductMapping';
-import { shouldDeferNewSupplierProductForZeroStock } from '../functions/src/scheduled/supplierSync';
+import { isLowStockHoldForNewSupplierProduct } from '../functions/src/api/suppliers/supplierLowStockPolicy';
 import {
   createSupplierCatalogTraversalCheckpoint,
   runSupplierCatalogTraversal,
@@ -183,15 +183,9 @@ test('DROPEX-LIMIT-04 supplier sync does not auto-continue a limited checkpoint 
   assert.match(source, /syncJobId !== batchId/u);
 });
 
-test('DROPEX-LIMIT-05 zero-stock new products are deferred instead of queued for review', () => {
-  assert.equal(shouldDeferNewSupplierProductForZeroStock({
-    inventoryLevel: 0,
-    providedFields: ['stock'],
-  }, false), true);
-  assert.equal(shouldDeferNewSupplierProductForZeroStock({
-    inventoryLevel: 4,
-    providedFields: ['stock'],
-  }, false), false);
+test('DROPEX-LIMIT-05 zero-stock new products remain reviewable as a low-stock hold', () => {
+  assert.equal(isLowStockHoldForNewSupplierProduct({ isNewUnpublished: true, supplierSourceId: 'dropex', stock: 0, stockKnown: true }), true);
+  assert.equal(isLowStockHoldForNewSupplierProduct({ isNewUnpublished: true, supplierSourceId: 'dropex', stock: 4, stockKnown: true }), false);
 });
 
 test('DROPEX-LIMIT-06 queued counter semantics exclude refreshed review updates in supplier sync', () => {
