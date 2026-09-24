@@ -101,6 +101,9 @@ test("Supplier category mapping API, lazy review projection, and approval author
   const mappingId = supplierMappingDocumentId(sourceId, normalizedSupplierCategory);
   const childMappingId = supplierChildMappingDocumentId(sourceId, normalizedSupplierCategory, "Legacy Buds");
   const childMappingWithId = supplierChildMappingDocumentId(sourceId, normalizedSupplierCategory, "Legacy Buds", "legacy-buds-2");
+  const unmapQueueId = `mapping-review-unmap-${suffix}`;
+  const unmapSupplierSubcategory = "Legacy Chargers";
+  const unmapChildMappingId = supplierChildMappingDocumentId(sourceId, normalizedSupplierCategory, unmapSupplierSubcategory);
 
   const seedQueueItem = async (id: string, offerId = "", pendingRevision = "", categoryLabel = supplierCategory, subcategoryLabel = "Legacy Buds", subcategoryId = "") => {
     await adminDb.collection("supplier_review_queue").doc(id).set({
@@ -293,6 +296,7 @@ test("Supplier category mapping API, lazy review projection, and approval author
       ],
     }, { merge: true });
     await seedQueueItem(queueId);
+    await seedQueueItem(unmapQueueId, "", "", supplierCategory, unmapSupplierSubcategory);
     await adminDb.collection("supplier_review_queue").doc(queueId).set({
       approvalBaseline: buildSupplierProductApprovalBaseline(`payload-${queueId}`, undefined, "2026-09-21T00:00:00.000Z"),
     }, { merge: true });
@@ -359,6 +363,70 @@ test("Supplier category mapping API, lazy review projection, and approval author
       assert.equal(listedSecondChild.targetSubcategoryId, secondSubcategoryId);
       assert.equal("adminEmail" in listedChild, false);
       assert.equal("current" in listedChild, false);
+    });
+
+    await t.test("exact child unmap is admin-only, audited, and falls back without touching queue or products", async () => {
+      const beforeQueue = (await adminDb.collection("supplier_review_queue").doc(unmapQueueId).get()).data();
+      const beforeProducts = (await adminDb.collection("products").get()).docs.map((document) => ({ id: document.id, data: document.data() }));
+      const saved = await request("POST", "/supplier-category-mappings", adminToken, {
+        sourceId,
+        supplierCategory,
+        supplierSubcategory: unmapSupplierSubcategory,
+        targetCategoryId: categoryId,
+        targetSubcategoryId: secondSubcategoryId,
+      });
+      assert.equal(saved.status, 200);
+      const mappedPage = await listSupplierQueuePage(adminDb, { view: "review", state: "active", limit: 40 });
+      const mappedItem = mappedPage.items.find((item) => item.id === unmapQueueId) as Record<string, unknown> | undefined;
+      assert.equal((mappedItem?.productPayload as Record<string, unknown>)?.category, categoryId);
+      assert.equal((mappedItem?.productPayload as Record<string, unknown>)?.subcategory, secondSubcategoryId);
+
+      const removalBody = {
+        mappingId: unmapChildMappingId,
+        sourceId,
+        supplierCategory,
+        supplierSubcategory: unmapSupplierSubcategory,
+      };
+      assert.equal((await request("POST", "/supplier-category-mappings/unmap", undefined, removalBody)).status, 401);
+      assert.equal((await request("POST", "/supplier-category-mappings/unmap", ordinaryToken, removalBody)).status, 403);
+      assert.equal((await request("POST", "/supplier-category-mappings/unmap", adminToken, {
+        ...removalBody,
+        sourceId: `other-source-${suffix}`,
+      })).status, 400);
+      assert.equal((await adminDb.collection("supplier_category_mappings").doc(unmapChildMappingId).get()).exists, true);
+
+      const missingMappingId = supplierChildMappingDocumentId(sourceId, normalizedSupplierCategory, "Missing Child");
+      const missing = await request("POST", "/supplier-category-mappings/unmap", adminToken, {
+        mappingId: missingMappingId,
+        sourceId,
+        supplierCategory,
+        supplierSubcategory: "Missing Child",
+      });
+      assert.equal(missing.status, 200);
+      assert.equal((await missing.json() as { result?: { removed?: boolean } }).result?.removed, false);
+
+      const removed = await request("POST", "/supplier-category-mappings/unmap", adminToken, removalBody);
+      assert.equal(removed.status, 200);
+      const removedBody = await removed.json() as { success?: boolean; result?: { id?: string; removed?: boolean } };
+      assert.equal(removedBody.success, true);
+      assert.equal(removedBody.result?.id, unmapChildMappingId);
+      assert.equal(removedBody.result?.removed, true);
+      assert.equal((await adminDb.collection("supplier_category_mappings").doc(unmapChildMappingId).get()).exists, false);
+      assert.equal((await adminDb.collection("supplier_category_mappings").doc(mappingId).get()).data()?.targetCategoryId, categoryId);
+      assert.equal((await adminDb.collection("supplier_category_mappings").doc(mappingId).get()).data()?.targetSubcategoryId, "");
+      assert.equal((await adminDb.collection("supplier_category_mappings").doc(childMappingId).get()).data()?.targetSubcategoryId, subcategoryId);
+      const removalAudits = await adminDb.collection("supplier_mapping_audit").where("mappingId", "==", unmapChildMappingId).get();
+      assert.equal(removalAudits.docs.at(-1)?.data().action, "admin_mapping_removed");
+
+      const readBack = await request("GET", `/supplier-category-mappings?sourceId=${encodeURIComponent(sourceId)}`, adminToken);
+      const readBackBody = await readBack.json() as { mappings: Array<Record<string, unknown>> };
+      assert.equal(readBackBody.mappings.some((mapping) => mapping.id === unmapChildMappingId), false);
+      const fallbackPage = await listSupplierQueuePage(adminDb, { view: "review", state: "active", limit: 40 });
+      const fallbackItem = fallbackPage.items.find((item) => item.id === unmapQueueId) as Record<string, unknown> | undefined;
+      assert.equal((fallbackItem?.productPayload as Record<string, unknown>)?.category, categoryId);
+      assert.equal((fallbackItem?.productPayload as Record<string, unknown>)?.subcategory, "");
+      assert.deepEqual((await adminDb.collection("supplier_review_queue").doc(unmapQueueId).get()).data(), beforeQueue);
+      assert.deepEqual((await adminDb.collection("products").get()).docs.map((document) => ({ id: document.id, data: document.data() })), beforeProducts);
     });
 
     await t.test("invalid mappings fail before persistence", async () => {

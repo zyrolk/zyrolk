@@ -468,6 +468,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
   const [supplierCategoryMappings, setSupplierCategoryMappings] = useState<SupplierCategoryMappingView[]>([]);
   const [supplierCategoryMappingDrafts, setSupplierCategoryMappingDrafts] = useState<Record<string, { targetCategoryId: string; targetSubcategoryId: string }>>({});
   const [savingSupplierCategoryMapping, setSavingSupplierCategoryMapping] = useState<string | null>(null);
+  const [removingSupplierCategoryMapping, setRemovingSupplierCategoryMapping] = useState<string | null>(null);
 
   const loadReviewCatalog = useCallback(async () => {
     try {
@@ -1787,6 +1788,37 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
     }
   };
 
+  const handleRemoveSupplierCategoryMapping = async (mapping: SupplierCategoryMappingView, optionLabel: string) => {
+    if (!mapping.id || mapping.mappingScope !== 'child') return;
+    const targetCategory = categories.find((category) => category.id === mapping.targetCategoryId);
+    const targetSubcategory = targetCategory?.subcategories?.find((subcategory: any) => subcategory.id === mapping.targetSubcategoryId);
+    const targetLabel = `${targetCategory?.name || mapping.targetCategoryId}${targetSubcategory ? ` / ${targetSubcategory.name || targetSubcategory.id}` : ''}`;
+    const pathLabel = `${optionLabel}${mapping.supplierSubcategory ? ` / ${mapping.supplierSubcategory}` : ''}`;
+    if (!window.confirm(`Remove supplier category mapping?\n\n${pathLabel}\n→ ${targetLabel}`)) return;
+    setRemovingSupplierCategoryMapping(mapping.id);
+    try {
+      const response = await postSupplierApi('/api/supplier-category-mappings/unmap', {
+        mappingId: mapping.id,
+        sourceId: mapping.sourceId,
+        supplierCategory: mapping.supplierCategory,
+        ...(mapping.supplierSubcategory ? { supplierSubcategory: mapping.supplierSubcategory } : {}),
+        ...(mapping.supplierSubcategoryId ? { supplierSubcategoryId: mapping.supplierSubcategoryId } : {}),
+      });
+      const result = await response.json().catch(() => ({})) as { success?: boolean; result?: { removed?: boolean }; error?: string };
+      if (!response.ok || result.success !== true || result.result?.removed !== true) {
+        throw new Error(result.error || 'Supplier category mapping could not be removed.');
+      }
+      await loadReviewCatalog();
+      setSuccessMsg(`Unmapped ${pathLabel}. Future products will use the parent category mapping.`);
+      setErrorMsg(null);
+      setTimeout(() => setSuccessMsg(null), 4000);
+    } catch (error: any) {
+      setErrorMsg(error instanceof Error ? error.message : 'Supplier category mapping could not be removed.');
+    } finally {
+      setRemovingSupplierCategoryMapping(null);
+    }
+  };
+
   const handleSaveAdvancedSourceSettings = async (sourceId: string) => {
     setSavingSettingsSourceId(sourceId);
     try {
@@ -2822,6 +2854,9 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                       <button type="button" onClick={() => void handleSaveSupplierCategoryMapping(option)} disabled={!draft.targetCategoryId || (requiresSubcategory && !draft.targetSubcategoryId) || savingSupplierCategoryMapping === option.key} className="mt-2 min-h-9 rounded-lg bg-blue-600 px-3 text-[10px] font-black text-white disabled:cursor-not-allowed disabled:opacity-40">
                         {savingSupplierCategoryMapping === option.key ? 'Saving…' : 'Save mapping'}
                       </button>
+                      {mapping?.mappingScope === 'child' && mapping.id && <button type="button" onClick={() => void handleRemoveSupplierCategoryMapping(mapping, option.label)} disabled={savingSupplierCategoryMapping === option.key || removingSupplierCategoryMapping === mapping.id} className="mt-2 ml-2 min-h-9 rounded-lg border border-red-300 px-3 text-[10px] font-black text-red-600 disabled:cursor-not-allowed disabled:opacity-40">
+                        {removingSupplierCategoryMapping === mapping.id ? 'Removing...' : 'Unmap'}
+                      </button>}
                     </div>;
                   })}
                   {(supplierSources.length === 0 || supplierCategoryOptions.length === 0) && <div className="rounded-xl border border-dashed border-slate-200 p-4 text-[11px] text-slate-400 dark:border-slate-800 md:col-span-2">{supplierSources.length === 0 ? 'Connect a supplier to configure category mapping.' : 'Update a supplier to discover categories for mapping.'}</div>}

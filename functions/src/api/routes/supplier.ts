@@ -62,7 +62,11 @@ import {
   selectSupplierProductOffer,
 } from "../suppliers/supplierOfferEngine";
 import { activateSupplierTaxonomyCandidate } from "../suppliers/supplierTaxonomy";
-import { listSupplierCategoryMappings, saveSupplierCategoryMapping } from "../suppliers/supplierCategoryMappingAdmin";
+import {
+  listSupplierCategoryMappings,
+  removeSupplierCategoryMapping,
+  saveSupplierCategoryMapping,
+} from "../suppliers/supplierCategoryMappingAdmin";
 import {
   admitPendingReviewBatch,
   PENDING_REVIEW_BATCH_JOB_TYPE,
@@ -594,6 +598,21 @@ export function registerSupplierRoutes(app: express.Express): void {
       sendSupplierFailure(res, error, {
         logMessage: "Supplier category mapping save failed.",
         fallbackMessage: "Supplier category mapping could not be saved.",
+        context: { route: req.path },
+      });
+    }
+  });
+
+  app.post("/api/supplier-category-mappings/unmap", requireSupplierHubAdmin, async (req, res) => {
+    try {
+      res.status(200).json({
+        success: true,
+        result: await removeSupplierCategoryMapping(adminDb, req.body, reviewerFor(res)),
+      });
+    } catch (error: unknown) {
+      sendSupplierFailure(res, error, {
+        logMessage: "Supplier category mapping removal failed.",
+        fallbackMessage: "Supplier category mapping could not be removed.",
         context: { route: req.path },
       });
     }

@@ -77,6 +77,17 @@ test('Category Mapping is reachable from Supplier Hub Settings and uses the exis
   assert.match(hub, /targetSubcategoryId: option\.supplierSubcategory \|\| option\.supplierSubcategoryId\s*\n?\s*\? draft\.targetSubcategoryId \|\| undefined/u);
 });
 
+test('Category Mapping unmap is confirmation-gated, child-only, and reloads persisted mappings', () => {
+  const hub = projectFile('src/components/SupplierHubFiveStars.tsx');
+  const unmapHandler = hub.slice(hub.indexOf('const handleRemoveSupplierCategoryMapping'), hub.indexOf('const handleSaveAdvancedSourceSettings'));
+  assert.match(hub, /postSupplierApi\('\/api\/supplier-category-mappings\/unmap'/u);
+  assert.match(hub, /window\.confirm\(`Remove supplier category mapping\?/u);
+  assert.match(hub, /mapping\.mappingScope === 'child'/u);
+  assert.match(hub, /await loadReviewCatalog\(\)/u);
+  assert.match(hub, /Future products will use the parent category mapping/u);
+  assert.match(unmapHandler, /mappingId: mapping\.id/u);
+});
+
 test('Advanced Settings expose existing operations only to owner and super-admin claims', () => {
   const hub = projectFile('src/components/SupplierHubFiveStars.tsx');
   for (const setting of [

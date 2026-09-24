@@ -24,6 +24,14 @@ export interface SupplierCategoryMappingAdminInput {
   targetSubcategoryId?: string;
 }
 
+export interface SupplierCategoryMappingRemovalInput {
+  mappingId: string;
+  sourceId: string;
+  supplierCategory: string;
+  supplierSubcategory?: string;
+  supplierSubcategoryId?: string;
+}
+
 const text = (value: unknown, max = 160): string => {
   const result = typeof value === "string" ? value.normalize("NFKC").trim() : "";
   return result.length <= max ? result : result.slice(0, max).trim();
@@ -202,4 +210,66 @@ export async function saveSupplierCategoryMapping(
     return { id: mappingReference.id, value: next };
   });
   return projectMapping(mapping.id, mapping.value as Record<string, unknown>);
+}
+
+export async function removeSupplierCategoryMapping(
+  db: Firestore,
+  input: unknown,
+  actor: SupplierCategoryMappingAdminActor,
+): Promise<{ id: string; removed: boolean }> {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new ApiError("Supplier category mapping removal is invalid.", 400);
+  }
+  const value = input as Record<string, unknown>;
+  const mappingId = text(value.mappingId);
+  const sourceId = text(value.sourceId);
+  const supplierCategory = text(value.supplierCategory);
+  const supplierSubcategory = text(value.supplierSubcategory);
+  const supplierSubcategoryId = text(value.supplierSubcategoryId);
+  const normalizedCategory = normalizeSupplierMappingValue(supplierCategory);
+  const expectedMappingId = supplierChildMappingDocumentId(
+    sourceId,
+    normalizedCategory,
+    supplierSubcategory,
+    supplierSubcategoryId,
+  );
+  if (!mappingId || !sourceId || sourceId.includes("/") || !supplierCategory || !normalizedCategory
+    || !expectedMappingId || mappingId !== expectedMappingId) {
+    throw new ApiError("Only an exact child supplier category mapping can be removed.", 400);
+  }
+
+  const mappingReference = db.collection("supplier_category_mappings").doc(expectedMappingId);
+  return db.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(mappingReference);
+    if (!snapshot.exists) return { id: expectedMappingId, removed: false };
+    const previous = snapshot.data() || {};
+    const previousSourceId = text(previous.sourceId);
+    const previousNormalizedCategory = normalizeSupplierMappingValue(previous.normalizedCategory || previous.supplierCategory);
+    const previousSupplierSubcategory = text(previous.supplierSubcategory);
+    const previousSupplierSubcategoryId = text(previous.supplierSubcategoryId);
+    if (previousSourceId !== sourceId
+      || previousNormalizedCategory !== normalizedCategory
+      || previous.mappingScope !== "child"
+      || !hasSupplierSubcategoryBinding(previous)
+      || (supplierSubcategoryId
+        ? previousSupplierSubcategoryId !== supplierSubcategoryId
+        : normalizeSupplierMappingValue(previousSupplierSubcategory) !== normalizeSupplierMappingValue(supplierSubcategory))) {
+      throw new ApiError("The requested supplier child mapping does not match the stored record.", 409);
+    }
+    transaction.delete(mappingReference);
+    const auditReference = db.collection("supplier_mapping_audit").doc();
+    transaction.create(auditReference, {
+      id: auditReference.id,
+      mappingKind: "category",
+      mappingId: expectedMappingId,
+      sourceId,
+      action: "admin_mapping_removed",
+      previous,
+      current: null,
+      adminUserId: actor.uid,
+      adminEmail: actor.email,
+      timestamp: FieldValue.serverTimestamp(),
+    });
+    return { id: expectedMappingId, removed: true };
+  });
 }
