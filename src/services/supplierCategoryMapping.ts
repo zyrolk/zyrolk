@@ -6,7 +6,23 @@ export const normalizeSupplierCategory = (value: unknown): string => String(valu
   .normalize('NFKC')
   .trim()
   .toLocaleLowerCase('en')
-  .replace(/[\s_-]+/g, ' ');
+  .replace(/[^\p{L}\p{N}]+/gu, ' ')
+  .replace(/\s+/gu, ' ')
+  .trim();
+
+export const supplierCategoryMappingUiKey = (
+  sourceId: string,
+  normalizedCategory: string,
+  supplierSubcategory?: string,
+  supplierSubcategoryId?: string,
+): string => {
+  const childBinding = supplierSubcategoryId?.trim()
+    ? `id:${supplierSubcategoryId.trim()}`
+    : supplierSubcategory?.trim()
+      ? `name:${normalizeSupplierCategory(supplierSubcategory)}`
+      : 'parent';
+  return `${sourceId}::${normalizeSupplierCategory(normalizedCategory)}::${childBinding}`;
+};
 
 export function parseSupplierCategoryMappings(value: string): SupplierCategoryMappings {
   return value.split(/\r?\n/).reduce<SupplierCategoryMappings>((mappings, line) => {

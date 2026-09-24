@@ -41,7 +41,7 @@ import { projectSupplierReviewCatalogTaxonomy, supplierReviewValidCategoryIds } 
 import { normalizeCategoryBlueprint } from '../services/products/productBlueprint';
 import { sortCategoriesAlphabetically } from '../services/categories/categoryUtils';
 import { sortBrandsAlphabetically } from '../services/brands/brandUtils';
-import { normalizeSupplierCategory } from '../services/supplierCategoryMapping';
+import { normalizeSupplierCategory, supplierCategoryMappingUiKey } from '../services/supplierCategoryMapping';
 import {
   sortSupplierOffers,
   SupplierOfferSelectionView,
@@ -107,20 +107,6 @@ interface SupplierHubFiveStarsProps {
 const SUPPLIER_AUTO_SYNC_SCHEDULES = ['1 Hour', '3 Hours', '6 Hours', 'Daily'] as const;
 const PENDING_REVIEW_BATCH_SIZES = [25, 50, 100] as const;
 type PendingReviewBatchSize = typeof PENDING_REVIEW_BATCH_SIZES[number];
-
-const supplierCategoryMappingUiKey = (
-  sourceId: string,
-  normalizedCategory: string,
-  supplierSubcategory?: string,
-  supplierSubcategoryId?: string,
-): string => {
-  const childBinding = supplierSubcategoryId?.trim()
-    ? `id:${supplierSubcategoryId.trim()}`
-    : supplierSubcategory?.trim()
-      ? `name:${normalizeSupplierCategory(supplierSubcategory)}`
-      : 'parent';
-  return `${sourceId}::${normalizeSupplierCategory(normalizedCategory)}::${childBinding}`;
-};
 
 export interface ComparisonResult {
   matchFound: boolean;
