@@ -21,6 +21,7 @@ type QueryRef = {
   cursor: string | null;
   pageLimit: number;
   get: () => Promise<QuerySnapshot>;
+  where: (field: string, operator: string, value: unknown) => QueryRef;
   limit: (value: number) => QueryRef;
   orderBy: (field: { __name__: true } | string, direction?: "asc" | "desc") => QueryRef;
   startAfter: (value: string) => QueryRef;
@@ -51,6 +52,10 @@ const makeFakeFirestore = (initial: Record<string, Data>) => {
       cursor,
       pageLimit,
       get: async () => executeQuery(value),
+      where: (field, operator, filterValue) => {
+        assert.equal(operator, "==");
+        return query(collectionName, [...filters, { field, value: filterValue }], cursor, pageLimit);
+      },
       limit: (nextLimit) => query(collectionName, filters, cursor, nextLimit),
       orderBy: () => query(collectionName, filters, cursor, pageLimit),
       startAfter: (nextCursor) => query(collectionName, filters, nextCursor, pageLimit),
@@ -388,7 +393,7 @@ test("non-Dropex, unapproved, and disabled offers are skipped before any supplie
   }));
   assert.equal(fetchCount, 0);
   assert.equal(result.attempted, 0);
-  assert.equal(result.skippedItems, 3);
+  assert.equal(result.skippedItems, 1);
   assert.deepEqual(snapshotOf(fixture.documents, [`supplier_product_offers/${a2zOffer.id}`, "products/a2z-product"]), before);
 });
 
@@ -602,6 +607,233 @@ test("quarantined inactive i7 product and its order stay untouched and Global Au
   const unexpectedWrites = [...fixture.documents.keys()].filter((key) => !keys.includes(key)
     && key !== `supplier_sync_locks/${DROPEX_INVENTORY_REFRESH_SOURCE_LOCK_ID}`);
   assert.deepEqual(unexpectedWrites, []);
+});
+
+const withoutLocalDemand = (documents: Record<string, Data>, productId: string, localDemand?: unknown) => {
+  const privateProduct = clone(documents[`product_private/${productId}`]);
+  if (localDemand === undefined) delete privateProduct.supplierMetadata.localDemand;
+  else privateProduct.supplierMetadata.localDemand = localDemand;
+  documents[`product_private/${productId}`] = privateProduct;
+  return documents;
+};
+
+const countingConnector = (stock: number | ((target: { supplierProductId: string; sku: string }) => number)) => {
+  const requests: string[] = [];
+  const factory = async () => connectorFor(async (target) => {
+    requests.push(target.supplierProductId);
+    return { ...target, stock: typeof stock === "function" ? stock(target) : stock };
+  });
+  return { requests, factory };
+};
+
+test("missing localDemand is eligible only when the canonical resolver proves tracked(0), and is persisted transactionally", async () => {
+  const seeded = dropexProductDocuments({ productId: "p", supplierProductId: "sp", sku: "SKU", inventoryLevel: 10, publicStock: 10 });
+  const fixture = makeFakeFirestore({ ...sourceDocuments(), ...withoutLocalDemand(seeded.documents, "p") });
+  const connector = countingConnector(7);
+  const result = await runDropexInventoryRefresh(1_000, fixture.db as never, 20, connector.factory);
+  assert.deepEqual(connector.requests, ["sp"]);
+  assert.equal(result.updated, 1);
+  assert.equal(fixture.documents.get("products/p")!.stock, 7);
+  assert.equal(fixture.documents.get("products/p")!.price, 1500);
+  assert.deepEqual(fixture.documents.get("product_private/p")!.supplierMetadata.localDemand, { version: 1, quantity: 0, status: "tracked" });
+});
+
+test("missing or malformed localDemand without canonical proof is skipped before any supplier fetch", async () => {
+  const scenarios: Array<{ label: string; build: () => Record<string, Data> }> = [
+    {
+      label: "inferred legacy bootstrap (supplier 10, public 8)",
+      build: () => withoutLocalDemand(dropexProductDocuments({ productId: "p", supplierProductId: "sp", sku: "SKU", inventoryLevel: 10, publicStock: 8 }).documents, "p"),
+    },
+    {
+      label: "unknown public stock is not defaulted to zero demand",
+      build: () => {
+        const documents = withoutLocalDemand(dropexProductDocuments({ productId: "p", supplierProductId: "sp", sku: "SKU", inventoryLevel: 10, publicStock: 10 }).documents, "p");
+        delete documents["products/p"].stock;
+        return documents;
+      },
+    },
+    {
+      label: "unknown supplier baseline",
+      build: () => {
+        const documents = withoutLocalDemand(dropexProductDocuments({ productId: "p", supplierProductId: "sp", sku: "SKU", inventoryLevel: 10, publicStock: 10 }).documents, "p");
+        delete documents["product_private/p"].supplierMetadata.inventoryLevel;
+        return documents;
+      },
+    },
+    {
+      label: "malformed stored localDemand",
+      build: () => withoutLocalDemand(dropexProductDocuments({ productId: "p", supplierProductId: "sp", sku: "SKU", inventoryLevel: 10, publicStock: 10 }).documents, "p", { version: 1, quantity: -1, status: "tracked" }),
+    },
+    {
+      label: "explicit legacy bootstrap state",
+      build: () => withoutLocalDemand(dropexProductDocuments({ productId: "p", supplierProductId: "sp", sku: "SKU", inventoryLevel: 10, publicStock: 10 }).documents, "p", { version: 1, quantity: 0, status: "legacy_bootstrap_required" }),
+    },
+  ];
+  for (const scenario of scenarios) {
+    const documents = scenario.build();
+    const fixture = makeFakeFirestore({ ...sourceDocuments(), ...documents });
+    const before = snapshotOf(fixture.documents, Object.keys(documents));
+    const connector = countingConnector(3);
+    const result = await runDropexInventoryRefresh(1_000, fixture.db as never, 20, connector.factory);
+    assert.deepEqual(connector.requests, [], scenario.label);
+    assert.equal(result.attempted, 0, scenario.label);
+    assert.equal(result.skippedItems, 1, scenario.label);
+    assert.deepEqual(snapshotOf(fixture.documents, Object.keys(documents)), before, scenario.label);
+  }
+});
+
+test("inactive i7-style product without localDemand stays rejected before fetch even though inference is safe", async () => {
+  const quarantined = dropexProductDocuments({
+    productId: "zyro-27fd11710127de4ead9a0cf6e5777a81",
+    supplierProductId: "2656",
+    sku: "SHX2208",
+    inventoryLevel: 10,
+    publicStock: 10,
+    isActive: false,
+  });
+  const documents = withoutLocalDemand(quarantined.documents, "zyro-27fd11710127de4ead9a0cf6e5777a81");
+  const fixture = makeFakeFirestore({ ...sourceDocuments(), ...documents });
+  const before = snapshotOf(fixture.documents, Object.keys(documents));
+  const connector = countingConnector(50);
+  const result = await runDropexInventoryRefresh(1_000, fixture.db as never, 20, connector.factory);
+  assert.deepEqual(connector.requests, []);
+  assert.equal(result.attempted, 0);
+  assert.deepEqual(snapshotOf(fixture.documents, Object.keys(documents)), before);
+});
+
+test("inferred demand stays transactional when a checkout commits during the supplier fetch", async () => {
+  const seeded = dropexProductDocuments({ productId: "p", supplierProductId: "sp", sku: "SKU", inventoryLevel: 10, publicStock: 10 });
+  const fixture = makeFakeFirestore({ ...sourceDocuments(), ...withoutLocalDemand(seeded.documents, "p") });
+  await runDropexInventoryRefresh(1_000, fixture.db as never, 20, async () => connectorFor(async (target) => {
+    const privateProduct = clone(fixture.documents.get("product_private/p")!);
+    privateProduct.supplierMetadata.localDemand = { version: 1, quantity: 1, status: "tracked" };
+    fixture.documents.set("product_private/p", privateProduct);
+    fixture.documents.set("products/p", { ...fixture.documents.get("products/p")!, stock: 9 });
+    return { ...target, stock: 7 };
+  }));
+  assert.equal(fixture.documents.get("products/p")!.stock, 6);
+  assert.deepEqual(fixture.documents.get("product_private/p")!.supplierMetadata.localDemand, { version: 1, quantity: 1, status: "tracked" });
+});
+
+test("explicit tracked localDemand without a stored supplier baseline projects the fresh observation through that demand", async () => {
+  const seeded = dropexProductDocuments({ productId: "p", supplierProductId: "sp", sku: "SKU", publicStock: 8, localDemand: 2 });
+  delete seeded.documents["product_private/p"].supplierMetadata.inventoryLevel;
+  const fixture = makeFakeFirestore({ ...sourceDocuments(), ...seeded.documents });
+  const connector = countingConnector(8);
+  const result = await runDropexInventoryRefresh(1_000, fixture.db as never, 20, connector.factory);
+  assert.deepEqual(connector.requests, ["sp"]);
+  assert.equal(result.skippedItems, 0);
+  assert.equal(result.updated, 1);
+  const product = fixture.documents.get("products/p")!;
+  assert.equal(product.stock, 6);
+  assert.equal(product.availability, "in_stock");
+  assert.equal(product.price, 1500);
+  const metadata = fixture.documents.get("product_private/p")!.supplierMetadata;
+  assert.equal(metadata.inventoryLevel, 8);
+  assert.deepEqual(metadata.localDemand, { version: 1, quantity: 2, status: "tracked" });
+  assert.deepEqual(fixture.documents.get("product_private/p")!.supplierOfferSelection, { activeOfferId: seeded.offer.id, lockedOfferId: null });
+  const storedOffer = fixture.documents.get(`supplier_product_offers/${seeded.offer.id}`)!;
+  assert.equal(storedOffer.stock, 8);
+  assert.equal(storedOffer.price, 1500);
+  assert.equal(storedOffer.supplierCatalogTraversalId, undefined);
+  assert.equal([...fixture.documents.keys()].some((key) => key.startsWith("supplier_review_queue/")), false);
+});
+
+const liveSet = (approved: number, activeCount: number, unapproved: number) => {
+  const documents: Record<string, Data> = { ...sourceDocuments() };
+  for (let index = 0; index < approved; index += 1) {
+    const seeded = dropexProductDocuments({
+      productId: `p-${index}`,
+      supplierProductId: `sp-${index}`,
+      sku: `SKU-${index}`,
+      inventoryLevel: 10,
+      publicStock: 10,
+      isActive: index < activeCount,
+    });
+    Object.assign(documents, index % 2 === 0 ? withoutLocalDemand(seeded.documents, `p-${index}`) : seeded.documents);
+    if (index % 2 !== 0) documents[`product_private/p-${index}`].supplierMetadata.localDemand = { version: 1, quantity: 0, status: "tracked" };
+  }
+  for (let index = 0; index < unapproved; index += 1) {
+    documents[`supplier_product_offers/aaaa-unapproved-${String(index).padStart(5, "0")}`] = {
+      sourceId: "dropex",
+      supplierId: "dropex",
+      supplierProductId: `u-${index}`,
+      sku: `U-${index}`,
+      reviewStatus: "pending",
+      enabled: true,
+      stock: 5,
+    };
+  }
+  return documents;
+};
+
+test("current production size: 92 approved offers, 84 active, 3188 unapproved are all covered in one run", async () => {
+  const fixture = makeFakeFirestore(liveSet(92, 84, 3188));
+  const connector = countingConnector(7);
+  const result = await runDropexInventoryRefresh(1_000, fixture.db as never, undefined, connector.factory);
+  assert.equal(result.attempted, 84);
+  assert.equal(result.updated, 84);
+  assert.equal(result.failed, 0);
+  assert.equal(result.skippedItems, 8);
+  assert.equal(result.cursor, null);
+  assert.equal(result.truncated, false);
+  assert.equal(new Set(connector.requests).size, 84);
+  assert.equal(connector.requests.some((id) => id.startsWith("u-")), false);
+  assert.equal(fixture.documents.get("products/p-0")!.stock, 7);
+  assert.equal(fixture.documents.get("products/p-90")!.stock, 10);
+});
+
+test("per-run supplier request cap is hard and the cursor continues past it", async () => {
+  const fixture = makeFakeFirestore(liveSet(105, 105, 0));
+  const first = countingConnector(7);
+  const firstRun = await runDropexInventoryRefresh(1_000, fixture.db as never, 1_000, first.factory);
+  assert.equal(firstRun.attempted, 100);
+  assert.equal(firstRun.truncated, true);
+  assert.notEqual(firstRun.cursor, null);
+  const second = countingConnector(7);
+  const secondRun = await runDropexInventoryRefresh(2_000, fixture.db as never, 1_000, second.factory);
+  assert.equal(secondRun.attempted, 5);
+  assert.equal(secondRun.cursor, null);
+  assert.equal(new Set([...first.requests, ...second.requests]).size, 105);
+});
+
+test("small batches rotate through every eligible offer without starvation", async () => {
+  const fixture = makeFakeFirestore(liveSet(5, 5, 40));
+  const seen: string[] = [];
+  const attempts: number[] = [];
+  for (let run = 0; run < 3; run += 1) {
+    const connector = countingConnector(7);
+    const result = await runDropexInventoryRefresh(1_000 + run, fixture.db as never, 2, connector.factory);
+    attempts.push(result.attempted);
+    seen.push(...connector.requests);
+  }
+  assert.deepEqual(attempts, [2, 2, 1]);
+  assert.deepEqual([...new Set(seen)].sort(), ["sp-0", "sp-1", "sp-2", "sp-3", "sp-4"]);
+  assert.equal(seen.length, 5);
+});
+
+test("runtime budget stops new supplier requests and resumes from the last processed offer", async () => {
+  const fixture = makeFakeFirestore(liveSet(3, 3, 0));
+  const realNow = Date.now;
+  let offset = 0;
+  Date.now = () => realNow() + offset;
+  try {
+    const first = countingConnector(() => {
+      offset += 8 * 60 * 1000;
+      return 7;
+    });
+    const firstRun = await runDropexInventoryRefresh(realNow(), fixture.db as never, 100, first.factory);
+    assert.equal(firstRun.attempted, 1);
+    assert.equal(firstRun.truncated, true);
+    assert.equal(first.requests.length, 1);
+    offset = 0;
+    const second = countingConnector(7);
+    const secondRun = await runDropexInventoryRefresh(realNow() + 1, fixture.db as never, 100, second.factory);
+    assert.equal(secondRun.attempted, 2);
+    assert.deepEqual([...first.requests, ...second.requests].sort(), ["sp-0", "sp-1", "sp-2"]);
+  } finally {
+    Date.now = realNow;
+  }
 });
 
 test("scheduled refresh binds only the Dropex Secret Manager credentials", () => {

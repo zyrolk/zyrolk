@@ -10,16 +10,17 @@ import {
   SUPPLIER_PRODUCT_OFFERS_COLLECTION,
 } from "../api/suppliers/supplierOfferEngine";
 import {
-  supplierLocalDemandFromPrivate,
-  supplierObservedStockFromPrivate,
+  resolveProvenSupplierLocalDemand,
 } from "../api/orders/supplierInventoryReconciliation";
 import { SupplierConnector, SupplierInventoryObservation } from "../api/suppliers/types";
 import { SupplierRegistry } from "../api/suppliers/SupplierRegistry";
 
 export const DROPEX_INVENTORY_REFRESH_SCHEDULE = "every 15 minutes";
-export const DROPEX_INVENTORY_REFRESH_BATCH_SIZE = 20;
-export const DROPEX_INVENTORY_REFRESH_SCAN_LIMIT = 200;
+export const DROPEX_INVENTORY_REFRESH_BATCH_SIZE = 100;
+export const DROPEX_INVENTORY_REFRESH_SCAN_LIMIT = 120;
 export const DROPEX_INVENTORY_REFRESH_LEASE_MS = 8 * 60 * 1000;
+/** No new supplier request starts after this; one request is bounded by ~45s of timeouts, inside the 540s function timeout. */
+export const DROPEX_INVENTORY_REFRESH_RUNTIME_BUDGET_MS = 7 * 60 * 1000;
 export const DROPEX_INVENTORY_REFRESH_SOURCE_LOCK_ID = "source-dropex";
 
 const SOURCE_ID = "dropex";
@@ -35,6 +36,7 @@ export interface SupplierInventoryRefreshSummary {
   skippedItems: number;
   failed: number;
   cursor: string | null;
+  truncated: boolean;
 }
 
 interface RefreshLease {
@@ -43,6 +45,7 @@ interface RefreshLease {
 }
 
 interface InventoryRefreshTarget {
+  documentId: string;
   offer: SupplierProductOffer;
   productId: string;
   supplierProductId: string;
@@ -127,6 +130,7 @@ async function releaseRefreshLease(
 }
 
 function targetFromSnapshots(
+  documentId: string,
   offer: SupplierProductOffer | null,
   productId: string,
   productValue: unknown,
@@ -149,8 +153,7 @@ function targetFromSnapshots(
   const privateSku = identity(metadata.sku || privateProduct.supplierItemCode);
   const publicSource = identityLower(product.supplierSourceId || product.supplierId);
   const publicSku = identity(product.supplierItemCode);
-  const localDemand = supplierLocalDemandFromPrivate(privateValue);
-  const observedStock = supplierObservedStockFromPrivate(privateValue);
+  const localDemand = resolveProvenSupplierLocalDemand(privateValue, product.stock);
 
   if (privateSource !== SOURCE_ID
     || (publicSource && publicSource !== SOURCE_ID)
@@ -163,10 +166,10 @@ function targetFromSnapshots(
     || identityLower(privateSku) !== identityLower(offer.sku)
     || (publicSku && identityLower(publicSku) !== identityLower(offer.sku))
     || !localDemand
-    || localDemand.status !== "tracked"
-    || observedStock === null) return null;
+    || localDemand.status !== "tracked") return null;
 
   return {
+    documentId,
     offer,
     productId,
     supplierProductId: identity(offer.supplierProductId),
@@ -181,6 +184,8 @@ async function loadRefreshPage(
 ): Promise<{ targets: InventoryRefreshTarget[]; skipped: number; nextCursor: string | null }> {
   let query = db.collection(SUPPLIER_PRODUCT_OFFERS_COLLECTION)
     .where("sourceId", "==", SOURCE_ID)
+    .where("reviewStatus", "==", "approved")
+    .where("enabled", "==", true)
     .orderBy(FieldPath.documentId(), "asc")
     .limit(DROPEX_INVENTORY_REFRESH_SCAN_LIMIT);
   if (cursor) query = query.startAfter(cursor);
@@ -207,6 +212,7 @@ async function loadRefreshPage(
       db.collection(PRIVATE_PRODUCTS_COLLECTION).doc(productId).get(),
     ]);
     const target = targetFromSnapshots(
+      offerDocument.id,
       offer,
       productId,
       productSnapshot.exists ? productSnapshot.data() : undefined,
@@ -250,7 +256,9 @@ export async function runDropexInventoryRefresh(
     skippedItems: 0,
     failed: 0,
     cursor: null,
+    truncated: false,
   };
+  const startedAt = Date.now();
   const lease = await acquireRefreshLease(db, runId, now);
   if (!lease.acquired) return { ...summary, skipped: true };
   let nextCursor = lease.cursor;
@@ -270,16 +278,26 @@ export async function runDropexInventoryRefresh(
     const page = await loadRefreshPage(db, lease.cursor, boundedBatchSize);
     summary.skippedItems += page.skipped;
     nextCursor = page.nextCursor;
+    summary.truncated = page.nextCursor !== null;
     if (page.targets.length === 0) return summary;
 
     const connector = exactInventoryConnector(await connectorFactory(SOURCE_ID, source));
+    let lastProcessedDocumentId: string | null = null;
     for (const target of page.targets) {
+      if (Date.now() - startedAt >= DROPEX_INVENTORY_REFRESH_RUNTIME_BUDGET_MS) {
+        nextCursor = lastProcessedDocumentId ?? lease.cursor;
+        summary.truncated = true;
+        appLogger.warn("Scheduled Dropex inventory refresh reached its runtime budget; continuing next run.", { runId });
+        break;
+      }
       summary.attempted += 1;
       if (!await heartbeatRefreshLease(db, runId, Date.now())) {
         summary.failed += 1;
+        summary.truncated = true;
         appLogger.warn("Scheduled Dropex inventory refresh lease was lost; stopping the run.", { runId });
         break;
       }
+      lastProcessedDocumentId = target.documentId;
       try {
         const observation = await connector.fetchExactInventoryForRefresh({
           supplierProductId: target.supplierProductId,
@@ -324,6 +342,9 @@ export async function runDropexInventoryRefresh(
   } finally {
     summary.cursor = nextCursor;
     await releaseRefreshLease(db, runId, nextCursor, summary, Date.now());
+    if (summary.truncated) {
+      appLogger.warn("Scheduled Dropex inventory refresh did not cover every candidate this run.", { runId, cursor: nextCursor });
+    }
     appLogger.info("Scheduled Dropex inventory refresh finished.", { ...summary });
   }
 }

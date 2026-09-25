@@ -6,6 +6,7 @@ import { PRODUCT_PRIVATE_COLLECTION } from "../products/productCommercialData";
 import { reconcileSupplierApprovalStock } from "./supplierApprovalConcurrency";
 import {
   projectSupplierAvailableStock,
+  resolveProvenSupplierLocalDemand,
   resolveSupplierLocalDemand,
   withSupplierLocalDemand,
 } from "../orders/supplierInventoryReconciliation";
@@ -808,6 +809,7 @@ export async function applyApprovedSupplierInventoryObservation(
       const stockOnlySelection = parseSupplierOfferSelection(currentPrivate.supplierOfferSelection);
       if (currentProduct.isActive !== true
         || input.removed === true
+        || resolveProvenSupplierLocalDemand(currentPrivate, currentProduct.stock)?.status !== "tracked"
         || stockOnlySelection.activeOfferId !== offerId
         || (stockOnlySelection.lockedOfferId && stockOnlySelection.lockedOfferId !== offerId)) {
         return {

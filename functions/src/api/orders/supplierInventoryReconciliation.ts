@@ -597,6 +597,22 @@ export const resolveSupplierLocalDemand = (
   };
 };
 
+/**
+ * Canonical local demand only when it is provable: a valid stored state, or
+ * the canonical inference from both a known supplier baseline and a known
+ * public stock. Malformed stored state or unknown inputs return null.
+ */
+export const resolveProvenSupplierLocalDemand = (
+  privateValue: unknown,
+  currentPublicStock: unknown,
+): SupplierLocalDemandState | null => {
+  const existing = supplierLocalDemandFromPrivate(privateValue);
+  if (existing) return existing;
+  if (record(record(privateValue).supplierMetadata).localDemand !== undefined) return null;
+  if (supplierObservedStockFromPrivate(privateValue) === null || nonNegativeInteger(currentPublicStock) === null) return null;
+  return resolveSupplierLocalDemand(privateValue, currentPublicStock);
+};
+
 export const withSupplierLocalDemand = (
   privateValue: unknown,
   state: SupplierLocalDemandState,
