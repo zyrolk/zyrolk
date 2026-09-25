@@ -458,7 +458,7 @@ test("P1 production blockers fail closed at trusted and Rules boundaries", {
         expectedPendingRevision: stockQueue.supplierOfferPendingRevision,
       });
       assert.equal(stockDecision.success, true);
-      assert.equal((await adminDb.collection("products").doc(productId).get()).data()?.stock, 9);
+      assert.equal((await adminDb.collection("products").doc(productId).get()).data()?.stock, 8);
 
       const rejectedProposal = await portalRequest(`/supplier-portal/products/${productId}/stock-proposal`, { stock: 12 });
       assert.equal(rejectedProposal.status, 200, await rejectedProposal.text());
@@ -473,7 +473,7 @@ test("P1 production blockers fail closed at trusted and Rules boundaries", {
       assert.equal(afterRejectOffer.reviewStatus, "approved");
       assert.equal(afterRejectOffer.stock, beforeRejectOffer.stock);
       assert.equal(afterRejectOffer.pendingObservation, null);
-      assert.equal((await adminDb.collection("products").doc(productId).get()).data()?.stock, 9);
+      assert.equal((await adminDb.collection("products").doc(productId).get()).data()?.stock, 8);
 
       const skuClaimReference = adminDb.collection("supplier_sku_claims").doc(String(queue.supplierSkuClaimId));
       assert.equal((await skuClaimReference.get()).data()?.canonicalProductId, productId);

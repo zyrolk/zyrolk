@@ -33,6 +33,12 @@ import {
 } from "../orders/orderPrivateAttribution";
 import { isProductExplicitlyActive } from "../products/productAvailability";
 import { PRODUCT_PRIVATE_COLLECTION } from "../products/productCommercialData";
+import {
+  addSupplierLocalDemand,
+  hasSupplierInventoryAuthority,
+  resolveSupplierLocalDemand,
+  withSupplierLocalDemand,
+} from "../orders/supplierInventoryReconciliation";
 
 const enforceCheckoutRateLimit = createCheckoutRateLimiter();
 const enforceCouponRateLimit = createCheckoutRateLimiter();
@@ -213,7 +219,14 @@ export function registerCheckoutRoutes(app: express.Express): void {
         let itemsSubtotal = 0;
         const priceChanges: CheckoutPriceChange[] = [];
         const verifiedItems = [];
-        const productUpdates: Array<{ ref: FirebaseFirestore.DocumentReference; newStock: number }> = [];
+        const productUpdates: Array<{
+          ref: FirebaseFirestore.DocumentReference;
+          newStock: number;
+          quantity: number;
+          privateRef: FirebaseFirestore.DocumentReference;
+          privateValue: FirebaseFirestore.DocumentData | null;
+          tracksSupplierDemand: boolean;
+        }> = [];
         const attributionInputs: CheckoutProductAttributionInput[] = [];
 
         for (const item of validatedCartItems) {
@@ -262,9 +275,14 @@ export function registerCheckoutRoutes(app: express.Express): void {
             imageUrl: pData.imageUrl || ""
           });
 
+          const privateValue = privateProductSnap.exists ? privateProductSnap.data() || null : null;
           productUpdates.push({
             ref: productRef,
             newStock: currentStock - item.quantity,
+            quantity: item.quantity,
+            privateRef: privateProductRef,
+            privateValue,
+            tracksSupplierDemand: hasSupplierInventoryAuthority(privateValue),
           });
           attributionInputs.push({
             productId: item.productId,
@@ -321,6 +339,13 @@ export function registerCheckoutRoutes(app: express.Express): void {
           transaction.update(update.ref, {
             stock: Math.max(0, update.newStock),
           });
+          if (update.tracksSupplierDemand) {
+            const localDemand = addSupplierLocalDemand(
+              resolveSupplierLocalDemand(update.privateValue, update.newStock + update.quantity),
+              update.quantity,
+            );
+            transaction.set(update.privateRef, withSupplierLocalDemand(update.privateValue, localDemand), { merge: true });
+          }
         }
 
         const orderRef = adminDb.collection("orders").doc();

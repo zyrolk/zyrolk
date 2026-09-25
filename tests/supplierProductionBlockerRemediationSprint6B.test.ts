@@ -170,7 +170,11 @@ test('Sprint 6B atomically fails over to the highest-priority eligible approved 
     'products/product-1': { id: 'product-1', price: 120, stock: 8, availability: 'in_stock', isActive: true, active: true, visible: true },
     'product_private/product-1': {
       supplierOfferSelection: { activeOfferId: unavailable.id, lockedOfferId: null, failoverEnabled: true },
-      supplierMetadata: { activeOfferId: unavailable.id, inventoryLevel: 10 },
+      supplierMetadata: {
+        activeOfferId: unavailable.id,
+        inventoryLevel: 10,
+        localDemand: { version: 1, quantity: 2, status: 'tracked' },
+      },
     },
     [`supplier_product_offers/${unavailable.id}`]: { ...unavailable },
     [`supplier_product_offers/${approved.id}`]: { ...approved },
@@ -195,7 +199,11 @@ test('Sprint 6B never exposes an unapproved offer and safely restores a recovere
     'products/product-1': { id: 'product-1', price: 120, stock: 7, availability: 'in_stock', isActive: true, active: true, visible: true },
     'product_private/product-1': {
       supplierOfferSelection: { activeOfferId: offer.id, lockedOfferId: null, failoverEnabled: true },
-      supplierMetadata: { activeOfferId: offer.id, inventoryLevel: 10 },
+      supplierMetadata: {
+        activeOfferId: offer.id,
+        inventoryLevel: 10,
+        localDemand: { version: 1, quantity: 0, status: 'tracked' },
+      },
     },
     [`supplier_product_offers/${offer.id}`]: { ...offer },
   });

@@ -4,6 +4,11 @@ import { ApiError } from "../errors";
 import { SupplierHubAdminIdentity } from "../middleware/supplierHubAdminAuth";
 import { PRODUCT_PRIVATE_COLLECTION } from "../products/productCommercialData";
 import { reconcileSupplierApprovalStock } from "./supplierApprovalConcurrency";
+import {
+  projectSupplierAvailableStock,
+  resolveSupplierLocalDemand,
+  withSupplierLocalDemand,
+} from "../orders/supplierInventoryReconciliation";
 
 export const SUPPLIER_PRODUCT_OFFERS_COLLECTION = "supplier_product_offers";
 export const SUPPLIER_OFFER_SCHEMA_VERSION = 2;
@@ -532,6 +537,7 @@ export function buildSupplierOfferPublicProjection(
   offer: SupplierProductOffer,
   currentProductValue: unknown,
   previousSupplierStockValue?: unknown,
+  localDemand?: ReturnType<typeof resolveSupplierLocalDemand>,
 ): Record<string, unknown> {
   if (offer.reviewStatus !== "approved") {
     throw new Error("Only an approved supplier offer can be projected to the public catalogue.");
@@ -540,12 +546,13 @@ export function buildSupplierOfferPublicProjection(
   const previousSupplierStock = previousSupplierStockValue === undefined
     ? currentProduct.stock
     : previousSupplierStockValue;
-  const projectedStock = reconcileSupplierApprovalStock(
-    previousSupplierStock,
-    currentProduct.stock,
-    offer.stock,
-    true,
-  );
+  const projectedStock = localDemand
+    ? projectSupplierAvailableStock({
+      currentPublicStock: currentProduct.stock,
+      supplierObservedStock: offer.stock,
+      localDemand,
+    })
+    : reconcileSupplierApprovalStock(previousSupplierStock, currentProduct.stock, offer.stock, true);
   const currentPrice = money(currentProduct.price);
   const currentOriginalPrice = money(currentProduct.originalPrice);
   const hasExistingPromotion = currentOriginalPrice > 0
@@ -791,6 +798,7 @@ export async function applyApprovedSupplierInventoryObservation(
       .filter((offer): offer is SupplierProductOffer => Boolean(offer));
     const currentProduct = productSnapshot.data() || {};
     const currentPrivate = privateSnapshot.data() || {};
+    const localDemand = resolveSupplierLocalDemand(currentPrivate, currentProduct.stock);
     const availability: SupplierOfferAvailability = input.removed
       ? "unavailable"
       : observedStock > 0 ? "in_stock" : "out_of_stock";
@@ -850,9 +858,13 @@ export async function applyApprovedSupplierInventoryObservation(
     let publicProjection: Record<string, unknown> = {};
     if (nextAuthority && (authorityChanged || projectsObservedOffer)) {
       publicProjection = authorityChanged && isSupplierOfferAvailableForCommerce(nextAuthority)
-        ? buildSupplierOfferPublicProjection(nextAuthority, currentProduct, previousSupplierStock)
+        ? buildSupplierOfferPublicProjection(nextAuthority, currentProduct, previousSupplierStock, localDemand)
         : {
-          stock: reconcileSupplierApprovalStock(previousSupplierStock, currentProduct.stock, nextAuthority.stock, true),
+          stock: projectSupplierAvailableStock({
+            currentPublicStock: currentProduct.stock,
+            supplierObservedStock: nextAuthority.stock,
+            localDemand,
+          }),
           availability: nextAuthority.availability === "unavailable"
             ? "unavailable"
             : nextAuthority.stock > 0 ? "in_stock" : "out_of_stock",
@@ -882,6 +894,10 @@ export async function applyApprovedSupplierInventoryObservation(
         ...activeSupplierPrivateProjection(nextAuthority, currentPrivate),
         supplierOfferSelection: nextSelection,
         updatedAt: FieldValue.serverTimestamp(),
+        ...withSupplierLocalDemand(
+          activeSupplierPrivateProjection(nextAuthority, currentPrivate),
+          localDemand,
+        ),
       }, { merge: true });
     }
     if (reviewReference && reviewSnapshot?.exists) {
@@ -959,6 +975,7 @@ export async function reconcileSupplierProductOfferFailover(
       .map((document) => projectSupplierOfferForAdmin({ id: document.id, ...document.data() }))
       .filter((offer): offer is SupplierProductOffer => Boolean(offer));
     const privateProduct = privateSnapshot.data() || {};
+    const localDemand = resolveSupplierLocalDemand(privateProduct, productSnapshot.data()?.stock);
     const previousSelection = parseSupplierOfferSelection(privateProduct.supplierOfferSelection);
     if (!previousSelection.activeOfferId) {
       return { productId, changed: false, previousOfferId: null, activeOfferId: null };
@@ -1003,7 +1020,7 @@ export async function reconcileSupplierProductOfferFailover(
       ?? previousOffer?.stock
       ?? productSnapshot.data()?.stock;
     const publicProjection = replacementOffer
-      ? buildSupplierOfferPublicProjection(replacementOffer, productSnapshot.data(), previousSupplierStock)
+      ? buildSupplierOfferPublicProjection(replacementOffer, productSnapshot.data(), previousSupplierStock, localDemand)
       : buildSupplierRemovalPublicProjection(null, productSnapshot.data(), previousSupplierStock);
     if (replacementOffer && failoverDeactivated) {
       const previousVisibility = asRecord(asRecord(privateProduct.supplierMetadata).failoverPreviousVisibility);
@@ -1032,6 +1049,12 @@ export async function reconcileSupplierProductOfferFailover(
         : inactiveSupplierPrivateProjection(privateProduct, productSnapshot.data())),
       supplierOfferSelection: nextSelection,
       updatedAt: FieldValue.serverTimestamp(),
+      ...withSupplierLocalDemand(
+        replacementOffer
+          ? activeSupplierPrivateProjection(replacementOffer, privateProduct)
+          : inactiveSupplierPrivateProjection(privateProduct, productSnapshot.data()),
+        localDemand,
+      ),
     }, { merge: true });
     const auditReference = db.collection("supplier_operations_audit").doc();
     transaction.create(auditReference, {
@@ -1178,9 +1201,10 @@ export async function configureSupplierProductOffer(
     const previousSupplierStock = asRecord(privateSnapshot.data()?.supplierMetadata).inventoryLevel
       ?? previousOffer?.stock
       ?? productSnapshot.data()?.stock;
+    const localDemand = resolveSupplierLocalDemand(privateSnapshot.data(), productSnapshot.data()?.stock);
     const publicProjection = productSnapshot.exists
       ? resolved
-        ? buildSupplierOfferPublicProjection(resolved, productSnapshot.data(), previousSupplierStock)
+        ? buildSupplierOfferPublicProjection(resolved, productSnapshot.data(), previousSupplierStock, localDemand)
         : buildSupplierRemovalPublicProjection(null, productSnapshot.data(), previousSupplierStock)
       : null;
     transaction.set(offerReference, {
@@ -1199,6 +1223,10 @@ export async function configureSupplierProductOffer(
       ...activeSupplierPrivateProjection(resolved, privateSnapshot.data()),
       supplierOfferSelection: selection,
       updatedAt: FieldValue.serverTimestamp(),
+      ...withSupplierLocalDemand(
+        activeSupplierPrivateProjection(resolved, privateSnapshot.data()),
+        localDemand,
+      ),
     }, { merge: true });
     writeOfferAdministrationAudit(transaction, db, {
       action: "offer_configured",
@@ -1257,10 +1285,12 @@ export async function selectSupplierProductOffer(
     const previousSupplierStock = asRecord(privateSnapshot.data()?.supplierMetadata).inventoryLevel
       ?? previousOffer?.stock
       ?? productSnapshot.data()?.stock;
+    const localDemand = resolveSupplierLocalDemand(privateSnapshot.data(), productSnapshot.data()?.stock);
     const publicProjection = buildSupplierOfferPublicProjection(
       requestedOffer,
       productSnapshot.data(),
       previousSupplierStock,
+      localDemand,
     );
     const selection: SupplierOfferSelection = {
       activeOfferId: requestedOffer.id,
@@ -1279,6 +1309,10 @@ export async function selectSupplierProductOffer(
       ...activeSupplierPrivateProjection(requestedOffer, privateSnapshot.data()),
       supplierOfferSelection: selection,
       updatedAt: FieldValue.serverTimestamp(),
+      ...withSupplierLocalDemand(
+        activeSupplierPrivateProjection(requestedOffer, privateSnapshot.data()),
+        localDemand,
+      ),
     }, { merge: true });
     writeOfferAdministrationAudit(transaction, db, {
       action: "active_offer_selected",

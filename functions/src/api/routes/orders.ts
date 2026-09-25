@@ -20,6 +20,15 @@ import {
   projectFulfilmentNotificationLines,
 } from "../orders/orderFulfilmentNotifications";
 import { appendPaymentTimeline, createPaymentTimelineEvent } from "../payments/payhereLogic";
+import {
+  hasSupplierInventoryAuthority,
+  projectSupplierAvailableStock,
+  releaseSupplierLocalDemand,
+  resolveSupplierLocalDemand,
+  unreconciledSupplierOrderQuantity,
+  supplierObservedStockFromPrivate,
+  withSupplierLocalDemand,
+} from "../orders/supplierInventoryReconciliation";
 
 const VALID_ORDER_STATUSES = new Set<string>(ORDER_STATUSES);
 
@@ -93,15 +102,58 @@ export async function updateOrderStatus(
       && newStatus !== "pending"
       && newStatus !== "cancelled";
 
-    const productStocks: Array<{ ref: FirebaseFirestore.DocumentReference; stock: number; quantity: number }> = [];
+    const productStocks: Array<{
+      ref: FirebaseFirestore.DocumentReference;
+      privateRef: FirebaseFirestore.DocumentReference;
+      privateValue: FirebaseFirestore.DocumentData | null;
+      stock: number;
+      quantity: number;
+      restorationQuantity: number;
+      tracksSupplierDemand: boolean;
+    }> = [];
     for (const [productId, quantity] of quantities) {
       const productRef = db.collection("products").doc(productId);
-      const productSnap = await transaction.get(productRef);
+      const productPrivateRef = db.collection("product_private").doc(productId);
+      const [productSnap, productPrivateSnap] = shouldRestoreStock
+        ? await transaction.getAll(productRef, productPrivateRef)
+        : [await transaction.get(productRef), null];
       const stock = requireCurrentProductStock(productSnap.exists, productSnap.data()?.stock);
-      productStocks.push({ ref: productRef, stock, quantity });
+      const privateValue = productPrivateSnap?.exists ? productPrivateSnap.data() || null : null;
+      const tracksSupplierDemand = productPrivateSnap?.exists
+        ? hasSupplierInventoryAuthority(privateValue)
+        : false;
+      productStocks.push({
+        ref: productRef,
+        privateRef: productPrivateRef,
+        privateValue,
+        tracksSupplierDemand,
+        stock,
+        quantity,
+        restorationQuantity: tracksSupplierDemand
+          ? unreconciledSupplierOrderQuantity(privateValue, productId, quantity)
+          : quantity,
+      });
     }
 
-    productStocks.forEach(({ ref, stock, quantity }) => transaction.update(ref, { stock: stock + quantity }));
+    productStocks.forEach(({ ref, privateRef: productPrivateRef, privateValue, tracksSupplierDemand, stock, restorationQuantity }) => {
+      if (!shouldRestoreStock) return;
+      if (!tracksSupplierDemand) {
+        transaction.update(ref, { stock: stock + restorationQuantity });
+        return;
+      }
+      const localDemand = releaseSupplierLocalDemand(
+        resolveSupplierLocalDemand(privateValue, stock),
+        restorationQuantity,
+      );
+      transaction.update(ref, {
+        stock: projectSupplierAvailableStock({
+          currentPublicStock: stock + restorationQuantity,
+          supplierObservedStock: supplierObservedStockFromPrivate(privateValue),
+          localDemand,
+        }),
+      });
+      transaction.set(productPrivateRef, withSupplierLocalDemand(privateValue, localDemand), { merge: true });
+    });
     if (delivery) {
       transaction.update(privateRef, {
         fulfilmentGroups: delivery.groups,

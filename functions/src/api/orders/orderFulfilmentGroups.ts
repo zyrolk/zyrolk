@@ -46,6 +46,10 @@ export interface GroupableOrderPrivateLine {
   fulfilmentMode: "supplier" | "internal";
   supplierAccountId: string | null;
   supplierSourceId: string | null;
+  supplierOfferId?: string | null;
+  supplierId?: string | null;
+  supplierProductId?: string | null;
+  supplierItemCode?: string | null;
 }
 
 export interface OrderFulfilmentGroup {
@@ -175,6 +179,10 @@ const parseLine = (value: unknown): GroupableOrderPrivateLine => {
     fulfilmentMode: fulfilmentMode as "supplier" | "internal",
     supplierAccountId: cleanText(line.supplierAccountId, 160) || null,
     supplierSourceId: cleanText(line.supplierSourceId, 160) || null,
+    supplierOfferId: cleanText(line.supplierOfferId, 220) || null,
+    supplierId: cleanText(line.supplierId, 180) || null,
+    supplierProductId: cleanText(line.supplierProductId, 300) || null,
+    supplierItemCode: cleanText(line.supplierItemCode, 300) || null,
   };
 };
 

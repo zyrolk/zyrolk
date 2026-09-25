@@ -12,6 +12,10 @@ import {
   supplierGroupForAccount,
   transitionOrderFulfilmentGroup,
 } from "../orders/orderFulfilmentGroups";
+import {
+  prepareSupplierInventorySettlement,
+  reconcileSupplierInventorySettlement,
+} from "../orders/supplierInventoryReconciliation";
 import { PRODUCT_PRIVATE_COLLECTION, sanitizePublicProductData } from "../products/productCommercialData";
 import { createSupplierAuditEvent } from "../suppliers/supplierAuditTrail";
 import { buildSupplierProductApprovalBaseline } from "../suppliers/supplierApprovalConcurrency";
@@ -491,6 +495,62 @@ export function registerSupplierPortalRoutes(app: express.Express, dependencies:
         logMessage: "Admin fulfilment-group retrieval failed.",
         fallbackMessage: "Fulfilment groups could not be loaded",
         context: { orderId },
+      });
+    }
+  });
+
+  const supplierInventorySettlementInput = (req: express.Request, res: express.Response) => ({
+    db: dependencies.db,
+    orderId: req.params.orderId,
+    groupId: req.params.groupId,
+    productId: req.body?.productId,
+    quantity: req.body?.quantity,
+    expectedGroupRevision: req.body?.expectedGroupRevision,
+    expectedOrderPrivateRevision: req.body?.expectedOrderPrivateRevision,
+    actorUid: String(res.locals.supplierAdmin?.uid || ""),
+    externalSupplierOrderReference: req.body?.externalSupplierOrderReference,
+  });
+
+  app.post("/api/supplier-portal/orders/:orderId/groups/:groupId/supplier-stock-reconciliation/prepare", requireSupplierHubAdmin, async (req, res) => {
+    const orderId = typeof req.params.orderId === "string" ? req.params.orderId.trim() : "";
+    const groupId = typeof req.params.groupId === "string" ? req.params.groupId.trim() : "";
+    if (!orderId || orderId.includes("/") || !groupId || groupId.includes("/")) {
+      res.status(400).json({ error: "A valid order and fulfilment group are required" });
+      return;
+    }
+    try {
+      const result = await prepareSupplierInventorySettlement({
+        ...supplierInventorySettlementInput(req, res),
+        manualSupplierOrderPlaced: req.body?.manualSupplierOrderPlaced,
+      });
+      res.json({ success: true, ...result });
+    } catch (error) {
+      sendApiError(res, error, {
+        logMessage: "Supplier inventory settlement preparation failed.",
+        fallbackMessage: "Supplier inventory settlement could not be prepared",
+        context: { orderId, groupId },
+      });
+    }
+  });
+
+  app.post("/api/supplier-portal/orders/:orderId/groups/:groupId/supplier-stock-reconciliation/reconcile", requireSupplierHubAdmin, async (req, res) => {
+    const orderId = typeof req.params.orderId === "string" ? req.params.orderId.trim() : "";
+    const groupId = typeof req.params.groupId === "string" ? req.params.groupId.trim() : "";
+    if (!orderId || orderId.includes("/") || !groupId || groupId.includes("/")) {
+      res.status(400).json({ error: "A valid order and fulfilment group are required" });
+      return;
+    }
+    try {
+      const result = await reconcileSupplierInventorySettlement({
+        ...supplierInventorySettlementInput(req, res),
+        acknowledgeFreshSupplierObservation: req.body?.acknowledgeFreshSupplierObservation,
+      });
+      res.json({ success: true, ...result });
+    } catch (error) {
+      sendApiError(res, error, {
+        logMessage: "Supplier inventory settlement reconciliation failed.",
+        fallbackMessage: "Supplier inventory settlement could not be reconciled",
+        context: { orderId, groupId },
       });
     }
   });

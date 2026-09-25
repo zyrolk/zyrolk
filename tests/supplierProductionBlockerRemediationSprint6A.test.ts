@@ -134,7 +134,10 @@ test('Sprint 6A supplier selection atomically projects approved offer commerce f
     ['products/product-1', { id: 'product-1', price: 120, originalPrice: 180, discount: 33, stock: 8 }],
     ['product_private/product-1', {
       supplierOfferSelection: { activeOfferId: previous.id, lockedOfferId: null, failoverEnabled: true },
-      supplierMetadata: { inventoryLevel: 10 },
+      supplierMetadata: {
+        inventoryLevel: 10,
+        localDemand: { version: 1, quantity: 2, status: 'tracked' },
+      },
     }],
   ]);
   const offers = [previous, selected];

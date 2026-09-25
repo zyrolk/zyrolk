@@ -9,6 +9,15 @@ import {
   hasSupplierFulfilmentStarted,
   requireCurrentProductStock,
 } from "../api/orders/orderStatusLogic";
+import {
+  hasSupplierInventoryAuthority,
+  projectSupplierAvailableStock,
+  releaseSupplierLocalDemand,
+  resolveSupplierLocalDemand,
+  unreconciledSupplierOrderQuantity,
+  supplierObservedStockFromPrivate,
+  withSupplierLocalDemand,
+} from "../api/orders/supplierInventoryReconciliation";
 
 type ReservationExpiryOutcome = "expired" | "not_eligible" | "blocked_by_fulfilment";
 
@@ -35,16 +44,54 @@ export async function expireReservation(
     if (hasSupplierAssignment(order) || hasSupplierFulfilmentStarted(order.supplierFulfilmentStatus)) {
       return "blocked_by_fulfilment";
     }
+    const orderPrivateSnapshot = await transaction.get(db.collection("order_private").doc(orderRef.id));
 
-    const productUpdates: Array<{ ref: FirebaseFirestore.DocumentReference; stock: number }> = [];
+    const productUpdates: Array<{
+      ref: FirebaseFirestore.DocumentReference;
+      privateRef: FirebaseFirestore.DocumentReference;
+      privateValue: FirebaseFirestore.DocumentData | null;
+      stock: number;
+      quantity: number;
+      localDemand: ReturnType<typeof resolveSupplierLocalDemand>;
+      tracksSupplierDemand: boolean;
+    }> = [];
     for (const [productId, quantity] of collectOrderStockQuantities(order.items)) {
       const productRef = db.collection("products").doc(productId);
+      const privateRef = db.collection("product_private").doc(productId);
+      // Keep this path compatible with the lightweight transaction doubles used
+      // by the existing reservation-expiry tests. Both reads still happen
+      // before any transaction writes, preserving the Firestore read fence.
       const productSnapshot = await transaction.get(productRef);
+      const privateSnapshot = await transaction.get(privateRef);
       const stock = requireCurrentProductStock(productSnapshot.exists, productSnapshot.data()?.stock);
-      productUpdates.push({ ref: productRef, stock: stock + quantity });
+      const privateValue = privateSnapshot.exists ? privateSnapshot.data() || null : null;
+      const tracksSupplierDemand = hasSupplierInventoryAuthority(privateValue);
+      const localDemand = tracksSupplierDemand
+        ? releaseSupplierLocalDemand(
+          resolveSupplierLocalDemand(privateValue, stock),
+          unreconciledSupplierOrderQuantity(orderPrivateSnapshot.exists ? orderPrivateSnapshot.data() : null, productId, quantity),
+        )
+        : resolveSupplierLocalDemand(null, stock);
+      const restorationQuantity = tracksSupplierDemand
+        ? unreconciledSupplierOrderQuantity(orderPrivateSnapshot.exists ? orderPrivateSnapshot.data() : null, productId, quantity)
+        : quantity;
+      productUpdates.push({ ref: productRef, privateRef, privateValue, stock, quantity: restorationQuantity, localDemand, tracksSupplierDemand });
     }
 
-    productUpdates.forEach((update) => transaction.update(update.ref, { stock: update.stock }));
+    productUpdates.forEach((update) => {
+      transaction.update(update.ref, {
+        stock: update.tracksSupplierDemand
+          ? projectSupplierAvailableStock({
+            currentPublicStock: update.stock + update.quantity,
+            supplierObservedStock: supplierObservedStockFromPrivate(update.privateValue),
+            localDemand: update.localDemand,
+          })
+          : update.stock + update.quantity,
+      });
+      if (update.tracksSupplierDemand) {
+        transaction.set(update.privateRef, withSupplierLocalDemand(update.privateValue, update.localDemand), { merge: true });
+      }
+    });
     transaction.update(orderRef, {
       ...(isPayHereReservation ? { paymentStatus: "expired" } : { reservationExpiredReason: "cod_confirmation_expired" }),
       paymentTimeline: appendPaymentTimeline(order.paymentTimeline, createPaymentTimelineEvent(

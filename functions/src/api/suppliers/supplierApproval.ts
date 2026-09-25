@@ -67,6 +67,10 @@ import {
   lowSupplierStockValidationError,
   LOW_SUPPLIER_STOCK_FOR_PUBLICATION_MESSAGE,
 } from "./supplierLowStockPolicy";
+import {
+  projectSupplierAvailableStock,
+  resolveSupplierLocalDemand,
+} from "../orders/supplierInventoryReconciliation";
 
 export function assertNewSupplierPublicationStock(input: {
   supplierSourceId: unknown;
@@ -789,6 +793,10 @@ export async function decideSupplierQueueItem(
       ],
     });
     const persistedOwnership = parseSupplierProductFieldOwnership(existingPrivateProductSnapshot?.data()?.supplierFieldOwnership);
+    const localDemand = resolveSupplierLocalDemand(
+      existingPrivateProductSnapshot?.data(),
+      existingProductSnapshot?.data()?.stock,
+    );
     const editedFields = new Set(effectiveDraft?.editedFields || []);
     const hasPersistedAdminOwnership = (field: "category" | "subcategory"): boolean => {
       const entry = persistedOwnership[field];
@@ -977,6 +985,7 @@ export async function decideSupplierQueueItem(
         price: projectedSupplierOffer.price,
         availability: projectedSupplierOffer.availability,
         activeOfferId: projectedSupplierOffer.id,
+        localDemand,
       };
     } else if (approvedPayload && isSupplierOfferRemoval) {
       approvedPayload.supplierId = "";
@@ -988,6 +997,7 @@ export async function decideSupplierQueueItem(
         inventoryLevel: 0,
         availability: "unavailable",
         activeOfferId: null,
+        localDemand,
       };
     }
 
@@ -1124,12 +1134,18 @@ export async function decideSupplierQueueItem(
           ? Number(existingProductSnapshot.data()?.stock ?? 0)
           : !shouldProjectApprovedOffer && !stockWasEdited && existingProductSnapshot?.exists
             ? Number(existingProductSnapshot.data()?.stock ?? 0)
-          : reconcileSupplierApprovalStock(
-            approvalBaseline?.stockAtCapture,
-            existingProductSnapshot?.data()?.stock,
-            approvedPayload.stock,
-            existingProductSnapshot?.exists === true,
-          ),
+          : existingProductSnapshot?.exists && decisionSupplierOffer
+            ? projectSupplierAvailableStock({
+              currentPublicStock: existingProductSnapshot.data()?.stock,
+              supplierObservedStock: approvedPayload.stock,
+              localDemand,
+            })
+            : reconcileSupplierApprovalStock(
+              approvalBaseline?.stockAtCapture,
+              existingProductSnapshot?.data()?.stock,
+              approvedPayload.stock,
+              false,
+            ),
         updatedAt: now,
       };
       const { publicData, commercialData } = splitProductData(approvedProductPayload);

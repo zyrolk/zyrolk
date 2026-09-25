@@ -46,6 +46,7 @@ export interface OrderPrivateDocument {
   lines: OrderPrivateAttributionLine[];
   fulfilmentGroups: OrderFulfilmentGroup[];
   assignedSupplierAccountIds: string[];
+  supplierLocalDemandTrackingVersion: number;
 }
 
 export interface CheckoutProductAttributionInput {
@@ -242,5 +243,6 @@ export function buildOrderPrivateDocument(
     lines: immutableLines,
     fulfilmentGroups,
     assignedSupplierAccountIds: assignedAccountIds(fulfilmentGroups),
+    supplierLocalDemandTrackingVersion: 1,
   };
 }

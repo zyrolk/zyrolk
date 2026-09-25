@@ -37,6 +37,8 @@ const testFiles = [
   "tests/supplierSecurityEmulatorSprint8.test.ts",
   "tests/supplierAccountAdministrationE2EEmulator.test.ts",
   "tests/productionBlockersP1Emulator.test.ts",
+  "tests/supplierStockAuthorityP1.test.ts",
+  "tests/supplierInventorySettlementP1.test.ts",
 ] as const;
 
 const result = spawnSync(process.execPath, [

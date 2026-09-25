@@ -93,7 +93,7 @@ test('offline reservations expire, restore stock, and commit only after admin co
   assert.match(orders, /stockReservationStatus: "released"/);
   assert.match(expiry, /isOfflineConfirmationReservation/);
   assert.match(expiry, /cod_confirmation_expired/);
-  assert.match(expiry, /transaction\.update\(update\.ref, \{ stock: update\.stock \}\)/);
+  assert.match(expiry, /stock: update\.tracksSupplierDemand/);
 });
 
 test('supplier responses use allowlists and missing profiles fail closed', () => {

@@ -3,6 +3,16 @@ import { FieldValue, Timestamp, type DocumentData, type UpdateData } from "fireb
 import { createCheckoutRateLimiter, getClientRateLimitKey, hashValue } from "../checkout/checkoutLogic";
 import { collectOrderStockQuantities, requireCurrentProductStock } from "../orders/orderStatusLogic";
 import {
+  addSupplierLocalDemand,
+  hasSupplierInventoryAuthority,
+  projectSupplierAvailableStock,
+  releaseSupplierLocalDemand,
+  resolveSupplierLocalDemand,
+  unreconciledSupplierOrderQuantity,
+  supplierObservedStockFromPrivate,
+  withSupplierLocalDemand,
+} from "../orders/supplierInventoryReconciliation";
+import {
   PaymentError,
   amountsMatch,
   appendPaymentTimeline,
@@ -165,15 +175,36 @@ export function registerPaymentRoutes(app: express.Express, dependencies: Paymen
         if (order.paymentMethod !== "payhere") throw new PaymentError("This order does not use PayHere", 409);
         if (!FAILURE_STATUSES.has(String(order.paymentStatus || ""))) throw new PaymentError("This payment is not eligible for retry", 409);
 
-        const productUpdates: Array<{ ref: FirebaseFirestore.DocumentReference; stock: number }> = [];
+        const productUpdates: Array<{
+          ref: FirebaseFirestore.DocumentReference;
+          privateRef: FirebaseFirestore.DocumentReference;
+          privateValue: FirebaseFirestore.DocumentData | null;
+          stock: number;
+          quantity: number;
+          tracksSupplierDemand: boolean;
+        }> = [];
         for (const [productId, quantity] of collectOrderStockQuantities(order.items)) {
           const productRef = db.collection("products").doc(productId);
-          const productSnapshot = await transaction.get(productRef);
+          const productPrivateRef = db.collection("product_private").doc(productId);
+          const [productSnapshot, privateSnapshot] = await transaction.getAll(productRef, productPrivateRef);
           const stock = requireCurrentProductStock(productSnapshot.exists, productSnapshot.data()?.stock);
           if (stock < quantity) {
             throw new PaymentError("Insufficient stock to retry payment for an order item", 409);
           }
-          productUpdates.push({ ref: productRef, stock: stock - quantity });
+          const privateValue = privateSnapshot.exists ? privateSnapshot.data() || null : null;
+          const tracksSupplierDemand = hasSupplierInventoryAuthority(privateValue);
+          productUpdates.push({
+            ref: productRef,
+            privateRef: productPrivateRef,
+            privateValue,
+            stock: stock - quantity,
+            quantity,
+            tracksSupplierDemand,
+          });
+          if (tracksSupplierDemand) {
+            const localDemand = addSupplierLocalDemand(resolveSupplierLocalDemand(privateValue, stock), quantity);
+            transaction.set(productPrivateRef, withSupplierLocalDemand(privateValue, localDemand), { merge: true });
+          }
         }
 
         const attempt = Math.max(1, Math.floor(Number(order.paymentAttempt) || 1)) + 1;
@@ -256,6 +287,11 @@ export function registerPaymentRoutes(app: express.Express, dependencies: Paymen
         const orderSnapshot = await transaction.get(orderRef);
         if (!orderSnapshot.exists) throw new PaymentError("Payment order not found", 404);
         const order = orderSnapshot.data()!;
+        const shouldRestore = (mappedStatus === "failed" || mappedStatus === "cancelled")
+          && order.stockReservationStatus === "reserved"
+          && order.stockRestorationApplied !== true;
+        const orderPrivateRef = db.collection("order_private").doc(String(payment.orderId || ""));
+        const orderPrivateSnapshot = shouldRestore ? await transaction.get(orderPrivateRef) : null;
         if (order.paymentGatewayOrderId !== notification.gatewayOrderId) {
           transaction.update(paymentRef, {
             status: mappedStatus === "paid" ? "manual_review" : mappedStatus,
@@ -307,20 +343,57 @@ export function registerPaymentRoutes(app: express.Express, dependencies: Paymen
           return { status: "manual_review", duplicate: false };
         }
 
-        const shouldRestore = (mappedStatus === "failed" || mappedStatus === "cancelled")
-          && order.stockReservationStatus === "reserved"
-          && order.stockRestorationApplied !== true;
-        const productUpdates: Array<{ ref: FirebaseFirestore.DocumentReference; stock: number }> = [];
+        const productUpdates: Array<{
+          ref: FirebaseFirestore.DocumentReference;
+          privateRef: FirebaseFirestore.DocumentReference;
+          privateValue: FirebaseFirestore.DocumentData | null;
+          stock: number;
+          quantity: number;
+          restorationQuantity: number;
+          localDemand: ReturnType<typeof resolveSupplierLocalDemand>;
+          tracksSupplierDemand: boolean;
+        }> = [];
         if (shouldRestore) {
           for (const [productId, quantity] of collectOrderStockQuantities(order.items)) {
             const productRef = db.collection("products").doc(productId);
-            const productSnapshot = await transaction.get(productRef);
+            const productPrivateRef = db.collection("product_private").doc(productId);
+            const [productSnapshot, privateSnapshot] = await transaction.getAll(productRef, productPrivateRef);
             const stock = requireCurrentProductStock(productSnapshot.exists, productSnapshot.data()?.stock);
-            productUpdates.push({ ref: productRef, stock: stock + quantity });
+            const privateValue = privateSnapshot.exists ? privateSnapshot.data() || null : null;
+            const tracksSupplierDemand = hasSupplierInventoryAuthority(privateValue);
+            const restorationQuantity = tracksSupplierDemand
+              ? unreconciledSupplierOrderQuantity(orderPrivateSnapshot?.exists ? orderPrivateSnapshot.data() : null, productId, quantity)
+              : quantity;
+            const localDemand = tracksSupplierDemand
+              ? releaseSupplierLocalDemand(resolveSupplierLocalDemand(privateValue, stock), restorationQuantity)
+              : resolveSupplierLocalDemand(null, stock);
+            productUpdates.push({
+              ref: productRef,
+              privateRef: productPrivateRef,
+              privateValue,
+              stock,
+              quantity,
+              restorationQuantity,
+              localDemand,
+              tracksSupplierDemand,
+            });
           }
         }
 
-        productUpdates.forEach((update) => transaction.update(update.ref, { stock: update.stock }));
+        productUpdates.forEach((update) => {
+          transaction.update(update.ref, {
+            stock: update.tracksSupplierDemand
+              ? projectSupplierAvailableStock({
+                currentPublicStock: update.stock + update.restorationQuantity,
+                supplierObservedStock: supplierObservedStockFromPrivate(update.privateValue),
+                localDemand: update.localDemand,
+              })
+              : update.stock + update.restorationQuantity,
+          });
+          if (update.tracksSupplierDemand) {
+            transaction.set(update.privateRef, withSupplierLocalDemand(update.privateValue, update.localDemand), { merge: true });
+          }
+        });
         const timelineEvent = createPaymentTimelineEvent(
           mappedStatus,
           mappedStatus === "paid" ? "Payment verified by PayHere" : notification.statusMessage || `Payment ${mappedStatus}`,
