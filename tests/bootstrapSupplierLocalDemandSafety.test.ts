@@ -3,7 +3,9 @@ import test from "node:test";
 import {
   assertSupplierLocalDemandBootstrapSafety,
   BOOTSTRAP_PRODUCTION_PROJECT,
+  initializedAdminProjectId,
 } from "../scripts/bootstrapSupplierLocalDemand";
+import { adminDb } from "../functions/src/api/firebase";
 
 const production = (overrides: Partial<Parameters<typeof assertSupplierLocalDemandBootstrapSafety>[0]> = {}) => ({
   initializedProjectId: BOOTSTRAP_PRODUCTION_PROJECT,
@@ -11,6 +13,12 @@ const production = (overrides: Partial<Parameters<typeof assertSupplierLocalDema
   firestoreEmulatorHost: "",
   apply: false,
   ...overrides,
+});
+
+test("bootstrap reads the project from the same canonical Firestore instance it uses", () => {
+  const serialized = (adminDb as unknown as { toJSON: () => unknown }).toJSON() as { projectId?: unknown };
+  assert.equal(initializedAdminProjectId(), serialized.projectId);
+  assert.equal(typeof initializedAdminProjectId(), "string");
 });
 
 test("bootstrap guard rejects a missing project before the database path is entered", () => {

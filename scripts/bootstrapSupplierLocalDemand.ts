@@ -1,10 +1,14 @@
 import { adminDb } from "../functions/src/api/firebase";
-import { getApp } from "firebase-admin/app";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { bootstrapSupplierLocalDemandForOrder } from "../functions/src/api/orders/supplierInventoryReconciliation";
 
 export const BOOTSTRAP_PRODUCTION_PROJECT = "zyrolk-e0164";
+
+export const initializedAdminProjectId = (): string | undefined => {
+  const serialized = (adminDb as unknown as { toJSON: () => unknown }).toJSON() as { projectId?: unknown };
+  return typeof serialized.projectId === "string" ? serialized.projectId : undefined;
+};
 
 export interface SupplierLocalDemandBootstrapSafetyInput {
   initializedProjectId: unknown;
@@ -76,7 +80,7 @@ const orderIds = async (): Promise<string[]> => {
 
 const main = async (): Promise<void> => {
   assertSupplierLocalDemandBootstrapSafety({
-    initializedProjectId: getApp().options.projectId,
+    initializedProjectId: initializedAdminProjectId(),
     requestedProjectId,
     firestoreEmulatorHost: process.env.FIRESTORE_EMULATOR_HOST,
     apply: !dryRun,
