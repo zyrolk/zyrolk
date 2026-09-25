@@ -723,6 +723,12 @@ export interface ApprovedSupplierInventoryObservationInput {
   removed?: boolean;
   expectedStateVersion?: number;
   suppressReviewQueueItemId?: string;
+  /**
+   * Scheduled inventory refresh: the product must still be active and already
+   * select this offer; only stock/availability and local-demand attribution are
+   * written, and offer authority, pricing, and content never change.
+   */
+  stockOnly?: boolean;
 }
 
 export interface ApprovedSupplierInventoryObservationResult {
@@ -798,6 +804,22 @@ export async function applyApprovedSupplierInventoryObservation(
       .filter((offer): offer is SupplierProductOffer => Boolean(offer));
     const currentProduct = productSnapshot.data() || {};
     const currentPrivate = privateSnapshot.data() || {};
+    if (input.stockOnly) {
+      const stockOnlySelection = parseSupplierOfferSelection(currentPrivate.supplierOfferSelection);
+      if (currentProduct.isActive !== true
+        || input.removed === true
+        || stockOnlySelection.activeOfferId !== offerId
+        || (stockOnlySelection.lockedOfferId && stockOnlySelection.lockedOfferId !== offerId)) {
+        return {
+          applied: false,
+          action: null,
+          offer: currentOffer,
+          activeOfferId: stockOnlySelection.activeOfferId || null,
+          publicStock: null,
+          publicAvailability: null,
+        };
+      }
+    }
     const localDemand = resolveSupplierLocalDemand(currentPrivate, currentProduct.stock);
     const availability: SupplierOfferAvailability = input.removed
       ? "unavailable"
@@ -849,14 +871,24 @@ export async function applyApprovedSupplierInventoryObservation(
     };
     const offersAfter = offersBefore.map((offer) => offer.id === offerId ? effectiveOffer : offer);
     if (!offersAfter.some((offer) => offer.id === offerId)) offersAfter.push(effectiveOffer);
-    const nextAuthority = resolveActiveSupplierOffer(offersAfter, selection);
+    const nextAuthority = input.stockOnly ? effectiveOffer : resolveActiveSupplierOffer(offersAfter, selection);
     const authorityChanged = previousAuthority?.id !== nextAuthority?.id;
     const projectsObservedOffer = nextAuthority?.id === offerId;
     const previousSupplierStock = asRecord(currentPrivate.supplierMetadata).inventoryLevel
       ?? previousAuthority?.stock
       ?? currentProduct.stock;
     let publicProjection: Record<string, unknown> = {};
-    if (nextAuthority && (authorityChanged || projectsObservedOffer)) {
+    if (input.stockOnly) {
+      const projectedStock = projectSupplierAvailableStock({
+        currentPublicStock: currentProduct.stock,
+        supplierObservedStock: observedStock,
+        localDemand,
+      });
+      publicProjection = {
+        stock: projectedStock,
+        availability: projectedStock > 0 ? "in_stock" : "out_of_stock",
+      };
+    } else if (nextAuthority && (authorityChanged || projectsObservedOffer)) {
       publicProjection = authorityChanged && isSupplierOfferAvailableForCommerce(nextAuthority)
         ? buildSupplierOfferPublicProjection(nextAuthority, currentProduct, previousSupplierStock, localDemand)
         : {
@@ -885,7 +917,23 @@ export async function applyApprovedSupplierInventoryObservation(
         supplierCatalogSeenAt: observedAt,
       } : {}),
     }, { merge: true });
-    if (Object.keys(publicProjection).length > 0) {
+    if (input.stockOnly) {
+      transaction.set(productReference, {
+        ...publicProjection,
+        updatedAt: FieldValue.serverTimestamp(),
+      }, { merge: true });
+      transaction.set(privateReference, {
+        updatedAt: FieldValue.serverTimestamp(),
+        ...withSupplierLocalDemand({
+          supplierMetadata: {
+            ...asRecord(currentPrivate.supplierMetadata),
+            inventoryLevel: observedStock,
+            supplierStockAvailable: true,
+            availability,
+          },
+        }, localDemand),
+      }, { merge: true });
+    } else if (Object.keys(publicProjection).length > 0) {
       transaction.set(productReference, {
         ...publicProjection,
         updatedAt: FieldValue.serverTimestamp(),

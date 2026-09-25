@@ -15,6 +15,7 @@ import {
   classifyDropexHttpStatus,
   transientRetryDelayMs,
 } from "./dropexHttpErrors";
+import { SupplierInventoryObservation } from "../types";
 
 export interface DropexSessionScope {
   supplierId: string;
@@ -686,6 +687,74 @@ export class DropexConnectorService {
       )
       : undefined;
     return ProductParser.parseCatalogItem(match, { categoryLookup, enrichment });
+  }
+
+  /**
+   * Reads only the known product's inventory DTO. This is intentionally
+   * separate from the review refresh catalogue lookup: the 15-minute live
+   * inventory scheduler must never traverse, discover, or parse the catalogue.
+   */
+  public async fetchExactInventoryForRefresh(
+    credentials: { username?: string; password?: string },
+    outboundPolicy: SupplierOutboundPolicy,
+    target: { supplierProductId: string; sku: string },
+  ): Promise<SupplierInventoryObservation> {
+    if (!credentials.username || !credentials.password) {
+      throw new Error("Dropex credentials are required.");
+    }
+    const expectedProductId = String(target.supplierProductId || "").normalize("NFKC").trim();
+    const expectedSku = String(target.sku || "").normalize("NFKC").trim().toLocaleLowerCase();
+    if (!expectedProductId || !expectedSku) {
+      throw new Error("Dropex inventory refresh requires an exact supplier product ID and SKU.");
+    }
+
+    const endpoint = `${DROPEX_INVENTORY_SERVICE_URL}/api/v1/products/${encodeURIComponent(expectedProductId)}/dto`;
+    const { response, bodyText } = await this.authorizedRequest(
+      { username: credentials.username, password: credentials.password },
+      outboundPolicy,
+      (token) => ({
+        url: endpoint,
+        init: { method: "GET", headers: { Authorization: `Bearer ${token}` } },
+      }),
+    );
+    this.logDiagnostic("direct-inventory-fetch", {
+      endpoint,
+      method: "GET",
+      httpStatus: response.status,
+      responseHeaders: sanitizeDropexResponseHeaders(response.headers),
+    });
+    const httpError = classifyDropexHttpStatus(response.status, response.headers.get("retry-after"), this.now());
+    if (httpError) throw httpError;
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(bodyText);
+    } catch {
+      throw new Error(`Failed to parse Dropex inventory response for product ${expectedProductId}.`);
+    }
+    const raw = envelopeRecord(parsed);
+    const detail = asRecord(raw.productDetail) || raw;
+    const returnedProductId = String(detail.id ?? detail.productId ?? raw.productId ?? raw.id ?? "")
+      .normalize("NFKC")
+      .trim();
+    const returnedSku = String(detail.sku ?? raw.sku ?? "").normalize("NFKC").trim().toLocaleLowerCase();
+    if (returnedProductId !== expectedProductId || returnedSku !== expectedSku) {
+      throw new Error("Dropex returned an unexpected supplier identity for the exact inventory request.");
+    }
+
+    const stockValue = [
+      detail.onHandInventory,
+      raw.onHandInventory,
+      detail.inventoryLevel,
+      raw.inventoryLevel,
+      detail.stock,
+      raw.stock,
+    ].find((value) => value !== undefined && value !== null && !(typeof value === "string" && !value.trim()));
+    const stock = Number(stockValue);
+    if (!Number.isSafeInteger(stock) || stock < 0) {
+      throw new Error(`Dropex returned an invalid inventory value for product ${expectedProductId}.`);
+    }
+    return { supplierProductId: expectedProductId, sku: String(detail.sku ?? raw.sku).trim(), stock };
   }
 
   public async fetchCatalogPage(

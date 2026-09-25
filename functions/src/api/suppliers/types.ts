@@ -43,6 +43,12 @@ export interface SupplierFetchResult {
   targetUrl: string;
 }
 
+export interface SupplierInventoryObservation {
+  supplierProductId: string;
+  sku: string;
+  stock: number;
+}
+
 export interface SupplierCatalogPageRequest {
   cursor: string | null;
   pageSize: number;
@@ -123,5 +129,7 @@ export interface SupplierConnector {
   syncCapabilities?: Readonly<SupplierConnectorSyncCapabilities>;
   fetchProducts(): Promise<SupplierFetchResult>;
   fetchProductPage(request: SupplierCatalogPageRequest): Promise<SupplierCatalogPageResult>;
+  /** Optional exact-identity inventory read; it must not traverse a catalogue. */
+  fetchExactInventoryForRefresh?(target: { supplierProductId: string; sku: string }): Promise<SupplierInventoryObservation>;
   testConnection(): Promise<SupplierConnectionTestResult>;
 }

@@ -5,6 +5,7 @@ export { syncReviewAggregates } from "./triggers/reviewAggregates";
 export { scheduledSupplierSync } from "./scheduled/supplierSync";
 export { scheduledSupplierSyncJobDispatcher, supplierSyncJobCreated } from "./scheduled/supplierSyncWorker";
 export { scheduledSupplierQueueWorker } from "./scheduled/supplierQueueWorker";
+export { scheduledSupplierInventoryRefresh } from "./scheduled/supplierInventoryRefresh";
 export { scheduledSupplierOperationalAlerts } from "./scheduled/supplierOperationalAlerts";
 export { expirePaymentReservations } from "./scheduled/paymentReservations";
 export { sendOrderNotifications, trackOrderNotificationDelivery } from "./triggers/orderNotifications";

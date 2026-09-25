@@ -8,6 +8,7 @@ import {
   SupplierConnectorSyncCapabilities,
   SupplierConnectorType,
   SupplierFetchResult,
+  SupplierInventoryObservation,
 } from "../types";
 import { SupplierOutboundPolicy } from "../../security/supplierOutboundRequest";
 import { SERVER_FILTERED_FULL_CATALOG_CAPABILITIES } from "../supplierSyncCapabilities";
@@ -86,6 +87,11 @@ export class DropexSupplierConnector implements SupplierConnector {
   public async fetchExactProductForRefresh(target: { supplierProductId: string; sku: string }) {
     const credentials = await this.resolveCredentials();
     return this.connectorService.fetchExactProductForRefresh(credentials, this.outboundPolicy, target);
+  }
+
+  public async fetchExactInventoryForRefresh(target: { supplierProductId: string; sku: string }): Promise<SupplierInventoryObservation> {
+    const credentials = await this.resolveCredentials();
+    return this.connectorService.fetchExactInventoryForRefresh(credentials, this.outboundPolicy, target);
   }
 
   public async testConnection(): Promise<SupplierConnectionTestResult> {
