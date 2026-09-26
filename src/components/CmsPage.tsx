@@ -318,8 +318,7 @@ export default function CmsPage({ pageId, onBackToHome, isAdmin, onEdit }: CmsPa
           if (fallback) {
             setPage({
               title: fallback.title,
-              content: fallback.content,
-              lastUpdated: new Date().toLocaleDateString()
+              content: fallback.content
             });
           } else {
             setPage({
@@ -399,7 +398,7 @@ export default function CmsPage({ pageId, onBackToHome, isAdmin, onEdit }: CmsPa
               <div className="flex flex-wrap items-center gap-2 text-[10px] text-slate-400 uppercase tracking-widest font-bold">
                 <span className="flex items-center gap-1.5 bg-slate-100 px-3 py-1 rounded-full text-slate-500 border border-slate-200/40">
                   <FileText className="h-3 w-3 text-blue-500" />
-                  Corporate Specifications
+                  Information
                 </span>
                 {page?.lastUpdated && (
                   <span className="flex items-center gap-1.5 bg-slate-100 px-3 py-1 rounded-full text-slate-500 border border-slate-200/40">
@@ -407,10 +406,6 @@ export default function CmsPage({ pageId, onBackToHome, isAdmin, onEdit }: CmsPa
                     Updated: {page.lastUpdated}
                   </span>
                 )}
-                <span className="flex items-center gap-1.5 bg-emerald-50 border border-emerald-100/50 px-3 py-1 rounded-full text-emerald-600 font-bold">
-                  <Check className="h-3 w-3 text-emerald-500" />
-                  Official Zyro Spec
-                </span>
               </div>
 
               <h1 className="text-3xl sm:text-5xl font-black font-display text-slate-900 mb-4 tracking-tight leading-none">
