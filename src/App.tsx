@@ -2318,7 +2318,6 @@ export default function App() {
                                   <span className="zy-category-image-placeholder-icon">
                                     <Grid3X3 className="h-8 w-8" />
                                   </span>
-                                  <span>Collection image coming soon</span>
                                 </div>
                               )}
                               <div className="zy-category-media-shade" aria-hidden="true" />

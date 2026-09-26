@@ -21,11 +21,22 @@ test('Categories keeps the existing live-category filtering and selection behavi
 test('Categories renders premium cards with honest image fallbacks and live counts', () => {
   assert.match(categoriesPage, /zy-category-collection-card/);
   assert.match(categoriesPage, /cat\.imageUrl\?\.trim\(\) \|\| activeProducts\.find/);
-  assert.match(categoriesPage, /Collection image coming soon/);
+  assert.doesNotMatch(app, /coming soon/iu);
+  assert.match(categoriesPage, /<div className="zy-category-image-placeholder" aria-hidden="true">\s*<span className="zy-category-image-placeholder-icon">\s*<Grid3X3 className="h-8 w-8" \/>\s*<\/span>\s*<\/div>/);
+  assert.match(styles, /\.zy-category-image-placeholder\s*\{[\s\S]*linear-gradient\(145deg, #172554, #1d4ed8 58%, #60a5fa\)/);
+  assert.match(categoriesPage, /<h2 title=\{cat\.name\}>\{cat\.name\}<\/h2>/);
   assert.match(categoriesPage, /Explore live products selected for this marketplace collection\./);
   assert.match(categoriesPage, /Explore Collection/);
   assert.match(categoriesPage, /itemsCount === 1 \? 'product' : 'products'/);
   assert.doesNotMatch(categoriesPage, /unsplash|placeholder product|demo product/iu);
+});
+
+test('homepage category circles and cards keep their monogram fallback', () => {
+  const homepage = readFileSync('src/components/MarketplaceHomePhase1.tsx', 'utf8');
+  assert.match(homepage, /: <b className="zy-category-monogram" aria-hidden="true">\{getCategoryMonogram\(item\.category\.name\)\}<\/b>/);
+  assert.match(homepage, /: <b className="zy-category-monogram">\{getCategoryMonogram\(item\.name\)\}<\/b>/);
+  assert.match(homepage, /data-placeholder=\{item\.image \? undefined : 'true'\}/);
+  assert.doesNotMatch(homepage, /coming soon/iu);
 });
 
 test('Categories exposes loading and compact empty states without zero-product cards', () => {
