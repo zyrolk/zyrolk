@@ -16,7 +16,7 @@ test('Slice 10 keeps Popular / Recommended on the existing active-catalog projec
 
   assert.match(homepage, /id: 'homepage-recommended-products'[\s\S]*?tone: 'recommended'/);
   assert.match(homepage, /products: recommendedProducts/);
-  assert.match(projection, /activeProducts\.filter\(product => !usedIds\.has\(product\.id\)\)\.slice\(0, 8\)/);
+  assert.match(projection, /selectExploreMoreProducts\(activeProducts, \[newArrivalProducts, trendingProducts, bestSellerProducts, discountedProducts\]\)/);
   assert.match(projection, /discountedProducts|trendingProducts/);
   assert.doesNotMatch(projection, /salesCount|popularityScore|rating|reviewCount|fake|mock|sample/iu);
 });

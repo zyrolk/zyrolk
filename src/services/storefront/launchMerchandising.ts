@@ -186,6 +186,16 @@ export const formatCategoryDisplayName = (name: string): string => {
   return clean.replace(/(^|[\s&/-])(\p{Ll})/gu, (_match, separator: string, letter: string) => `${separator}${letter.toLocaleUpperCase()}`);
 };
 
+/** Explore More: first remaining products in the existing stable order, never repeating a product from another homepage shelf. */
+export const selectExploreMoreProducts = <T extends { readonly id: string }>(
+  products: readonly T[],
+  otherShelves: readonly (readonly T[])[],
+  limit = 8,
+): T[] => {
+  const usedIds = new Set(otherShelves.flatMap((shelf) => shelf.map((product) => product.id)));
+  return products.filter((product) => !usedIds.has(product.id)).slice(0, limit);
+};
+
 /** Readable fallback for an ID with no loaded category, e.g. "home-garden" -> "Home Garden". */
 export const humanizeCategoryId = (value: string): string =>
   value

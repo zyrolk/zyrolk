@@ -37,7 +37,7 @@ import {
 import { isProductExplicitlyActive } from './services/storefront/productAvailability';
 import { canUseProductInCommerce, filterCommerceCartItems, filterCommerceProductIds, filterCommerceProducts } from './services/storefront/previewCommerceGuard';
 import { buildStorefrontUrl, parseStorefrontRoute } from './services/navigation/storefrontRoutes';
-import { formatCategoryDisplayName, resolveCategoryDisplayName } from './services/storefront/launchMerchandising';
+import { formatCategoryDisplayName, resolveCategoryDisplayName, selectExploreMoreProducts } from './services/storefront/launchMerchandising';
 
 // Components
 import Navbar from './components/Navbar';
@@ -1315,13 +1315,10 @@ export default function App() {
     const dealIds = new Set(discountedProducts.map(product => product.id));
     return featuredProducts.filter(product => !dealIds.has(product.id)).slice(0, 8);
   }, [discountedProducts, featuredProducts]);
-  const recommendedProducts = useMemo(() => {
-    const usedIds = new Set([
-      ...discountedProducts.map(product => product.id),
-      ...trendingProducts.map(product => product.id),
-    ]);
-    return activeProducts.filter(product => !usedIds.has(product.id)).slice(0, 8);
-  }, [activeProducts, discountedProducts, trendingProducts]);
+  const recommendedProducts = useMemo(
+    () => selectExploreMoreProducts(activeProducts, [newArrivalProducts, trendingProducts, bestSellerProducts, discountedProducts]),
+    [activeProducts, bestSellerProducts, discountedProducts, newArrivalProducts, trendingProducts],
+  );
   const homepageLatestProducts = useMemo(() => {
     const usedIds = new Set([
       ...discountedProducts.map(product => product.id),
