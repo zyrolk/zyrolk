@@ -72,7 +72,7 @@ export default function Footer({ setCurrentPage, onSelectCategory, settings, cat
             ) : (
               <span className="zy-launch-footer-wordmark">{storeName}</span>
             )}
-            <p>{settings?.aboutText || 'A growing Sri Lankan marketplace for product discovery, convenient ordering and local customer support.'}</p>
+            <p>{settings?.aboutText || 'Shop everyday products online with Zyro.lk.'}</p>
 
             {hasSocialLinks && (
               <div className="zy-launch-footer-socials" aria-label="Social media links">

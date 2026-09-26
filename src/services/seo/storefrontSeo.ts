@@ -3,11 +3,11 @@ import { absoluteStorefrontUrl } from '../navigation/storefrontRoutes';
 import { sanitizeStorefrontCategoryId } from '../storefront/storefrontCatalog';
 
 const DEFAULT_ORIGIN = 'https://zyro.lk';
-const DEFAULT_DESCRIPTION = 'Shop live collections across home, beauty, fashion, electronics, lifestyle, accessories and more from one trusted Sri Lankan marketplace.';
+const DEFAULT_DESCRIPTION = 'Discover everyday products across electronics, automotive, home, fashion and more at Zyro.lk.';
 
 const PAGE_COPY: Record<string, { title: string; description: string }> = {
   home: {
-    title: 'A Trusted Sri Lankan Marketplace',
+    title: 'Shop Online in Sri Lanka',
     description: DEFAULT_DESCRIPTION,
   },
   products: {
@@ -136,7 +136,7 @@ export const buildStorefrontSeo = ({
         : isSearchPage
           ? `Search results for ${cleanSearchQuery} | ${storeName}`
       : currentPage === 'home' || currentPage === 'legacy-home'
-        ? configuredSeoTitle || `${storeName} | ${pageCopy.title}`
+        ? configuredSeoTitle || `${storeName} — ${pageCopy.title}`
         : `${pageCopy.title} | ${storeName}`;
   const description = truncate(
     isProduct

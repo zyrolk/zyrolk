@@ -54,8 +54,8 @@ export const DEFAULT_WEBSITE_SETTINGS: WebsiteSettings = {
   instagramUrl: '',
   tiktokUrl: '',
   youtubeUrl: '',
-  seoTitle: 'Zyro.lk',
-  seoDescription: 'Shop the live Zyro.lk marketplace catalog.',
+  seoTitle: 'Zyro.lk — Shop Online in Sri Lanka',
+  seoDescription: 'Discover everyday products across electronics, automotive, home, fashion and more at Zyro.lk.',
   seoKeywords: '',
   ogImageUrl: '',
   deliveryCharge: DEFAULT_DELIVERY_CHARGE,
@@ -100,4 +100,31 @@ export function normalizeWebsiteSettings(value: Partial<WebsiteSettings> | null 
     },
     currency: 'LKR',
   };
+}
+
+const normalizeBrandCopy = (value: string): string => value.trim().replace(/\s+/gu, ' ').toLowerCase();
+
+export const LEGACY_BRAND_COPY_VALUES: readonly string[] = [
+  'Zyro.lk | Flagship Tech, Smart Energy & Premium Audio Sri Lanka',
+  'Browse premium consumer electronics, solar hybrid smart inverters, flagship audio systems, and high-end smart kitchen appliances in Sri Lanka with Islandwide Cash on Delivery.',
+  "Sri Lanka's premier destination for high-end digital solutions, smart energy solar, kitchen devices, and lifestyle audio components.",
+  "Sri Lanka's Premium Electronics & Solar Solutions Hub",
+];
+
+const LEGACY_BRAND_COPY = new Set(LEGACY_BRAND_COPY_VALUES.map(normalizeBrandCopy));
+
+export const isLegacyBrandCopy = (value: unknown): boolean => (
+  typeof value === 'string' && LEGACY_BRAND_COPY.has(normalizeBrandCopy(value))
+);
+
+const LEGACY_BRAND_COPY_FIELDS = ['seoTitle', 'seoDescription', 'aboutText', 'storeTagline'] as const;
+
+export function withoutLegacyBrandCopy(settings: WebsiteSettings): WebsiteSettings {
+  const result = { ...settings };
+  for (const field of LEGACY_BRAND_COPY_FIELDS) {
+    if (isLegacyBrandCopy(result[field])) {
+      result[field] = DEFAULT_WEBSITE_SETTINGS[field];
+    }
+  }
+  return result;
 }

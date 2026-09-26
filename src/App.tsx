@@ -50,7 +50,7 @@ import StorefrontNotFound from './components/StorefrontNotFound';
 import StorefrontSeo from './components/StorefrontSeo';
 import StorefrontMaintenance from './components/StorefrontMaintenance';
 import StorefrontMotionController from './components/StorefrontMotionController';
-import { normalizeWebsiteSettings } from './services/settings/websiteSettings';
+import { normalizeWebsiteSettings, withoutLegacyBrandCopy } from './services/settings/websiteSettings';
 
 const AdminDashboard = lazy(() => import('./components/AdminDashboard'));
 const CartDrawer = lazy(() => import('./components/CartDrawer'));
@@ -820,7 +820,7 @@ export default function App() {
           }
           
           // Sanitize old demo values in local state if they still exist in the Firestore database (no writing back to DB on startup)
-          const cleanData = { ...data };
+          const cleanData = withoutLegacyBrandCopy(data);
           if (cleanData.contactPhone === "+94 11 234 5678") {
             cleanData.contactPhone = "";
           }
