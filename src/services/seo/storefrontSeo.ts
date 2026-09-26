@@ -123,12 +123,12 @@ export const buildStorefrontSeo = ({
   const productName = cleanText(product?.name);
   const productDescription = cleanText(product?.description);
   const categoryName = formatCategoryDisplayName(cleanText(category?.name));
-  const isCategory = currentPage === 'products' && Boolean(categoryName);
+  const isProduct = Boolean(product && productName);
+  const isCategory = currentPage === 'products' && Boolean(categoryName) && !isProduct;
   const cleanSearchQuery = cleanText(searchQuery);
   const isSearchPage = currentPage === 'products' && Boolean(cleanSearchQuery);
   const configuredSeoTitle = cleanText(settings?.seoTitle);
   const settingsDescription = cleanText(settings?.seoDescription);
-  const isProduct = Boolean(product && productName);
   const isMissingPage = !PAGE_COPY[currentPage] && currentPage !== 'legacy-home';
   const title = isAdminMode
     ? `Admin Dashboard | ${storeName}`
@@ -160,7 +160,7 @@ export const buildStorefrontSeo = ({
   const keywords = cleanText(settings?.seoKeywords) || 'Zyro.lk, online marketplace Sri Lanka, online shopping Sri Lanka';
   const isPrivateCustomerPage = ['wishlist', 'recently-viewed', 'compare', 'payment-return'].includes(currentPage) || currentPage.startsWith('account');
   const isMissingProduct = Boolean(requestedProductId) && !isProduct;
-  const isMissingCategory = Boolean(requestedCategoryId) && !isCategory;
+  const isMissingCategory = Boolean(requestedCategoryId) && !isCategory && !isProduct;
   const robots = isAdminMode || isMissingPage || isMissingProduct || isMissingCategory || isPrivateCustomerPage || isSearchPage
     ? 'noindex, follow'
     : 'index, follow';
