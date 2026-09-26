@@ -3,6 +3,7 @@ import { BadgeDollarSign, Check, Eye, Star, ShoppingCart, Heart, Truck } from 'l
 import { Product } from '../types';
 import { PRODUCT_IMAGE_FALLBACK } from '../features/product-experience/productExperience';
 import { sanitizeStorefrontCategoryId } from '../services/storefront/storefrontCatalog';
+import { useCategoryDisplayName } from './CategoryDisplayContext';
 
 interface ProductCardProps {
   key?: string | number;
@@ -27,6 +28,7 @@ function ProductCard({
   const [isAdded, setIsAdded] = useState(false);
   const [isImageLoaded, setIsImageLoaded] = useState(false);
   const addedTimerRef = useRef<number | null>(null);
+  const categoryDisplayName = useCategoryDisplayName();
   const stockLabel = product.stock <= 0
     ? 'Out of stock'
     : product.stock <= 5
@@ -162,7 +164,7 @@ function ProductCard({
         <div className="zy-product-card-info">
           {/* Category Label */}
           <span className="zy-product-card-category">
-            {sanitizeStorefrontCategoryId(product.category).replace('-', ' ')}
+            {categoryDisplayName(sanitizeStorefrontCategoryId(product.category))}
           </span>
 
           {/* Product Name */}

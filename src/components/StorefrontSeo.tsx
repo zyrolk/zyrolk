@@ -7,6 +7,7 @@ interface StorefrontSeoProps {
   product?: Product | null;
   requestedProductId?: string | null;
   category?: Category | null;
+  categories?: readonly Category[];
   requestedCategoryId?: string | null;
   searchQuery?: string;
   settings?: WebsiteSettings | null;
@@ -32,6 +33,7 @@ export default function StorefrontSeo({
   product,
   requestedProductId,
   category,
+  categories,
   requestedCategoryId,
   searchQuery,
   settings,
@@ -43,6 +45,7 @@ export default function StorefrontSeo({
       product,
       requestedProductId,
       category,
+      categories,
       requestedCategoryId,
       searchQuery,
       settings,
@@ -95,7 +98,7 @@ export default function StorefrontSeo({
       document.head.appendChild(structuredData);
     }
     structuredData.textContent = JSON.stringify(seo.structuredData).replace(/</gu, '\\u003c');
-  }, [category, currentPage, isAdminMode, product, requestedCategoryId, requestedProductId, searchQuery, settings]);
+  }, [categories, category, currentPage, isAdminMode, product, requestedCategoryId, requestedProductId, searchQuery, settings]);
 
   return null;
 }

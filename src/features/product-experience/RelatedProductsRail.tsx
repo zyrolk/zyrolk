@@ -4,6 +4,7 @@ import { motion, useReducedMotion } from 'motion/react';
 import { Product } from '../../types';
 import { PRODUCT_IMAGE_FALLBACK } from './productExperience';
 import { sanitizeStorefrontCategoryId } from '../../services/storefront/storefrontCatalog';
+import { useCategoryDisplayName } from '../../components/CategoryDisplayContext';
 
 interface Props {
   products: readonly Product[];
@@ -15,6 +16,7 @@ interface Props {
 
 export default function RelatedProductsRail({ products, scrollRef, onScroll, onSelect, formatPrice }: Props) {
   const shouldReduceMotion = useReducedMotion();
+  const categoryDisplayName = useCategoryDisplayName();
   if (products.length === 0) return null;
   return (
     <section className="zy-related-products space-y-6 border-t border-slate-100 pt-14 text-left" aria-labelledby="related-products-title">
@@ -41,7 +43,7 @@ export default function RelatedProductsRail({ products, scrollRef, onScroll, onS
             <span className={`zy-related-product-stock ${item.stock > 0 ? 'is-available' : 'is-unavailable'}`}>{item.stock > 0 ? 'In stock' : 'Out of stock'}</span>
           </div>
           <div className="zy-related-product-meta">
-            <span>{sanitizeStorefrontCategoryId(item.category)}</span>
+            <span>{categoryDisplayName(sanitizeStorefrontCategoryId(item.category))}</span>
             {item.reviewsCount > 0 && <span aria-label={`${item.rating} out of 5 stars`}><Star className="h-3 w-3 fill-amber-400 text-amber-400" aria-hidden="true" />{item.rating.toFixed(1)}</span>}
           </div>
           <span className="zy-related-product-name line-clamp-2 min-h-10 text-sm font-bold text-slate-800">{item.name}</span>

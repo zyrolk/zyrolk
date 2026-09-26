@@ -1,6 +1,7 @@
 import { Category, Product, WebsiteSettings } from '../../types';
 import { absoluteStorefrontUrl } from '../navigation/storefrontRoutes';
 import { sanitizeStorefrontCategoryId } from '../storefront/storefrontCatalog';
+import { formatCategoryDisplayName, resolveCategoryDisplayName } from '../storefront/launchMerchandising';
 
 const DEFAULT_ORIGIN = 'https://zyro.lk';
 const DEFAULT_DESCRIPTION = 'Discover everyday products across electronics, automotive, home, fashion and more at Zyro.lk.';
@@ -73,6 +74,7 @@ export interface StorefrontSeoInput {
   product?: Product | null;
   settings?: WebsiteSettings | null;
   category?: Category | null;
+  categories?: readonly Category[];
   requestedCategoryId?: string | null;
   searchQuery?: string;
   requestedProductId?: string | null;
@@ -99,6 +101,7 @@ export const buildStorefrontSeo = ({
   product,
   settings,
   category,
+  categories = [],
   requestedCategoryId,
   searchQuery,
   requestedProductId,
@@ -119,7 +122,7 @@ export const buildStorefrontSeo = ({
   };
   const productName = cleanText(product?.name);
   const productDescription = cleanText(product?.description);
-  const categoryName = cleanText(category?.name);
+  const categoryName = formatCategoryDisplayName(cleanText(category?.name));
   const isCategory = currentPage === 'products' && Boolean(categoryName);
   const cleanSearchQuery = cleanText(searchQuery);
   const isSearchPage = currentPage === 'products' && Boolean(cleanSearchQuery);
@@ -191,6 +194,7 @@ export const buildStorefrontSeo = ({
   };
 
   const publicProductCategory = sanitizeStorefrontCategoryId(product?.category);
+  const publicProductCategoryName = resolveCategoryDisplayName(publicProductCategory, categories);
   const productData = isProduct && product ? {
     '@type': 'Product',
     '@id': `${canonical}#product`,
@@ -198,7 +202,7 @@ export const buildStorefrontSeo = ({
     description,
     image: [image].filter(Boolean),
     mainEntityOfPage: canonical,
-    category: cleanText(publicProductCategory),
+    category: publicProductCategoryName,
     offers: {
       '@type': 'Offer',
       priceCurrency: 'LKR',
@@ -224,7 +228,7 @@ export const buildStorefrontSeo = ({
       ...(cleanText(publicProductCategory) ? [{
         '@type': 'ListItem',
         position: 2,
-        name: cleanText(publicProductCategory),
+        name: publicProductCategoryName,
         item: absoluteStorefrontUrl(resolvedOrigin, { page: 'products', categoryId: publicProductCategory }),
       }] : []),
       { '@type': 'ListItem', position: cleanText(publicProductCategory) ? 3 : 2, name: productName, item: canonical },

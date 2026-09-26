@@ -37,6 +37,7 @@ import {
 import { isProductExplicitlyActive } from './services/storefront/productAvailability';
 import { canUseProductInCommerce, filterCommerceCartItems, filterCommerceProductIds, filterCommerceProducts } from './services/storefront/previewCommerceGuard';
 import { buildStorefrontUrl, parseStorefrontRoute } from './services/navigation/storefrontRoutes';
+import { formatCategoryDisplayName, resolveCategoryDisplayName } from './services/storefront/launchMerchandising';
 
 // Components
 import Navbar from './components/Navbar';
@@ -48,6 +49,7 @@ import FloatingWhatsApp from './components/FloatingWhatsApp';
 import MarketplaceHomePhase1 from './components/MarketplaceHomePhase1';
 import StorefrontNotFound from './components/StorefrontNotFound';
 import StorefrontSeo from './components/StorefrontSeo';
+import { CategoryDisplayProvider } from './components/CategoryDisplayContext';
 import StorefrontMaintenance from './components/StorefrontMaintenance';
 import StorefrontMotionController from './components/StorefrontMotionController';
 import { normalizeWebsiteSettings, withoutLegacyBrandCopy } from './services/settings/websiteSettings';
@@ -881,7 +883,8 @@ export default function App() {
       // Category metadata is a small, explicitly bounded registry.
       const cUnsub = subscribeToStorefrontCategories(db, (catList) => {
         if (!isMounted) return;
-        setCategories(getActiveCategories(sortCategoriesAlphabetically(catList)));
+        setCategories(getActiveCategories(sortCategoriesAlphabetically(catList))
+          .map((category) => ({ ...category, name: formatCategoryDisplayName(category.name) })));
         setCategoriesLoadError(null);
         setCategoriesLoading(false);
       }, handleCategoryFailure);
@@ -1434,6 +1437,7 @@ export default function App() {
   }
 
   return (
+    <CategoryDisplayProvider value={categories}>
     <div
       className={`zy-l6-shell flex flex-col min-h-screen bg-slate-50 text-slate-800 ${!isAdminMode ? 'zy-penpot-storefront' : ''}`}
       data-storefront-page={isAdminMode ? 'admin' : currentPage}
@@ -1443,6 +1447,7 @@ export default function App() {
         product={liveSelectedProduct}
         requestedProductId={routedProductId}
         category={selectedSeoCategory}
+        categories={categories}
         requestedCategoryId={selectedCategory === 'all' ? null : selectedCategory}
         searchQuery={searchQuery}
         settings={settings}
@@ -2035,7 +2040,7 @@ export default function App() {
                     <div className="flex items-center justify-between gap-4">
                       <div>
                         <h2 className="text-lg font-black font-display text-slate-950">
-                          {selectedCategory === 'all' ? 'Explore All Products' : categories.find(category => category.id === selectedCategory)?.name || selectedCategory.toUpperCase().replace('-', ' ')}
+                          {selectedCategory === 'all' ? 'Explore All Products' : resolveCategoryDisplayName(selectedCategory, categories)}
                         </h2>
                         <span className="mt-1 block text-xs font-medium text-slate-500" aria-live="polite">
                           {filteredProducts.length} {filteredProducts.length === 1 ? 'product' : 'products'} available
@@ -2073,7 +2078,7 @@ export default function App() {
                         )}
                         {selectedCategory !== 'all' && (
                           <button type="button" onClick={() => setSelectedCategory('all')} className="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-blue-100 bg-blue-50 px-3 text-[11px] font-bold text-brand-blue focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20">
-                            {categories.find(category => category.id === selectedCategory)?.name || selectedCategory.replace('-', ' ')} <X className="h-3.5 w-3.5" aria-hidden="true" />
+                            {resolveCategoryDisplayName(selectedCategory, categories)} <X className="h-3.5 w-3.5" aria-hidden="true" />
                           </button>
                         )}
                         {priceRange < 1000000 && (
@@ -2561,5 +2566,6 @@ export default function App() {
       )}
 
     </div>
+    </CategoryDisplayProvider>
   );
 }

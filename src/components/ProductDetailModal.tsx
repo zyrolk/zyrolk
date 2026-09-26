@@ -18,6 +18,7 @@ import {
 } from '../features/product-experience/productExperience';
 import ProductSpecificationsPanel from '../features/product-experience/ProductSpecificationsPanel';
 import RelatedProductsRail from '../features/product-experience/RelatedProductsRail';
+import { useCategoryDisplayName } from './CategoryDisplayContext';
 import ProductReviewsAndQuestions from '../features/reviews/ProductReviewsAndQuestions';
 
 interface ProductDetailModalProps {
@@ -76,6 +77,7 @@ export default function ProductDetailModal({
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [announcement, setAnnouncement] = useState('');
   const prefersReducedMotion = useReducedMotion();
+  const categoryDisplayName = useCategoryDisplayName();
   const productDescription = product ? product.description : '';
   const productDescriptionIsHtml = supplierDescriptionLooksLikeHtml(productDescription);
   const safeProductDescriptionHtml = sanitizeSupplierDescriptionHtml(productDescription);
@@ -634,7 +636,7 @@ export default function ProductDetailModal({
                   <div className="zy-product-experience-status flex flex-wrap items-center gap-2.5">
                     <span className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue bg-blue-50 border border-blue-100/50 px-3.5 py-1.5 rounded-full flex items-center gap-1.5">
                       <Sparkles className="h-3 w-3" />
-                      {sanitizeStorefrontCategoryId(product.category).replace('-', ' ')}
+                      {categoryDisplayName(sanitizeStorefrontCategoryId(product.category))}
                     </span>
                     
                     {product.stock > 0 ? (

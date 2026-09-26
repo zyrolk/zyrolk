@@ -1,4 +1,4 @@
-import type { Product } from '../../types';
+import type { Category, Product } from '../../types';
 import { categoryMatches } from '../categories/categoryUtils';
 import { DEFAULT_HERO_FOCAL_POINT, HERO_IMAGE_CONTRACT, type HeroCampaignSlide, type HeroTheme } from '../hero-slider/heroSlider';
 
@@ -184,6 +184,26 @@ export const formatCategoryDisplayName = (name: string): string => {
   const clean = name.trim();
   if (!clean || clean !== clean.toLocaleLowerCase()) return clean;
   return clean.replace(/(^|[\s&/-])(\p{Ll})/gu, (_match, separator: string, letter: string) => `${separator}${letter.toLocaleUpperCase()}`);
+};
+
+/** Readable fallback for an ID with no loaded category, e.g. "home-garden" -> "Home Garden". */
+export const humanizeCategoryId = (value: string): string =>
+  value
+    .replace(/[-_]+/gu, ' ')
+    .replace(/\s+/gu, ' ')
+    .trim()
+    .toLocaleLowerCase()
+    .replace(/(^|\s)(\p{Ll})/gu, (_match, separator: string, letter: string) => `${separator}${letter.toLocaleUpperCase()}`);
+
+/** Presentation-only label for a category ID; the loaded category name is the authority. IDs and routes never use this. */
+export const resolveCategoryDisplayName = (
+  categoryId: string | undefined,
+  categories: readonly Readonly<Pick<Category, 'id' | 'name'>>[],
+): string => {
+  const id = categoryId?.trim() || '';
+  if (!id) return '';
+  const match = categories.find((category) => categoryMatches(category.id, id));
+  return (match && formatCategoryDisplayName(match.name)) || humanizeCategoryId(id);
 };
 
 export const getCategoryMonogram = (name: string): string =>
