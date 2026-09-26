@@ -71,7 +71,8 @@ type HomepageBannerItem =
   | { kind: 'live'; id: string; name: string; image: string; hasArtwork: boolean; tone: number; onClick: () => void }
   | { kind: 'preview'; banner: HomepagePreviewBanner; onClick: () => void };
 
-const FEATURED_CATEGORY_CARD_LIMIT = 6;
+const FEATURED_CATEGORY_CARD_LIMIT = 4;
+const SECONDARY_PROMO_LIMIT = 2;
 const CATEGORY_BANNER_TONE_INDEX = { warm: 0, cool: 1 } as const;
 
 export default function MarketplaceHomePhase1({
@@ -108,9 +109,21 @@ export default function MarketplaceHomePhase1({
   const liveCategoryRailItems: HomepageCategoryRailItem[] = categoryVisuals.map(item => ({ kind: 'live', ...item }));
   const previewCategoryRailItems: HomepageCategoryRailItem[] = previewPresentation?.categories.map(category => ({ kind: 'preview', category })) || [];
   const categoryRailItems = [...liveCategoryRailItems, ...previewCategoryRailItems].slice(0, 9);
+  const bannerCategoryVisuals = orderByCategoryPriority(
+    categoryVisuals,
+    item => item.category.id,
+    LAUNCH_CATEGORY_BANNERS.map(banner => banner.categoryId),
+  ).slice(0, SECONDARY_PROMO_LIMIT);
+  const bannerCategoryIds = new Set(bannerCategoryVisuals.map(item => item.category.id));
   const featuredCategoryVisuals = orderByCategoryPriority(categoryVisuals, item => item.category.id, LAUNCH_FEATURED_CATEGORY_IDS);
+  // Cards skip categories that already get a wide promo banner and prefer real imagery; both are only fallbacks.
+  const categoryCardVisuals = [
+    ...featuredCategoryVisuals.filter(item => item.image && !bannerCategoryIds.has(item.category.id)),
+    ...featuredCategoryVisuals.filter(item => !item.image && !bannerCategoryIds.has(item.category.id)),
+    ...featuredCategoryVisuals.filter(item => bannerCategoryIds.has(item.category.id)),
+  ];
   const promoCategoryItems: HomepagePromoItem[] = [
-    ...featuredCategoryVisuals.slice(0, FEATURED_CATEGORY_CARD_LIMIT).map(({ category, image }) => ({
+    ...categoryCardVisuals.slice(0, FEATURED_CATEGORY_CARD_LIMIT).map(({ category, image }) => ({
       kind: 'live' as const,
       id: category.id,
       name: formatCategoryDisplayName(category.name),
@@ -119,13 +132,8 @@ export default function MarketplaceHomePhase1({
     })),
     ...(previewPresentation?.promos.map(promo => ({ kind: 'preview' as const, promo, onClick: onBrowseCategories })) || []),
   ].slice(0, FEATURED_CATEGORY_CARD_LIMIT);
-  const bannerCategoryVisuals = orderByCategoryPriority(
-    categoryVisuals,
-    item => item.category.id,
-    LAUNCH_CATEGORY_BANNERS.map(banner => banner.categoryId),
-  );
   const secondaryPromoItems: HomepageBannerItem[] = [
-    ...bannerCategoryVisuals.slice(0, 2).map(({ category, image }, index) => {
+    ...bannerCategoryVisuals.map(({ category, image }, index) => {
       const bannerImage = getLaunchCategoryArtwork(category.id).bannerImage;
       const configuredTone = LAUNCH_CATEGORY_BANNERS.find(banner => categoryMatches(banner.categoryId, category.id))?.tone;
       return {
@@ -139,7 +147,7 @@ export default function MarketplaceHomePhase1({
       };
     }),
     ...(previewPresentation?.banners.map(banner => ({ kind: 'preview' as const, banner, onClick: onBrowseCategories })) || []),
-  ].slice(0, 2);
+  ].slice(0, SECONDARY_PROMO_LIMIT);
   const homepageSections = settings?.homepageSections || DEFAULT_HOMEPAGE_SECTIONS;
   const recommendedShelfTitle = homepageSections.recommended.title === 'Recommended Products'
     ? 'Explore More'

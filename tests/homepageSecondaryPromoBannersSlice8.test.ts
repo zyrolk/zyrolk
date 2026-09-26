@@ -11,7 +11,8 @@ const slice8Styles = styles.slice(
 
 test('Slice 8 keeps live secondary banners first and fills only local preview density gaps', () => {
   assert.match(homepage, /const secondaryPromoItems: HomepageBannerItem\[\] = \[/);
-  assert.match(homepage, /bannerCategoryVisuals\.slice\(0, 2\)/);
+  assert.match(homepage, /const SECONDARY_PROMO_LIMIT = 2;/);
+  assert.match(homepage, /LAUNCH_CATEGORY_BANNERS\.map\(banner => banner\.categoryId\),\s*\)\.slice\(0, SECONDARY_PROMO_LIMIT\)/);
   assert.match(homepage, /item\.onClick/);
   assert.match(homepage, /item\.image/);
   assert.match(homepage, /previewPresentation\?\.banners/);
