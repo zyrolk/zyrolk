@@ -16,7 +16,7 @@ test('Slice 2 keeps the CMS-backed hero and existing carousel/CTA handlers', () 
   assert.match(hero, /onClick=\{handlePrevious\}/);
   assert.match(hero, /onClick=\{handleNext\}/);
   assert.match(hero, /onClick=\{handlePrimaryAction\}/);
-  assert.match(hero, /onClick=\{onBrowseCategories \|\| onExploreProducts\}/);
+  assert.match(hero, /\(onBrowseCategories \|\| onExploreProducts\)\(\)/);
   assert.match(hero, /MARKETPLACE_MESSAGE/);
 });
 

@@ -14,6 +14,16 @@ import type {
   HomepagePreviewPromo,
 } from '../services/storefront/homepagePreviewPresentation';
 import { DEFAULT_HOMEPAGE_SECTIONS } from '../services/settings/websiteSettings';
+import {
+  LAUNCH_CATEGORY_BANNERS,
+  LAUNCH_FEATURED_CATEGORY_IDS,
+  LAUNCH_MERCHANDISING_IMAGE_CONTRACT,
+  formatCategoryDisplayName,
+  getCategoryMonogram,
+  getLaunchCategoryArtwork,
+  orderByCategoryPriority,
+} from '../services/storefront/launchMerchandising';
+import { categoryMatches } from '../services/categories/categoryUtils';
 import '../styles/homepagePreview.css';
 
 export interface HomepageCategoryVisual {
@@ -24,6 +34,7 @@ export interface HomepageCategoryVisual {
 
 interface MarketplaceHomePhase1Props {
   settings?: WebsiteSettings | null;
+  settingsLoading?: boolean;
   products: Product[];
   categories: Category[];
   categoryVisuals: HomepageCategoryVisual[];
@@ -57,11 +68,15 @@ type HomepagePromoItem =
   | { kind: 'preview'; promo: HomepagePreviewPromo; onClick: () => void };
 
 type HomepageBannerItem =
-  | { kind: 'live'; id: string; name: string; image: string; onClick: () => void }
+  | { kind: 'live'; id: string; name: string; image: string; hasArtwork: boolean; tone: number; onClick: () => void }
   | { kind: 'preview'; banner: HomepagePreviewBanner; onClick: () => void };
+
+const FEATURED_CATEGORY_CARD_LIMIT = 6;
+const CATEGORY_BANNER_TONE_INDEX = { warm: 0, cool: 1 } as const;
 
 export default function MarketplaceHomePhase1({
   settings,
+  settingsLoading = false,
   products,
   categories,
   categoryVisuals,
@@ -93,24 +108,36 @@ export default function MarketplaceHomePhase1({
   const liveCategoryRailItems: HomepageCategoryRailItem[] = categoryVisuals.map(item => ({ kind: 'live', ...item }));
   const previewCategoryRailItems: HomepageCategoryRailItem[] = previewPresentation?.categories.map(category => ({ kind: 'preview', category })) || [];
   const categoryRailItems = [...liveCategoryRailItems, ...previewCategoryRailItems].slice(0, 9);
+  const featuredCategoryVisuals = orderByCategoryPriority(categoryVisuals, item => item.category.id, LAUNCH_FEATURED_CATEGORY_IDS);
   const promoCategoryItems: HomepagePromoItem[] = [
-    ...categoryVisuals.slice(0, 4).map(({ category, image }) => ({
+    ...featuredCategoryVisuals.slice(0, FEATURED_CATEGORY_CARD_LIMIT).map(({ category, image }) => ({
       kind: 'live' as const,
       id: category.id,
-      name: category.name,
+      name: formatCategoryDisplayName(category.name),
       image,
       onClick: () => onSelectCategory(category.id),
     })),
     ...(previewPresentation?.promos.map(promo => ({ kind: 'preview' as const, promo, onClick: onBrowseCategories })) || []),
-  ].slice(0, 4);
+  ].slice(0, FEATURED_CATEGORY_CARD_LIMIT);
+  const bannerCategoryVisuals = orderByCategoryPriority(
+    categoryVisuals,
+    item => item.category.id,
+    LAUNCH_CATEGORY_BANNERS.map(banner => banner.categoryId),
+  );
   const secondaryPromoItems: HomepageBannerItem[] = [
-    ...categoryVisuals.slice(0, 2).map(({ category, image }) => ({
-      kind: 'live' as const,
-      id: category.id,
-      name: category.name,
-      image,
-      onClick: () => onSelectCategory(category.id),
-    })),
+    ...bannerCategoryVisuals.slice(0, 2).map(({ category, image }, index) => {
+      const bannerImage = getLaunchCategoryArtwork(category.id).bannerImage;
+      const configuredTone = LAUNCH_CATEGORY_BANNERS.find(banner => categoryMatches(banner.categoryId, category.id))?.tone;
+      return {
+        kind: 'live' as const,
+        id: category.id,
+        name: formatCategoryDisplayName(category.name),
+        image: bannerImage || image,
+        hasArtwork: Boolean(bannerImage),
+        tone: configuredTone ? CATEGORY_BANNER_TONE_INDEX[configuredTone] : index % 2,
+        onClick: () => onSelectCategory(category.id),
+      };
+    }),
     ...(previewPresentation?.banners.map(banner => ({ kind: 'preview' as const, banner, onClick: onBrowseCategories })) || []),
   ].slice(0, 2);
   const homepageSections = settings?.homepageSections || DEFAULT_HOMEPAGE_SECTIONS;
@@ -166,7 +193,9 @@ export default function MarketplaceHomePhase1({
       <div className="zy-foundation-hero-wrap zy-ai-hero-wrap">
         <HeroBanner
           settings={settings}
+          settingsLoading={settingsLoading}
           products={products}
+          productsLoading={loading}
           categories={categories}
           previewPresentation={previewPresentation}
           onExploreProducts={onExploreProducts}
@@ -210,11 +239,15 @@ export default function MarketplaceHomePhase1({
                 onClick={() => onSelectCategory(item.category.id)}
                 className="zy-foundation-category-tile"
                 data-zy-category-motion
-                aria-label={`Browse ${item.category.name}, ${item.itemsCount} ${item.itemsCount === 1 ? 'product' : 'products'}`}
+                aria-label={`Browse ${formatCategoryDisplayName(item.category.name)}, ${item.itemsCount} ${item.itemsCount === 1 ? 'product' : 'products'}`}
                 role="listitem"
               >
-                <span className="zy-foundation-category-image"><img src={item.image} alt="" loading="lazy" fetchPriority="low" decoding="async" width="160" height="160" referrerPolicy="no-referrer" /></span>
-                <strong>{item.category.name}</strong>
+                <span className="zy-foundation-category-image" data-placeholder={item.image ? undefined : 'true'}>
+                  {item.image
+                    ? <img src={item.image} alt="" loading="lazy" fetchPriority="low" decoding="async" width="160" height="160" referrerPolicy="no-referrer" />
+                    : <b className="zy-category-monogram" aria-hidden="true">{getCategoryMonogram(item.category.name)}</b>}
+                </span>
+                <strong>{formatCategoryDisplayName(item.category.name)}</strong>
                 <small>{item.itemsCount} {item.itemsCount === 1 ? 'product' : 'products'}</small>
               </button>
             ) : (
@@ -268,21 +301,79 @@ export default function MarketplaceHomePhase1({
                 key={item.kind === 'live' ? item.id : item.promo.id}
                 type="button"
                 onClick={item.onClick}
-                className={`zy-home-category-promo zy-home-category-promo-tone-${index}${item.kind === 'preview' ? ' is-preview' : ''}`}
+                className={`zy-home-category-promo zy-home-category-promo-tone-${index % 4}${item.kind === 'preview' ? ' is-preview' : ''}`}
                 aria-label={item.kind === 'live' ? `Shop ${item.name} category` : `Explore ${item.promo.categoryName}`}
                 data-preview-promo-id={item.kind === 'preview' ? item.promo.id : undefined}
               >
+                <span
+                  className="zy-home-category-promo-media"
+                  data-placeholder={item.kind === 'live' && !item.image ? 'true' : undefined}
+                  aria-hidden="true"
+                >
+                  {item.kind === 'live'
+                    ? item.image
+                      ? (
+                        <img
+                          src={item.image}
+                          alt=""
+                          loading="lazy"
+                          decoding="async"
+                          width={LAUNCH_MERCHANDISING_IMAGE_CONTRACT.categoryCard.width}
+                          height={LAUNCH_MERCHANDISING_IMAGE_CONTRACT.categoryCard.height}
+                          referrerPolicy="no-referrer"
+                        />
+                      )
+                      : <b className="zy-category-monogram">{getCategoryMonogram(item.name)}</b>
+                    : <HomepagePreviewProductArt art={item.promo.art} tone={item.promo.tone} />}
+                </span>
                 <span className="zy-home-category-promo-copy">
                   {item.kind === 'preview' && <small>{item.promo.eyebrow}</small>}
                   <strong>{item.kind === 'live' ? item.name : item.promo.title}</strong>
                   {item.kind === 'preview' && <small>{item.promo.subtitle}</small>}
-                  <span className="zy-home-category-promo-cta">{item.kind === 'live' ? 'Shop now' : item.promo.cta} <ArrowRight aria-hidden="true" /></span>
+                  <span className="zy-home-category-promo-cta">{item.kind === 'live' ? 'Shop Now' : item.promo.cta} <ArrowRight aria-hidden="true" /></span>
                 </span>
-                <span className="zy-home-category-promo-media" aria-hidden="true">
-                  {item.kind === 'live'
-                    ? <img src={item.image} alt="" loading="lazy" decoding="async" width="240" height="180" referrerPolicy="no-referrer" />
-                    : <HomepagePreviewProductArt art={item.promo.art} tone={item.promo.tone} />}
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {secondaryPromoItems.length > 0 && (
+        <section className="zy-home-secondary-promos" data-zy-reveal aria-label="Explore more categories">
+          <div className="zy-home-secondary-promo-grid">
+            {secondaryPromoItems.map((item, index) => (
+              <button
+                key={item.kind === 'live' ? item.id : item.banner.id}
+                type="button"
+                onClick={item.onClick}
+                className={`zy-home-secondary-promo zy-home-secondary-promo-tone-${item.kind === 'live' ? item.tone : index}${item.kind === 'preview' ? ' is-preview' : ''}`}
+                aria-label={item.kind === 'live' ? `Explore ${item.name}` : `Explore ${item.banner.categoryName}`}
+                data-preview-banner-id={item.kind === 'preview' ? item.banner.id : undefined}
+                data-artwork={item.kind === 'live' && item.hasArtwork ? 'true' : undefined}
+              >
+                <span className="zy-home-secondary-promo-copy">
+                  <small>{item.kind === 'live' ? 'Discover more' : item.banner.eyebrow}</small>
+                  <strong>{item.kind === 'live' ? item.name : item.banner.title}</strong>
+                  {item.kind === 'preview' && <small>{item.banner.subtitle}</small>}
+                  <span className="zy-home-secondary-promo-cta">{item.kind === 'live' ? 'Shop Now' : item.banner.cta} <ArrowRight aria-hidden="true" /></span>
                 </span>
+                {(item.kind === 'preview' || item.image) && (
+                  <span className="zy-home-secondary-promo-media" aria-hidden="true">
+                    {item.kind === 'live'
+                      ? (
+                        <img
+                          src={item.image}
+                          alt=""
+                          loading="lazy"
+                          decoding="async"
+                          width={LAUNCH_MERCHANDISING_IMAGE_CONTRACT.categoryBanner.width}
+                          height={LAUNCH_MERCHANDISING_IMAGE_CONTRACT.categoryBanner.height}
+                          referrerPolicy="no-referrer"
+                        />
+                      )
+                      : <HomepagePreviewProductArt art={item.banner.art} tone={item.banner.tone} />}
+                  </span>
+                )}
               </button>
             ))}
           </div>
@@ -302,35 +393,6 @@ export default function MarketplaceHomePhase1({
             description: 'Products with a genuine active discount will appear here automatically.',
           },
         })}
-
-        {secondaryPromoItems.length > 0 && (
-          <section className="zy-home-secondary-promos" data-zy-reveal aria-label="Explore more categories">
-            <div className="zy-home-secondary-promo-grid">
-              {secondaryPromoItems.map((item, index) => (
-                <button
-                  key={item.kind === 'live' ? item.id : item.banner.id}
-                  type="button"
-                  onClick={item.onClick}
-                  className={`zy-home-secondary-promo zy-home-secondary-promo-tone-${index}${item.kind === 'preview' ? ' is-preview' : ''}`}
-                  aria-label={item.kind === 'live' ? `Explore ${item.name}` : `Explore ${item.banner.categoryName}`}
-                  data-preview-banner-id={item.kind === 'preview' ? item.banner.id : undefined}
-                >
-                  <span className="zy-home-secondary-promo-copy">
-                    <small>{item.kind === 'live' ? 'Discover more' : item.banner.eyebrow}</small>
-                    <strong>{item.kind === 'live' ? item.name : item.banner.title}</strong>
-                    {item.kind === 'preview' && <small>{item.banner.subtitle}</small>}
-                    <span className="zy-home-secondary-promo-cta">{item.kind === 'live' ? 'Shop now' : item.banner.cta} <ArrowRight aria-hidden="true" /></span>
-                  </span>
-                  <span className="zy-home-secondary-promo-media" aria-hidden="true">
-                    {item.kind === 'live'
-                      ? <img src={item.image} alt="" loading="lazy" decoding="async" width="320" height="220" referrerPolicy="no-referrer" />
-                      : <HomepagePreviewProductArt art={item.banner.art} tone={item.banner.tone} />}
-                  </span>
-                </button>
-              ))}
-            </div>
-          </section>
-        )}
 
         {homepageSections.newArrivals.enabled && renderShelf({
           id: 'homepage-new-arrivals',

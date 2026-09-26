@@ -11,7 +11,7 @@ const slice8Styles = styles.slice(
 
 test('Slice 8 keeps live secondary banners first and fills only local preview density gaps', () => {
   assert.match(homepage, /const secondaryPromoItems: HomepageBannerItem\[\] = \[/);
-  assert.match(homepage, /categoryVisuals\.slice\(0, 2\)/);
+  assert.match(homepage, /bannerCategoryVisuals\.slice\(0, 2\)/);
   assert.match(homepage, /item\.onClick/);
   assert.match(homepage, /item\.image/);
   assert.match(homepage, /previewPresentation\?\.banners/);
@@ -26,7 +26,7 @@ test('Slice 8 sits before the product discovery shelves in the reference-led flo
   assert.ok(homepage.indexOf('zy-home-secondary-promos') < homepage.indexOf("id: 'homepage-recommended-products'"));
   assert.match(homepage, /aria-label="Explore more categories"/);
   assert.match(homepage, /Discover more/);
-  assert.match(homepage, /Shop now/);
+  assert.match(homepage, /Shop Now/);
 });
 
 test('Slice 8 provides warm/cool wide banners and a compact stacked mobile layout', () => {

@@ -30,5 +30,5 @@ test('Hero V3 preserves CMS ordering, slider timing, gestures, arrows, and CTA d
   assert.match(hero, /onClick=\{handleNext\}/);
   assert.match(hero, /const target = activeSlide\.ctaUrl/);
   assert.match(hero, /onClick=\{handlePrimaryAction\}/);
-  assert.match(hero, /onClick=\{onBrowseCategories \|\| onExploreProducts\}/);
+  assert.doesNotMatch(hero, /Explore Categories/);
 });

@@ -4,20 +4,29 @@ import { HeroBannerSettings, WebsiteSettings } from '../types';
 import HeroBanner from './HeroBanner';
 import {
   createHeroSlide,
+  DEFAULT_HERO_FOCAL_POINT,
   duplicateHeroSlide,
+  HERO_FOCAL_POINT_PRESETS,
+  HERO_IMAGE_CONTRACT,
   HERO_SLIDE_LIMIT,
   HERO_SLIDE_SPEED_MAX,
   HERO_SLIDE_SPEED_MIN,
+  HERO_THEME_LABELS,
+  HERO_THEMES,
+  isHeroTheme,
   validateHeroSlide,
   validateHeroSlides,
+  withSequentialHeroSortOrder,
 } from '../services/hero-slider/heroSlider';
+
+type HeroImageField = 'image' | 'mobileImage';
 
 interface HeroSliderEditorProps {
   settings: WebsiteSettings;
   setSettings: Dispatch<SetStateAction<WebsiteSettings | null>>;
   bannerErrors: Record<string, boolean>;
   setBannerErrors: Dispatch<SetStateAction<Record<string, boolean>>>;
-  onImageUpload: (event: ChangeEvent<HTMLInputElement>, bannerId: string) => void;
+  onImageUpload: (event: ChangeEvent<HTMLInputElement>, bannerId: string, field?: HeroImageField) => void;
 }
 
 export default function HeroSliderEditor({
@@ -30,11 +39,17 @@ export default function HeroSliderEditor({
   const validationErrors = useMemo(() => validateHeroSlides(settings.heroBanners), [settings.heroBanners]);
 
   const updateSlides = (updater: (slides: HeroBannerSettings[]) => HeroBannerSettings[]) => {
-    setSettings((current) => current ? { ...current, heroBanners: updater(current.heroBanners) } : current);
+    setSettings((current) => current ? { ...current, heroBanners: withSequentialHeroSortOrder(updater(current.heroBanners)) } : current);
   };
 
   const updateSlide = (id: string, updates: Partial<HeroBannerSettings>) => {
     updateSlides((slides) => slides.map((slide) => slide.id === id ? { ...slide, ...updates } : slide));
+  };
+
+  const updateImage = (id: string, field: HeroImageField, value: string) => {
+    updateSlide(id, { [field]: value });
+    const errorKey = field === 'image' ? id : `${id}:mobile`;
+    setBannerErrors((current) => ({ ...current, [errorKey]: false }));
   };
 
   const moveSlide = (index: number, offset: number) => {
@@ -157,14 +172,15 @@ export default function HeroSliderEditor({
               );
             })}
             <label className="space-y-1 text-xs">
-              <span className="text-[10px] font-bold uppercase text-slate-400">Background gradient</span>
-              <select value={banner.bgGradient ?? 'from-black via-zinc-950/90 to-blue-950/20'} onChange={(event) => updateSlide(banner.id, { bgGradient: event.target.value })} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900">
-                <option value="from-black via-zinc-950/90 to-blue-950/20">Royal blue</option>
-                <option value="from-black via-neutral-950/90 to-purple-950/30">Premium purple</option>
-                <option value="from-black via-slate-950/90 to-emerald-950/30">Emerald</option>
-                <option value="from-black via-stone-950/90 to-orange-950/30">Warm orange</option>
-                <option value="from-black via-zinc-950/95 to-transparent">Neutral</option>
+              <span className="text-[10px] font-bold uppercase text-slate-400">Theme</span>
+              <select value={isHeroTheme(banner.theme) ? banner.theme : ''} onChange={(event) => updateSlide(banner.id, { theme: event.target.value })} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900">
+                <option value="">Automatic</option>
+                {HERO_THEMES.map((theme) => <option key={theme} value={theme}>{HERO_THEME_LABELS[theme]}</option>)}
               </select>
+            </label>
+            <label className="space-y-1 text-xs">
+              <span className="text-[10px] font-bold uppercase text-slate-400">Image alt text</span>
+              <input type="text" value={banner.imageAlt ?? ''} onChange={(event) => updateSlide(banner.id, { imageAlt: event.target.value })} placeholder="Describe the artwork (defaults to the title)" className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900" />
             </label>
           </div>
 
@@ -173,24 +189,49 @@ export default function HeroSliderEditor({
             <textarea rows={3} value={banner.description} onChange={(event) => updateSlide(banner.id, { description: event.target.value })} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900" />
           </label>
 
-          <div className="grid items-start gap-3 sm:grid-cols-2">
-            <div className="space-y-3">
-              <label className="block space-y-1 text-xs">
-                <span className="text-[10px] font-bold uppercase text-slate-400">Image URL</span>
-                <input type="text" value={banner.image} onChange={(event) => updateSlide(banner.id, { image: event.target.value })} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900" />
-              </label>
-              <label className="block space-y-1 text-xs">
-                <span className="text-[10px] font-bold uppercase text-slate-400">Upload JPG, PNG, WebP or GIF (max 5 MB)</span>
-                <input type="file" accept="image/jpeg,image/png,image/webp,image/gif" onChange={(event) => onImageUpload(event, banner.id)} className="w-full text-[10px] text-slate-500 file:mr-2 file:rounded file:border-0 file:bg-slate-200 file:px-3 file:py-2 file:text-[10px] file:font-semibold dark:file:bg-slate-700 dark:file:text-white" />
-              </label>
-            </div>
-            <div className="aspect-video overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
-              {banner.image && !bannerErrors[banner.id] ? (
-                <img src={banner.image} alt={`${banner.title || `Slide ${index + 1}`} preview`} onError={() => setBannerErrors((current) => ({ ...current, [banner.id]: true }))} className="h-full w-full object-cover" referrerPolicy="no-referrer" />
-              ) : (
-                <div className="flex h-full flex-col items-center justify-center gap-2 text-slate-400"><Image className="h-7 w-7" /><span className="text-[10px] font-bold uppercase">No valid image</span></div>
-              )}
-            </div>
+          <p className="text-[11px] text-slate-500">Keep headline text out of the artwork; the storefront overlays it on the left. Leave both images empty to show live product imagery.</p>
+
+          <div className="grid items-start gap-4 lg:grid-cols-2">
+            {([
+              { field: 'image', focalField: 'focalPointDesktop', label: 'Desktop image', size: HERO_IMAGE_CONTRACT.desktop, aspect: 'aspect-[20/9]', hint: 'Required. Keep the left 45% free of important detail.' },
+              { field: 'mobileImage', focalField: 'focalPointMobile', label: 'Mobile image', size: HERO_IMAGE_CONTRACT.mobile, aspect: 'aspect-[9/8]', hint: 'Optional. Falls back to the desktop image. Keep the top-left free for text.' },
+            ] as const).map(({ field, focalField, label, size, aspect, hint }) => {
+              const url = banner[field] ?? '';
+              const errorKey = field === 'image' ? banner.id : `${banner.id}:mobile`;
+              const focalValue = banner[focalField] || DEFAULT_HERO_FOCAL_POINT;
+              const hasPreset = HERO_FOCAL_POINT_PRESETS.some((preset) => preset.value === focalValue);
+              return (
+                <div key={field} className="space-y-2 rounded-xl border border-slate-200 bg-white/60 p-3 dark:border-slate-700 dark:bg-slate-900/40">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-500">{label}</span>
+                    <span className="text-[10px] font-semibold text-blue-600">Recommended {size.width} × {size.height}px</span>
+                  </div>
+                  <p className="text-[10px] text-slate-400">{hint}</p>
+                  <label className="block space-y-1 text-xs">
+                    <span className="text-[10px] font-bold uppercase text-slate-400">Image URL</span>
+                    <input type="text" value={url} onChange={(event) => updateImage(banner.id, field, event.target.value)} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900" />
+                  </label>
+                  <label className="block space-y-1 text-xs">
+                    <span className="text-[10px] font-bold uppercase text-slate-400">Upload JPG, PNG, WebP or GIF (max 5 MB)</span>
+                    <input type="file" accept="image/jpeg,image/png,image/webp,image/gif" onChange={(event) => onImageUpload(event, banner.id, field)} className="w-full text-[10px] text-slate-500 file:mr-2 file:rounded file:border-0 file:bg-slate-200 file:px-3 file:py-2 file:text-[10px] file:font-semibold dark:file:bg-slate-700 dark:file:text-white" />
+                  </label>
+                  <label className="block space-y-1 text-xs">
+                    <span className="text-[10px] font-bold uppercase text-slate-400">Focal point</span>
+                    <select value={focalValue} onChange={(event) => updateSlide(banner.id, { [focalField]: event.target.value })} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900">
+                      {!hasPreset && <option value={focalValue}>Custom ({focalValue})</option>}
+                      {HERO_FOCAL_POINT_PRESETS.map((preset) => <option key={preset.value} value={preset.value}>{preset.label} ({preset.value})</option>)}
+                    </select>
+                  </label>
+                  <div className={`${aspect} overflow-hidden rounded-lg border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-900`}>
+                    {url && !bannerErrors[errorKey] ? (
+                      <img src={url} alt={`${banner.title || `Slide ${index + 1}`} ${label.toLowerCase()} preview`} onError={() => setBannerErrors((current) => ({ ...current, [errorKey]: true }))} className="h-full w-full object-cover" style={{ objectPosition: focalValue }} referrerPolicy="no-referrer" />
+                    ) : (
+                      <div className="flex h-full flex-col items-center justify-center gap-2 text-slate-400"><Image className="h-7 w-7" /><span className="text-[10px] font-bold uppercase">{field === 'mobileImage' && banner.image ? 'Uses desktop image' : 'No valid image'}</span></div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
           </div>
 
           {validateHeroSlides([banner])
@@ -208,7 +249,7 @@ export default function HeroSliderEditor({
       <div className="space-y-2">
         <span className="block text-[10px] font-black uppercase tracking-widest text-blue-500">Full storefront preview</span>
         <div className="overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-800">
-          <HeroBanner settings={settings} onExploreProducts={() => undefined} onBrowseCategories={() => undefined} />
+          <HeroBanner settings={settings} onExploreProducts={() => undefined} onBrowseCategories={() => undefined} onSelectCategory={() => undefined} />
         </div>
       </div>
     </section>

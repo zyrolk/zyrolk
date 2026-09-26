@@ -324,6 +324,7 @@ export default function App() {
 
   // Website Settings
   const [settings, setSettings] = useState<WebsiteSettings | null>(null);
+  const [settingsUnavailable, setSettingsUnavailable] = useState(false);
   const [isOffline, setIsOffline] = useState(() => typeof navigator !== 'undefined' && !navigator.onLine);
   const [storefrontDataError, setStorefrontDataError] = useState<string | null>(null);
 
@@ -791,6 +792,7 @@ export default function App() {
         if (!isMounted) return;
         setLoading(false);
         setCategoriesLoading(false);
+        setSettingsUnavailable(true);
       }, 8000);
       
       // Live listener on website settings
@@ -838,7 +840,10 @@ export default function App() {
         } else {
           setSettings(normalizeWebsiteSettings(null));
         }
-      }, error => handleDataFailure('settings', error));
+      }, error => {
+        setSettingsUnavailable(true);
+        handleDataFailure('settings', error);
+      });
       if (!isMounted) {
         sUnsub();
       } else {
@@ -1351,9 +1356,9 @@ export default function App() {
     const productImage = activeProducts.find(
       product => categoryMatches(product.category, category.id) && Boolean(product.imageUrl?.trim()),
     )?.imageUrl?.trim();
-    const image = storedImage || productImage;
-    return image ? [{ category, image, itemsCount }] : [];
-  }).slice(0, 8), [activeProducts, categories, categoryCounts]);
+    const image = storedImage || productImage || '';
+    return [{ category, image, itemsCount }];
+  }), [activeProducts, categories, categoryCounts]);
 
   const activeFilterCount = Number(Boolean(searchQuery.trim())) +
     Number(selectedCategory !== 'all') +
@@ -1524,6 +1529,7 @@ export default function App() {
           {currentPage === 'home' && (
             <MarketplaceHomePhase1
               settings={settings}
+              settingsLoading={settings === null && !settingsUnavailable}
               products={activeProducts}
               categories={storefrontCategories}
               categoryVisuals={homepageCategories}

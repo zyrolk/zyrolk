@@ -15,12 +15,10 @@ test('premium hero communicates the marketplace without fabricated intelligence 
   assert.doesNotMatch(hero, /\b(?:1,000,000|five-star reviews|number one marketplace|guaranteed savings)\b/iu);
 });
 
-test('hero search reuses the customer-safe search projection and storefront navigation', () => {
-  assert.match(hero, /projectCustomerProducts\(liveProducts\)/);
-  assert.match(hero, /searchCustomerProducts\(customerProducts, debouncedQuery\)/);
-  assert.match(hero, /What are you looking for today\?/);
+test('campaign hero leaves search to the header and keeps storefront navigation', () => {
+  assert.doesNotMatch(hero, /role="search"|searchCustomerProducts|What are you looking for today\?/);
   assert.match(hero, /onViewProduct\(product\)/);
-  assert.match(hero, /onSelectCategory\(category\.id\)/);
+  assert.match(hero, /onSelectCategory\(destination\.categoryId\)/);
   assert.match(homepage, /onSearch=\{onSearch\}/);
   assert.match(app, /onSearch=\{\(query\) => \{ setSearchQuery\(query\); setSelectedCategory\('all'\); setCurrentPage\('products'\); \}\}/);
 });
@@ -31,28 +29,24 @@ test('hero keeps CMS campaign configuration and never introduces mock catalogue 
   assert.match(hero, /activeSlide\.ctaUrl/);
   assert.match(hero, /normalizeSlideSpeed\(settings\?\.autoSlideSpeed\)/);
   assert.match(hero, /products\.filter\(product => isProductExplicitlyActive\(product\.isActive\)\)/);
-  assert.match(hero, /\.filter\(category => category\.isActive !== false\)/);
   assert.doesNotMatch(hero, /mockProducts|sampleProducts|placeholderProducts/);
 });
 
-test('voice and image-search controls stay hidden for launch while search remains accessible', () => {
+test('voice and image-search controls stay hidden and the carousel is keyboard accessible', () => {
   assert.doesNotMatch(hero, /SpeechRecognition|webkitSpeechRecognition/);
   assert.doesNotMatch(hero, /Voice search is unavailable in this launch version/);
   assert.doesNotMatch(hero, /Image search is coming soon/);
   assert.doesNotMatch(hero, /<Mic\b/);
   assert.doesNotMatch(hero, /<Camera\b/);
-  assert.match(hero, /role="search"/);
-  assert.match(hero, /aria-autocomplete="list"/);
-  assert.match(hero, /aria-activedescendant/);
-  assert.match(hero, /event\.key === 'ArrowDown'/);
-  assert.match(hero, /event\.key === 'Escape'/);
+  assert.match(hero, /aria-roledescription="carousel"/);
+  assert.match(hero, /event\.key === 'ArrowLeft'/);
+  assert.match(hero, /event\.key === 'ArrowRight'/);
 });
 
-test('hero trust and category surfaces use factual labels and live category actions', () => {
+test('hero has no trust cards or category chips; those live in the trust strip and category rail', () => {
   assert.doesNotMatch(hero, /zy-ai-hero-trust|Verified Suppliers/);
   assert.doesNotMatch(hero, /24\/7 Support|Relevant Recommendations|Easy Returns/);
-  assert.match(hero, /popularCategories\.map/);
-  assert.match(hero, /visualCategories\.slice\(0, 3\)\.map/);
+  assert.doesNotMatch(hero, /popularCategories|visualCategories|Popular categories/);
 });
 
 test('isolated hero styling is responsive, touch-safe, and reduced-motion aware', () => {

@@ -30,7 +30,7 @@ test('production mode has no preview presentation and live products stay authori
   assert.match(homepage, /products: featuredProducts/);
   assert.match(homepage, /products: recommendedProducts/);
   assert.match(hero, /previewPresentation\?\.hero/);
-  assert.match(hero, /onClick=\{onBrowseCategories \|\| onExploreProducts\}/);
+  assert.match(hero, /\(onBrowseCategories \|\| onExploreProducts\)\(\)/);
 });
 
 test('preview visual cards cannot enter commerce or persistence paths', () => {

@@ -145,11 +145,20 @@ export interface HeroBannerSettings {
   title: string;
   subtitle: string;
   description: string;
+  /** Desktop artwork (1600 × 720). */
   image: string;
   bgGradient?: string;
   buttonText?: string;
   buttonUrl?: string;
   enabled?: boolean;
+  /** Optional mobile artwork (1080 × 960). Falls back to `image`. */
+  mobileImage?: string;
+  imageAlt?: string;
+  /** CSS object-position, e.g. "70% 50%". */
+  focalPointDesktop?: string;
+  focalPointMobile?: string;
+  theme?: string;
+  sortOrder?: number;
 }
 
 export interface HomepageSectionSettings {

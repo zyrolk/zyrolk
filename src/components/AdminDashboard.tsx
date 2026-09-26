@@ -1888,7 +1888,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
     }
   };
 
-  const handleBannerImageUpload = async (e: React.ChangeEvent<HTMLInputElement>, bannerId: string) => {
+  const handleBannerImageUpload = async (e: React.ChangeEvent<HTMLInputElement>, bannerId: string, field: 'image' | 'mobileImage' = 'image') => {
     const file = e.target.files?.[0];
     if (!file || !settingsForm) return;
     const allowedTypes = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
@@ -1903,13 +1903,14 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
       return;
     }
     try {
-      const fileName = `${Date.now()}_banner_${bannerId}_${file.name.replace(/[^a-zA-Z0-9.]/g, "_")}`;
+      const variant = field === 'mobileImage' ? '_mobile' : '';
+      const fileName = `${Date.now()}_banner_${bannerId}${variant}_${file.name.replace(/[^a-zA-Z0-9.]/g, "_")}`;
       const fileRef = storageRef(storage, `banners/${fileName}`);
       const snapshot = await uploadBytes(fileRef, file);
       const downloadUrl = await getDownloadURL(snapshot.ref);
       setSettingsForm(prev => {
         if (!prev) return prev;
-        const updatedBanners = prev.heroBanners.map(b => b.id === bannerId ? { ...b, image: downloadUrl } : b);
+        const updatedBanners = prev.heroBanners.map(b => b.id === bannerId ? { ...b, [field]: downloadUrl } : b);
         return { ...prev, heroBanners: updatedBanners };
       });
       showSettingsToast('success', 'Banner image uploaded. Save settings to publish the URL.');
