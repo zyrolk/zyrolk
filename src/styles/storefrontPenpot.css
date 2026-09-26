@@ -2782,6 +2782,7 @@
 
   .zy-penpot-storefront .zy-mobile-delivery-context {
     order: 3;
+    flex: 1 1 0;
   }
 
   .zy-penpot-storefront .zy-header-actions {
@@ -2810,7 +2811,7 @@
   }
 }
 
-@media (max-width: 359px) {
+@media (max-width: 409px) {
   .zy-penpot-storefront .zy-brand-button img {
     max-width: 7.25rem;
   }
