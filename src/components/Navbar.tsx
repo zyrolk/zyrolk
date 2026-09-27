@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   Menu, X, Search, Heart, ShoppingBag, User, 
-  LayoutDashboard, LogIn, LogOut, ChevronDown,
+  LayoutDashboard, LogIn, LogOut, ChevronDown, ChevronRight,
   ArrowUpRight, Clock3, LoaderCircle, PackageSearch, Tag,
-  Grid3X3, MessageCircle, MapPin,
+  Grid3X3, MessageCircle, MapPin, CircleHelp, Phone,
   Settings, Headphones, ReceiptText, Home, BarChart3, Sparkles,
   Banknote, LockKeyhole, Truck
 } from 'lucide-react';
@@ -66,6 +66,7 @@ export default function Navbar({
   const [isScrolled, setIsScrolled] = useState(false);
   const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(-1);
   const searchInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const mobileMenuRef = useRef<HTMLDivElement | null>(null);
   const prefersReducedMotion = useReducedMotion();
   const [recentSearches, setRecentSearches] = useState<string[]>(() => {
     try {
@@ -118,6 +119,23 @@ export default function Navbar({
       document.removeEventListener('keydown', handleEscape);
     };
   }, []);
+
+  useEffect(() => {
+    if (!isMobileMenuOpen) return;
+    const handleOutsideMenuPointer = (event: PointerEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!target || mobileMenuRef.current?.contains(target) || target.closest('.zy-mobile-menu-trigger, .zy-mobile-menu-scrim')) return;
+      setIsMobileMenuOpen(false);
+    };
+    document.addEventListener('pointerdown', handleOutsideMenuPointer);
+    const shouldLockScroll = window.matchMedia('(max-width: 767px)').matches;
+    const previousOverflow = document.body.style.overflow;
+    if (shouldLockScroll) document.body.style.overflow = 'hidden';
+    return () => {
+      document.removeEventListener('pointerdown', handleOutsideMenuPointer);
+      if (shouldLockScroll) document.body.style.overflow = previousOverflow;
+    };
+  }, [isMobileMenuOpen]);
 
   const debouncedSearch = useDebouncedValue(tempSearch, 150);
   const normalizedTempSearch = normalizeSearchText(debouncedSearch);
@@ -268,6 +286,27 @@ export default function Navbar({
     { id: 'best-sellers', label: 'Best Sellers', icon: BarChart3, action: () => navigateToPage('products') },
     { id: 'today-offers', label: "Today's Offers", icon: Tag, action: navigateToDeals }
   ];
+
+  const mobileBrowseLinks = ['new-arrivals', 'deals']
+    .map((id) => navLinks.find((link) => link.id === id))
+    .filter((link): link is (typeof navLinks)[number] => Boolean(link));
+
+  const mobileAccountLinks = [
+    { id: 'account-orders', label: 'My Orders', icon: ReceiptText },
+    ...(isWishlistEnabled ? [{ id: 'wishlist', label: 'Wishlist', icon: Heart }] : []),
+    { id: 'account-profile', label: 'Profile', icon: User },
+    { id: 'account-addresses', label: 'Addresses', icon: MapPin },
+  ];
+
+  const supportWhatsApp = (settings?.whatsappNumber || '').replace(/[^0-9]/gu, '');
+
+  const renderMobileMenuRow = (key: string, label: string, Icon: typeof Home, onClick: () => void) => (
+    <button key={key} type="button" className="zy-mobile-menu-row" onClick={onClick}>
+      <span className="zy-mobile-menu-icon"><Icon aria-hidden="true" /></span>
+      <span className="zy-mobile-menu-row-label">{label}</span>
+      <ChevronRight aria-hidden="true" className="zy-mobile-menu-chevron" />
+    </button>
+  );
 
   const accountItems = [
     { label: 'My Account', icon: User, action: user ? () => navigateToPage('account') : () => { onOpenAuthModal(); setIsProfileOpen(false); } },
@@ -626,6 +665,20 @@ export default function Navbar({
       <AnimatePresence initial={false}>
         {isMobileMenuOpen && (
           <motion.div
+            key="mobile-menu-scrim"
+            className="zy-mobile-menu-scrim"
+            aria-hidden="true"
+            onClick={() => setIsMobileMenuOpen(false)}
+            initial={{ opacity: prefersReducedMotion ? 1 : 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: prefersReducedMotion ? 0 : 0.18 }}
+          />
+        )}
+        {isMobileMenuOpen && (
+          <motion.div
+            key="mobile-menu"
+            ref={mobileMenuRef}
             id="mobile-header-navigation"
             className="zy-mobile-market-menu"
             initial={prefersReducedMotion ? { opacity: 1 } : { opacity: 0, y: -8 }}
@@ -634,25 +687,43 @@ export default function Navbar({
             transition={{ duration: prefersReducedMotion ? 0 : 0.18 }}
           >
             <div className="zy-mobile-menu-account">
-              <span aria-hidden="true">{(user?.displayName || user?.email || 'G').slice(0, 1).toUpperCase()}</span>
+              <span className="zy-mobile-menu-avatar" aria-hidden="true">
+                {user?.photoURL ? <img src={user.photoURL} alt="" referrerPolicy="no-referrer" /> : (user?.displayName || user?.email || 'G').slice(0, 1).toUpperCase()}
+              </span>
               <div><strong>{user ? user.displayName || 'Zyro.lk Customer' : 'Welcome to Zyro.lk'}</strong><small>{user?.email || 'Sign in for orders, saved items and more'}</small></div>
-              <button type="button" onClick={user ? () => navigateToPage('account') : onOpenAuthModal}>{user ? 'Account' : 'Sign in'}</button>
+              <button type="button" onClick={user ? () => navigateToPage('account') : () => { setIsMobileMenuOpen(false); onOpenAuthModal(); }}>{user ? 'My Account' : 'Sign in'}</button>
             </div>
-            <nav className="zy-mobile-primary-links" aria-label="Mobile storefront navigation">
-              <button type="button" onClick={() => navigateToPage('home')}><Home aria-hidden="true" />Home</button>
-              <button type="button" onClick={() => navigateToPage('categories')}><Grid3X3 aria-hidden="true" />Categories</button>
-              {navLinks.map(({ id, label, icon: Icon, action }) => <button key={id} type="button" onClick={action}><Icon aria-hidden="true" />{label}</button>)}
-              <button type="button" onClick={supportNavLink.action}><MessageCircle aria-hidden="true" />{supportNavLink.label}</button>
-            </nav>
-            {categories.length > 0 && (
-              <div className="zy-mobile-category-list">
-                <span>Shop by category</span>
-                <div>{categories.filter((category) => category.isActive !== false).slice(0, 10).map((category) => <button key={category.id} type="button" onClick={() => handleCategorySuggestion(category.id)}>{category.name}</button>)}</div>
+            <nav className="zy-mobile-menu-nav" aria-label="Mobile menu">
+              <div className="zy-mobile-menu-group" role="group" aria-labelledby="mobile-menu-browse">
+                <p id="mobile-menu-browse" className="zy-mobile-menu-label">Browse</p>
+                {renderMobileMenuRow('home', 'Home', Home, () => navigateToPage('home'))}
+                {renderMobileMenuRow('categories', 'Categories', Grid3X3, () => navigateToPage('categories'))}
+                {mobileBrowseLinks.map(({ id, label, icon: Icon, action }) => renderMobileMenuRow(id, label, Icon, action))}
               </div>
-            )}
-            <div className="zy-mobile-menu-footer">
-              {settings?.contactPhone && <a href={`tel:${settings.contactPhone}`} aria-label={`Call Zyro.lk hotline at ${settings.contactPhone}`}><Headphones aria-hidden="true" />Hotline {settings.contactPhone}</a>}
-            </div>
+              {user && (
+                <div className="zy-mobile-menu-group" role="group" aria-labelledby="mobile-menu-account">
+                  <p id="mobile-menu-account" className="zy-mobile-menu-label">Your account</p>
+                  {mobileAccountLinks.map(({ id, label, icon: Icon }) => renderMobileMenuRow(id, label, Icon, () => navigateToPage(id)))}
+                </div>
+              )}
+              <div className="zy-mobile-menu-group" role="group" aria-labelledby="mobile-menu-help">
+                <p id="mobile-menu-help" className="zy-mobile-menu-label">Help</p>
+                {renderMobileMenuRow('support', supportNavLink.label, Headphones, supportNavLink.action)}
+                {renderMobileMenuRow('faq', 'FAQ', CircleHelp, () => navigateToPage('faq'))}
+                {settings?.contactPhone && (
+                  <a className="zy-mobile-menu-row" href={`tel:${settings.contactPhone}`} aria-label={`Call Zyro.lk hotline at ${settings.contactPhone}`}>
+                    <span className="zy-mobile-menu-icon"><Phone aria-hidden="true" /></span>
+                    <span className="zy-mobile-menu-row-label">Hotline {settings.contactPhone}</span>
+                  </a>
+                )}
+                {supportWhatsApp && (
+                  <a className="zy-mobile-menu-row" href={`https://wa.me/${supportWhatsApp}`} target="_blank" rel="noopener noreferrer">
+                    <span className="zy-mobile-menu-icon"><MessageCircle aria-hidden="true" /></span>
+                    <span className="zy-mobile-menu-row-label">WhatsApp</span>
+                  </a>
+                )}
+              </div>
+            </nav>
           </motion.div>
         )}
       </AnimatePresence>

@@ -12,7 +12,8 @@ test('Deals navigation uses the live Flash Deals anchor in desktop and mobile me
   assert.match(navbar, /document\.getElementById\('homepage-flash-deals'\)/);
   assert.doesNotMatch(navbar, /phase-one-deals-title/);
   assert.match(navbar, /navLinks\.map\(\(link\)/);
-  assert.match(navbar, /navLinks\.map\(\(\{ id, label, icon: Icon, action \}\)/);
+  assert.match(navbar, /const mobileBrowseLinks = \['new-arrivals', 'deals'\][\s\S]{0,80}navLinks\.find/);
+  assert.match(navbar, /mobileBrowseLinks\.map\(\(\{ id, label, icon: Icon, action \}\)/);
   assert.match(navbar, /id: 'deals'[\s\S]{0,140}action: navigateToDeals/);
   assert.match(navbar, /id: 'today-offers'[\s\S]{0,160}action: navigateToDeals/);
 });
