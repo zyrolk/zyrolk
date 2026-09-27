@@ -61,13 +61,14 @@ test('Customer fallback copy contains only the canonical daily hours', () => {
 test('Fallback shipping copy matches the flat fee and inclusive threshold', () => {
   const settings = normalizeWebsiteSettings({
     ...DEFAULT_WEBSITE_SETTINGS,
-    deliveryCharge: 350,
-    freeDeliveryMin: 5000,
+    deliveryCharge: 300,
+    freeDeliveryMin: 3500,
   });
-  assert.equal(calculateCheckoutTotals(4999, 'Colombo', settings).deliveryFee, 350);
-  assert.equal(calculateCheckoutTotals(5000, 'Colombo', settings).deliveryFee, 0);
-  assert.match(cms, /Delivery fee is LKR 350 for orders below LKR 5,000/);
-  assert.match(cms, /Free delivery is available on orders of LKR 5,000 or more/);
+  assert.equal(calculateCheckoutTotals(3499, 'Colombo', settings).deliveryFee, 300);
+  assert.equal(calculateCheckoutTotals(3500, 'Colombo', settings).deliveryFee, 0);
+  assert.match(cms, /Delivery fee is LKR 300 for orders below LKR 3,500/);
+  assert.match(cms, /Delivery is free for orders of LKR 3,500 or more/);
+  assert.doesNotMatch(cms, /LKR 350|LKR 5,000/);
   assert.doesNotMatch(cms, /Shipping costs vary based on your district/);
   assert.doesNotMatch(cms, /orders that exceed our minimum threshold/);
 });

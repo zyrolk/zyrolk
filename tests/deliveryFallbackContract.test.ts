@@ -16,15 +16,15 @@ import {
 
 const read = (relativePath: string) => readFileSync(new URL(`../${relativePath}`, import.meta.url), 'utf8');
 
-test('canonical delivery fallback is 350 and 5000 when settings are missing', () => {
+test('canonical delivery fallback is 300 and 3500 when settings are missing', () => {
   const settings = normalizeWebsiteSettings(null);
 
-  assert.equal(DEFAULT_DELIVERY_CHARGE, 350);
-  assert.equal(DEFAULT_FREE_DELIVERY_MIN, 5000);
-  assert.equal(DEFAULT_WEBSITE_SETTINGS.deliveryCharge, 350);
-  assert.equal(DEFAULT_WEBSITE_SETTINGS.freeDeliveryMin, 5000);
-  assert.equal(settings.deliveryCharge, 350);
-  assert.equal(settings.freeDeliveryMin, 5000);
+  assert.equal(DEFAULT_DELIVERY_CHARGE, 300);
+  assert.equal(DEFAULT_FREE_DELIVERY_MIN, 3500);
+  assert.equal(DEFAULT_WEBSITE_SETTINGS.deliveryCharge, 300);
+  assert.equal(DEFAULT_WEBSITE_SETTINGS.freeDeliveryMin, 3500);
+  assert.equal(settings.deliveryCharge, 300);
+  assert.equal(settings.freeDeliveryMin, 3500);
 });
 
 test('partial settings use canonical fallback only for the missing field', () => {
@@ -32,35 +32,77 @@ test('partial settings use canonical fallback only for the missing field', () =>
   const missingThreshold = normalizeWebsiteSettings({ deliveryCharge: 425 });
   const configured = normalizeWebsiteSettings({ deliveryCharge: 425, freeDeliveryMin: 7000 });
   const backendMissingCharge = calculateCheckoutTotals(4999, 'Gampaha', { freeDeliveryMin: 7000 });
-  const backendMissingThreshold = calculateCheckoutTotals(4999, 'Gampaha', { deliveryCharge: 425 });
+  const backendMissingThreshold = calculateCheckoutTotals(3499, 'Gampaha', { deliveryCharge: 425 });
 
-  assert.equal(missingCharge.deliveryCharge, 350);
+  assert.equal(missingCharge.deliveryCharge, 300);
   assert.equal(missingCharge.freeDeliveryMin, 7000);
   assert.equal(missingThreshold.deliveryCharge, 425);
-  assert.equal(missingThreshold.freeDeliveryMin, 5000);
+  assert.equal(missingThreshold.freeDeliveryMin, 3500);
   assert.equal(configured.deliveryCharge, 425);
   assert.equal(configured.freeDeliveryMin, 7000);
-  assert.equal(backendMissingCharge.baseDeliveryCharge, 350);
+  assert.equal(backendMissingCharge.baseDeliveryCharge, 300);
   assert.equal(backendMissingCharge.freeDeliveryThreshold, 7000);
-  assert.equal(backendMissingCharge.deliveryFee, 350);
+  assert.equal(backendMissingCharge.deliveryFee, 300);
   assert.equal(backendMissingThreshold.baseDeliveryCharge, 425);
-  assert.equal(backendMissingThreshold.freeDeliveryThreshold, 5000);
+  assert.equal(backendMissingThreshold.freeDeliveryThreshold, 3500);
   assert.equal(backendMissingThreshold.deliveryFee, 425);
 });
 
 test('frontend and backend fallback totals agree below, at, and above the threshold', () => {
-  const below = calculateCheckoutTotals(4999, 'Gampaha', null);
-  const atThreshold = calculateCheckoutTotals(5000, 'Gampaha', null);
-  const above = calculateCheckoutTotals(5001, 'Gampaha', null);
+  const below = calculateCheckoutTotals(3499, 'Gampaha', null);
+  const atThreshold = calculateCheckoutTotals(3500, 'Gampaha', null);
+  const above = calculateCheckoutTotals(3501, 'Gampaha', null);
+  const wellAbove = calculateCheckoutTotals(5000, 'Gampaha', null);
+  const empty = calculateCheckoutTotals(0, 'Gampaha', null);
 
-  assert.equal(below.deliveryFee, 350);
-  assert.equal(below.baseDeliveryCharge, 350);
-  assert.equal(below.freeDeliveryThreshold, 5000);
+  assert.equal(below.deliveryFee, 300);
+  assert.equal(below.grandTotalPrice, 3799);
+  assert.equal(below.baseDeliveryCharge, 300);
+  assert.equal(below.freeDeliveryThreshold, 3500);
   assert.equal(atThreshold.deliveryFee, 0);
+  assert.equal(atThreshold.grandTotalPrice, 3500);
   assert.equal(above.deliveryFee, 0);
-  assert.equal(resolveDeliveryCharge(null, 'Gampaha', DEFAULT_DELIVERY_CHARGE), 350);
+  assert.equal(wellAbove.deliveryFee, 0);
+  assert.equal(empty.deliveryFee, 0);
+  assert.equal(empty.grandTotalPrice, 0);
+  assert.equal(resolveDeliveryCharge(null, 'Gampaha', DEFAULT_DELIVERY_CHARGE), 300);
   assert.equal(SERVER_DEFAULT_DELIVERY_CHARGE, DEFAULT_DELIVERY_CHARGE);
   assert.equal(SERVER_DEFAULT_FREE_DELIVERY_MIN, DEFAULT_FREE_DELIVERY_MIN);
+});
+
+test('free delivery qualifies on the discounted selling-price subtotal, never the original price', () => {
+  const regularPrice = 4000;
+  const sellingPrice = 3400;
+  const discounted = calculateCheckoutTotals(sellingPrice, 'Colombo', null);
+
+  assert.ok(regularPrice >= DEFAULT_FREE_DELIVERY_MIN);
+  assert.equal(discounted.itemsSubtotal, 3400);
+  assert.equal(discounted.deliveryFee, 300);
+  assert.equal(discounted.grandTotalPrice, 3700);
+
+  const checkoutRoute = read('functions/src/api/routes/checkout.ts');
+  assert.match(checkoutRoute, /const truePrice = Number\(pData\.price\)/);
+  assert.match(checkoutRoute, /itemsSubtotal \+= truePrice \* item\.quantity/);
+  assert.doesNotMatch(checkoutRoute, /itemsSubtotal \+=[^\n]*originalPrice/);
+});
+
+test('delivery fee never helps an order qualify for free delivery', () => {
+  const totals = calculateCheckoutTotals(3300, 'Colombo', null);
+
+  assert.equal(totals.deliveryFee, 300);
+  assert.equal(totals.itemsSubtotal + totals.deliveryFee, 3600);
+  assert.ok(totals.itemsSubtotal + totals.deliveryFee >= DEFAULT_FREE_DELIVERY_MIN);
+});
+
+test('coupon discounts do not change the free-delivery eligibility decision', () => {
+  const qualifiedWithCoupon = calculateCheckoutTotals(3600, 'Colombo', null, 400);
+  const belowWithCoupon = calculateCheckoutTotals(3499, 'Colombo', null, 400);
+
+  assert.equal(qualifiedWithCoupon.discountAmount, 400);
+  assert.equal(qualifiedWithCoupon.deliveryFee, 0);
+  assert.equal(qualifiedWithCoupon.grandTotalPrice, 3200);
+  assert.equal(belowWithCoupon.deliveryFee, 300);
+  assert.equal(belowWithCoupon.grandTotalPrice, 3399);
 });
 
 test('valid production settings remain authoritative for checkout totals', () => {

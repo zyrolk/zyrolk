@@ -71,8 +71,8 @@ You have the right to request access to your stored personal data, request corre
 - WhatsApp is available for customer support and order assistance only; it is not a separate payment method.
 
 3. Deliveries & Shipments
-- Delivery fee is LKR 350 for orders below LKR 5,000.
-- Free delivery is available on orders of LKR 5,000 or more.
+- Delivery fee is LKR 300 for orders below LKR 3,500.
+- Delivery is free for orders of LKR 3,500 or more.
 - Delivery times may vary by location. Estimated delivery information will be provided where available.
 - While we make every effort to meet estimated delivery times, external factors such as weather or courier delays are beyond our control.
 
@@ -110,7 +110,7 @@ Q: Do you deliver islandwide in Sri Lanka?
 A: Islandwide delivery is available across Sri Lanka. Delivery availability and timing may vary by location.
 
 Q: What are your shipping rates?
-A: Delivery fee is LKR 350 for orders below LKR 5,000. Free delivery is available on orders of LKR 5,000 or more.
+A: Delivery fee is LKR 300 for orders below LKR 3,500. Delivery is free for orders of LKR 3,500 or more.
 
 Q: How long does delivery take?
 A: Delivery times may vary by location. Estimated delivery information will be provided where available.

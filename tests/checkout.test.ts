@@ -45,16 +45,18 @@ test("checkout consolidates duplicate product IDs before stock calculation", () 
 });
 
 test("checkout totals calculation preserves delivery and free delivery behavior", () => {
-  assert.deepEqual(calculateCheckoutTotals(4000, "Colombo", null), {
-    itemsSubtotal: 4000,
+  assert.deepEqual(calculateCheckoutTotals(3499, "Colombo", null), {
+    itemsSubtotal: 3499,
     discountAmount: 0,
-    deliveryFee: 350,
-    grandTotalPrice: 4350,
-    freeDeliveryThreshold: 5000,
-    baseDeliveryCharge: 350,
+    deliveryFee: 300,
+    grandTotalPrice: 3799,
+    freeDeliveryThreshold: 3500,
+    baseDeliveryCharge: 300,
   });
 
-  assert.equal(calculateCheckoutTotals(5000, "Colombo", null).deliveryFee, 0);
+  assert.equal(calculateCheckoutTotals(3500, "Colombo", null).deliveryFee, 0);
+  assert.equal(calculateCheckoutTotals(4000, "Colombo", null).deliveryFee, 0);
+  assert.equal(calculateCheckoutTotals(0, "Colombo", null).deliveryFee, 0);
   assert.equal(calculateCheckoutTotals(2500, "Unknown", { deliveryCharge: 700, freeDeliveryMin: 3000 }).grandTotalPrice, 3200);
 });
 
@@ -65,7 +67,8 @@ test("checkout coupons are normalized, privately addressed, and calculated from 
   assert.equal(resolveCouponDiscount({ active: true, type: "percentage", value: 10 }, 4000), 400);
   assert.equal(resolveCouponDiscount({ active: true, type: "fixed", value: 750 }, 4000), 750);
   assert.equal(resolveCouponDiscount({ active: true, type: "percentage", value: 25, maxDiscount: 500 }, 4000), 500);
-  assert.equal(calculateCheckoutTotals(4000, "Colombo", null, 400).grandTotalPrice, 3950);
+  assert.equal(calculateCheckoutTotals(4000, "Colombo", null, 400).grandTotalPrice, 3600);
+  assert.equal(calculateCheckoutTotals(3000, "Colombo", null, 400).grandTotalPrice, 2900);
 });
 
 test("checkout coupons reject invalid, unavailable, expired, and ineligible offers", () => {

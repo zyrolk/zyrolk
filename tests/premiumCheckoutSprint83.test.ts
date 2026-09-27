@@ -121,25 +121,25 @@ test('confirmation uses server-authoritative order values and coupon-aware order
 
 test('delivery progress uses the resolved fee for its free and completed states', () => {
   const zeroFeeBelowThreshold = calculateCheckoutTotals(1000, 'Colombo', {
-    deliveryCharge: 350,
-    freeDeliveryMin: 5000,
+    deliveryCharge: 300,
+    freeDeliveryMin: 3500,
     deliveryAreas: [{ charge: 0, districts: ['Colombo'], isActive: true }],
   });
-  const positiveFeeBelowThreshold = calculateCheckoutTotals(1000, 'Colombo', {
-    deliveryCharge: 350,
-    freeDeliveryMin: 5000,
+  const positiveFeeBelowThreshold = calculateCheckoutTotals(3499, 'Colombo', {
+    deliveryCharge: 300,
+    freeDeliveryMin: 3500,
   });
-  const zeroFeeAtThreshold = calculateCheckoutTotals(5000, 'Colombo', {
-    deliveryCharge: 350,
-    freeDeliveryMin: 5000,
+  const zeroFeeAtThreshold = calculateCheckoutTotals(3500, 'Colombo', {
+    deliveryCharge: 300,
+    freeDeliveryMin: 3500,
   });
   const zeroThreshold = calculateCheckoutTotals(1000, 'Colombo', {
-    deliveryCharge: 350,
+    deliveryCharge: 300,
     freeDeliveryMin: 0,
   });
 
   assert.equal(zeroFeeBelowThreshold.deliveryFee, 0);
-  assert.equal(positiveFeeBelowThreshold.deliveryFee, 350);
+  assert.equal(positiveFeeBelowThreshold.deliveryFee, 300);
   assert.equal(zeroFeeAtThreshold.deliveryFee, 0);
   assert.equal(zeroThreshold.deliveryFee, 0);
 
