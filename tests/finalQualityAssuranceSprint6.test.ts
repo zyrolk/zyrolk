@@ -15,13 +15,11 @@ test('customer sign-in dialog contains focus, Escape, scroll, and return-focus b
   assert.match(authModal, /ref=\{closeButtonRef\}/);
 });
 
-test('mobile account sheet contains focus and motion-safe interaction boundaries', () => {
+test('mobile bottom dock has no retired account sheet or leftover modal plumbing', () => {
   const mobileNavigation = source('src/components/MobileBottomNav.tsx');
-  assert.match(mobileNavigation, /ref=\{menuSheetRef\}/);
-  assert.match(mobileNavigation, /event\.key !== 'Tab'/);
-  assert.match(mobileNavigation, /document\.body\.style\.overflow = 'hidden'/);
-  assert.match(mobileNavigation, /previousFocusRef\.current\?\.focus\(\)/);
-  assert.match(mobileNavigation, /prefersReducedMotion/);
+  assert.doesNotMatch(mobileNavigation, /menuSheetRef|previousFocusRef|role="dialog"|aria-modal/);
+  assert.doesNotMatch(mobileNavigation, /document\.body\.style\.overflow/);
+  assert.match(mobileNavigation, /aria-current=/);
 });
 
 test('Supplier Portal is mobile-wrapping, touch-safe, and its editor contains focus', () => {

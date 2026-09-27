@@ -509,11 +509,6 @@ html {
   color: #1d4ed8;
 }
 
-.zy-mobile-sheet {
-  border-radius: 1.75rem 1.75rem 0 0;
-  box-shadow: 0 -30px 80px -34px rgba(15, 23, 42, 0.64);
-}
-
 @media (hover: hover) and (pointer: fine) {
   .zy-product-card:hover {
     border-color: rgba(37, 99, 235, 0.22);

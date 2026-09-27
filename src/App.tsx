@@ -1,6 +1,6 @@
 import React, { Suspense, lazy, useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { onSnapshot, doc, getDoc, updateDoc, setDoc } from 'firebase/firestore';
-import { onAuthStateChanged, User } from 'firebase/auth';
+import { onAuthStateChanged, signOut, User } from 'firebase/auth';
 import { db, auth } from './firebase';
 import { Product, Category, CartItem, CustomerProduct, WebsiteSettings } from './types';
 import { hasAdminAccess } from './services/security/adminAuthorization';
@@ -384,7 +384,6 @@ export default function App() {
   // Modal / Drawer Toggles
   const [isCartOpen, setIsCartOpen] = useState<boolean>(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
-  const [isMobileMoreMenuOpen, setIsMobileMoreMenuOpen] = useState<boolean>(false);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [hasOpenedCart, setHasOpenedCart] = useState<boolean>(false);
   const [hasOpenedAuth, setHasOpenedAuth] = useState<boolean>(false);
@@ -1225,6 +1224,17 @@ export default function App() {
     resolvedRoutedProductRef.current = product.id;
     setRoutedProductId(product.id);
     setSelectedProduct(product);
+  }, []);
+
+  const handleCustomerSignOut = useCallback(async () => {
+    await signOut(auth);
+    setIsAdminMode(false);
+    setCurrentPage('home');
+  }, []);
+
+  const handleOpenAdmin = useCallback(() => {
+    setIsAdminMode(true);
+    setCurrentPage('admin');
   }, []);
 
   // Ratings are maintained as product aggregates by the review backend. A
@@ -2405,6 +2415,9 @@ export default function App() {
                 onViewProduct={handleViewProduct}
                 onAddToCart={handleAddToCart}
                 onOpenCart={() => setIsCartOpen(true)}
+                onSignOut={handleCustomerSignOut}
+                isAdminUser={isAdminUser}
+                onOpenAdmin={handleOpenAdmin}
               />
             </Suspense>
           )}
@@ -2470,7 +2483,7 @@ export default function App() {
       <FloatingWhatsApp
         settings={settings}
         isAdminMode={isAdminMode}
-        isOverlayOpen={isMobileMoreMenuOpen || isCartOpen || isAuthModalOpen || Boolean(selectedProduct) || isFilterDrawerOpen}
+        isOverlayOpen={isCartOpen || isAuthModalOpen || Boolean(selectedProduct) || isFilterDrawerOpen}
       />
 
       {wishlistFeedback && (
@@ -2495,16 +2508,9 @@ export default function App() {
           cartCount={cart.reduce((acc, item) => acc + item.quantity, 0)}
           wishlistCount={wishlist.length}
           onOpenCart={() => setIsCartOpen(true)}
-          onOpenAuthModal={() => setIsAuthModalOpen(true)}
-          onMoreMenuOpenChange={setIsMobileMoreMenuOpen}
           isCartOpen={isCartOpen}
-          user={user}
-          isAdminUser={isAdminUser}
           isAdminMode={isAdminMode}
           setIsAdminMode={setIsAdminMode}
-          settings={settings}
-          categories={storefrontCategories}
-          setSelectedCategory={setSelectedCategory}
         />
       )}
 

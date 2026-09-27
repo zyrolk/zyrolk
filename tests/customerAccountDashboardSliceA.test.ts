@@ -136,7 +136,6 @@ test('sidebar protection note uses customer-facing copy', () => {
 
 test('bottom navigation and hamburger menu remain unchanged', () => {
   assert.match(navbar, /label: 'My Account'/);
-  assert.match(bottomNav, /Account Center/);
-  assert.match(bottomNav, /handleTabClick\('account-security'\)/);
-  assert.match(bottomNav, /handleTabClick\('account-settings'\)/);
+  assert.match(bottomNav, /onClick=\{\(\) => handleTabClick\('account'\)\}/);
+  assert.match(bottomNav, /aria-label="Go to account"/);
 });

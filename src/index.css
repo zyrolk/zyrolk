@@ -4679,12 +4679,6 @@ textarea {
   box-shadow: 0 24px 60px -28px rgba(15, 23, 42, 0.7);
 }
 
-.zy-mobile-sheet {
-  background:
-    radial-gradient(circle at 95% 0%, rgba(37, 99, 235, 0.1), transparent 18rem),
-    #ffffff;
-}
-
 .zy-footer-trust-card {
   transition: border-color 180ms ease, background-color 180ms ease, transform 180ms ease;
 }

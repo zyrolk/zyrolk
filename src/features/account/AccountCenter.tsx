@@ -1,7 +1,7 @@
 import { FormEvent, ReactNode, useEffect, useRef, useState } from 'react';
 import {
   Bell, BookOpen, Check, ChevronLeft, ChevronRight, CircleHelp, Clock3, Edit3, Headphones, Heart, Home, KeyRound,
-  LoaderCircle, LockKeyhole, MailCheck, MapPin, MessageCircle, PackageCheck, Phone, Plus, Save, Settings, ShieldCheck, ShoppingBag,
+  LayoutDashboard, LoaderCircle, LockKeyhole, LogOut, MailCheck, MapPin, MessageCircle, PackageCheck, Phone, Plus, Save, Settings, ShieldCheck, ShoppingBag,
   Trash2, UserRound, X,
 } from 'lucide-react';
 import {
@@ -39,6 +39,9 @@ interface AccountCenterProps {
   onViewProduct: (product: Product) => void;
   onAddToCart: (product: Product, quantity: number) => void;
   onOpenCart: () => void;
+  onSignOut: () => void | Promise<void>;
+  isAdminUser: boolean;
+  onOpenAdmin: () => void;
 }
 
 interface CustomerProfileDocument {
@@ -78,7 +81,7 @@ const Field = ({ label, children, hint }: { label: string; children: ReactNode; 
 
 export default function AccountCenter({
   currentPage, user, products, wishlist, recentlyViewed, settings, onNavigate, onOpenAuth, onViewProduct,
-  onAddToCart, onOpenCart,
+  onAddToCart, onOpenCart, onSignOut, isAdminUser, onOpenAdmin,
 }: AccountCenterProps) {
   const section = ACCOUNT_PAGE_TO_SECTION[currentPage] || 'overview';
   const contentHeadingRef = useRef<HTMLHeadingElement>(null);
@@ -116,6 +119,7 @@ export default function AccountCenter({
   const [securityMessage, setSecurityMessage] = useState('');
   const [securityError, setSecurityError] = useState('');
   const [verificationSending, setVerificationSending] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => contentHeadingRef.current?.focus({ preventScroll: true }));
@@ -193,6 +197,17 @@ export default function AccountCenter({
   }, [user]);
 
   const navigateSection = (nextSection: AccountSection) => onNavigate(ACCOUNT_SECTION_TO_PAGE[nextSection]);
+  const handleSignOut = async () => {
+    if (signingOut) return;
+    setSigningOut(true);
+    try {
+      await onSignOut();
+    } catch (error) {
+      reportClientIssue('account-sign-out', error, 'warning');
+    } finally {
+      setSigningOut(false);
+    }
+  };
   const hasPasswordProvider = Boolean(user?.providerData.some(provider => provider.providerId === 'password'));
   const profileComplete = Boolean((profile.displayName || user?.displayName) && profile.phoneNumber);
 
@@ -534,6 +549,8 @@ export default function AccountCenter({
 
             <div className="zy-account-footer-actions">
               <button type="button" onClick={() => navigateSection('settings')}><Settings aria-hidden="true" /> Settings &amp; notifications <ChevronRight aria-hidden="true" /></button>
+              {isAdminUser && <button type="button" onClick={onOpenAdmin}><LayoutDashboard aria-hidden="true" /> Management Console <ChevronRight aria-hidden="true" /></button>}
+              <button type="button" className="zy-account-footer-signout" onClick={handleSignOut} disabled={signingOut} aria-busy={signingOut}><LogOut aria-hidden="true" /><span>{signingOut ? 'Signing out…' : 'Sign out'}</span></button>
             </div>
           </div>
         )}

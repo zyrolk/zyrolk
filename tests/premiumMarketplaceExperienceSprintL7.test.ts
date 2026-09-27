@@ -40,9 +40,8 @@ test('search and mobile navigation animate open and closed accessibly', () => {
   assert.match(navbar, /AnimatePresence/);
   assert.match(navbar, /exit=\{prefersReducedMotion/);
   assert.match(navbar, /role="listbox"/);
-  assert.match(mobileNavigation, /AnimatePresence/);
-  assert.match(mobileNavigation, /aria-modal="true"/);
-  assert.match(mobileNavigation, /prefersReducedMotion/);
+  assert.match(mobileNavigation, /aria-label="Mobile storefront navigation"/);
+  assert.doesNotMatch(mobileNavigation, /aria-modal="true"/);
   assert.match(styles, /\.zy-market-header \.zy-search-submit \{\s+position: absolute/);
   assert.match(styles, /grid-template-columns: repeat\(5, minmax\(0, 1fr\)\)/);
 });

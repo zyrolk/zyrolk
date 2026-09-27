@@ -144,9 +144,9 @@ test('account navigation replaces prior placeholders on desktop and mobile', () 
   assert.match(navbar, /label: 'My Account'[\s\S]*navigateToPage\('account'\)/);
   assert.match(navbar, /label: 'Addresses'[\s\S]*navigateToPage\('account-addresses'\)/);
   assert.match(navbar, /label: 'Settings'[\s\S]*navigateToPage\('account-settings'\)/);
-  assert.match(mobileNavigation, /Account Center/);
-  assert.match(mobileNavigation, /handleTabClick\('account-security'\)/);
-  assert.match(mobileNavigation, /handleTabClick\('account-settings'\)/);
+  assert.match(mobileNavigation, /onClick=\{\(\) => handleTabClick\('account'\)\}/);
+  assert.match(account, /\{ id: 'security', label: 'Security', icon: ShieldCheck \}/);
+  assert.match(account, /\{ id: 'settings', label: 'Settings', icon: Settings \}/);
 });
 
 test('premium account UI includes loading, empty, error, keyboard, mobile, and motion-safe states', () => {

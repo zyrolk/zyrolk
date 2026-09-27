@@ -78,6 +78,6 @@ test('desktop navigation, search, cart and bottom dock stay unchanged', () => {
   assert.match(navbar, /<nav aria-label="Primary storefront navigation">\s*\{navLinks\.map\(\(link\) => \(/);
   assert.match(navbar, /renderSearchBox\('mobile'\)/);
   assert.match(navbar, /aria-controls="mobile-header-navigation"/);
-  assert.match(bottomNav, /handleTabClick\('account-security'\)/);
+  assert.match(bottomNav, /onClick=\{\(\) => handleTabClick\('account'\)\}/);
   assert.match(bottomNav, /zy-mobile-tab/);
 });

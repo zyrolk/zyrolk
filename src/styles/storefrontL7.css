@@ -253,8 +253,7 @@
   transition: transform 200ms var(--zy-l7-ease-out), color 160ms ease;
 }
 
-.zy-bottom-dock .zy-mobile-tab[aria-current="page"] svg,
-.zy-bottom-dock .zy-mobile-tab[aria-expanded="true"] svg {
+.zy-bottom-dock .zy-mobile-tab[aria-current="page"] svg {
   transform: translate3d(0, -0.1rem, 0) scale(1.08);
 }
 
@@ -582,11 +581,6 @@
       max(0.75rem, env(safe-area-inset-right))
       max(0.75rem, env(safe-area-inset-bottom))
       max(0.75rem, env(safe-area-inset-left));
-  }
-
-  .zy-mobile-sheet {
-    padding-left: env(safe-area-inset-left);
-    padding-right: env(safe-area-inset-right);
   }
 }
 

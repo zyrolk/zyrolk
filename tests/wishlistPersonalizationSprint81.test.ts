@@ -216,8 +216,9 @@ test('personalized pages are connected through existing state navigation on desk
   assert.match(app, /<CompareProducts/);
   assert.match(navbar, /label: 'Recently Viewed'[\s\S]*navigateToPage\('recently-viewed'\)/);
   assert.match(navbar, /label: 'Compare Products'[\s\S]*navigateToPage\('compare'\)/);
-  assert.match(mobileNav, /handleTabClick\('recently-viewed'\)/);
-  assert.match(mobileNav, /handleTabClick\('compare'\)/);
+  assert.match(mobileNav, /handleTabClick\('wishlist'\)/);
+  assert.match(wishlistView, /onNavigate\('recently-viewed'\)/);
+  assert.match(wishlistView, /onNavigate\('compare'\)/);
 });
 
 test('Firestore security remains owner-scoped without adding public personalization collections', () => {

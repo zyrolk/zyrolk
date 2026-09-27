@@ -101,13 +101,13 @@ test('Navbar V2 exposes approved account actions without inventing customer rout
   assert.match(navbar, /zy-mobile-market-menu/);
 });
 
-test('existing mobile account sheet retains working storefront and support destinations', () => {
-  assert.match(mobileNavigation, /Quick actions/i);
+test('mobile storefront and support destinations remain reachable after the account sheet retirement', () => {
+  const accountCenter = readFileSync('src/features/account/AccountCenter.tsx', 'utf8');
   assert.match(mobileNavigation, /Wishlist/);
   assert.match(mobileNavigation, /Cart/);
   assert.match(mobileNavigation, /Categories/);
-  assert.match(mobileNavigation, /privacy-policy/);
-  assert.match(mobileNavigation, /about-us/);
-  assert.match(mobileNavigation, /faq/);
-  assert.match(mobileNavigation, /Sign Out/);
+  assert.match(footer, /privacy-policy/);
+  assert.match(footer, /about-us/);
+  assert.match(accountCenter, /onNavigate\('faq'\)/);
+  assert.match(accountCenter, /Sign out/);
 });
