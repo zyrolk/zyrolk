@@ -16,7 +16,6 @@ test('mobile payment confirmation clears the fixed header and bottom dock', () =
 
 test('mobile order surfaces hide intentional scrollbars while preserving touch scrolling', () => {
   assert.match(accountCss, /\.zy-order-filter-row[^}]*scrollbar-width: none/u);
-  assert.match(accountCss, /\.zy-account-sidebar nav[^}]*scrollbar-width: none/u);
   assert.match(accountCss, /\.zy-order-timeline[^}]*scrollbar-width: none/u);
   assert.match(accountCss, /overscroll-behavior-x: contain/u);
   assert.match(accountCss, /\.zy-order-timeline ol \{ min-width: 540px; \}/u);

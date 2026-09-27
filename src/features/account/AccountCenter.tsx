@@ -1,7 +1,7 @@
 import { FormEvent, ReactNode, useEffect, useRef, useState } from 'react';
 import {
-  Bell, BookOpen, Check, ChevronRight, Clock3, Edit3, Heart, Home, KeyRound, LoaderCircle,
-  LockKeyhole, MailCheck, MapPin, PackageCheck, Plus, Save, Settings, ShieldCheck, ShoppingBag,
+  Bell, BookOpen, Check, ChevronLeft, ChevronRight, CircleHelp, Clock3, Edit3, Headphones, Heart, Home, KeyRound,
+  LoaderCircle, LockKeyhole, MailCheck, MapPin, MessageCircle, PackageCheck, Phone, Plus, Save, Settings, ShieldCheck, ShoppingBag,
   Trash2, UserRound, X,
 } from 'lucide-react';
 import {
@@ -48,7 +48,7 @@ interface CustomerProfileDocument {
 }
 
 const SECTION_COPY: Record<AccountSection, { eyebrow: string; title: string; description: string }> = {
-  overview: { eyebrow: 'Account overview', title: 'Your Zyro.lk dashboard', description: 'Manage the details that make shopping faster and keep an eye on your marketplace activity.' },
+  overview: { eyebrow: 'Account overview', title: 'My Account', description: 'Manage your orders, saved details and account security.' },
   orders: { eyebrow: 'Purchase history', title: 'My Orders', description: 'Search your live order history, track fulfilment, and open detailed invoices.' },
   'order-details': { eyebrow: 'Order tracking', title: 'Order details', description: 'Review delivery progress, order information, totals, and available customer actions.' },
   profile: { eyebrow: 'Personal details', title: 'Profile management', description: 'Keep your account identity and preferred contact number current.' },
@@ -428,9 +428,27 @@ export default function AccountCenter({
     { id: 'settings', label: 'Settings', icon: Settings },
   ];
   const copy = SECTION_COPY[section];
+  const isOverview = section === 'overview';
+  const customerName = profile.displayName || user.displayName || 'Zyro.lk Customer';
+  const hasProfileName = Boolean(profile.displayName || user.displayName);
+  const profileStatus = loadingProfile
+    ? 'Loading your profile details'
+    : profileComplete
+      ? 'Your profile is complete'
+      : hasProfileName
+        ? 'Add your phone number to finish your profile.'
+        : 'Add your name and phone number to finish your profile.';
+  const supportPhone = settings?.contactPhone?.trim() || '';
+  const supportWhatsApp = (settings?.whatsappNumber || '').replace(/[^0-9]/gu, '');
+  const quickActions: Array<{ id: string; label: string; meta: string; icon: typeof Home; onSelect: () => void }> = [
+    { id: 'orders', label: 'My Orders', meta: loadingOrders ? 'Loading orders' : `${orders.length} ${orders.length === 1 ? 'order' : 'orders'}`, icon: ShoppingBag, onSelect: () => navigateSection('orders') },
+    { id: 'wishlist', label: 'Wishlist', meta: `${wishlist.length} saved`, icon: Heart, onSelect: () => onNavigate('wishlist') },
+    { id: 'addresses', label: 'Addresses', meta: loadingAddresses ? 'Loading addresses' : addresses.length === 0 ? 'Add an address' : `${addresses.length} saved`, icon: MapPin, onSelect: () => navigateSection('addresses') },
+    { id: 'security', label: 'Security', meta: user.emailVerified ? 'Email verified' : 'Verify email', icon: ShieldCheck, onSelect: () => navigateSection('security') },
+  ];
 
   return (
-    <div className="zy-account-center">
+    <div className={`zy-account-center ${isOverview ? 'is-overview' : 'is-subpage'}`}>
       <aside className="zy-account-sidebar" aria-label="Account sections">
         <div className="zy-account-identity">
           <div className="zy-account-avatar" aria-hidden="true">
@@ -445,45 +463,77 @@ export default function AccountCenter({
             </button>
           ))}
         </nav>
-        <div className="zy-account-sidebar-note"><ShieldCheck aria-hidden="true" /><p><strong>Protected account</strong><span>Firebase Authentication secures your sign-in.</span></p></div>
+        <div className="zy-account-sidebar-note"><ShieldCheck aria-hidden="true" /><p><strong>Protected account</strong><span>Your account and sign-in are protected.</span></p></div>
       </aside>
 
       <section className="zy-account-content" aria-labelledby="account-content-title">
         <header className="zy-account-page-header">
+          {!isOverview && <button type="button" className="zy-account-back" onClick={() => navigateSection('overview')}><ChevronLeft aria-hidden="true" /> Account</button>}
           <p className="zy-section-eyebrow">{copy.eyebrow}</p>
           <h1 id="account-content-title" ref={contentHeadingRef} tabIndex={-1}>{copy.title}</h1>
-          <p>{copy.description}</p>
+          {!isOverview && <p>{copy.description}</p>}
         </header>
 
         {loadError && <div className="zy-account-alert is-error" role="alert"><span>{loadError}</span><button type="button" onClick={() => window.location.reload()}>Retry</button></div>}
 
         {section === 'overview' && (
           <div className="zy-account-overview">
-            <div className="zy-account-overview-cards">
-              <button type="button" onClick={() => navigateSection('profile')}><span><UserRound /></span><small>Profile</small><strong>{profileComplete ? 'Complete' : 'Needs attention'}</strong><p>{profile.phoneNumber || 'Add your phone number'}</p></button>
-              <button type="button" onClick={() => navigateSection('orders')}><span><PackageCheck /></span><small>Orders</small><strong>{loadingOrders ? '-' : orders.length}</strong><p>{orders.length === 1 ? 'Order placed' : 'Orders placed'}</p></button>
-              <button type="button" onClick={() => onNavigate('wishlist')}><span><Heart /></span><small>Wishlist</small><strong>{wishlist.length}</strong><p>{wishlist.length === 1 ? 'Saved product' : 'Saved products'}</p></button>
-              <button type="button" onClick={() => document.getElementById('account-recently-viewed')?.scrollIntoView({ behavior: 'smooth' })}><span><Clock3 /></span><small>Recently viewed</small><strong>{recentlyViewed.length}</strong><p>Device-local history</p></button>
+            <section className="zy-account-profile-card" aria-label="Your profile">
+              <div className="zy-account-avatar" aria-hidden="true">
+                {user.photoURL ? <img src={user.photoURL} alt="" referrerPolicy="no-referrer" /> : customerName.slice(0, 1).toUpperCase()}
+              </div>
+              <div className="zy-account-profile-card-copy">
+                <strong>{customerName}</strong>
+                <span>{user.email}</span>
+              </div>
+              <p className={`zy-account-profile-card-status ${profileComplete ? 'is-complete' : 'is-incomplete'}`}>{!loadingProfile && !profileComplete && <i aria-hidden="true" />}{profileStatus}</p>
+              <button type="button" onClick={() => navigateSection('profile')}><Edit3 aria-hidden="true" /> Edit profile</button>
+            </section>
+
+            <nav className="zy-account-quick-actions" aria-label="Account shortcuts">
+              {quickActions.map(({ id, label, meta, icon: Icon, onSelect }) => (
+                <button key={id} type="button" onClick={onSelect}>
+                  <span className="zy-account-icon-tile"><Icon aria-hidden="true" /></span>
+                  <span className="zy-account-quick-copy"><strong>{label}</strong><small>{meta}</small></span>
+                </button>
+              ))}
+            </nav>
+
+            <div className="zy-account-overview-grid">
+              <div className="zy-account-panel" id="account-recent-orders">
+                <div className="zy-account-panel-heading"><div><small>Order activity</small><h2>Recent orders</h2></div>{orders.length > 0 && <button type="button" className="zy-account-text-action" onClick={() => navigateSection('orders')}>View all <ChevronRight aria-hidden="true" /></button>}</div>
+                {loadingOrders ? <Skeleton rows={3} /> : orders.length === 0 ? (
+                  <div className="zy-account-empty is-compact"><PackageCheck /><strong>No orders yet</strong><p>Your Zyro.lk orders will appear here.</p><button type="button" onClick={() => onNavigate('products')}>Browse products</button></div>
+                ) : (
+                  <div className="zy-account-order-list">
+                    {orders.slice(0, 4).map(order => { const itemCount = order.items.reduce((total, item) => total + item.quantity, 0); return <article key={order.id} role="button" tabIndex={0} onClick={() => { setSelectedOrderId(order.id); navigateSection('order-details'); }} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setSelectedOrderId(order.id); navigateSection('order-details'); } }}><div><strong>{order.orderNumber || `Order ${order.id.slice(0, 8).toUpperCase()}`}</strong><span>{formatAccountDate(order.createdAt)} · {itemCount} {itemCount === 1 ? 'item' : 'items'}</span></div><div><strong>{formatPrice(order.totalPrice)}</strong><b className={`status-${order.status.toLowerCase().replace(/[^a-z]/gu, '')}`}>{order.status}</b></div><ChevronRight aria-hidden="true" /></article>; })}
+                  </div>
+                )}
+              </div>
+
+              <div className="zy-account-panel" id="account-recently-viewed">
+                <div className="zy-account-panel-heading"><div><small>Continue browsing</small><h2>Recently viewed</h2></div></div>
+                {recentlyViewed.length === 0 ? <div className="zy-account-empty is-compact"><Clock3 /><p>Products you view will appear here.</p></div> : (
+                  <div className="zy-account-product-strip">
+                    {recentlyViewed.map(product => <button type="button" key={product.id} onClick={() => onViewProduct(product)}><span><img src={product.imageUrl || '/logo.png'} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" /></span><strong>{product.name}</strong><small>{formatPrice(product.price)}</small></button>)}
+                  </div>
+                )}
+              </div>
             </div>
 
-            <div className="zy-account-panel" id="account-recent-orders">
-              <div className="zy-account-panel-heading"><div><small>Order activity</small><h2>Recent orders</h2></div><ShoppingBag aria-hidden="true" /></div>
-              {loadingOrders ? <Skeleton rows={3} /> : orders.length === 0 ? (
-                <div className="zy-account-empty"><PackageCheck /><strong>No orders yet</strong><p>Your completed Zyro.lk orders will appear here.</p><button type="button" onClick={() => onNavigate('products')}>Browse products</button></div>
-              ) : (
-                <div className="zy-account-order-list">
-                  {orders.slice(0, 4).map(order => { const itemCount = order.items.reduce((total, item) => total + item.quantity, 0); return <article key={order.id} role="button" tabIndex={0} onClick={() => { setSelectedOrderId(order.id); navigateSection('order-details'); }} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setSelectedOrderId(order.id); navigateSection('order-details'); } }}><div><small>{order.orderNumber || `Order ${order.id.slice(0, 8).toUpperCase()}`}</small><strong>{formatPrice(order.totalPrice)}</strong><span>{formatAccountDate(order.createdAt)}</span></div><div><b className={`status-${order.status.toLowerCase().replace(/[^a-z]/gu, '')}`}>{order.status}</b><span>{itemCount} {itemCount === 1 ? 'item' : 'items'}</span></div></article>; })}
-                </div>
-              )}
-            </div>
+            <section className="zy-account-help-card" aria-labelledby="account-help-title">
+              <span className="zy-account-icon-tile"><Headphones aria-hidden="true" /></span>
+              <div className="zy-account-help-copy"><h2 id="account-help-title">Need help?</h2><p>Get support with orders, delivery and your account.</p></div>
+              <div className="zy-account-help-actions">
+                <button type="button" onClick={() => onNavigate('contact')}><Headphones aria-hidden="true" /> Contact us</button>
+                <button type="button" onClick={() => onNavigate('faq')}><CircleHelp aria-hidden="true" /> FAQs</button>
+                {supportPhone && <a href={`tel:${supportPhone.replace(/[^0-9+]/gu, '')}`} aria-label={`Call ${supportPhone}`} title={supportPhone}><Phone aria-hidden="true" /> Call us</a>}
+                {supportWhatsApp && <a href={`https://wa.me/${supportWhatsApp}`} target="_blank" rel="noopener noreferrer"><MessageCircle aria-hidden="true" /> WhatsApp</a>}
+              </div>
+            </section>
 
-            <div className="zy-account-panel" id="account-recently-viewed">
-              <div className="zy-account-panel-heading"><div><small>Continue browsing</small><h2>Recently viewed</h2></div><Clock3 aria-hidden="true" /></div>
-              {recentlyViewed.length === 0 ? <div className="zy-account-empty is-compact"><Clock3 /><strong>No recently viewed products</strong><p>Products you open will appear here on this device.</p></div> : (
-                <div className="zy-account-product-strip">
-                  {recentlyViewed.map(product => <button type="button" key={product.id} onClick={() => onViewProduct(product)}><span><img src={product.imageUrl || '/logo.png'} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" /></span><strong>{product.name}</strong><small>{formatPrice(product.price)}</small></button>)}
-                </div>
-              )}
+            <div className="zy-account-footer-actions">
+              <button type="button" onClick={() => navigateSection('settings')}><Settings aria-hidden="true" /> Settings &amp; notifications <ChevronRight aria-hidden="true" /></button>
             </div>
           </div>
         )}
