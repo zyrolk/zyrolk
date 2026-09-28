@@ -320,11 +320,14 @@ test("SH-7B captures immutable purchase-time supplier attribution through the re
       }),
     ]);
     const failover = await reconcileSupplierProductOfferFailover(adminDb, selected.productId, "sh7b-test");
-    assert.equal(failover.activeOfferId, replacement.id);
+    assert.equal(failover.activeOfferId, null);
+    assert.equal(failover.proposedOfferId, replacement.id);
     const productAfterFailover = (await adminDb.collection("products").doc(selected.productId).get()).data()!;
-    assert.equal(productAfterFailover.price, 1_100);
-    assert.equal(Object.hasOwn(productAfterFailover, "originalPrice"), false);
-    assert.equal(Object.hasOwn(productAfterFailover, "discount"), false);
+    assert.equal(productAfterFailover.price, 1_500);
+    assert.equal(productAfterFailover.originalPrice, 1_000);
+    assert.equal(productAfterFailover.discount, 33);
+    assert.equal(productAfterFailover.stock, 0);
+    assert.equal(productAfterFailover.visible, false);
     const failoverAudits = await adminDb.collection("supplier_operations_audit")
       .where("productId", "==", selected.productId)
       .get();

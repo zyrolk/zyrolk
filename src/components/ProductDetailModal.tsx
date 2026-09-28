@@ -10,6 +10,7 @@ import { auth } from '../firebase';
 import { Product, WebsiteSettings } from '../types';
 import { isProductExplicitlyActive } from '../services/storefront/productAvailability';
 import { sanitizeStorefrontCategoryId } from '../services/storefront/storefrontCatalog';
+import { resolveCustomerPromotion } from '../services/products/promotionPolicy';
 import { sanitizeSupplierDescriptionHtml, supplierDescriptionLooksLikeHtml } from '../services/supplierReviewDescription';
 import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
 import {
@@ -239,6 +240,8 @@ export default function ProductDetailModal({
   const specificationGroups = useMemo(() => groupProductSpecifications(product?.specs), [product?.specs]);
 
   if (!isOpen || !product) return null;
+
+  const promotion = resolveCustomerPromotion(product);
 
   // LKR formatting
   const formatPrice = (amount: number) => {
@@ -529,9 +532,9 @@ export default function ProductDetailModal({
                       </div>
 
                       {/* Direct Save Discount Float */}
-                      {product.discount && product.discount > 0 && (
+                      {promotion && (
                         <div className="absolute bottom-4 left-4 z-10 bg-brand-blue text-white text-[10px] font-black uppercase tracking-widest px-3.5 py-2 rounded-xl shadow-lg shadow-brand-blue/20">
-                          -{product.discount}% INTRODUCTORY OFFER
+                          -{promotion.discountPercent}% INTRODUCTORY OFFER
                         </div>
                       )}
 
@@ -690,18 +693,18 @@ export default function ProductDetailModal({
                         <span className="text-4xl font-black text-slate-950 tracking-tight font-display">
                           {formatPrice(product.price)}
                         </span>
-                        {product.originalPrice && product.originalPrice > product.price && (
+                        {promotion && (
                           <span className="text-lg text-slate-400 line-through font-light">
-                            {formatPrice(product.originalPrice)}
+                            {formatPrice(promotion.originalPrice)}
                           </span>
                         )}
                       </div>
                     </div>
 
                     {/* Absolute and percentage savings calculation */}
-                    {product.originalPrice && product.originalPrice > product.price && (
+                    {promotion && (
                       <div className="w-fit rounded-xl bg-brand-orange px-3 py-1.5 text-xs font-bold text-white shadow-md shadow-orange-500/20 flex items-center gap-1">
-                        <span>Save {formatPrice(product.originalPrice - product.price)} ({product.discount}% OFF)</span>
+                        <span>Save {formatPrice(promotion.originalPrice - product.price)} ({promotion.discountPercent}% OFF)</span>
                       </div>
                     )}
 
@@ -953,11 +956,14 @@ export default function ProductDetailModal({
                           className="max-h-full max-w-full object-contain group-hover:scale-106 transition-transform duration-500 ease-out"
                           referrerPolicy="no-referrer"
                         />
-                        {item.discount && item.discount > 0 && (
-                          <div className="absolute top-2.5 left-2.5 bg-brand-blue text-white font-black text-[9px] px-2.5 py-1 rounded-lg uppercase tracking-wider shadow-sm">
-                            -{item.discount}%
-                          </div>
-                        )}
+                        {(() => {
+                          const itemPromotion = resolveCustomerPromotion(item);
+                          return itemPromotion ? (
+                            <div className="absolute top-2.5 left-2.5 bg-brand-blue text-white font-black text-[9px] px-2.5 py-1 rounded-lg uppercase tracking-wider shadow-sm">
+                              -{itemPromotion.discountPercent}%
+                            </div>
+                          ) : null;
+                        })()}
                       </div>
                       
                       <div className="flex-grow flex flex-col justify-between space-y-2">

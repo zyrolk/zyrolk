@@ -3,7 +3,11 @@ import { DocumentReference, FieldValue, Firestore, GeoPoint, Timestamp } from "f
 import { ApiError } from "../errors";
 import { SupplierHubAdminIdentity } from "../middleware/supplierHubAdminAuth";
 import { PRODUCT_PRIVATE_COLLECTION } from "../products/productCommercialData";
-import { reconcileSupplierApprovalStock } from "./supplierApprovalConcurrency";
+import { calculatePromotionDiscountPercent, isPromotionDiscountWithinCap } from "../products/promotionPolicy";
+import { buildSupplierProductApprovalBaseline, reconcileSupplierApprovalStock } from "./supplierApprovalConcurrency";
+import { buildSupplierAuditEvent } from "./supplierAuditTrail";
+import { buildSupplierLifecycleFieldChange } from "./supplierProductImport";
+import { buildSupplierOfferRemovalReviewId, buildSupplierQueueLifecycle } from "./supplierQueueLifecycle";
 import {
   projectSupplierAvailableStock,
   resolveProvenSupplierLocalDemand,
@@ -561,12 +565,13 @@ export function buildSupplierOfferPublicProjection(
     && currentOriginalPrice > currentPrice;
   // A public promotion's regular price is admin-owned. Supplier offer
   // payloads may contain legacy reference pricing, but it must not replace or
-  // increase the customer-facing regular price.
+  // increase the customer-facing regular price. A promotion that the new
+  // offer price would push above the launch cap is removed, never clamped.
   const candidateComparePrice = hasExistingPromotion ? currentOriginalPrice : 0;
-  const hasPromotion = candidateComparePrice > offer.price;
-  const discount = hasPromotion
-    ? Math.round(((candidateComparePrice - offer.price) / candidateComparePrice) * 100)
-    : undefined;
+  const hasPromotion = candidateComparePrice > offer.price
+    && isPromotionDiscountWithinCap(candidateComparePrice, offer.price);
+  const discountPercent = hasPromotion ? calculatePromotionDiscountPercent(candidateComparePrice, offer.price) : undefined;
+  const discount = discountPercent !== undefined ? Math.round(discountPercent) : undefined;
   return {
     price: offer.price,
     ...(hasPromotion
@@ -705,6 +710,111 @@ export interface SupplierOfferFailoverResult {
   changed: boolean;
   previousOfferId: string | null;
   activeOfferId: string | null;
+  proposedOfferId?: string | null;
+  reviewQueueItemId?: string | null;
+}
+
+const SUPPLIER_REVIEW_QUEUE_COLLECTION = "supplier_review_queue";
+
+/**
+ * Supplier-snapshot key on a `supplier_offer_unavailable` Product Review that
+ * records the approved replacement offer proposed by automatic failover.
+ * Approval must resolve exactly this offer or be reloaded.
+ */
+export const SUPPLIER_FAILOVER_REPLACEMENT_FIELD = "failoverReplacementOfferId";
+
+const stringField = (value: unknown): string => typeof value === "string" ? value.trim() : "";
+
+const supplierReviewIsTerminal = (review: Record<string, unknown>): boolean => {
+  const state = String(review.queueState || "").toLowerCase();
+  const status = String(review.status || "").toLowerCase();
+  return ["approved", "rejected", "suppressed"].includes(state)
+    || ["approved", "rejected", "suppressed"].includes(status);
+};
+
+export function isSupplierFailoverReplacementReview(review: Record<string, unknown>): boolean {
+  return stringField(review.reconciliationAction) === "supplier_offer_unavailable"
+    && Object.hasOwn(asRecord(review.supplierSnapshot), SUPPLIER_FAILOVER_REPLACEMENT_FIELD);
+}
+
+export type SupplierFailoverPromotionOutcome = "kept" | "removed_cap" | "removed_not_below" | "none";
+
+export interface SupplierFailoverProposalSummary {
+  currentOfferId: string;
+  currentSupplierId: string;
+  currentSourceId: string;
+  currentSku: string;
+  replacementOfferId: string;
+  replacementSupplierId: string;
+  replacementSourceId: string;
+  replacementSku: string;
+  replacementSupplierProductId: string;
+  replacementSupplierName: string;
+  previousPrice: number | null;
+  proposedPrice: number;
+  previousOriginalPrice: number | null;
+  proposedOriginalPrice: number | null;
+  proposedDiscountPercent: number | null;
+  promotionOutcome: SupplierFailoverPromotionOutcome;
+}
+
+/**
+ * Builds the reviewable commercial state of a failover replacement. The
+ * payload is what Product Review edits and what approval publishes, so a
+ * promotion the replacement price would push past the launch cap is already
+ * removed here, never at approval time. Nulls overwrite a previous proposal
+ * when the review document is merged.
+ */
+export function buildSupplierFailoverProposal(
+  currentOffer: SupplierProductOffer,
+  replacementOffer: SupplierProductOffer,
+  currentProductValue: unknown,
+): { payload: Record<string, unknown>; summary: SupplierFailoverProposalSummary } {
+  const currentProduct = asRecord(currentProductValue);
+  const previousPrice = money(currentProduct.price) > 0 ? money(currentProduct.price) : null;
+  const previousOriginalPrice = money(currentProduct.originalPrice) > 0 ? money(currentProduct.originalPrice) : null;
+  const promotionWasActive = currentProduct.promotionEnabled !== false
+    && previousPrice !== null
+    && previousOriginalPrice !== null
+    && previousOriginalPrice > previousPrice;
+  const projection = buildSupplierOfferPublicProjection(replacementOffer, currentProduct);
+  const promotionKept = promotionWasActive && typeof projection.originalPrice === "number";
+  const proposedOriginalPrice = promotionKept ? projection.originalPrice as number : null;
+  const proposedDiscountPercent = promotionKept ? projection.discount as number : null;
+  const promotionOutcome: SupplierFailoverPromotionOutcome = promotionKept
+    ? "kept"
+    : !promotionWasActive
+      ? "none"
+      : (previousOriginalPrice as number) <= replacementOffer.price ? "removed_not_below" : "removed_cap";
+  return {
+    payload: {
+      price: replacementOffer.price,
+      originalPrice: proposedOriginalPrice,
+      discount: proposedDiscountPercent,
+      promotionEnabled: promotionKept,
+      costPrice: replacementOffer.cost,
+      stock: projection.stock,
+      availability: projection.availability,
+    },
+    summary: {
+      currentOfferId: currentOffer.id,
+      currentSupplierId: currentOffer.supplierId,
+      currentSourceId: currentOffer.sourceId,
+      currentSku: currentOffer.sku,
+      replacementOfferId: replacementOffer.id,
+      replacementSupplierId: replacementOffer.supplierId,
+      replacementSourceId: replacementOffer.sourceId,
+      replacementSku: replacementOffer.sku,
+      replacementSupplierProductId: replacementOffer.supplierProductId,
+      replacementSupplierName: stringField(replacementOffer.supplierSnapshot.supplierName) || replacementOffer.sourceId,
+      previousPrice,
+      proposedPrice: replacementOffer.price,
+      previousOriginalPrice,
+      proposedOriginalPrice,
+      proposedDiscountPercent,
+      promotionOutcome,
+    },
+  };
 }
 
 export type SupplierInventoryAutomationAction =
@@ -754,9 +864,10 @@ const supplierInventoryAutomationAction = (
 
 /**
  * Applies a known supplier inventory observation to an already-approved offer.
- * Offer state, authoritative selection, public stock, private attribution, and
- * audit evidence commit together. Content and pricing remain review-gated unless
- * the existing failover policy selects a different approved commerce offer.
+ * Offer state, public stock, private attribution, and audit evidence commit
+ * together. Automatic observations never change the authoritative offer
+ * selection, pricing, promotion, or content; a replacement offer can only go
+ * live through Product Review approval or an explicit admin offer action.
  */
 export async function applyApprovedSupplierInventoryObservation(
   db: Firestore,
@@ -772,15 +883,13 @@ export async function applyApprovedSupplierInventoryObservation(
     const offerReference = db.collection(SUPPLIER_PRODUCT_OFFERS_COLLECTION).doc(offerId);
     const productReference = db.collection("products").doc(productId);
     const privateReference = db.collection(PRODUCT_PRIVATE_COLLECTION).doc(productId);
-    const offersQuery = db.collection(SUPPLIER_PRODUCT_OFFERS_COLLECTION).where("productId", "==", productId).limit(100);
     const reviewReference = input.suppressReviewQueueItemId
       ? db.collection("supplier_review_queue").doc(cleanDocumentId(input.suppressReviewQueueItemId, "Product Review ID"))
       : null;
-    const [offerSnapshot, productSnapshot, privateSnapshot, offersSnapshot, reviewSnapshot] = await Promise.all([
+    const [offerSnapshot, productSnapshot, privateSnapshot, reviewSnapshot] = await Promise.all([
       transaction.get(offerReference),
       transaction.get(productReference),
       transaction.get(privateReference),
-      transaction.get(offersQuery),
       reviewReference ? transaction.get(reviewReference) : Promise.resolve(null),
     ]);
     const currentOffer = offerSnapshot.exists
@@ -800,9 +909,6 @@ export async function applyApprovedSupplierInventoryObservation(
       throw new Error("Supplier offer state changed before its inventory observation could be applied.");
     }
 
-    const offersBefore = offersSnapshot.docs
-      .map((document) => projectSupplierOfferForAdmin({ id: document.id, ...document.data() }))
-      .filter((offer): offer is SupplierProductOffer => Boolean(offer));
     const currentProduct = productSnapshot.data() || {};
     const currentPrivate = privateSnapshot.data() || {};
     if (input.stockOnly) {
@@ -845,7 +951,10 @@ export async function applyApprovedSupplierInventoryObservation(
     }
 
     const selection = parseSupplierOfferSelection(currentPrivate.supplierOfferSelection);
-    const previousAuthority = resolveActiveSupplierOffer(offersBefore, selection);
+    const authorityOfferId = selection.lockedOfferId
+      || selection.activeOfferId
+      || text(asRecord(currentPrivate.supplierMetadata).activeOfferId, 180)
+      || null;
     const existingProvidedFields = Array.isArray(currentOffer.supplierSnapshot.providedFields)
       ? currentOffer.supplierSnapshot.providedFields.filter((field): field is string => typeof field === "string")
       : [];
@@ -871,16 +980,12 @@ export async function applyApprovedSupplierInventoryObservation(
       stateVersion: currentOffer.stateVersion + 1,
       updatedAt: observedAt,
     };
-    const offersAfter = offersBefore.map((offer) => offer.id === offerId ? effectiveOffer : offer);
-    if (!offersAfter.some((offer) => offer.id === offerId)) offersAfter.push(effectiveOffer);
-    const nextAuthority = input.stockOnly ? effectiveOffer : resolveActiveSupplierOffer(offersAfter, selection);
-    const authorityChanged = previousAuthority?.id !== nextAuthority?.id;
-    const projectsObservedOffer = nextAuthority?.id === offerId;
-    const previousSupplierStock = asRecord(currentPrivate.supplierMetadata).inventoryLevel
-      ?? previousAuthority?.stock
-      ?? currentProduct.stock;
+    // Only the offer that already has commerce authority can move public
+    // stock/availability. An unavailable authority is handled by the failover
+    // trigger, which fails closed and proposes any replacement for review.
+    const projectsObservedOffer = input.stockOnly === true || authorityOfferId === offerId;
     let publicProjection: Record<string, unknown> = {};
-    if (input.stockOnly) {
+    if (projectsObservedOffer) {
       const projectedStock = projectSupplierAvailableStock({
         currentPublicStock: currentProduct.stock,
         supplierObservedStock: observedStock,
@@ -888,28 +993,11 @@ export async function applyApprovedSupplierInventoryObservation(
       });
       publicProjection = {
         stock: projectedStock,
-        availability: projectedStock > 0 ? "in_stock" : "out_of_stock",
+        availability: availability === "unavailable"
+          ? "unavailable"
+          : projectedStock > 0 ? "in_stock" : "out_of_stock",
       };
-    } else if (nextAuthority && (authorityChanged || projectsObservedOffer)) {
-      publicProjection = authorityChanged && isSupplierOfferAvailableForCommerce(nextAuthority)
-        ? buildSupplierOfferPublicProjection(nextAuthority, currentProduct, previousSupplierStock, localDemand)
-        : {
-          stock: projectSupplierAvailableStock({
-            currentPublicStock: currentProduct.stock,
-            supplierObservedStock: nextAuthority.stock,
-            localDemand,
-          }),
-          availability: nextAuthority.availability === "unavailable"
-            ? "unavailable"
-            : nextAuthority.stock > 0 ? "in_stock" : "out_of_stock",
-        };
     }
-    const nextSelection: SupplierOfferSelection = {
-      ...selection,
-      activeOfferId: nextAuthority?.id || selection.activeOfferId,
-      updatedAt: FieldValue.serverTimestamp(),
-      updatedBy: "system:supplier-inventory",
-    };
     const action = supplierInventoryAutomationAction(currentOffer.stock, observedStock, input.removed === true);
 
     transaction.set(offerReference, {
@@ -919,7 +1007,7 @@ export async function applyApprovedSupplierInventoryObservation(
         supplierCatalogSeenAt: observedAt,
       } : {}),
     }, { merge: true });
-    if (input.stockOnly) {
+    if (projectsObservedOffer) {
       transaction.set(productReference, {
         ...publicProjection,
         updatedAt: FieldValue.serverTimestamp(),
@@ -934,20 +1022,6 @@ export async function applyApprovedSupplierInventoryObservation(
             availability,
           },
         }, localDemand),
-      }, { merge: true });
-    } else if (Object.keys(publicProjection).length > 0) {
-      transaction.set(productReference, {
-        ...publicProjection,
-        updatedAt: FieldValue.serverTimestamp(),
-      }, { merge: true });
-      transaction.set(privateReference, {
-        ...activeSupplierPrivateProjection(nextAuthority, currentPrivate),
-        supplierOfferSelection: nextSelection,
-        updatedAt: FieldValue.serverTimestamp(),
-        ...withSupplierLocalDemand(
-          activeSupplierPrivateProjection(nextAuthority, currentPrivate),
-          localDemand,
-        ),
       }, { merge: true });
     }
     if (reviewReference && reviewSnapshot?.exists) {
@@ -969,8 +1043,8 @@ export async function applyApprovedSupplierInventoryObservation(
       supplierId: effectiveOffer.supplierId,
       sourceId: effectiveOffer.sourceId,
       offerId,
-      previousOfferId: previousAuthority?.id || null,
-      activeOfferId: nextAuthority?.id || null,
+      previousOfferId: authorityOfferId,
+      activeOfferId: authorityOfferId,
       batchId: text(input.batchId, 180) || null,
       reason: text(input.reason, 1_000) || null,
       before: {
@@ -991,7 +1065,7 @@ export async function applyApprovedSupplierInventoryObservation(
       applied: true,
       action,
       offer: effectiveOffer,
-      activeOfferId: nextAuthority?.id || null,
+      activeOfferId: authorityOfferId,
       publicStock: Number(publicProjection.stock ?? currentProduct.stock),
       publicAvailability: (publicProjection.availability || currentProduct.availability || null) as SupplierOfferAvailability | null,
     };
@@ -1000,8 +1074,11 @@ export async function applyApprovedSupplierInventoryObservation(
 
 /**
  * Reconciles an unavailable active offer without publishing any unapproved
- * supplier data. The public and private projections and immutable audit event
- * are committed in one Firestore transaction.
+ * supplier data. Automatic failover only moves stock/availability/visibility:
+ * it fails commerce closed, keeps the configured selection, and proposes an
+ * approved replacement through the existing Product Review removal item. The
+ * public and private projections, review proposal, and audit events are
+ * committed in one Firestore transaction.
  */
 export async function reconcileSupplierProductOfferFailover(
   db: Firestore,
@@ -1059,83 +1136,298 @@ export async function reconcileSupplierProductOfferFailover(
       };
     }
 
-    const eligibleOffers = offers.filter((offer) => (
-      offer.reviewStatus === "approved" && isSupplierOfferAvailableForCommerce(offer)
-    ));
-    const automaticSelectionAllowed = previousSelection.failoverEnabled && !previousSelection.lockedOfferId;
-    const replacementOffer = automaticSelectionAllowed
-      ? resolveActiveSupplierOffer(eligibleOffers, { activeOfferId: null, lockedOfferId: null, failoverEnabled: true })
-      : null;
-    const previousSupplierStock = asRecord(privateProduct.supplierMetadata).inventoryLevel
-      ?? previousOffer?.stock
-      ?? productSnapshot.data()?.stock;
-    const publicProjection = replacementOffer
-      ? buildSupplierOfferPublicProjection(replacementOffer, productSnapshot.data(), previousSupplierStock, localDemand)
-      : buildSupplierRemovalPublicProjection(null, productSnapshot.data(), previousSupplierStock);
-    if (replacementOffer && failoverDeactivated) {
-      const previousVisibility = asRecord(asRecord(privateProduct.supplierMetadata).failoverPreviousVisibility);
-      Object.assign(publicProjection, {
+    const currentProduct = productSnapshot.data() || {};
+    const metadata = asRecord(privateProduct.supplierMetadata);
+    const reviewCollection = db.collection(SUPPLIER_REVIEW_QUEUE_COLLECTION);
+    const offerReviews = previousOffer
+      ? (await transaction.get(reviewCollection.where("supplierOfferId", "==", previousOffer.id).limit(50))).docs
+      : [];
+    const activeOfferReviews = offerReviews
+      .map((document) => ({ id: document.id, data: document.data() || {} }))
+      .filter((review) => !supplierReviewIsTerminal(review.data));
+    const activeFailoverReviews = activeOfferReviews.filter((review) => isSupplierFailoverReplacementReview(review.data));
+    const nowIso = new Date().toISOString();
+    const publicCommerceBefore = Object.fromEntries(Object.entries({
+      price: currentProduct.price,
+      originalPrice: currentProduct.originalPrice,
+      discount: currentProduct.discount,
+      stock: currentProduct.stock,
+      availability: currentProduct.availability,
+    }).filter(([, value]) => value !== undefined));
+    const suppressFailoverReviews = (decision: string, decisionReason: string): string[] => {
+      activeFailoverReviews.forEach((review) => {
+        transaction.set(reviewCollection.doc(review.id), {
+          status: "Suppressed",
+          queueState: "suppressed",
+          systemDecision: decision,
+          systemDecisionReason: decisionReason,
+          updatedAt: nowIso,
+        }, { merge: true });
+      });
+      return activeFailoverReviews.map((review) => review.id);
+    };
+    const writeFailoverAudit = (after: Record<string, unknown>): void => {
+      const auditReference = db.collection("supplier_operations_audit").doc();
+      transaction.create(auditReference, {
+        id: auditReference.id,
+        eventId: auditReference.id,
+        module: "supplier_offers",
+        action: "automatic_offer_failover",
+        productId,
+        offerId: previousOfferEligible ? previousOffer?.id || null : null,
+        previousOfferId: previousOffer?.id || previousSelection.activeOfferId,
+        adminUserId: "system",
+        adminEmail: "",
+        reason,
+        before: serializeSupplierAuditValue({ selection: previousSelection, publicCommerce: publicCommerceBefore }),
+        after: serializeSupplierAuditValue({ selection: previousSelection, ...after }),
+        timestamp: FieldValue.serverTimestamp(),
+      });
+    };
+
+    // The configured offer recovered while commerce was failed closed: restore
+    // only its stock/availability and the pre-failover visibility. Price,
+    // promotion, and content are never re-projected by this automatic path.
+    if (previousOfferEligible && previousOffer) {
+      const previousVisibility = asRecord(metadata.failoverPreviousVisibility);
+      const projectedStock = projectSupplierAvailableStock({
+        currentPublicStock: currentProduct.stock,
+        supplierObservedStock: previousOffer.stock,
+        localDemand,
+      });
+      const publicProjection: Record<string, unknown> = {
+        stock: projectedStock,
+        availability: projectedStock > 0 ? "in_stock" : "out_of_stock",
         ...(previousVisibility.isActive !== undefined ? { isActive: previousVisibility.isActive } : {}),
         ...(previousVisibility.active !== undefined ? { active: previousVisibility.active } : {}),
         ...(previousVisibility.visible !== undefined ? { visible: previousVisibility.visible } : {}),
+      };
+      transaction.set(productReference, {
+        ...publicProjection,
+        updatedAt: FieldValue.serverTimestamp(),
+      }, { merge: true });
+      transaction.set(privateReference, {
+        updatedAt: FieldValue.serverTimestamp(),
+        ...withSupplierLocalDemand({
+          supplierMetadata: {
+            ...metadata,
+            activeOfferId: previousOffer.id,
+            inventoryLevel: previousOffer.stock,
+            supplierStockAvailable: previousOffer.stockKnown,
+            availability: previousOffer.availability,
+            supplierFailoverDeactivated: false,
+            failoverPreviousVisibility: null,
+          },
+        }, localDemand),
+      }, { merge: true });
+      const suppressedReviewIds = suppressFailoverReviews(
+        "STOCK_RESTORED",
+        "The configured supplier offer recovered before the replacement proposal was decided.",
+      );
+      writeFailoverAudit({ publicCommerce: publicProjection, suppressedReviewIds });
+      return {
+        productId,
+        changed: true,
+        previousOfferId: previousOffer.id,
+        activeOfferId: previousOffer.id,
+        proposedOfferId: null,
+        reviewQueueItemId: null,
+      };
+    }
+
+    // The configured offer can no longer serve commerce. Fail closed with the
+    // existing deactivation projection and keep the configured selection; an
+    // approved replacement is only proposed through Product Review.
+    const deactivation = buildSupplierRemovalPublicProjection(null, currentProduct);
+    const alreadyFailedClosed = failoverDeactivated
+      && Object.entries(deactivation).every(([field, value]) => currentProduct[field] === value);
+    const automaticSelectionAllowed = previousSelection.failoverEnabled && !previousSelection.lockedOfferId;
+    const replacementOffer = automaticSelectionAllowed
+      ? resolveActiveSupplierOffer(
+        offers.filter((offer) => (
+          offer.id !== previousOffer?.id
+          && offer.reviewStatus === "approved"
+          && isSupplierOfferAvailableForCommerce(offer)
+        )),
+        { activeOfferId: null, lockedOfferId: null, failoverEnabled: true },
+      )
+      : null;
+
+    let reviewQueueItemId: string | null = null;
+    let reviewWrite: { id: string; data: Record<string, unknown>; previousState: string | null } | null = null;
+    if (previousOffer && replacementOffer) {
+      const blockingReview = activeOfferReviews.find((review) => (
+        stringField(review.data.reconciliationAction) !== "supplier_offer_unavailable"
+      ));
+      const reusableReview = activeOfferReviews.find((review) => (
+        stringField(review.data.reconciliationAction) === "supplier_offer_unavailable"
+      ));
+      let targetId = reusableReview?.id || null;
+      let existingData: Record<string, unknown> | null = reusableReview?.data || null;
+      if (!blockingReview && !targetId) {
+        const stableId = buildSupplierOfferRemovalReviewId(previousOffer.id);
+        const stableSnapshot = await transaction.get(reviewCollection.doc(stableId));
+        if (!stableSnapshot.exists) {
+          targetId = stableId;
+        } else if (!supplierReviewIsTerminal(stableSnapshot.data() || {})) {
+          targetId = stableId;
+          existingData = stableSnapshot.data() || {};
+        } else {
+          // A decided review for this exact offer state is respected; a new
+          // supplier state version is required before proposing again.
+          const versionedId = buildSupplierOfferRemovalReviewId(previousOffer.id, previousOffer.stateVersion, true);
+          const versionedSnapshot = await transaction.get(reviewCollection.doc(versionedId));
+          if (!versionedSnapshot.exists) targetId = versionedId;
+        }
+      }
+      if (blockingReview) reviewQueueItemId = blockingReview.id;
+      if (!blockingReview && targetId) {
+        reviewQueueItemId = targetId;
+        const failedClosedProduct = { ...currentProduct, ...deactivation };
+        const createdAt = stringField(existingData?.createdAt) || nowIso;
+        const approvalBaseline = buildSupplierProductApprovalBaseline(productId, failedClosedProduct, createdAt);
+        const existingSnapshot = asRecord(existingData?.supplierSnapshot);
+        const existingBaseline = asRecord(existingData?.approvalBaseline);
+        const proposal = buildSupplierFailoverProposal(previousOffer, replacementOffer, currentProduct);
+        const existingProposal = asRecord(existingSnapshot.failoverProposal);
+        const proposalUnchanged = existingData !== null
+          && existingSnapshot[SUPPLIER_FAILOVER_REPLACEMENT_FIELD] === replacementOffer.id
+          && existingBaseline.version === approvalBaseline.version
+          && existingProposal.proposedPrice === proposal.summary.proposedPrice
+          && existingProposal.proposedOriginalPrice === proposal.summary.proposedOriginalPrice
+          && existingProposal.promotionOutcome === proposal.summary.promotionOutcome;
+        if (!proposalUnchanged) {
+          const previousVisibility = failoverDeactivated
+            ? asRecord(metadata.failoverPreviousVisibility)
+            : { isActive: currentProduct.isActive, active: currentProduct.active, visible: currentProduct.visible };
+          const { proposedPrice, proposedOriginalPrice, previousPrice, previousOriginalPrice } = proposal.summary;
+          const fieldChanges = [
+            buildSupplierLifecycleFieldChange("availability", previousOffer.availability, "unavailable"),
+            buildSupplierLifecycleFieldChange("stock", previousOffer.stock, 0),
+            ...(previousPrice !== proposedPrice
+              ? [buildSupplierLifecycleFieldChange("price", previousPrice, proposedPrice)]
+              : []),
+            ...(previousOriginalPrice !== proposedOriginalPrice
+              ? [buildSupplierLifecycleFieldChange("comparePrice", previousOriginalPrice, proposedOriginalPrice)]
+              : []),
+          ];
+          reviewWrite = {
+            id: targetId,
+            previousState: existingData
+              ? String(existingData.queueState || existingData.status || "queued").toLowerCase()
+              : null,
+            data: {
+              ...(existingData ? {} : buildSupplierQueueLifecycle(createdAt)),
+              id: targetId,
+              status: "Pending",
+              supplierCode: previousOffer.sku,
+              supplierName: stringField(existingData?.supplierName)
+                || stringField(previousOffer.supplierSnapshot.supplierName)
+                || previousOffer.sourceId,
+              source: "Website",
+              connector: stringField(existingData?.connector) || "website",
+              sourceId: previousOffer.sourceId,
+              supplierId: previousOffer.supplierId,
+              supplierPriority: previousOffer.priority,
+              supplierOfferId: previousOffer.id,
+              canonicalProductId: productId,
+              productId,
+              batchId: "system:supplier-failover",
+              productName: stringField(currentProduct.name) || productId,
+              costPrice: previousOffer.cost,
+              marketPrice: previousOffer.price,
+              stock: 0,
+              imageUrl: stringField(currentProduct.imageUrl),
+              comparisonStatus: "SUPPLIER_OFFER_REMOVED",
+              comparison: {
+                matchFound: true,
+                matchedProductId: productId,
+                comparisonStatus: "SUPPLIER_OFFER_REMOVED",
+                changedFields: fieldChanges.map((change) => change.label),
+                fieldChanges,
+              },
+              reconciliationAction: "supplier_offer_unavailable",
+              productPayload: {
+                ...currentProduct,
+                ...privateProduct,
+                ...proposal.payload,
+                id: productId,
+                ...(previousVisibility.isActive !== undefined ? { isActive: previousVisibility.isActive } : {}),
+                ...(previousVisibility.active !== undefined ? { active: previousVisibility.active } : {}),
+                ...(previousVisibility.visible !== undefined ? { visible: previousVisibility.visible } : {}),
+                supplierMetadata: {
+                  ...metadata,
+                  supplierFailoverDeactivated: false,
+                  failoverPreviousVisibility: null,
+                },
+              },
+              supplierSnapshot: {
+                ...previousOffer.supplierSnapshot,
+                supplierId: previousOffer.supplierId,
+                sourceId: previousOffer.sourceId,
+                supplierSku: previousOffer.sku,
+                supplierProductId: previousOffer.supplierProductId,
+                reconciliationAction: "supplier_offer_unavailable",
+                [SUPPLIER_FAILOVER_REPLACEMENT_FIELD]: replacementOffer.id,
+                failoverProposal: proposal.summary,
+              },
+              matchedProductId: productId,
+              approvalBaseline,
+              correlationId: stringField(existingData?.correlationId) || targetId,
+              createdAt,
+              updatedAt: nowIso,
+            },
+          };
+        }
+      }
+    }
+
+    if (!alreadyFailedClosed) {
+      transaction.set(productReference, {
+        ...deactivation,
+        updatedAt: FieldValue.serverTimestamp(),
+      }, { merge: true });
+      transaction.set(privateReference, {
+        ...inactiveSupplierPrivateProjection(privateProduct, currentProduct),
+        updatedAt: FieldValue.serverTimestamp(),
+        ...withSupplierLocalDemand(inactiveSupplierPrivateProjection(privateProduct, currentProduct), localDemand),
+      }, { merge: true });
+    }
+    const pendingReview = reviewWrite as { id: string; data: Record<string, unknown>; previousState: string | null } | null;
+    if (pendingReview) {
+      transaction.set(reviewCollection.doc(pendingReview.id), pendingReview.data, { merge: true });
+      const approvalAuditReference = db.collection("supplier_approval_audit").doc();
+      transaction.create(approvalAuditReference, buildSupplierAuditEvent({
+        queueItemId: pendingReview.id,
+        queueItem: pendingReview.data,
+        action: "queued",
+        previousState: pendingReview.previousState,
+        newState: "queued",
+        reason: "The active supplier offer can no longer serve commerce; an approved replacement offer is proposed for Product Review.",
+      }, approvalAuditReference.id));
+    }
+    const suppressedReviewIds = previousOffer && !replacementOffer
+      ? suppressFailoverReviews(
+        "NO_APPROVED_REPLACEMENT",
+        "No approved replacement offer is currently available; commerce remains failed closed.",
+      )
+      : [];
+    const changed = !alreadyFailedClosed || pendingReview !== null || suppressedReviewIds.length > 0;
+    if (changed) {
+      writeFailoverAudit({
+        publicCommerce: alreadyFailedClosed ? {} : deactivation,
+        proposedOfferId: replacementOffer?.id || null,
+        reviewQueueItemId,
+        suppressedReviewIds,
       });
     }
-    const nextSelection: SupplierOfferSelection = {
-      ...previousSelection,
-      // Keep the configured offer while commerce is safely deactivated. This
-      // lets a later health recovery re-project it without auto-selecting an
-      // unrelated legacy offer.
-      activeOfferId: replacementOffer?.id || previousSelection.activeOfferId,
-      updatedAt: FieldValue.serverTimestamp(),
-      updatedBy: "system:supplier-failover",
-    };
-    transaction.set(productReference, {
-      ...publicProjection,
-      updatedAt: FieldValue.serverTimestamp(),
-    }, { merge: true });
-    transaction.set(privateReference, {
-      ...(replacementOffer
-        ? activeSupplierPrivateProjection(replacementOffer, privateProduct)
-        : inactiveSupplierPrivateProjection(privateProduct, productSnapshot.data())),
-      supplierOfferSelection: nextSelection,
-      updatedAt: FieldValue.serverTimestamp(),
-      ...withSupplierLocalDemand(
-        replacementOffer
-          ? activeSupplierPrivateProjection(replacementOffer, privateProduct)
-          : inactiveSupplierPrivateProjection(privateProduct, productSnapshot.data()),
-        localDemand,
-      ),
-    }, { merge: true });
-    const auditReference = db.collection("supplier_operations_audit").doc();
-    transaction.create(auditReference, {
-      id: auditReference.id,
-      eventId: auditReference.id,
-      module: "supplier_offers",
-      action: "automatic_offer_failover",
-      productId,
-      offerId: replacementOffer?.id || null,
-      previousOfferId: previousOffer?.id || previousSelection.activeOfferId,
-      adminUserId: "system",
-      adminEmail: "",
-      reason,
-      before: serializeSupplierAuditValue({
-        selection: previousSelection,
-        publicCommerce: Object.fromEntries(Object.entries({
-          price: productSnapshot.data()?.price,
-          originalPrice: productSnapshot.data()?.originalPrice,
-          discount: productSnapshot.data()?.discount,
-          stock: productSnapshot.data()?.stock,
-          availability: productSnapshot.data()?.availability,
-        }).filter(([, value]) => value !== undefined)),
-      }),
-      after: serializeSupplierAuditValue({ selection: nextSelection, publicCommerce: publicProjection }),
-      timestamp: FieldValue.serverTimestamp(),
-    });
     return {
       productId,
-      changed: true,
+      changed,
       previousOfferId: previousOffer?.id || previousSelection.activeOfferId,
-      activeOfferId: replacementOffer?.id || null,
+      activeOfferId: null,
+      proposedOfferId: replacementOffer?.id || null,
+      reviewQueueItemId,
     };
   });
 }

@@ -8,6 +8,11 @@ import {
   splitProductData,
 } from "./productCommercialData";
 import {
+  calculatePromotionDiscountPercent,
+  exceedsPromotionDiscountCap,
+  PROMOTION_DISCOUNT_CAP_MESSAGE,
+} from "./promotionPolicy";
+import {
   assertZyroBarcodeAvailable,
   buildZyroProductId,
   reserveZyroSku,
@@ -198,6 +203,9 @@ const validatePromotionContract = (draft: Pick<AdminProductDraft, "price" | "ori
   if (draft.promotionEnabled === true && (draft.originalPrice === undefined || draft.originalPrice <= draft.price)) {
     throw new ApiError("Regular price must be greater than the sale price when promotion is enabled.", 400);
   }
+  if (draft.promotionEnabled !== false && exceedsPromotionDiscountCap(draft.originalPrice, draft.price)) {
+    throw new ApiError(PROMOTION_DISCOUNT_CAP_MESSAGE, 400);
+  }
 };
 
 const validateEffectiveRequiredFields = (draft: AdminProductDraft): void => {
@@ -328,12 +336,14 @@ export const productProjection = (
     && existingPublic?.originalPrice !== undefined
     && Number(existingPublic.originalPrice) > Number(existingPublic.price);
   const promotionEnabled = draft.promotionEnabled === true || legacyPromotionEnabled;
-  const regularPrice = promotionEnabled
+  const candidateRegularPrice = promotionEnabled
     ? (draft.originalPrice ?? Number(existingPublic?.originalPrice))
     : undefined;
-  const discount = regularPrice !== undefined && regularPrice > draft.price
-    ? Math.round(((regularPrice - draft.price) / regularPrice) * 100)
-    : undefined;
+  const regularPrice = exceedsPromotionDiscountCap(candidateRegularPrice, draft.price)
+    ? undefined
+    : candidateRegularPrice;
+  const discountPercent = calculatePromotionDiscountPercent(regularPrice, draft.price);
+  const discount = discountPercent !== undefined ? Math.round(discountPercent) : undefined;
   const combined = compact({
     id: productId,
     name: draft.name,

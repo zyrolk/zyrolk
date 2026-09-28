@@ -161,7 +161,9 @@ test('product information continues to render existing pricing, inventory, categ
   assert.match(modal, /sanitizeStorefrontCategoryId\(product\.category\)/);
   assert.match(modal, /product\.stock <= 5/);
   assert.match(modal, /formatPrice\(product\.price\)/);
-  assert.match(modal, /product\.originalPrice > product\.price/);
+  assert.match(modal, /const promotion = resolveCustomerPromotion\(product\)/);
+  assert.match(modal, /\(\{promotion\.discountPercent\}% OFF\)/);
+  assert.doesNotMatch(modal, /product\.discount\b|item\.discount\b/);
   assert.match(modal, /product\.description/);
   assert.match(modal, /groupProductSpecifications\(product\?\.specs\)/);
   assert.match(modal, /<ProductSpecificationsPanel groups=\{specificationGroups\}/);
@@ -206,7 +208,8 @@ test('related-products presentation consumes the unchanged deterministic ranking
   assert.match(model, /a\.priceDistance - b\.priceDistance/);
   assert.match(related, /products\.map/);
   assert.match(related, /onSelect\(item\)/);
-  assert.match(related, /item\.originalPrice > item\.price/);
+  assert.match(related, /const promotion = resolveCustomerPromotion\(item\)/);
+  assert.doesNotMatch(related, /item\.discount\b/);
   assert.doesNotMatch(related, /firebase|firestore|collection\(|onSnapshot\(|\.sort\(|\.filter\(/iu);
 });
 

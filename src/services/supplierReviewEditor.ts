@@ -2,6 +2,7 @@ import { Product } from '../types';
 import { isValidSupplierImageUrl, normalizeSupplierProductImages } from './connectors/a2z-website/productImages';
 import { parseSupplierProductFieldOwnership, SupplierProductFieldOwner } from './products/supplierFieldOwnership';
 import { hasExplicitSupplierCommerceMetadata, readSupplierCommerceAvailability } from './supplierCommerceSemantics';
+import { exceedsPromotionDiscountCap, PROMOTION_DISCOUNT_CAP_MESSAGE } from './products/promotionPolicy';
 
 export interface SupplierReviewSourceItem {
   id: string;
@@ -366,6 +367,71 @@ const optionalFiniteNumber = (value: unknown): number | undefined => {
   return Number.isFinite(parsed) ? parsed : undefined;
 };
 
+export type SupplierFailoverPromotionOutcome = 'kept' | 'removed_cap' | 'removed_not_below' | 'none';
+
+export interface SupplierFailoverProposalSummary {
+  currentOffer: { offerId: string; supplierId: string; sourceId: string; sku: string };
+  replacementOffer: { offerId: string; supplierId: string; sourceId: string; sku: string; supplierProductId: string; supplierName: string };
+  previousPrice: number | null;
+  proposedPrice: number | null;
+  previousOriginalPrice: number | null;
+  proposedOriginalPrice: number | null;
+  proposedDiscountPercent: number | null;
+  promotionOutcome: SupplierFailoverPromotionOutcome;
+  promotionMessage: string;
+}
+
+const FAILOVER_PROMOTION_OUTCOMES: readonly SupplierFailoverPromotionOutcome[] = ['kept', 'removed_cap', 'removed_not_below', 'none'];
+
+/** Reads the automatic-failover offer switch recorded on a Product Review item. */
+export function buildSupplierFailoverProposalSummary(item: SupplierReviewSourceItem): SupplierFailoverProposalSummary | null {
+  const snapshot = item.supplierSnapshot || {};
+  const proposal = snapshot.failoverProposal;
+  if (!proposal || typeof proposal !== 'object' || Array.isArray(proposal)) return null;
+  const value = proposal as Record<string, unknown>;
+  const text = (field: string): string => (typeof value[field] === 'string' ? String(value[field]).trim() : '');
+  const amount = (field: string): number | null => {
+    const parsed = value[field] === null || value[field] === undefined ? Number.NaN : Number(value[field]);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  };
+  const replacementOfferId = text('replacementOfferId') || String(snapshot.failoverReplacementOfferId || '').trim();
+  if (!replacementOfferId) return null;
+  const outcome = FAILOVER_PROMOTION_OUTCOMES.includes(value.promotionOutcome as SupplierFailoverPromotionOutcome)
+    ? value.promotionOutcome as SupplierFailoverPromotionOutcome
+    : 'none';
+  const proposedDiscountPercent = amount('proposedDiscountPercent');
+  const promotionMessage = outcome === 'removed_cap'
+    ? 'Promotion removed — proposed price would exceed the 20% maximum.'
+    : outcome === 'removed_not_below'
+      ? 'Promotion removed — proposed price is not below the regular price.'
+      : outcome === 'kept'
+        ? `Promotion kept — ${proposedDiscountPercent ?? 0}% off the regular price.`
+        : 'No active promotion.';
+  return {
+    currentOffer: {
+      offerId: text('currentOfferId') || String(item.supplierOfferId || ''),
+      supplierId: text('currentSupplierId'),
+      sourceId: text('currentSourceId') || String(item.sourceId || ''),
+      sku: text('currentSku') || item.supplierCode,
+    },
+    replacementOffer: {
+      offerId: replacementOfferId,
+      supplierId: text('replacementSupplierId'),
+      sourceId: text('replacementSourceId'),
+      sku: text('replacementSku'),
+      supplierProductId: text('replacementSupplierProductId'),
+      supplierName: text('replacementSupplierName') || text('replacementSourceId'),
+    },
+    previousPrice: amount('previousPrice'),
+    proposedPrice: amount('proposedPrice'),
+    previousOriginalPrice: amount('previousOriginalPrice'),
+    proposedOriginalPrice: amount('proposedOriginalPrice'),
+    proposedDiscountPercent,
+    promotionOutcome: outcome,
+    promotionMessage,
+  };
+}
+
 export function createSupplierReviewDraft(item: SupplierReviewSourceItem): SupplierReviewDraft {
   const payload = item.productPayload;
   const snapshot = item.supplierSnapshot || {};
@@ -542,6 +608,8 @@ export function validateSupplierReviewDraft(
   if (!Number.isFinite(draft.comparePrice) || draft.comparePrice < 0) errors.comparePrice = 'Compare price cannot be negative.';
   if (draft.promotionEnabled === true && draft.comparePrice <= draft.sellingPrice) {
     errors.comparePrice = 'Regular price must be greater than the selling price when promotion is enabled.';
+  } else if (draft.promotionEnabled === true && exceedsPromotionDiscountCap(draft.comparePrice, draft.sellingPrice)) {
+    errors.comparePrice = PROMOTION_DISCOUNT_CAP_MESSAGE;
   } else if (draft.comparePrice > 0 && draft.comparePrice < draft.sellingPrice) {
     errors.comparePrice = 'Compare price must be at least the selling price.';
   }

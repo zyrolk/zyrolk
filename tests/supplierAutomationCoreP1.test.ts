@@ -441,7 +441,7 @@ test('P1 11 reservation-aware stock delta and transactional checkout validation 
   assert.match(checkout, /currentStock < item\.quantity/);
 });
 
-test('P1 12 a zero-stock offer cannot zero the product when failover selects another in-stock offer', async () => {
+test('P1 12 a zero-stock active offer fails closed and never auto-switches to another offer price', async () => {
   const primary = approvedOffer('source-a', 7);
   const backup = approvedOffer('source-b', 12);
   const fixture = inventoryFixture(primary);
@@ -449,8 +449,14 @@ test('P1 12 a zero-stock offer cannot zero the product when failover selects ano
   const result = await applyApprovedSupplierInventoryObservation(fixture.db as never, {
     offerId: primary.id, productId: 'product-1', stock: 0, observedAt: '2026-09-01T13:00:00.000Z', expectedStateVersion: primary.stateVersion,
   });
-  assert.equal(result.activeOfferId, backup.id);
-  assert.equal(fixture.documents.get('products/product-1')?.stock, 12);
+  assert.equal(result.activeOfferId, primary.id);
+  const product = fixture.documents.get('products/product-1') || {};
+  assert.equal(product.stock, 0);
+  assert.equal(product.availability, 'out_of_stock');
+  assert.equal(product.price, 100);
+  assert.equal(product.originalPrice, 150);
+  const selection = fixture.documents.get('product_private/product-1')?.supplierOfferSelection as Data;
+  assert.equal(selection.activeOfferId, primary.id);
 });
 
 test('P1 13 locked and failover-disabled offer semantics remain authoritative', () => {
@@ -932,7 +938,7 @@ test('P1 22 confirmed approved-offer removal never deletes or hides the Zyro pro
   assert.equal(fixture.operations.some((operation) => operation.operation === 'set' && operation.data === null), false);
 });
 
-test('P1 23 removed active offer recomputes availability through existing failover', async () => {
+test('P1 23 removed active offer fails closed and leaves replacement selection to review-first failover', async () => {
   const primary = approvedOffer('source-a', 7);
   const backup = approvedOffer('source-b', 9);
   const fixture = inventoryFixture(primary);
@@ -941,8 +947,14 @@ test('P1 23 removed active offer recomputes availability through existing failov
     offerId: primary.id, productId: 'product-1', stock: 0, removed: true,
     observedAt: '2026-09-01T13:00:00.000Z', expectedStateVersion: primary.stateVersion,
   });
-  assert.equal(result.activeOfferId, backup.id);
-  assert.equal(fixture.documents.get('products/product-1')?.stock, 9);
+  assert.equal(result.activeOfferId, primary.id);
+  const product = fixture.documents.get('products/product-1') || {};
+  assert.equal(product.stock, 0);
+  assert.equal(product.availability, 'unavailable');
+  assert.equal(product.price, 100);
+  assert.equal(product.originalPrice, 150);
+  const selection = fixture.documents.get('product_private/product-1')?.supplierOfferSelection as Data;
+  assert.equal(selection.activeOfferId, primary.id);
 });
 
 test('P1 24 Dropex cost and price remain outside automatic inventory field selection', () => {

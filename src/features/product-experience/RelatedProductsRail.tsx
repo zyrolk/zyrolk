@@ -4,6 +4,7 @@ import { motion, useReducedMotion } from 'motion/react';
 import { Product } from '../../types';
 import { PRODUCT_IMAGE_FALLBACK } from './productExperience';
 import { sanitizeStorefrontCategoryId } from '../../services/storefront/storefrontCatalog';
+import { resolveCustomerPromotion } from '../../services/products/promotionPolicy';
 import { useCategoryDisplayName } from '../../components/CategoryDisplayContext';
 
 interface Props {
@@ -32,14 +33,16 @@ export default function RelatedProductsRail({ products, scrollRef, onScroll, onS
         </div>}
       </div>
       <div ref={scrollRef} className="zy-related-products-rail flex snap-x snap-mandatory gap-4 overflow-x-auto py-3 scrollbar-none" aria-label="Related products">
-        {products.map((item) => <motion.button
+        {products.map((item) => {
+          const promotion = resolveCustomerPromotion(item);
+          return <motion.button
           type="button" key={item.id} whileHover={shouldReduceMotion ? undefined : { y: -4 }} whileTap={shouldReduceMotion ? undefined : { scale: 0.98 }} onClick={() => onSelect(item)}
           className="zy-related-product-card group flex h-full w-[185px] flex-shrink-0 snap-start flex-col rounded-2xl border border-slate-200 bg-white p-4 text-left transition-all hover:border-brand-blue/25 hover:shadow-lg focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20 sm:w-[230px]"
           aria-label={`View related product ${item.name}`}
         >
           <div className="zy-related-product-image relative mb-4 flex aspect-square w-full items-center justify-center overflow-hidden rounded-xl bg-slate-50 p-3">
             <img src={item.imageUrl || PRODUCT_IMAGE_FALLBACK} alt={item.name} loading="lazy" fetchPriority="low" decoding="async" width="600" height="600" onError={(event) => { event.currentTarget.onerror = null; event.currentTarget.src = PRODUCT_IMAGE_FALLBACK; }} className="max-h-full max-w-full object-contain transition-transform duration-500 group-hover:scale-105" referrerPolicy="no-referrer" />
-            {Boolean(item.discount && item.discount > 0) && <span className="absolute left-2.5 top-2.5 rounded-lg bg-brand-blue px-2.5 py-1 text-[9px] font-black text-white">-{item.discount}%</span>}
+            {promotion && <span className="absolute left-2.5 top-2.5 rounded-lg bg-brand-blue px-2.5 py-1 text-[9px] font-black text-white">-{promotion.discountPercent}%</span>}
             <span className={`zy-related-product-stock ${item.stock > 0 ? 'is-available' : 'is-unavailable'}`}>{item.stock > 0 ? 'In stock' : 'Out of stock'}</span>
           </div>
           <div className="zy-related-product-meta">
@@ -50,11 +53,12 @@ export default function RelatedProductsRail({ products, scrollRef, onScroll, onS
           <span className="zy-related-product-price mt-3 flex items-end justify-between text-sm font-black text-slate-900">
             <span>
               {formatPrice(item.price)}
-              {item.originalPrice && item.originalPrice > item.price && <small>{formatPrice(item.originalPrice)}</small>}
+              {promotion && <small>{formatPrice(promotion.originalPrice)}</small>}
             </span>
             <ArrowRight className="h-3.5 w-3.5 text-brand-blue" aria-hidden="true" />
           </span>
-        </motion.button>)}
+        </motion.button>;
+        })}
       </div>
     </section>
   );

@@ -1,6 +1,12 @@
 import { FieldValue, Firestore } from "firebase-admin/firestore";
 import { ApiError } from "../errors";
 import { COMMERCIAL_PRODUCT_FIELDS, PRODUCT_PRIVATE_COLLECTION, splitProductData } from "../products/productCommercialData";
+import {
+  calculatePromotionDiscountPercent,
+  exceedsPromotionDiscountCap,
+  isPromotionDiscountWithinCap,
+  PROMOTION_DISCOUNT_CAP_MESSAGE,
+} from "../products/promotionPolicy";
 import { isValidSupplierImageUrl } from "./a2z/ProductParser";
 import {
   extractSupplierMediaFromRecord,
@@ -43,12 +49,14 @@ import {
 } from "./supplierFieldOwnership";
 import {
   buildSupplierRemovalPublicProjection,
+  isSupplierFailoverReplacementReview,
   isSupplierOfferAvailableForCommerce,
   parseSupplierOfferSelection,
   promoteSupplierOfferPendingObservation,
   projectSupplierOfferForAdmin,
   resolveActiveSupplierOffer,
   SupplierProductOffer,
+  SUPPLIER_FAILOVER_REPLACEMENT_FIELD,
   SUPPLIER_PRODUCT_OFFERS_COLLECTION,
 } from "./supplierOfferEngine";
 import {
@@ -290,6 +298,9 @@ export function parseSupplierApprovalDraft(value: unknown): SupplierApprovalDraf
   if (promotionEnabled === true && (comparePrice === undefined || comparePrice <= sellingPrice)) {
     throw new ApiError("Regular price must be greater than the selling price when promotion is enabled.", 400);
   }
+  if (promotionEnabled === true && exceedsPromotionDiscountCap(comparePrice, sellingPrice)) {
+    throw new ApiError(PROMOTION_DISCOUNT_CAP_MESSAGE, 400);
+  }
   if (promotionEnabled !== true && comparePrice !== undefined && comparePrice > 0 && comparePrice < sellingPrice) {
     comparePrice = sellingPrice;
   }
@@ -461,7 +472,9 @@ export const toPublicProductPayload = (
   const costPrice = draft?.costPrice ?? Number(originalPayload.costPrice ?? 0);
   const existingOriginalPrice = Number(originalPayload.originalPrice);
   const comparisonStatus = String(queueItem.comparisonStatus || record(queueItem.comparison).comparisonStatus || "").toUpperCase();
-  const legacyPromotionEnabled = comparisonStatus !== "NEW_PRODUCT" && existingOriginalPrice > price;
+  const legacyPromotionEnabled = comparisonStatus !== "NEW_PRODUCT"
+    && existingOriginalPrice > price
+    && isPromotionDiscountWithinCap(draft?.comparePrice ?? existingOriginalPrice, price);
   const promotionEnabled = draft?.promotionEnabled === true
     || (draft?.promotionEnabled === undefined && legacyPromotionEnabled);
   const comparePrice = draft?.comparePrice ?? (promotionEnabled ? existingOriginalPrice : undefined);
@@ -474,14 +487,16 @@ export const toPublicProductPayload = (
   if (promotionEnabled && (comparePrice === undefined || comparePrice <= price)) {
     throw new ApiError("Regular price must be greater than the selling price when promotion is enabled.", 422);
   }
+  if (promotionEnabled && exceedsPromotionDiscountCap(comparePrice, price)) {
+    throw new ApiError(PROMOTION_DISCOUNT_CAP_MESSAGE, 422);
+  }
   const stock = draft?.stock ?? Number(originalPayload.stock);
   if (!Number.isInteger(stock) || stock < 0) throw new ApiError("Supplier product stock is invalid.", 422);
   const category = draft?.category || stringValue(originalPayload.category);
   const productName = draft?.productName || stringValue(originalPayload.name) || stringValue(queueItem.productName);
   if (!productName) throw new ApiError("Product name is required.", 422);
-  const discount = promotionEnabled
-    ? Math.round(((comparePrice! - price) / comparePrice!) * 100)
-    : undefined;
+  const discountPercent = promotionEnabled ? calculatePromotionDiscountPercent(comparePrice, price) : undefined;
+  const discount = discountPercent !== undefined ? Math.round(discountPercent) : undefined;
   const specs = record(originalPayload.specs);
   const isActive = (draft?.isActive ?? originalPayload.isActive) === true;
   const {
@@ -716,6 +731,18 @@ export async function decideSupplierQueueItem(
     const isSupplierOfferRemoval = action === "approved"
       && stringValue(queueItem.reconciliationAction) === "supplier_offer_unavailable";
     let approvedPayload = action === "approved" ? toPublicProductPayload(queueItem, effectiveDraft, approvedManagedMedia) : undefined;
+    const reviewedCommercialPayload: Record<string, unknown> | null = approvedPayload && isSupplierOfferRemoval
+      ? {
+        price: approvedPayload.price,
+        costPrice: approvedPayload.costPrice,
+        ...(Object.hasOwn(approvedPayload, "originalPrice") ? { originalPrice: approvedPayload.originalPrice } : {}),
+        ...(Object.hasOwn(approvedPayload, "discount") ? { discount: approvedPayload.discount } : {}),
+        promotionEnabled: Object.hasOwn(approvedPayload, "originalPrice"),
+        isActive: approvedPayload.isActive,
+        active: approvedPayload.active,
+        visible: approvedPayload.visible,
+      }
+      : null;
     const categoryReference = approvedPayload && String(approvedPayload.category || "").trim()
       ? db.collection("categories").doc(String(approvedPayload.category))
       : null;
@@ -945,6 +972,13 @@ export async function decideSupplierQueueItem(
     const activeCommerceOffer = activeSupplierOffer && isSupplierOfferAvailableForCommerce(activeSupplierOffer)
       ? activeSupplierOffer
       : null;
+    const approvesFailoverReplacement = isSupplierOfferRemoval && isSupplierFailoverReplacementReview(queueItem);
+    if (approvesFailoverReplacement) {
+      const proposedReplacementOfferId = stringValue(record(queueItem.supplierSnapshot)[SUPPLIER_FAILOVER_REPLACEMENT_FIELD]);
+      if (!activeCommerceOffer || activeCommerceOffer.id !== proposedReplacementOfferId) {
+        throw new ApiError("The proposed replacement supplier offer changed; reload Product Review before deciding.", 409);
+      }
+    }
     const projectedSupplierOffer = isSupplierOfferRemoval ? activeCommerceOffer : activeSupplierOffer;
     const nextOfferSelection = decisionSupplierOffer && approvedPayload ? {
       ...currentOfferSelection,
@@ -958,16 +992,26 @@ export async function decideSupplierQueueItem(
       || nextOfferSelection.activeOfferId === decisionSupplierOffer?.id;
 
     let resolvedOwnership = existingPrivateProductSnapshot?.data()?.supplierFieldOwnership;
+    let failoverReplacementProjection: Record<string, unknown> | null = null;
     if (approvedPayload && isSupplierOfferRemoval) {
       const approvalBaseline = parseSupplierProductApprovalBaseline(queueItem.approvalBaseline);
-      approvedPayload = {
-        ...approvedPayload,
-        ...buildSupplierRemovalPublicProjection(
-          activeCommerceOffer,
-          existingProductSnapshot?.data(),
-          approvalBaseline?.stockAtCapture,
-        ),
-      };
+      const removalProjection = buildSupplierRemovalPublicProjection(
+        activeCommerceOffer,
+        existingProductSnapshot?.data(),
+        approvalBaseline?.stockAtCapture,
+      );
+      if (approvesFailoverReplacement) {
+        failoverReplacementProjection = {
+          stock: removalProjection.stock,
+          availability: removalProjection.availability,
+        };
+        approvedPayload = { ...approvedPayload, ...failoverReplacementProjection };
+      } else {
+        approvedPayload = {
+          ...approvedPayload,
+          ...removalProjection,
+        };
+      }
     }
     if (approvedPayload && decisionSupplierOffer) approvedPayload.supplierOfferSelection = nextOfferSelection;
     if (approvedPayload && projectedSupplierOffer) {
@@ -1069,6 +1113,20 @@ export async function decideSupplierQueueItem(
       approvedPayload.supplierFieldOwnership = resolvedOwnership;
     }
 
+    // Approving an automatic failover proposal publishes exactly the reviewed
+    // commercial values (already validated against the promotion cap) and the
+    // replacement offer's stock. Legacy field-ownership defaults must not
+    // restore the live price, promotion or visibility; content ownership is
+    // unchanged.
+    if (approvedPayload && failoverReplacementProjection && reviewedCommercialPayload) {
+      for (const [field, value] of Object.entries(failoverReplacementProjection)) {
+        if (!editedFields.has(field)) approvedPayload[field] = value;
+      }
+      delete approvedPayload.originalPrice;
+      delete approvedPayload.discount;
+      Object.assign(approvedPayload, reviewedCommercialPayload);
+    }
+
     // Approving the removal is itself the administrator's explicit decision
     // to withdraw the product when no approved replacement offer exists.
     // Legacy field-ownership defaults must not restore the live stock or
@@ -1154,7 +1212,8 @@ export async function decideSupplierQueueItem(
       const hasValidPublicPromotion = Number.isFinite(publicPrice)
         && publicPrice > 0
         && Number.isFinite(publicOriginalPrice)
-        && publicOriginalPrice > publicPrice;
+        && publicOriginalPrice > publicPrice
+        && isPromotionDiscountWithinCap(publicOriginalPrice, publicPrice);
       transaction.set(db.collection("products").doc(decidedProductId), {
         ...publicData,
         ...(!hasValidPublicPromotion || effectiveDraft?.promotionEnabled === false ? {

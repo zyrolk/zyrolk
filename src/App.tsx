@@ -35,6 +35,7 @@ import {
   subscribeToStorefrontProductPage,
 } from './services/storefront/storefrontCatalog';
 import { isProductExplicitlyActive } from './services/storefront/productAvailability';
+import { resolveCustomerPromotion } from './services/products/promotionPolicy';
 import { canUseProductInCommerce, filterCommerceCartItems, filterCommerceProductIds, filterCommerceProducts } from './services/storefront/previewCommerceGuard';
 import { buildStorefrontUrl, parseStorefrontRoute } from './services/navigation/storefrontRoutes';
 import { formatCategoryDisplayName, resolveCategoryDisplayName, selectExploreMoreProducts } from './services/storefront/launchMerchandising';
@@ -1314,11 +1315,7 @@ export default function App() {
     return b.id.localeCompare(a.id);
   }), [activeProducts]);
   const discountedProducts = useMemo(
-    () => activeProducts.filter(product => (
-      Boolean(product.discount && product.discount > 0) &&
-      typeof product.originalPrice === 'number' &&
-      product.originalPrice > product.price
-    )).slice(0, 8),
+    () => activeProducts.filter(product => resolveCustomerPromotion(product) !== null).slice(0, 8),
     [activeProducts]
   );
   const trendingProducts = useMemo(() => {

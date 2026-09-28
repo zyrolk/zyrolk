@@ -6,6 +6,7 @@ import { adminDb } from "../api/firebase";
 import { ApiError } from "../api/errors";
 import { appLogger } from "../api/logging";
 import { COMMERCIAL_PRODUCT_FIELDS, mergeProductData, PRODUCT_PRIVATE_COLLECTION } from "../api/products/productCommercialData";
+import { calculatePromotionDiscountPercent, isPromotionDiscountWithinCap } from "../api/products/promotionPolicy";
 import { SupplierRegistry } from "../api/suppliers/SupplierRegistry";
 import { isValidSupplierImageUrl, ProductParser } from "../api/suppliers/a2z/ProductParser";
 import { RawA2ZProduct } from "../api/suppliers/a2z/types";
@@ -99,6 +100,7 @@ import {
   selectSupplierComparisonForReview,
   SupplierSourceSyncSettings,
 } from "./supplierSyncSettings";
+import { buildSupplierOfferRemovalReviewId } from "../api/suppliers/supplierQueueLifecycle";
 import {
   buildSupplierQueueLifecycle,
   classifySupplierQueueFailure,
@@ -1069,12 +1071,14 @@ export function buildProductPayload(
     && existingOriginalPrice > existingSellingPrice
     ? existingOriginalPrice
     : undefined;
-  const promotionFields = existingPromotionPrice !== undefined
-    && Number.isFinite(effectiveSellingPrice)
-    && existingPromotionPrice > effectiveSellingPrice
+  const preservedDiscountPercent = existingPromotionPrice !== undefined
+    && isPromotionDiscountWithinCap(existingPromotionPrice, effectiveSellingPrice)
+    ? calculatePromotionDiscountPercent(existingPromotionPrice, effectiveSellingPrice)
+    : undefined;
+  const promotionFields = preservedDiscountPercent !== undefined
     ? {
       originalPrice: existingPromotionPrice,
-      discount: Math.round(((existingPromotionPrice - effectiveSellingPrice) / existingPromotionPrice) * 100),
+      discount: Math.round(preservedDiscountPercent),
     }
     : {};
   const stockUpdateEnabled = acceptsField("stock");
@@ -2312,16 +2316,7 @@ export function buildSupplierRemovalProductPayload(
   };
 }
 
-export function buildSupplierOfferRemovalReviewId(
-  offerId: string,
-  lifecycleVersion = 0,
-  previousLifecycleTerminal = false,
-): string {
-  const baseId = `reconcile-offer-${offerId}`.slice(0, 180);
-  if (!previousLifecycleTerminal) return baseId;
-  const suffix = `-v${Math.max(0, Math.floor(lifecycleVersion))}`;
-  return `${baseId.slice(0, Math.max(1, 180 - suffix.length))}${suffix}`;
-}
+export { buildSupplierOfferRemovalReviewId };
 
 export function buildLegacySupplierRemovalReviewId(
   sourceId: string,

@@ -850,7 +850,7 @@ test('dead-letter retry repairs stale queue identity before returning the item t
   assert.equal((documents.get('supplier_review_queue/review-1')?.productPayload as StoredDocument).id, 'canonical-product');
 });
 
-test('multi-supplier failover continues to select only an eligible approved offer after identity repair', async () => {
+test('multi-supplier failover proposes only an eligible approved offer for review after identity repair', async () => {
   const sourceA = offer('source-a', 100, { reviewStatus: 'approved', stock: 15 });
   const sourceB = offer('source-b', 200, { reviewStatus: 'approved', stock: 0, availability: 'out_of_stock' });
   const { db, documents } = createFakeFirestore({
@@ -866,9 +866,15 @@ test('multi-supplier failover continues to select only an eligible approved offe
   const result = await reconcileSupplierProductOfferFailover(db as never, 'canonical-product', 'active supplier out of stock');
 
   assert.equal(result.changed, true);
-  assert.equal(result.activeOfferId, sourceA.id);
-  assert.equal((documents.get('product_private/canonical-product')?.supplierOfferSelection as StoredDocument).activeOfferId, sourceA.id);
-  assert.equal(documents.get('product_private/canonical-product')?.supplierSourceId, 'source-a');
+  assert.equal(result.activeOfferId, null);
+  assert.equal(result.proposedOfferId, sourceA.id);
+  assert.equal((documents.get('product_private/canonical-product')?.supplierOfferSelection as StoredDocument).activeOfferId, sourceB.id);
+  assert.equal(documents.get('products/canonical-product')?.price, canonicalProduct.price);
+  assert.equal(documents.get('products/canonical-product')?.originalPrice, canonicalProduct.originalPrice);
+  assert.equal(documents.get('products/canonical-product')?.stock, 0);
+  const review = documents.get(`supplier_review_queue/reconcile-offer-${sourceB.id}`) || {};
+  assert.equal(review.reconciliationAction, 'supplier_offer_unavailable');
+  assert.equal((review.supplierSnapshot as StoredDocument).failoverReplacementOfferId, sourceA.id);
   const audit = [...documents.entries()].find(([key]) => key.startsWith('supplier_operations_audit/'))?.[1];
   const publicCommerce = ((audit?.before as StoredDocument)?.publicCommerce || {}) as StoredDocument;
   assert.equal(Object.values(publicCommerce).includes(undefined), false);

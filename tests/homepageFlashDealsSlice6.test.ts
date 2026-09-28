@@ -18,9 +18,7 @@ test('Slice 6 keeps Flash Deals on the existing explicit discounted-product proj
   assert.match(homepage, /Products with a genuine active discount will appear here automatically\./);
 
   const discountedProjection = app.slice(app.indexOf('const discountedProducts = useMemo('), app.indexOf('const trendingProducts = useMemo('));
-  assert.match(discountedProjection, /Boolean\(product\.discount && product\.discount > 0\)/);
-  assert.match(discountedProjection, /typeof product\.originalPrice === 'number'/);
-  assert.match(discountedProjection, /product\.originalPrice > product\.price/);
+  assert.match(discountedProjection, /resolveCustomerPromotion\(product\) !== null/);
   assert.doesNotMatch(discountedProjection, /marketPrice|comparePrice|supplier/i);
 });
 

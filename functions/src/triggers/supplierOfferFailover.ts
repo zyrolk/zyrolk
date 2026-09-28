@@ -58,7 +58,8 @@ async function projectSupplierSourceAvailability(sourceId: string, available: bo
 
 /**
  * Supplier-offer writes remain approval-gated. This trigger only reacts when
- * eligibility changes and projects an already-approved replacement offer.
+ * eligibility changes: it fails commerce closed and proposes an approved
+ * replacement offer through Product Review, never switching it live.
  */
 export const reconcileSupplierOfferFailover = onDocumentWritten(
   "supplier_product_offers/{offerId}",

@@ -50,6 +50,7 @@ import BusinessConfigurationEditor from './admin/BusinessConfigurationEditor';
 import PaymentConfigurationPanel from './admin/PaymentConfigurationPanel';
 import { normalizeSlideSpeed, validateHeroSlides } from '../services/hero-slider/heroSlider';
 import { validateProductForSave } from '../services/products/productValidation';
+import { exceedsPromotionDiscountCap, PROMOTION_DISCOUNT_CAP_MESSAGE } from '../services/products/promotionPolicy';
 import {
   mergeProductCommercialData,
   PRODUCT_PRIVATE_COLLECTION,
@@ -5393,6 +5394,9 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                         ? '* Discount percentage is calculated automatically from the selling and regular prices.'
                         : '* Promotion is off by default; supplier reference pricing does not create a customer discount.'}
                     </p>
+                    {newProduct.promotionEnabled === true && exceedsPromotionDiscountCap(newProduct.originalPrice, newProduct.price) && (
+                      <p role="alert" className="text-[10px] font-bold leading-tight text-red-500">{PROMOTION_DISCOUNT_CAP_MESSAGE}</p>
+                    )}
                   </div>
 
                   {/* Status & Badges Group */}

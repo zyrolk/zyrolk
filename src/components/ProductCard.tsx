@@ -3,6 +3,7 @@ import { BadgeDollarSign, Check, Eye, Star, ShoppingCart, Heart, Truck } from 'l
 import { Product } from '../types';
 import { PRODUCT_IMAGE_FALLBACK } from '../features/product-experience/productExperience';
 import { sanitizeStorefrontCategoryId } from '../services/storefront/storefrontCatalog';
+import { resolveCustomerPromotion } from '../services/products/promotionPolicy';
 import { useCategoryDisplayName } from './CategoryDisplayContext';
 
 interface ProductCardProps {
@@ -36,6 +37,7 @@ function ProductCard({
       : 'In stock';
   const deliveryLabel = 'Delivery available';
   const isCodEnabled = settings?.enableCOD !== false;
+  const promotion = resolveCustomerPromotion(product);
 
   useEffect(() => () => {
     if (addedTimerRef.current !== null) window.clearTimeout(addedTimerRef.current);
@@ -76,9 +78,9 @@ function ProductCard({
     >
       {/* Badges Overlay */}
       <div className="zy-product-card-badges" aria-label="Product highlights">
-        {product.discount && product.discount > 0 ? (
+        {promotion ? (
           <span className="zy-badge zy-badge-accent zy-product-discount">
-            Save {product.discount}%
+            Save {promotion.discountPercent}%
           </span>
         ) : null}
         {product.isNew ? (
@@ -205,9 +207,9 @@ function ProductCard({
             <span className="zy-price zy-product-card-price">
               {formatPrice(product.price)}
             </span>
-            {product.originalPrice && product.originalPrice > product.price && (
+            {promotion && (
               <span className="zy-product-card-original-price">
-                {formatPrice(product.originalPrice)}
+                {formatPrice(promotion.originalPrice)}
               </span>
             )}
           </div>

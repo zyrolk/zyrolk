@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, ArrowDown, ArrowUp, Check, Image, LockKeyhole, Package, Pencil, Plus, RefreshCw, Sparkles, Trash2, X } from 'lucide-react';
 import {
+  buildSupplierFailoverProposalSummary,
   buildSupplierReviewMetadataSections,
   buildSupplierReviewFieldChanges,
   calculateSupplierProfit,
@@ -166,6 +167,7 @@ export default function SupplierReviewEditorModal({
   );
   const metadataSections = useMemo(() => buildSupplierReviewMetadataSections(item), [item]);
   const fieldChanges = useMemo(() => buildSupplierReviewFieldChanges(item), [item]);
+  const failoverProposal = useMemo(() => buildSupplierFailoverProposalSummary(item), [item]);
   const specificationCount = useMemo(
     () => countStructuredSupplierSpecifications(draft.specifications),
     [draft.specifications],
@@ -534,6 +536,33 @@ export default function SupplierReviewEditorModal({
                 {item.approvalConflict.changedFields?.length ? <div className="rounded-xl bg-white/70 p-3 sm:col-span-2 dark:bg-slate-950/40"><dt className="text-[9px] font-black uppercase tracking-wide text-slate-400">Detected signals</dt><dd className="mt-1 font-semibold text-slate-700 dark:text-slate-200">{item.approvalConflict.changedFields.join(', ')}</dd></div> : null}
               </dl>
               <p className="mt-3 text-[10px] font-semibold text-red-700/90 dark:text-red-200/90">Review the supplier identity and canonical product before publishing. Product Review never merges or publishes this conflict automatically.</p>
+            </section>
+          )}
+
+          {failoverProposal && (
+            <section className="order-[69] rounded-2xl border border-amber-500/30 bg-amber-500/5 p-4" aria-labelledby="supplier-offer-switch-title">
+              <h4 id="supplier-offer-switch-title" className="flex items-center gap-2 text-xs font-black uppercase tracking-wider text-amber-700 dark:text-amber-300"><LockKeyhole className="h-4 w-4" />Supplier offer switch</h4>
+              <p className="mt-1 text-[10px] text-slate-500 dark:text-slate-400">The current offer can no longer serve orders. Approving switches to the replacement offer below and publishes the selling price, compare price and promotion shown in this editor.</p>
+              <dl className="mt-3 grid gap-2 sm:grid-cols-2">
+                <div className="rounded-xl bg-white p-3 dark:bg-slate-950/60">
+                  <dt className="text-[9px] font-black uppercase tracking-wide text-slate-400">Current offer (unavailable)</dt>
+                  <dd className="mt-1 break-all text-[10px] font-semibold text-slate-700 dark:text-slate-200">{failoverProposal.currentOffer.sourceId || 'Unknown source'} · SKU {failoverProposal.currentOffer.sku || '—'}</dd>
+                  <dd className="mt-1 break-all font-mono text-[9px] text-slate-500">{failoverProposal.currentOffer.offerId}</dd>
+                </div>
+                <div className="rounded-xl bg-white p-3 dark:bg-slate-950/60">
+                  <dt className="text-[9px] font-black uppercase tracking-wide text-slate-400">Replacement offer (locked)</dt>
+                  <dd className="mt-1 break-all text-[10px] font-semibold text-slate-700 dark:text-slate-200">{failoverProposal.replacementOffer.supplierName} · SKU {failoverProposal.replacementOffer.sku || '—'}</dd>
+                  <dd className="mt-1 break-all font-mono text-[9px] text-slate-500">{failoverProposal.replacementOffer.offerId}</dd>
+                </div>
+                <div className="rounded-xl bg-white p-3 dark:bg-slate-950/60">
+                  <dt className="text-[9px] font-black uppercase tracking-wide text-slate-400">Selling price</dt>
+                  <dd className="mt-1 text-[10px] font-semibold text-slate-700 dark:text-slate-200">{money(failoverProposal.previousPrice)} → {money(failoverProposal.proposedPrice)}</dd>
+                </div>
+                <div className="rounded-xl bg-white p-3 dark:bg-slate-950/60">
+                  <dt className="text-[9px] font-black uppercase tracking-wide text-slate-400">Promotion</dt>
+                  <dd className={`mt-1 text-[10px] font-semibold ${failoverProposal.promotionOutcome.startsWith('removed') ? 'text-amber-700 dark:text-amber-300' : 'text-slate-700 dark:text-slate-200'}`}>{failoverProposal.promotionMessage}</dd>
+                </div>
+              </dl>
             </section>
           )}
 

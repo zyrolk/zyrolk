@@ -5,6 +5,7 @@ import {
   getActiveSubcategories,
   normalizeSubcategories,
 } from './productBlueprint';
+import { exceedsPromotionDiscountCap, PROMOTION_DISCOUNT_CAP_MESSAGE } from './promotionPolicy';
 
 export interface ProductValidationInput {
   readonly product: Partial<Product>;
@@ -33,6 +34,8 @@ export const validateProductForSave = ({
     const regularPrice = Number(product.originalPrice);
     if (!Number.isFinite(regularPrice) || regularPrice <= sellingPrice) {
       errors.push('Regular price must be greater than the sale price when promotion is enabled.');
+    } else if (exceedsPromotionDiscountCap(regularPrice, sellingPrice)) {
+      errors.push(PROMOTION_DISCOUNT_CAP_MESSAGE);
     }
   }
 

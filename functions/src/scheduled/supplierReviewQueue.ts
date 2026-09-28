@@ -28,6 +28,10 @@ import { classifySupplierMediaReadiness } from "../api/suppliers/supplierMediaRe
 import { recordSupplierQueueProcessingDurationMetric } from "../api/suppliers/supplierCloudMonitoring";
 import { appLogger } from "../api/logging";
 import {
+  buildSupplierQueueLifecycle,
+  SUPPLIER_QUEUE_DEFAULT_RETRY_LIMIT,
+} from "../api/suppliers/supplierQueueLifecycle";
+import {
   normalizeSupplierMappingValue,
   isExplicitSupplierChildMapping,
   selectSupplierCategoryMapping,
@@ -100,7 +104,7 @@ interface SupplierQueueRecord extends Record<string, unknown> {
   mediaSourceImageUrls?: unknown;
 }
 
-const DEFAULT_RETRY_LIMIT = 5;
+const DEFAULT_RETRY_LIMIT = SUPPLIER_QUEUE_DEFAULT_RETRY_LIMIT;
 const DEFAULT_LEASE_MS = 5 * 60 * 1000;
 const LEASE_HEARTBEAT_INTERVAL_MS = 60 * 1000;
 
@@ -709,15 +713,7 @@ export const reviewRecordIsRefreshable = (record: Record<string, unknown>): bool
 
 const nextRetryAt = (attempt: number, now: number): string => new Date(now + supplierMediaRetryDelayMs(attempt)).toISOString();
 
-export function buildSupplierQueueLifecycle(createdAt = new Date().toISOString()): Record<string, unknown> {
-  return {
-    queueState: "queued" satisfies SupplierQueueState,
-    retryCount: 0,
-    retryLimit: DEFAULT_RETRY_LIMIT,
-    nextRetryAt: createdAt,
-    queueCreatedAt: createdAt,
-  };
-}
+export { buildSupplierQueueLifecycle };
 
 export function supplierReviewSourceImageUrls(product: { mediaGallery?: readonly string[] }): string[] {
   return [...(product.mediaGallery || [])].map((url) => String(url || "").trim()).filter(Boolean);

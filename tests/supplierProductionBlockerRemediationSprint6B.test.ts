@@ -162,7 +162,7 @@ const approvedOffer = (sourceId: string, priority: number, overrides: Record<str
   ...overrides,
 });
 
-test('Sprint 6B atomically fails over to the highest-priority eligible approved offer and preserves reserved stock', async () => {
+test('Sprint 6B fails closed and proposes the highest-priority eligible approved offer for review', async () => {
   const unavailable = approvedOffer('current', 100, { stock: 0, availability: 'out_of_stock' });
   const approved = approvedOffer('approved', 200);
   const unapproved = approvedOffer('unapproved', 500, { reviewStatus: 'review_pending' });
@@ -184,10 +184,16 @@ test('Sprint 6B atomically fails over to the highest-priority eligible approved 
   const result = await reconcileSupplierProductOfferFailover(db as never, 'product-1', 'stock changed');
 
   assert.equal(result.changed, true);
-  assert.equal(result.activeOfferId, approved.id);
-  assert.equal(documents.get('products/product-1')?.price, 150);
-  assert.equal(documents.get('products/product-1')?.stock, 18);
-  assert.equal((documents.get('product_private/product-1')?.supplierOfferSelection as { activeOfferId?: string }).activeOfferId, approved.id);
+  assert.equal(result.activeOfferId, null);
+  assert.equal(result.proposedOfferId, approved.id);
+  assert.equal(documents.get('products/product-1')?.price, 120);
+  assert.equal(documents.get('products/product-1')?.stock, 0);
+  assert.equal(documents.get('products/product-1')?.visible, false);
+  assert.equal((documents.get('product_private/product-1')?.supplierOfferSelection as { activeOfferId?: string }).activeOfferId, unavailable.id);
+  const privateMetadata = documents.get('product_private/product-1')?.supplierMetadata as { localDemand?: { quantity?: number } };
+  assert.equal(privateMetadata.localDemand?.quantity, 2);
+  const review = documents.get(`supplier_review_queue/reconcile-offer-${unavailable.id}`) as { supplierSnapshot?: Record<string, unknown> };
+  assert.equal(review.supplierSnapshot?.failoverReplacementOfferId, approved.id);
   const audit = writes.find((write) => write.operation === 'create' && write.key.startsWith('supplier_operations_audit/'));
   assert.equal(audit?.data.action, 'automatic_offer_failover');
   assert.equal(audit?.data.previousOfferId, unavailable.id);

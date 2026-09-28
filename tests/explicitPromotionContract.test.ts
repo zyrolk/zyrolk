@@ -33,7 +33,7 @@ const approvalInput = (overrides: Record<string, unknown> = {}) => ({
   shortDescription: 'Short description',
   description: 'A valid supplier product description.',
   sellingPrice: 1_146,
-  comparePrice: 1_850,
+  comparePrice: 1_400,
   marketPrice: 1_850,
   costPrice: 900,
   stock: 5,
@@ -58,8 +58,8 @@ const approvalQueueItem = (overrides: Record<string, unknown> = {}) => ({
     name: 'Promotion Contract Product',
     description: 'A valid supplier product description.',
     price: 1_146,
-    originalPrice: 1_850,
-    discount: 38,
+    originalPrice: 1_400,
+    discount: 18,
     marketPrice: 1_850,
     stock: 5,
     category: 'electronics',
@@ -133,17 +133,17 @@ test('explicit Promotion OFF overrides a legacy public promotion in Supplier Rev
   assert.equal(Object.hasOwn(approved.productPayload || {}, 'discount'), false);
 });
 
-test('explicit promotion ON serializes regular price and derives 38 percent discount', () => {
+test('explicit promotion ON serializes regular price and derives 18 percent discount', () => {
   const item = reviewItem();
-  const draft = { ...createSupplierReviewDraft(item), promotionEnabled: true, comparePrice: 1_850 };
+  const draft = { ...createSupplierReviewDraft(item), promotionEnabled: true, comparePrice: 1_400 };
   const approved = buildSupplierApprovalItem(item, draft, ['electronics']);
-  assert.equal(approved.productPayload?.originalPrice, 1_850);
-  assert.equal(approved.productPayload?.discount, 38);
+  assert.equal(approved.productPayload?.originalPrice, 1_400);
+  assert.equal(approved.productPayload?.discount, 18);
 
   const parsed = parseSupplierApprovalDraft(approvalInput({ promotionEnabled: true, discount: 999 }));
   const publicPayload = toPublicProductPayload(approvalQueueItem(), parsed);
-  assert.equal(publicPayload.originalPrice, 1_850);
-  assert.equal(publicPayload.discount, 38);
+  assert.equal(publicPayload.originalPrice, 1_400);
+  assert.equal(publicPayload.discount, 18);
 });
 
 test('server approval removes legacy public promotion fields while retaining private market price', () => {
@@ -179,8 +179,8 @@ test('Promotion OFF with no compare price leaves a market-price-only item unprom
 
 test('legacy public promotions remain unchanged until explicitly disabled', () => {
   const legacyPayload = toPublicProductPayload(approvalQueueItem(), undefined);
-  assert.equal(legacyPayload.originalPrice, 1_850);
-  assert.equal(legacyPayload.discount, 38);
+  assert.equal(legacyPayload.originalPrice, 1_400);
+  assert.equal(legacyPayload.discount, 18);
 
   const disabledPayload = toPublicProductPayload(
     approvalQueueItem(),
@@ -199,7 +199,7 @@ test('invalid explicit regular prices cannot create a promotion and stored disco
     approvalQueueItem({ productPayload: { ...approvalQueueItem().productPayload, discount: 999 } }),
     parseSupplierApprovalDraft(approvalInput({ promotionEnabled: true }))!,
   );
-  assert.equal(payload.discount, 38);
+  assert.equal(payload.discount, 18);
 });
 
 test('server approval accepts structured optional media warnings but rejects blocking media', () => {
@@ -452,11 +452,11 @@ test('admin product saves apply the same explicit promotion contract', () => {
   assert.equal(off.discount, undefined);
 
   const on = buildProductSavePayload({
-    draft: { ...off, promotionEnabled: true, originalPrice: 1_850 },
+    draft: { ...off, promotionEnabled: true, originalPrice: 1_400 },
     now: '2026-09-07T00:00:00.000Z',
   });
-  assert.equal(on.originalPrice, 1_850);
-  assert.equal(on.discount, 38);
+  assert.equal(on.originalPrice, 1_400);
+  assert.equal(on.discount, 18);
 
   const serverOff = parseAdminProductDraft({
     id: 'admin-product-1',
@@ -465,7 +465,7 @@ test('admin product saves apply the same explicit promotion contract', () => {
     description: 'Description',
     shortDescription: '',
     price: 1_146,
-    originalPrice: 1_850,
+    originalPrice: 1_400,
     promotionEnabled: false,
     imageUrl: managedImage,
     imageUrls: [managedImage],
@@ -492,7 +492,7 @@ test('admin product saves apply the same explicit promotion contract', () => {
     serverOff,
     'Brand',
     '2026-09-07T00:00:00.000Z',
-    { price: 1_146, originalPrice: 1_850, discount: 38 },
+    { price: 1_146, originalPrice: 1_400, discount: 18 },
   );
   assert.equal(Object.hasOwn(serverOffProjection.publicData, 'originalPrice'), false);
   assert.equal(Object.hasOwn(serverOffProjection.publicData, 'discount'), false);
@@ -511,8 +511,8 @@ test('admin product saves apply the same explicit promotion contract', () => {
     'Brand',
     '2026-09-07T00:00:00.000Z',
   );
-  assert.equal(serverOnProjection.publicData.originalPrice, 1_850);
-  assert.equal(serverOnProjection.publicData.discount, 38);
+  assert.equal(serverOnProjection.publicData.originalPrice, 1_400);
+  assert.equal(serverOnProjection.publicData.discount, 18);
 });
 
 test('normal admin edits preserve an untouched legacy promotion', () => {
@@ -522,7 +522,7 @@ test('normal admin edits preserve an untouched legacy promotion', () => {
     name: 'Legacy promotion',
     description: 'Description',
     price: 1_146,
-    originalPrice: 1_850,
+    originalPrice: 1_400,
     imageUrl: managedImage,
     stock: 5,
     brand: 'brand-1',
@@ -535,7 +535,7 @@ test('normal admin edits preserve an untouched legacy promotion', () => {
       name: 'Legacy promotion',
       description: 'Description',
       price: 1_146,
-      originalPrice: 1_850,
+      originalPrice: 1_400,
       imageUrl: managedImage,
       imageUrls: [],
       category: 'electronics',
@@ -549,8 +549,8 @@ test('normal admin edits preserve an untouched legacy promotion', () => {
   });
 
   assert.equal(legacy.promotionEnabled, true);
-  assert.equal(legacy.originalPrice, 1_850);
-  assert.equal(legacy.discount, 38);
+  assert.equal(legacy.originalPrice, 1_400);
+  assert.equal(legacy.discount, 18);
 });
 
 test('supplier sync does not create a new public promotion but preserves an existing one', () => {
@@ -588,19 +588,19 @@ test('supplier sync does not create a new public promotion but preserves an exis
   assert.equal(newPayload.marketPrice, 0);
 
   const existingPayload = buildProductPayload(product, {
-    id: 'existing-product', price: 1_146, originalPrice: 1_850, discount: 38,
+    id: 'existing-product', price: 1_146, originalPrice: 1_400, discount: 18,
     marketPrice: 1_850, imageUrl: 'https://supplier.example/old.jpg', imageUrls: [],
     category: 'electronics', brand: 'brand-1', stock: 5,
   }, categorySuggestion, brandSuggestion, [{ id: 'brand-1', name: 'Brand' }], {
     status: 'PRICE_CHANGED', changedFields: ['price'], fieldChanges: [{ field: 'price' } as never],
   }, settings, source);
-  assert.equal(existingPayload.originalPrice, 1_850);
-  assert.equal(existingPayload.discount, 38);
+  assert.equal(existingPayload.originalPrice, 1_400);
+  assert.equal(existingPayload.discount, 18);
 
   const unapprovedPricePayload = buildProductPayload(
     { ...product, recommendedRetailPrice: 500 },
     {
-      id: 'existing-product', price: 1_146, originalPrice: 1_850, discount: 38,
+      id: 'existing-product', price: 1_146, originalPrice: 1_400, discount: 18,
       marketPrice: 1_850, imageUrl: 'https://supplier.example/old.jpg', imageUrls: [],
       category: 'electronics', brand: 'brand-1', stock: 5,
     },
@@ -612,8 +612,8 @@ test('supplier sync does not create a new public promotion but preserves an exis
     source,
   );
   assert.equal(unapprovedPricePayload.price, 1_146);
-  assert.equal(unapprovedPricePayload.originalPrice, 1_850);
-  assert.equal(unapprovedPricePayload.discount, 38);
+  assert.equal(unapprovedPricePayload.originalPrice, 1_400);
+  assert.equal(unapprovedPricePayload.discount, 18);
 });
 
 test('approved offer reprojection cannot turn OFF-product reference pricing into a promotion', () => {
@@ -640,13 +640,13 @@ test('approved offer reprojection preserves the admin regular price over supplie
   });
   const projection = buildSupplierOfferPublicProjection(offer, {
     price: 1_146,
-    originalPrice: 1_850,
+    originalPrice: 1_400,
     stock: 5,
   });
 
   assert.equal(projection.price, 1_146);
-  assert.equal(projection.originalPrice, 1_850);
-  assert.equal(projection.discount, 38);
+  assert.equal(projection.originalPrice, 1_400);
+  assert.equal(projection.discount, 18);
 });
 
 test('approved offer reprojection removes an invalidated promotion instead of restoring supplier reference pricing', () => {

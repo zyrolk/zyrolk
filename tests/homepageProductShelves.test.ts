@@ -34,8 +34,7 @@ test('shelf product selection stays with the live App-level product projections'
   assert.match(app, /activeProducts\.filter\(product => product\.isNew\)\.slice\(0, 8\)/);
   assert.match(app, /activeProducts\.filter\(product => product\.isBestSeller\)\.slice\(0, 8\)/);
   assert.match(app, /featuredProducts\.filter\(product => !dealIds\.has\(product\.id\)\)\.slice\(0, 8\)/);
-  assert.match(app, /typeof product\.originalPrice === 'number'/);
-  assert.match(app, /originalPrice > product\.price/);
+  assert.match(app, /activeProducts\.filter\(product => resolveCustomerPromotion\(product\) !== null\)\.slice\(0, 8\)/);
   assert.doesNotMatch(shelf, /firebase|firestore|isNew|isFeatured|isBestSeller|originalPrice >|\.filter\(/iu);
 });
 

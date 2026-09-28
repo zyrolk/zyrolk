@@ -31,7 +31,10 @@ test('Product Card V2 preserves every existing interaction and commerce flow', (
   assert.match(productCard, /PRODUCT_IMAGE_FALLBACK/);
   assert.match(productCard, /product\.reviewsCount > 0/);
   assert.match(productCard, /product\.stock <= 0/);
-  assert.match(productCard, /product\.originalPrice && product\.originalPrice > product\.price/);
+  assert.match(productCard, /const promotion = resolveCustomerPromotion\(product\)/);
+  assert.match(productCard, /Save \{promotion\.discountPercent\}%/);
+  assert.match(productCard, /formatPrice\(promotion\.originalPrice\)/);
+  assert.doesNotMatch(productCard, /product\.discount\b/);
   assert.doesNotMatch(productCard, /demo|sample rating|fake stock/iu);
 });
 
