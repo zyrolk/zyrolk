@@ -67,7 +67,8 @@ import {
   type AdminFulfilmentGroup,
   type AdminOrderFulfilmentView,
 } from '../services/admin/orderFulfilmentApi';
-import { isHttpUrl, validateStoreSettings } from '../services/settings/storeSettingsValidation';
+import { describeDeliveryTierPreview, isHttpUrl, validateStoreSettings } from '../services/settings/storeSettingsValidation';
+import { calculateCustomerOrderTotals } from '../features/account/customerOrders';
 import { getAppCheckRequestHeaders } from '../services/security/appCheck';
 import {
   DEFAULT_DELIVERY_CHARGE,
@@ -157,6 +158,10 @@ const AdminLazyPanelFallback = () => (
     </div>
     <div className="mt-6 h-56 rounded-xl bg-slate-800/70" />
   </div>
+);
+
+const optionalAmountText = (value: number | null | undefined): string => (
+  typeof value === 'number' && Number.isFinite(value) ? String(value) : ''
 );
 
 const DEFAULT_WEBSITE_SETTINGS: WebsiteSettings = normalizeWebsiteSettings({
@@ -285,8 +290,9 @@ You have the right to request access to your stored personal data, request corre
 • WhatsApp is available for customer support and order assistance only; it is not a separate payment method.
 
 3. Deliveries & Shipments
-• Delivery fee is LKR 300 for orders below LKR 3,500.
-• Delivery is free for orders of LKR 3,500 or more.
+• Delivery fee is LKR 300 for orders below LKR 3,000.
+• Orders from LKR 3,000 to below LKR 5,000 qualify for LKR 150 delivery.
+• Delivery is free for orders of LKR 5,000 or more.
 • Delivery times may vary by location. Estimated delivery information will be provided where available.
 • While we make every effort to meet estimated delivery times, external factors such as weather or courier delays are beyond our control.
 
@@ -324,7 +330,7 @@ Q: Do you deliver islandwide in Sri Lanka?
 A: Islandwide delivery is available across Sri Lanka. Delivery availability and timing may vary by location.
 
 Q: What are your shipping rates?
-A: Delivery fee is LKR 300 for orders below LKR 3,500. Delivery is free for orders of LKR 3,500 or more.
+A: Delivery fee is LKR 300 for orders below LKR 3,000. Orders from LKR 3,000 to below LKR 5,000 qualify for LKR 150 delivery. Delivery is free for orders of LKR 5,000 or more.
 
 Q: How long does delivery take?
 A: Delivery times may vary by location. Estimated delivery information will be provided where available.
@@ -575,6 +581,14 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
   const [savingProduct, setSavingProduct] = useState(false);
   const [tempDeliveryCharge, setTempDeliveryCharge] = useState<string>(String(DEFAULT_WEBSITE_SETTINGS.deliveryCharge));
   const [tempFreeDeliveryMin, setTempFreeDeliveryMin] = useState<string>(String(DEFAULT_WEBSITE_SETTINGS.freeDeliveryMin));
+  const [tempReducedDeliveryMin, setTempReducedDeliveryMin] = useState<string>('');
+  const [tempReducedDeliveryCharge, setTempReducedDeliveryCharge] = useState<string>('');
+  const deliveryTierPreview = useMemo(() => describeDeliveryTierPreview({
+    deliveryCharge: tempDeliveryCharge,
+    freeDeliveryMin: tempFreeDeliveryMin,
+    reducedDeliveryMin: tempReducedDeliveryMin,
+    reducedDeliveryCharge: tempReducedDeliveryCharge,
+  }), [tempDeliveryCharge, tempFreeDeliveryMin, tempReducedDeliveryMin, tempReducedDeliveryCharge]);
   const [tempSecondaryImage, setTempSecondaryImage] = useState("");
   const [logoError, setLogoError] = useState(false);
   const [bannerErrors, setBannerErrors] = useState<Record<string, boolean>>({});
@@ -930,6 +944,8 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
         setSettingsForm(merged);
         setTempDeliveryCharge(String(merged.deliveryCharge));
         setTempFreeDeliveryMin(String(merged.freeDeliveryMin));
+        setTempReducedDeliveryMin(optionalAmountText(merged.reducedDeliveryMin));
+        setTempReducedDeliveryCharge(optionalAmountText(merged.reducedDeliveryCharge));
       } else {
         setSettings(DEFAULT_WEBSITE_SETTINGS);
         setSettingsForm(DEFAULT_WEBSITE_SETTINGS);
@@ -1839,6 +1855,8 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
       settings: settingsForm,
       deliveryCharge: tempDeliveryCharge,
       freeDeliveryMin: tempFreeDeliveryMin,
+      reducedDeliveryMin: tempReducedDeliveryMin,
+      reducedDeliveryCharge: tempReducedDeliveryCharge,
     });
     if (settingsValidation.errors.length > 0) {
       showSettingsToast('error', settingsValidation.errors[0]);
@@ -1867,7 +1885,12 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
       autoSlideSpeed: normalizeSlideSpeed(settingsForm.autoSlideSpeed),
       deliveryCharge: settingsValidation.deliveryCharge!,
       freeDeliveryMin: settingsValidation.freeDeliveryMin!,
+      reducedDeliveryMin: settingsValidation.reducedDeliveryMin ?? null,
+      reducedDeliveryCharge: settingsValidation.reducedDeliveryCharge ?? null,
     });
+    // A disabled reduced tier is stored as absent fields, never as defaults.
+    if (updatedSettings.reducedDeliveryMin === null) delete updatedSettings.reducedDeliveryMin;
+    if (updatedSettings.reducedDeliveryCharge === null) delete updatedSettings.reducedDeliveryCharge;
 
     setSavingSettings(true);
     try {
@@ -1879,6 +1902,8 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
       setSettingsForm(persistedSettings);
       setTempDeliveryCharge(String(persistedSettings.deliveryCharge));
       setTempFreeDeliveryMin(String(persistedSettings.freeDeliveryMin));
+      setTempReducedDeliveryMin(optionalAmountText(persistedSettings.reducedDeliveryMin));
+      setTempReducedDeliveryCharge(optionalAmountText(persistedSettings.reducedDeliveryCharge));
       showSettingsToast("success", "Website settings saved and verified.");
     } catch (err: any) {
       console.error("Save settings error:", err);
@@ -3391,6 +3416,8 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
 
             // Selected order for detailed pane
             const selectedOrder = orders.find(o => o.id === selectedOrderId) || filteredOrders[0];
+            // Invoice amounts come from the order record, never from current settings.
+            const selectedOrderTotals = calculateCustomerOrderTotals(selectedOrder || { items: [], totalPrice: 0 });
 
             // Pagination calculations
             const startIndex = (orderPage - 1) * ordersPerPage;
@@ -3913,13 +3940,19 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                             <div className="flex justify-between items-center text-slate-500 dark:text-slate-400">
                               <span>Cart Subtotal</span>
                               <span className="font-medium">
-                                {formatPrice(selectedOrder.totalPrice - (settings?.deliveryCharge || 350))}
+                                {formatPrice(selectedOrderTotals.itemsSubtotal)}
                               </span>
                             </div>
+                            {selectedOrderTotals.discountAmount > 0 && (
+                              <div className="flex justify-between items-center text-emerald-600 dark:text-emerald-400">
+                                <span>Coupon Discount{selectedOrder.couponCode ? ` (${selectedOrder.couponCode})` : ''}</span>
+                                <span className="font-medium">-{formatPrice(selectedOrderTotals.discountAmount)}</span>
+                              </div>
+                            )}
                             <div className="flex justify-between items-center text-slate-500 dark:text-slate-400">
                               <span>Delivery Charge</span>
                               <span className="font-medium">
-                                {formatPrice(settings?.deliveryCharge || 350)}
+                                {selectedOrderTotals.deliveryFee === 0 ? 'Free' : formatPrice(selectedOrderTotals.deliveryFee)}
                               </span>
                             </div>
                             <div className="flex justify-between items-center pt-2 border-t border-slate-100 dark:border-slate-800/80 text-sm font-extrabold text-slate-900 dark:text-white">
@@ -4824,8 +4857,9 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                     <span className="block text-[10px] font-black uppercase tracking-widest text-blue-500">Delivery Logistics</span>
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-1 text-xs">
-                        <label className="text-slate-400 font-bold block">Flat Courier Charge (LKR)</label>
+                        <label htmlFor="settings-delivery-charge" className="text-slate-400 font-bold block">Standard Delivery Charge (LKR)</label>
                         <input
+                          id="settings-delivery-charge"
                           type="number"
                           min="0"
                           step="0.01"
@@ -4835,8 +4869,9 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                         />
                       </div>
                       <div className="space-y-1 text-xs">
-                        <label className="text-slate-400 font-bold block">Free Shipping Threshold Limit (LKR)</label>
+                        <label htmlFor="settings-free-delivery-min" className="text-slate-400 font-bold block">Free Delivery Starts At (LKR)</label>
                         <input
+                          id="settings-free-delivery-min"
                           type="number"
                           min="0"
                           step="0.01"
@@ -4845,6 +4880,39 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                           className="w-full px-3 py-2 bg-slate-100/50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-800 rounded-xl focus:outline-hidden"
                         />
                       </div>
+                      <div className="space-y-1 text-xs">
+                        <label htmlFor="settings-reduced-delivery-min" className="text-slate-400 font-bold block">Reduced Delivery Starts At (LKR)</label>
+                        <input
+                          id="settings-reduced-delivery-min"
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          placeholder="Blank = off"
+                          value={tempReducedDeliveryMin}
+                          onChange={(e) => setTempReducedDeliveryMin(e.target.value)}
+                          className="w-full px-3 py-2 bg-slate-100/50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-800 rounded-xl focus:outline-hidden"
+                        />
+                      </div>
+                      <div className="space-y-1 text-xs">
+                        <label htmlFor="settings-reduced-delivery-charge" className="text-slate-400 font-bold block">Reduced Delivery Charge (LKR)</label>
+                        <input
+                          id="settings-reduced-delivery-charge"
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          placeholder="Blank = off"
+                          value={tempReducedDeliveryCharge}
+                          onChange={(e) => setTempReducedDeliveryCharge(e.target.value)}
+                          className="w-full px-3 py-2 bg-slate-100/50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-800 rounded-xl focus:outline-hidden"
+                        />
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-slate-200/60 bg-slate-50/60 p-3 text-[11px] text-slate-500 dark:border-slate-800 dark:bg-slate-900/40 dark:text-slate-400" aria-live="polite">
+                      <p className="font-bold text-slate-600 dark:text-slate-300">Delivery preview</p>
+                      {deliveryTierPreview
+                        ? <ul className="mt-1 space-y-0.5">{deliveryTierPreview.map((line) => <li key={line}>{line}</li>)}</ul>
+                        : <p className="mt-1 text-amber-600">Enter valid delivery values to see the preview.</p>}
+                      <p className="mt-2">Leave both reduced fields blank to turn the reduced delivery tier off. Delivery area charges replace the standard charge for their districts; the reduced charge never raises a cheaper area charge.</p>
                     </div>
                   </div>
 

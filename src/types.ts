@@ -229,6 +229,9 @@ export interface WebsiteSettings {
   // Shipping
   deliveryCharge: number;
   freeDeliveryMin: number;
+  /** Optional middle tier; the tier is off unless both values are set. */
+  reducedDeliveryMin?: number | null;
+  reducedDeliveryCharge?: number | null;
   deliveryAreas?: DeliveryAreaSettings[];
   currency?: 'LKR';
   businessHours?: BusinessHoursSettings;

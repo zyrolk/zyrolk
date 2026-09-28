@@ -149,14 +149,12 @@ test('delivery progress uses the resolved fee for its free and completed states'
   assert.notEqual(progressEnd, -1);
   const deliveryProgress = checkout.slice(progressStart, progressEnd);
 
-  assert.match(deliveryProgress, /\{deliveryFee\s*===\s*0\s*\?\s*<><b>Free delivery unlocked<\/b>/);
-  assert.match(deliveryProgress, /\{formatPrice\(freeDeliveryThreshold - itemsSubtotal\)\} away from free delivery/);
-  assert.match(deliveryProgress, /width:\s*`\$\{deliveryFee\s*===\s*0\s*\?\s*100\s*:\s*Math\.min\(100,\s*\(itemsSubtotal \/ freeDeliveryThreshold\) \* 100\)\}%`/);
+  assert.match(deliveryProgress, /<b>\{deliveryProgress\.headline\}<\/b><small>\{deliveryProgress\.detail\}<\/small>/);
+  assert.match(deliveryProgress, /width:\s*`\$\{deliveryProgress\.progressPercent\}%`/);
   assert.doesNotMatch(deliveryProgress, /itemsSubtotal >= freeDeliveryThreshold/);
-  assert.match(checkout, /const baseDelivery = resolveDeliveryCharge\(settings, form\.district, DEFAULT_DELIVERY_CHARGE\)/);
-  assert.equal(checkout.match(/resolveDeliveryCharge\(/g)?.length, 1);
-  assert.match(checkout, /const freeDeliveryThreshold = Math\.max\(0, settings\?\.freeDeliveryMin \?\? DEFAULT_FREE_DELIVERY_MIN\)/);
-  assert.match(checkout, /const deliveryFee = itemsSubtotal > 0 && itemsSubtotal < freeDeliveryThreshold \? baseDelivery : 0/);
+  assert.match(checkout, /const deliveryQuote = resolveDeliveryQuote\(settings, form\.district, itemsSubtotal\)/);
+  assert.match(checkout, /const deliveryFee = deliveryQuote\.deliveryFee/);
+  assert.equal(checkout.match(/resolveDeliveryQuote\(/g)?.length, 1);
 });
 
 test('premium one-page checkout includes accessible validation, focus containment, responsive layout, and reduced motion', () => {

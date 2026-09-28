@@ -1,7 +1,7 @@
 import type { WebsiteSettings } from '../../types';
 
 export const DEFAULT_DELIVERY_CHARGE = 300;
-export const DEFAULT_FREE_DELIVERY_MIN = 3500;
+export const DEFAULT_FREE_DELIVERY_MIN = 5000;
 
 export const DEFAULT_HOMEPAGE_SECTIONS: NonNullable<WebsiteSettings['homepageSections']> = {
   flashDeals: {

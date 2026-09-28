@@ -16,11 +16,7 @@ import {
 } from './checkoutModel';
 import { Order } from '../../types';
 import { commerceAnalyticsItem, trackCommerceEvent, trackPurchaseOnce } from '../../services/observability/commerceAnalytics';
-import {
-  DEFAULT_DELIVERY_CHARGE,
-  DEFAULT_FREE_DELIVERY_MIN,
-} from '../../services/settings/websiteSettings';
-import { resolveDeliveryCharge } from '../../services/settings/shippingSettings';
+import { describeDeliveryProgress, resolveDeliveryQuote } from '../../services/settings/shippingSettings';
 import { filterCommerceCartItems } from '../../services/storefront/previewCommerceGuard';
 import './premiumCheckout.css';
 
@@ -85,9 +81,9 @@ export default function PremiumCheckoutDrawer({
   const commerceCartItems = useMemo(() => filterCommerceCartItems(cartItems), [cartItems]);
   const itemsSubtotal = useMemo(() => commerceCartItems.reduce((sum, item) => sum + item.product.price * item.quantity, 0), [commerceCartItems]);
   const cartSignature = useMemo(() => getCheckoutCartSignature(commerceCartItems), [commerceCartItems]);
-  const baseDelivery = resolveDeliveryCharge(settings, form.district, DEFAULT_DELIVERY_CHARGE);
-  const freeDeliveryThreshold = Math.max(0, settings?.freeDeliveryMin ?? DEFAULT_FREE_DELIVERY_MIN);
-  const deliveryFee = itemsSubtotal > 0 && itemsSubtotal < freeDeliveryThreshold ? baseDelivery : 0;
+  const deliveryQuote = resolveDeliveryQuote(settings, form.district, itemsSubtotal);
+  const deliveryFee = deliveryQuote.deliveryFee;
+  const deliveryProgress = describeDeliveryProgress(deliveryQuote, itemsSubtotal, formatPrice);
   const discountAmount = couponQuote?.cartSignature === cartSignature ? couponQuote.discountAmount : 0;
   const grandTotal = Math.max(0, itemsSubtotal - discountAmount + deliveryFee);
 
@@ -318,7 +314,7 @@ export default function PremiumCheckoutDrawer({
           <div className="zy-checkout-section-heading"><div><small>Step 1</small><h3 id="checkout-cart-heading">Your cart</h3></div><span>{commerceCartItems.length} {commerceCartItems.length === 1 ? 'item' : 'items'}</span></div>
           {commerceCartItems.length === 0 ? <div className="zy-checkout-empty"><ShoppingBag aria-hidden="true" /><strong>Your cart is empty</strong><p>Add a product before starting checkout.</p><button type="button" onClick={onClose}>Continue shopping</button></div> : <div className="zy-checkout-items">{commerceCartItems.map(item => <article key={item.product.id}><img src={item.product.imageUrl} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" /><div><strong>{item.product.name}</strong><small>{formatPrice(item.product.price)} each</small><span><button type="button" onClick={() => onUpdateQuantity(item.product.id, Math.max(1, item.quantity - 1))} disabled={item.quantity <= 1} aria-label={`Decrease ${item.product.name}`}><Minus /></button><b aria-live="polite">{item.quantity}</b><button type="button" onClick={() => onUpdateQuantity(item.product.id, Math.min(item.product.stock, item.quantity + 1))} disabled={item.quantity >= item.product.stock} aria-label={`Increase ${item.product.name}`}><Plus /></button></span></div><aside><b>{formatPrice(item.product.price * item.quantity)}</b><button type="button" onClick={() => onRemoveItem(item.product.id)} aria-label={`Remove ${item.product.name}`}><Trash2 /></button></aside></article>)}</div>}
 
-          {commerceCartItems.length > 0 && <><div className="zy-delivery-progress"><div><Truck aria-hidden="true" /><span>{deliveryFee === 0 ? <><b>Free delivery unlocked</b><small>Your order qualifies for islandwide delivery.</small></> : <><b>{formatPrice(freeDeliveryThreshold - itemsSubtotal)} away from free delivery</b><small>Keep shopping or continue with the current delivery fee.</small></>}</span></div><i><b style={{ width: `${deliveryFee === 0 ? 100 : Math.min(100, (itemsSubtotal / freeDeliveryThreshold) * 100)}%` }} /></i></div>
+          {commerceCartItems.length > 0 && <><div className="zy-delivery-progress"><div><Truck aria-hidden="true" /><span><b>{deliveryProgress.headline}</b><small>{deliveryProgress.detail}</small></span></div><i><b style={{ width: `${deliveryProgress.progressPercent}%` }} /></i></div>
           <div className="zy-coupon-card"><div><BadgePercent aria-hidden="true" /><span><b>Have a coupon?</b><small>Codes are validated securely against the live order subtotal.</small></span></div><div><input value={couponInput} onChange={event => { setCouponInput(event.target.value.toUpperCase()); setCouponError(''); }} maxLength={40} placeholder="Enter coupon code" aria-label="Coupon code" aria-describedby={couponError ? 'coupon-error' : undefined} /><button type="button" onClick={applyCoupon} disabled={couponLoading || !couponInput.trim()}>{couponLoading ? <LoaderCircle className="is-spinning" /> : couponQuote ? 'Reapply' : 'Apply'}</button></div>{couponQuote && <p className="is-success"><Check />Coupon {couponQuote.code} applied: save {formatPrice(couponQuote.discountAmount)} <button type="button" onClick={() => { setCouponQuote(null); setCouponInput(''); }}>Remove</button></p>}{couponError && <p id="coupon-error" className="is-error" role="alert">{couponError}</p>}</div></>}
         </section>
 
@@ -337,7 +333,7 @@ export default function PremiumCheckoutDrawer({
           </div>
 
           <fieldset className="zy-payment-options"><legend>Payment method</legend><label className="is-selected"><input type="radio" name="paymentMethod" value="cod" checked readOnly /><ShieldCheck /><span><b>Cash on Delivery</b><small>Pay when your confirmed order arrives.</small></span><CheckCircle2 /></label></fieldset>
-          <aside className="zy-checkout-summary" aria-labelledby="checkout-summary-title"><h3 id="checkout-summary-title">Order summary</h3><div><span>Items subtotal</span><b>{formatPrice(itemsSubtotal)}</b></div>{discountAmount > 0 && <div className="is-discount"><span>Coupon discount</span><b>−{formatPrice(discountAmount)}</b></div>}<div><span>Delivery to {form.district}</span><b>{deliveryFee === 0 ? 'Free' : formatPrice(deliveryFee)}</b></div><div className="is-total"><span>Total payable</span><b>{formatPrice(grandTotal)}</b></div></aside>
+          <aside className="zy-checkout-summary" aria-labelledby="checkout-summary-title"><h3 id="checkout-summary-title">Order summary</h3><div><span>Items subtotal</span><b>{formatPrice(itemsSubtotal)}</b></div>{discountAmount > 0 && <div className="is-discount"><span>Coupon discount</span><b>−{formatPrice(discountAmount)}</b></div>}{deliveryProgress.showSaving && <div><span>Standard delivery</span><b><s>{formatPrice(deliveryQuote.standardCharge)}</s></b></div>}<div><span>Delivery to {form.district}</span><b>{deliveryFee === 0 ? 'Free' : formatPrice(deliveryFee)}</b></div>{deliveryProgress.showSaving && <div className="is-discount"><span>You save {formatPrice(deliveryQuote.saving)} on delivery</span></div>}<div className="is-total"><span>Total payable</span><b>{formatPrice(grandTotal)}</b></div></aside>
           {cartReconciliationNotice && <div className="zy-checkout-error" role="status" aria-live="polite">{cartReconciliationNotice}</div>}
           {checkoutError && <div className="zy-checkout-error" role="alert">{checkoutError}<small>Your cart and delivery draft are still saved.</small></div>}
           <button className="zy-place-order" type="submit" disabled={isSubmitting || commerceCartItems.length === 0} aria-busy={isSubmitting}>{isSubmitting ? <><LoaderCircle className="is-spinning" />Placing your order securely…</> : <><LockKeyhole />{requiresPriceReconfirmation ? 'Confirm updated COD total' : 'Place COD order'} · {formatPrice(grandTotal)}<ChevronRight /></>}</button>

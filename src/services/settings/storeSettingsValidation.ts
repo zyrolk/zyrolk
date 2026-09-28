@@ -4,12 +4,18 @@ export interface StoreSettingsValidationInput {
   readonly settings: WebsiteSettings;
   readonly deliveryCharge: string;
   readonly freeDeliveryMin: string;
+  /** Blank reduced fields mean the reduced delivery tier is off. */
+  readonly reducedDeliveryMin?: string;
+  readonly reducedDeliveryCharge?: string;
 }
 
 export interface StoreSettingsValidationResult {
   readonly errors: readonly string[];
   readonly deliveryCharge?: number;
   readonly freeDeliveryMin?: number;
+  /** null when the reduced delivery tier is off. */
+  readonly reducedDeliveryMin?: number | null;
+  readonly reducedDeliveryCharge?: number | null;
 }
 
 export const isHttpUrl = (value: string): boolean => {
@@ -37,10 +43,42 @@ const parseNonNegativeAmount = (value: string): number | undefined => {
   return Number.isFinite(amount) && amount >= 0 ? amount : undefined;
 };
 
+const lkr = (amount: number): string => `LKR ${amount.toLocaleString('en-LK', { maximumFractionDigits: 2 })}`;
+
+/**
+ * Admin preview of the delivery rule built from the entered values. Returns
+ * null while the entered values are incomplete or invalid.
+ */
+export const describeDeliveryTierPreview = (input: {
+  deliveryCharge: string;
+  freeDeliveryMin: string;
+  reducedDeliveryMin?: string;
+  reducedDeliveryCharge?: string;
+}): string[] | null => {
+  const charge = parseNonNegativeAmount(input.deliveryCharge);
+  const freeMin = parseNonNegativeAmount(input.freeDeliveryMin);
+  if (charge === undefined || freeMin === undefined || freeMin <= 0) return null;
+  const reducedMinText = input.reducedDeliveryMin?.trim() || '';
+  const reducedChargeText = input.reducedDeliveryCharge?.trim() || '';
+  if (!reducedMinText && !reducedChargeText) {
+    return [`Below ${lkr(freeMin)}: ${lkr(charge)}`, `${lkr(freeMin)}+: FREE`, 'Reduced delivery tier is off.'];
+  }
+  const reducedMin = parseNonNegativeAmount(reducedMinText);
+  const reducedCharge = parseNonNegativeAmount(reducedChargeText);
+  if (reducedMin === undefined || reducedCharge === undefined || reducedMin <= 0 || reducedMin >= freeMin || reducedCharge > charge) return null;
+  return [
+    `Below ${lkr(reducedMin)}: ${lkr(charge)}`,
+    `${lkr(reducedMin)} to below ${lkr(freeMin)}: ${lkr(reducedCharge)}`,
+    `${lkr(freeMin)}+: FREE`,
+  ];
+};
+
 export const validateStoreSettings = ({
   settings,
   deliveryCharge,
   freeDeliveryMin,
+  reducedDeliveryMin = '',
+  reducedDeliveryCharge = '',
 }: StoreSettingsValidationInput): StoreSettingsValidationResult => {
   const errors: string[] = [];
   const storeName = settings.storeName.trim();
@@ -76,6 +114,30 @@ export const validateStoreSettings = ({
   const parsedFreeDeliveryMin = parseNonNegativeAmount(freeDeliveryMin);
   if (parsedDeliveryCharge === undefined) errors.push('Delivery charge must be a non-negative number.');
   if (parsedFreeDeliveryMin === undefined) errors.push('Free delivery threshold must be a non-negative number.');
+  else if (parsedFreeDeliveryMin <= 0) errors.push('Free delivery threshold must be greater than zero.');
+
+  const reducedMinBlank = !reducedDeliveryMin.trim();
+  const reducedChargeBlank = !reducedDeliveryCharge.trim();
+  let parsedReducedDeliveryMin: number | null = null;
+  let parsedReducedDeliveryCharge: number | null = null;
+  if (reducedMinBlank !== reducedChargeBlank) {
+    errors.push('Reduced delivery needs both a starting amount and a charge, or leave both blank to turn it off.');
+  } else if (!reducedMinBlank) {
+    const reducedMin = parseNonNegativeAmount(reducedDeliveryMin);
+    const reducedCharge = parseNonNegativeAmount(reducedDeliveryCharge);
+    if (reducedMin === undefined || reducedMin <= 0) {
+      errors.push('Reduced delivery starting amount must be a number greater than zero.');
+    } else if (parsedFreeDeliveryMin !== undefined && reducedMin >= parsedFreeDeliveryMin) {
+      errors.push('Reduced delivery must start below the free delivery threshold.');
+    }
+    if (reducedCharge === undefined) {
+      errors.push('Reduced delivery charge must be a non-negative number.');
+    } else if (parsedDeliveryCharge !== undefined && reducedCharge > parsedDeliveryCharge) {
+      errors.push('Reduced delivery charge cannot be higher than the standard delivery charge.');
+    }
+    parsedReducedDeliveryMin = reducedMin ?? null;
+    parsedReducedDeliveryCharge = reducedCharge ?? null;
+  }
 
   if (settings.currency && settings.currency !== 'LKR') errors.push('Currency must remain LKR for the current checkout contract.');
   if (settings.storeStatus && !['open', 'closed'].includes(settings.storeStatus)) errors.push('Store status is invalid.');
@@ -109,5 +171,7 @@ export const validateStoreSettings = ({
     errors,
     deliveryCharge: parsedDeliveryCharge,
     freeDeliveryMin: parsedFreeDeliveryMin,
+    reducedDeliveryMin: parsedReducedDeliveryMin,
+    reducedDeliveryCharge: parsedReducedDeliveryCharge,
   };
 };

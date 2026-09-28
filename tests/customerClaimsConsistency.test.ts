@@ -58,17 +58,23 @@ test('Customer fallback copy contains only the canonical daily hours', () => {
   }
 });
 
-test('Fallback shipping copy matches the flat fee and inclusive threshold', () => {
+test('Fallback shipping copy matches the launch delivery tiers and inclusive thresholds', () => {
   const settings = normalizeWebsiteSettings({
     ...DEFAULT_WEBSITE_SETTINGS,
     deliveryCharge: 300,
-    freeDeliveryMin: 3500,
+    reducedDeliveryMin: 3000,
+    reducedDeliveryCharge: 150,
+    freeDeliveryMin: 5000,
   });
-  assert.equal(calculateCheckoutTotals(3499, 'Colombo', settings).deliveryFee, 300);
-  assert.equal(calculateCheckoutTotals(3500, 'Colombo', settings).deliveryFee, 0);
-  assert.match(cms, /Delivery fee is LKR 300 for orders below LKR 3,500/);
-  assert.match(cms, /Delivery is free for orders of LKR 3,500 or more/);
-  assert.doesNotMatch(cms, /LKR 350|LKR 5,000/);
+  assert.equal(calculateCheckoutTotals(2999, 'Colombo', settings).deliveryFee, 300);
+  assert.equal(calculateCheckoutTotals(3000, 'Colombo', settings).deliveryFee, 150);
+  assert.equal(calculateCheckoutTotals(4999, 'Colombo', settings).deliveryFee, 150);
+  assert.equal(calculateCheckoutTotals(5000, 'Colombo', settings).deliveryFee, 0);
+  assert.match(cms, /Delivery fee is LKR 300 for orders below LKR 3,000\./);
+  assert.match(cms, /Orders from LKR 3,000 to below LKR 5,000 qualify for LKR 150 delivery\./);
+  assert.match(cms, /Delivery is free for orders of LKR 5,000 or more\./);
+  assert.doesNotMatch(cms, /LKR 350|LKR 3,500/);
+  assert.doesNotMatch(cms, /2[–-]5 (working )?days/);
   assert.doesNotMatch(cms, /Shipping costs vary based on your district/);
   assert.doesNotMatch(cms, /orders that exceed our minimum threshold/);
 });

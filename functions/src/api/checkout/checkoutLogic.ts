@@ -10,7 +10,7 @@ export const OFFLINE_CHECKOUT_LIMIT_WINDOW_MS = 60 * 60 * 1000;
 export const OFFLINE_CHECKOUT_PHONE_LIMIT = 3;
 export const OFFLINE_CHECKOUT_NETWORK_LIMIT = 12;
 export const DEFAULT_DELIVERY_CHARGE = 300;
-export const DEFAULT_FREE_DELIVERY_MIN = 3500;
+export const DEFAULT_FREE_DELIVERY_MIN = 5000;
 export {
   COD_CONFIRMATION_WINDOW_MS,
   DEFAULT_COD_PENDING_ORDER_TTL_MS,
@@ -30,7 +30,11 @@ export interface CheckoutSettings {
   deliveryCharge?: unknown;
   freeDeliveryMin?: unknown;
   deliveryAreas?: unknown;
+  reducedDeliveryMin?: unknown;
+  reducedDeliveryCharge?: unknown;
 }
+
+export type CheckoutDeliveryTier = "none" | "standard" | "reduced" | "free";
 
 export interface CheckoutTotals {
   itemsSubtotal: number;
@@ -39,6 +43,9 @@ export interface CheckoutTotals {
   grandTotalPrice: number;
   freeDeliveryThreshold: number;
   baseDeliveryCharge: number;
+  reducedDeliveryMin: number | null;
+  reducedDeliveryCharge: number | null;
+  deliveryTier: CheckoutDeliveryTier;
 }
 
 export interface CheckoutCouponRecord {
@@ -348,34 +355,75 @@ export function validateCheckoutCartItems(
   return Array.from(consolidated.values());
 }
 
+/**
+ * Parses a stored delivery amount. Only finite, non-negative numbers (or
+ * numeric strings) are accepted; null, blanks, booleans and other values are
+ * treated as absent. The storefront mirrors this in shippingSettings.ts.
+ */
+export function parseDeliveryAmount(value: unknown): number | null {
+  const parsed = typeof value === "number"
+    ? value
+    : typeof value === "string" && value.trim() !== "" ? Number(value) : Number.NaN;
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function resolveStandardDeliveryCharge(district: string, settings: CheckoutSettings | null): number {
+  const districtKey = district.trim().toLowerCase();
+  const matchingArea = Array.isArray(settings?.deliveryAreas)
+    ? settings.deliveryAreas.find((candidate): candidate is { charge?: unknown } => {
+      if (!candidate || typeof candidate !== "object") return false;
+      const area = candidate as { isActive?: unknown; districts?: unknown };
+      return area.isActive !== false
+        && Array.isArray(area.districts)
+        && area.districts.some((value) => typeof value === "string" && value.trim().toLowerCase() === districtKey);
+    })
+    : undefined;
+  return parseDeliveryAmount(matchingArea?.charge)
+    ?? parseDeliveryAmount(settings?.deliveryCharge)
+    ?? DEFAULT_DELIVERY_CHARGE;
+}
+
+/**
+ * The reduced middle tier is enabled only by explicit settings. Missing, null,
+ * partial or inconsistent values keep the standard/free two-level behaviour.
+ */
+export function resolveReducedDeliveryTier(
+  settings: CheckoutSettings | null,
+  freeDeliveryThreshold: number,
+): { min: number; charge: number } | null {
+  const min = parseDeliveryAmount(settings?.reducedDeliveryMin);
+  const charge = parseDeliveryAmount(settings?.reducedDeliveryCharge);
+  if (min === null || charge === null || min <= 0 || min >= freeDeliveryThreshold) return null;
+  return { min, charge };
+}
+
 export function calculateCheckoutTotals(
   itemsSubtotal: number,
   district: string,
   settings: CheckoutSettings | null,
   discountAmount = 0,
 ): CheckoutTotals {
-  const districtKey = district.trim().toLowerCase();
-  const matchingArea = Array.isArray(settings?.deliveryAreas)
-    ? settings.deliveryAreas.find((candidate): candidate is { charge?: unknown; districts?: unknown } => {
-      if (!candidate || typeof candidate !== 'object') return false;
-      const area = candidate as { isActive?: unknown; districts?: unknown };
-      return area.isActive !== false && Array.isArray(area.districts) && area.districts.some((value) => typeof value === 'string' && value.trim().toLowerCase() === districtKey);
-    })
-    : undefined;
-  const configuredDeliveryCharge = matchingArea?.charge ?? settings?.deliveryCharge;
-  const parsedDeliveryCharge = Number(configuredDeliveryCharge);
-  const baseDeliveryCharge = configuredDeliveryCharge !== undefined && Number.isFinite(parsedDeliveryCharge) && parsedDeliveryCharge >= 0
-    ? parsedDeliveryCharge
-    : DEFAULT_DELIVERY_CHARGE;
+  const baseDeliveryCharge = resolveStandardDeliveryCharge(district, settings);
+  const freeDeliveryThreshold = parseDeliveryAmount(settings?.freeDeliveryMin) ?? DEFAULT_FREE_DELIVERY_MIN;
+  const reducedTier = resolveReducedDeliveryTier(settings, freeDeliveryThreshold);
 
-  const freeDeliveryThreshold = (settings && settings.freeDeliveryMin !== undefined)
-    ? Number(settings.freeDeliveryMin)
-    : DEFAULT_FREE_DELIVERY_MIN;
-
-  const isEligibleForFreeDelivery = itemsSubtotal >= freeDeliveryThreshold;
-  const deliveryFee = itemsSubtotal > 0
-    ? (isEligibleForFreeDelivery ? 0 : baseDeliveryCharge)
-    : 0;
+  // Eligibility uses the verified selling-price subtotal only: delivery and
+  // coupon adjustments never count toward a delivery threshold.
+  let deliveryTier: CheckoutDeliveryTier;
+  let deliveryFee: number;
+  if (itemsSubtotal <= 0) {
+    deliveryTier = "none";
+    deliveryFee = 0;
+  } else if (itemsSubtotal >= freeDeliveryThreshold) {
+    deliveryTier = "free";
+    deliveryFee = 0;
+  } else if (reducedTier && itemsSubtotal >= reducedTier.min) {
+    deliveryTier = "reduced";
+    deliveryFee = Math.min(reducedTier.charge, baseDeliveryCharge);
+  } else {
+    deliveryTier = "standard";
+    deliveryFee = baseDeliveryCharge;
+  }
 
   const safeDiscount = Math.min(itemsSubtotal, Math.max(0, Number(discountAmount) || 0));
 
@@ -386,6 +434,9 @@ export function calculateCheckoutTotals(
     grandTotalPrice: itemsSubtotal - safeDiscount + deliveryFee,
     freeDeliveryThreshold,
     baseDeliveryCharge,
+    reducedDeliveryMin: reducedTier?.min ?? null,
+    reducedDeliveryCharge: reducedTier?.charge ?? null,
+    deliveryTier,
   };
 }
 
