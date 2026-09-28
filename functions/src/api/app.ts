@@ -43,6 +43,14 @@ const isSupplierHubApiPath = (path: string): boolean => path.startsWith("/api/su
   || path.startsWith("/api/test-supplier")
   || path.startsWith("/api/fetch-supplier");
 
+// Mirrors Express's default case-insensitive, non-strict matching for
+// app.all("/api/checkout") so every request routed to checkout consumes its token.
+const CHECKOUT_REPLAY_PROTECTED_PATH = /^\/api\/checkout\/?$/iu;
+
+export const requiresAppCheckReplayProtection = (method: string, path: string): boolean => (
+  method === "POST" && CHECKOUT_REPLAY_PROTECTED_PATH.test(path)
+);
+
 export function createApiApp(): express.Express {
   const app = express();
   const runtimeConfig = getRuntimeConfig();
@@ -105,7 +113,16 @@ export function createApiApp(): express.Express {
       return;
     }
     try {
-      await adminAppCheck.verifyToken(token);
+      if (requiresAppCheckReplayProtection(req.method, req.path)) {
+        const verification = await adminAppCheck.verifyToken(token, { consume: true });
+        if (verification.alreadyConsumed === true) {
+          appLogger.warn("Replayed App Check token rejected.", { path: req.path, method: req.method });
+          res.status(401).json({ error: "App verification failed" });
+          return;
+        }
+      } else {
+        await adminAppCheck.verifyToken(token);
+      }
       next();
     } catch (error) {
       if (isSupplierHubApiPath(req.path)) {

@@ -37,6 +37,15 @@ export async function getAppCheckRequestHeaders(forceRefresh = false): Promise<R
   return { 'X-Firebase-AppCheck': result.token };
 }
 
+export async function getLimitedUseAppCheckRequestHeaders(): Promise<Record<string, string>> {
+  const instance = await getAppCheckInstance();
+  if (!instance) return {};
+  const { getLimitedUseToken } = await import('firebase/app-check');
+  const result = await getLimitedUseToken(instance as Parameters<typeof getLimitedUseToken>[0]);
+  if (!result.token) throw new Error('Firebase App Check did not issue a limited-use request token.');
+  return { 'X-Firebase-AppCheck': result.token };
+}
+
 export async function initializeStorefrontAppCheck(): Promise<void> {
   if (!bootstrapVerification) {
     bootstrapVerification = (async () => {

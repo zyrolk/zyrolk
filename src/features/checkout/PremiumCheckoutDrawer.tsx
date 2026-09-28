@@ -8,6 +8,7 @@ import type { CartDrawerProps } from '../../components/CartDrawer';
 import { db } from '../../firebase';
 import { fetchJson, NetworkRequestError } from '../../services/network/fetchJson';
 import { reportClientIssue } from '../../services/observability/clientDiagnostics';
+import { getLimitedUseAppCheckRequestHeaders } from '../../services/security/appCheck';
 import { CustomerAddress, SRI_LANKA_DISTRICTS, sortCustomerAddresses } from '../account/accountData';
 import {
   CheckoutErrors, CheckoutField, CheckoutFormValues, EMPTY_CHECKOUT_FORM, checkoutFormFromAddress,
@@ -239,7 +240,7 @@ export default function PremiumCheckoutDrawer({
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify({ ...payload, idempotencyKey }),
-      }, { fallbackMessage: 'Checkout is temporarily unavailable. Your cart is still saved.' });
+      }, { fallbackMessage: 'Checkout is temporarily unavailable. Your cart is still saved.', appCheckHeaders: getLimitedUseAppCheckRequestHeaders });
       if (!result.success) throw new Error(result.error || 'The order could not be placed.');
       setPlacedOrder(result.order);
       trackPurchaseOnce(result.order.id, result.order.totalPrice, 'cod', result.order.couponCode, analyticsItems);

@@ -21,6 +21,7 @@ interface FetchJsonOptions {
   timeoutMs?: number;
   fallbackMessage?: string;
   fetchImpl?: typeof fetch;
+  appCheckHeaders?: () => Promise<Record<string, string>>;
 }
 
 const extractErrorMessage = (value: unknown, fallbackMessage: string): string => {
@@ -37,7 +38,9 @@ export async function fetchJson<T>(input: RequestInfo | URL, init: RequestInit =
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const appCheckHeaders = options.fetchImpl ? {} : await getAppCheckRequestHeaders();
+    const appCheckHeaders = options.appCheckHeaders
+      ? await options.appCheckHeaders()
+      : options.fetchImpl ? {} : await getAppCheckRequestHeaders();
     const headers = new Headers(init.headers);
     Object.entries(appCheckHeaders).forEach(([key, value]) => headers.set(key, value));
     const response = await fetchImpl(input, { ...init, headers, signal: controller.signal });
