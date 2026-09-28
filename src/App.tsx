@@ -37,6 +37,7 @@ import {
 import { isProductExplicitlyActive } from './services/storefront/productAvailability';
 import { resolveCustomerPromotion } from './services/products/promotionPolicy';
 import { canUseProductInCommerce, filterCommerceCartItems, filterCommerceProductIds, filterCommerceProducts } from './services/storefront/previewCommerceGuard';
+import { toFirestoreCartSnapshot } from './services/storefront/cartCloudSnapshot';
 import { buildStorefrontUrl, parseStorefrontRoute } from './services/navigation/storefrontRoutes';
 import { formatCategoryDisplayName, resolveCategoryDisplayName, selectExploreMoreProducts } from './services/storefront/launchMerchandising';
 
@@ -674,10 +675,11 @@ export default function App() {
     const syncCartToFirestore = async () => {
       if (user && reconciliationController.canPersist(true) && cartLoadedForUser === user.uid) {
         try {
+          const firestoreCart = toFirestoreCartSnapshot(commerceCart);
           const userRef = doc(db, "users", user.uid);
           const userDoc = await getDoc(userRef);
           if (userDoc.exists()) {
-            await updateDoc(userRef, { cart: commerceCart });
+            await updateDoc(userRef, { cart: firestoreCart });
           } else {
             await setDoc(userRef, {
               uid: user.uid,
@@ -685,7 +687,7 @@ export default function App() {
               displayName: user.displayName || user.email?.split('@')[0] || '',
               role: 'customer',
               createdAt: new Date().toISOString(),
-              cart: commerceCart
+              cart: firestoreCart
             });
           }
         } catch (e: any) {

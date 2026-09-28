@@ -32,10 +32,11 @@ test('preview cart items are removed before local or Firestore cart persistence'
   assert.match(appSource, /filterCommerceCartItems\(cart\)/u);
   assert.match(appSource, /const commerceWishlist = filterCommerceProducts\(wishlist\)/u);
   assert.match(appSource, /const commerceRecentlyViewedIds = filterCommerceProductIds\(recentlyViewedProductIds\)/u);
-  assert.match(appSource, /updateDoc\(userRef, \{ cart: commerceCart \}\)/u);
+  assert.match(appSource, /const firestoreCart = toFirestoreCartSnapshot\(commerceCart\)/u);
+  assert.match(appSource, /updateDoc\(userRef, \{ cart: firestoreCart \}\)/u);
   assert.match(appSource, /updateDoc\(userRef, \{ wishlist: commerceWishlist \}\)/u);
   assert.match(appSource, /updateDoc\(userRef, \{ recentlyViewedProductIds: commerceRecentlyViewedIds \}\)/u);
-  assert.match(appSource, /cart: commerceCart/u);
+  assert.match(appSource, /cart: firestoreCart/u);
 });
 
 test('preview items cannot reach cart entry or checkout payloads', () => {
