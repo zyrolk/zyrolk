@@ -297,6 +297,26 @@ export function supplierOwnsOrder(order: Record<string, unknown>, supplierId: st
     || (Array.isArray(order.supplierIds) && order.supplierIds.includes(supplierId));
 }
 
+export function supplierOrderIsCancelled(order: Record<string, unknown>): boolean {
+  return text(order.status, 30).toLocaleLowerCase() === "cancelled";
+}
+
+export function deriveSupplierOrderNotifications(
+  orders: Array<Record<string, unknown>>,
+  notifiedOrderIds: ReadonlySet<string>,
+): Array<Record<string, unknown>> {
+  return orders
+    .filter((order) => !supplierOrderIsCancelled(order) && !notifiedOrderIds.has(String(order.id)))
+    .map((order) => ({
+      id: `order-${order.id}`,
+      type: "new_order",
+      title: "Assigned order",
+      message: `Order ${order.orderNumber} is assigned to your account.`,
+      isRead: false,
+      createdAt: order.createdAt,
+    }));
+}
+
 export function calculateSupplierSummary(
   products: Array<Record<string, unknown>>,
   requests: Array<Record<string, unknown>>,

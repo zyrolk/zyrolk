@@ -36,6 +36,7 @@ import { buildSupplierQueueLifecycle } from "../../scheduled/supplierReviewQueue
 import {
   assertNoUnresolvedSupplierStockProposal,
   calculateSupplierSummary,
+  deriveSupplierOrderNotifications,
   normalizeProductFingerprint,
   normalizeSupplierSku,
   sanitizeSupplierProductDraft,
@@ -634,7 +635,7 @@ export function registerSupplierPortalRoutes(app: express.Express, dependencies:
     }));
     const notifiedOrderIds = new Set(storedNotifications.map((notification) => notification.orderId).filter(Boolean));
     const derivedNotifications = [
-      ...orders.filter((order) => !notifiedOrderIds.has(String(order.id))).map((order) => ({ id: `order-${order.id}`, type: "new_order", title: "Assigned order", message: `Order ${order.orderNumber} is assigned to your account.`, isRead: false, createdAt: order.createdAt })),
+      ...deriveSupplierOrderNotifications(orders, notifiedOrderIds),
       ...products.filter((product) => Number(product.stock || 0) <= Number(product.lowStockLimit || 5))
         .map((product) => ({ id: `stock-${product.id}`, type: "low_stock", title: "Low stock", message: `${product.name} has ${product.stock} units remaining.`, isRead: false, createdAt: product.updatedAt })),
     ];
