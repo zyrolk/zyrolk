@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import type { SupplierOutboundResponse } from '../functions/src/api/security/supplierOutboundRequest';
@@ -9,7 +10,12 @@ import {
   supplierOperationalAlertId,
   transitionSupplierOperationalAlert,
 } from '../functions/src/api/suppliers/supplierOperationalAlerts';
-import { evaluateSupplierOperationalAlerts } from '../functions/src/scheduled/supplierOperationalAlerts';
+import {
+  evaluateSupplierOperationalAlerts,
+  runWithConcurrencyLimit,
+  SUPPLIER_OPERATIONAL_ALERT_REPORT_CONCURRENCY,
+  SUPPLIER_QUEUE_AGE_STATES,
+} from '../functions/src/scheduled/supplierOperationalAlerts';
 import type {
   SupplierManagedMediaAsset,
   SupplierMediaPipelineDependencies,
@@ -21,6 +27,7 @@ import {
 import {
   buildSupplierQueueLifecycle,
   ensureSupplierReviewQueueManagedMedia,
+  getSupplierReviewQueueMetrics,
   processSupplierReviewQueueItem,
   resolveSupplierReviewQueueUpsertLifecycle,
   supplierReviewQueueSourceImageUrls,
@@ -1398,4 +1405,385 @@ test('required failure producers use the shared alert engine and lifecycle remai
   assert.match(routes, /supplier-operations\/alerts\/:alertId\/action/u);
   assert.match(rules, /match \/supplier_operational_alerts\/\{docId\}[\s\S]*?allow create, update, delete: if false/u);
   assert.match(rules, /match \/supplier_operational_alert_events\/\{docId\}[\s\S]*?allow create, update, delete: if false/u);
+});
+
+type QueryFilter = { field: string; operator: string; value: unknown };
+
+const createQueryableFirestore = (collections: Record<string, Record<string, StoredDocument>>) => {
+  const entriesFor = (collectionName: string) => Object.entries(collections[collectionName] || {});
+  const queryFor = (
+    collectionName: string,
+    filters: QueryFilter[] = [],
+    order?: { field: string; direction: string },
+    take?: number,
+  ): Record<string, unknown> => {
+    const resolve = () => {
+      const matches = entriesFor(collectionName).filter(([, record]) => filters.every(({ field, operator, value }) => {
+        if (operator === '==') return record[field] === value;
+        if (operator === 'in') return Array.isArray(value) && value.includes(record[field]);
+        return false;
+      }));
+      if (order) {
+        matches.sort(([, left], [, right]) => {
+          const comparison = String(left[order.field] ?? '').localeCompare(String(right[order.field] ?? ''));
+          return order.direction === 'desc' ? -comparison : comparison;
+        });
+      }
+      return matches.slice(0, take);
+    };
+    return {
+      where: (field: string, operator: string, value: unknown) => queryFor(collectionName, [...filters, { field, operator, value }], order, take),
+      orderBy: (field: string, direction = 'asc') => queryFor(collectionName, filters, { field, direction }, take),
+      limit: (value: number) => queryFor(collectionName, filters, order, value),
+      count: () => ({ get: async () => ({ data: () => ({ count: resolve().length }) }) }),
+      get: async () => {
+        const matches = resolve();
+        return { docs: matches.map(([id, record]) => ({ id, data: () => record })), size: matches.length };
+      },
+    };
+  };
+  return {
+    collection: (collectionName: string) => ({
+      ...queryFor(collectionName),
+      doc: (id: string) => ({
+        get: async () => {
+          const record = collections[collectionName]?.[id];
+          return { exists: Boolean(record), data: () => record };
+        },
+      }),
+    }),
+  };
+};
+
+const QUEUE_AGE_NOW = Date.UTC(2026, 8, 28, 7, 0, 0);
+const queueItemAged = (queueState: string, ageMs: number): StoredDocument => ({
+  queueState,
+  queueCreatedAt: new Date(QUEUE_AGE_NOW - ageMs).toISOString(),
+});
+const TWO_HOURS = 2 * 60 * 60 * 1000;
+const FIVE_MINUTES = 5 * 60 * 1000;
+
+const monitorReports = async (queueItems: Record<string, StoredDocument>) => {
+  const reports: Array<Record<string, unknown>> = [];
+  const result = await evaluateSupplierOperationalAlerts(
+    createQueryableFirestore({ supplier_review_queue: queueItems }) as never,
+    QUEUE_AGE_NOW,
+    async (input) => { reports.push(input as unknown as Record<string, unknown>); },
+  );
+  return { reports, result };
+};
+
+const workerSeesQueueDelay = async (queueItems: Record<string, StoredDocument>) => {
+  const metrics = await getSupplierReviewQueueMetrics(
+    createQueryableFirestore({ supplier_review_queue: queueItems }) as never,
+    QUEUE_AGE_NOW,
+  );
+  return (metrics.oldestQueueAgeMs || 0) >= 60 * 60 * 1000;
+};
+
+test('review_pending-only backlog does not raise a queue age alert', async () => {
+  const { reports, result } = await monitorReports({
+    'awaiting-admin-1': queueItemAged('review_pending', 22 * 24 * 60 * 60 * 1000),
+    'awaiting-admin-2': queueItemAged('review_pending', TWO_HOURS),
+  });
+  assert.equal(result.queueAgeExceeded, false);
+  assert.equal(reports.some((report) => report.category === 'queue_age_threshold_exceeded'), false);
+  assert.deepEqual([...SUPPLIER_QUEUE_AGE_STATES], ['queued', 'retryable_failure']);
+});
+
+test('genuinely old queued or retryable_failure items still raise a queue age alert', async () => {
+  for (const queueState of ['queued', 'retryable_failure']) {
+    const { reports, result } = await monitorReports({
+      'awaiting-admin': queueItemAged('review_pending', 10 * TWO_HOURS),
+      [`old-${queueState}`]: queueItemAged(queueState, TWO_HOURS),
+    });
+    assert.equal(result.queueAgeExceeded, true, queueState);
+    const queueAgeReports = reports.filter((report) => report.category === 'queue_age_threshold_exceeded');
+    assert.equal(queueAgeReports.length, 1, queueState);
+    assert.equal((queueAgeReports[0].technicalMetadata as StoredDocument).oldestQueueItemId, `old-${queueState}`);
+  }
+});
+
+test('monitor and queue worker agree on queue delay for the same queue data', async () => {
+  const scenarios: Array<{ name: string; items: Record<string, StoredDocument>; delayed: boolean }> = [
+    { name: 'empty', items: {}, delayed: false },
+    { name: 'review_pending only', items: { a: queueItemAged('review_pending', 10 * TWO_HOURS) }, delayed: false },
+    {
+      name: 'old review_pending with fresh queued',
+      items: { a: queueItemAged('review_pending', 10 * TWO_HOURS), b: queueItemAged('queued', FIVE_MINUTES) },
+      delayed: false,
+    },
+    { name: 'old queued', items: { a: queueItemAged('queued', TWO_HOURS) }, delayed: true },
+    { name: 'old retryable_failure', items: { a: queueItemAged('retryable_failure', TWO_HOURS) }, delayed: true },
+    {
+      name: 'old processing and dead_letter are not queue delay',
+      items: { a: queueItemAged('processing', TWO_HOURS), b: queueItemAged('dead_letter', TWO_HOURS) },
+      delayed: false,
+    },
+  ];
+  for (const scenario of scenarios) {
+    const { result } = await monitorReports(scenario.items);
+    assert.equal(result.queueAgeExceeded, scenario.delayed, `monitor: ${scenario.name}`);
+    assert.equal(await workerSeesQueueDelay(scenario.items), scenario.delayed, `worker: ${scenario.name}`);
+  }
+});
+
+test('a queue age alert resolved by the worker is not reopened by review_pending items', async () => {
+  const { db, documents } = createFakeFirestore();
+  const input = { category: 'queue_age_threshold_exceeded' as const, severity: 'critical' as const, dedupeScope: 'supplier-review-processing' };
+  const opened = await recordSupplierOperationalAlert(db as never, { ...input, now: QUEUE_AGE_NOW - TWO_HOURS }, { notificationEmail: 'admin@zyro.lk' });
+  await transitionSupplierOperationalAlert(db as never, opened.alertId, 'resolved', undefined, QUEUE_AGE_NOW - FIVE_MINUTES);
+
+  const items = { 'awaiting-admin': queueItemAged('review_pending', 10 * TWO_HOURS) };
+  assert.equal(await workerSeesQueueDelay(items), false);
+  for (let run = 0; run < 3; run += 1) {
+    await evaluateSupplierOperationalAlerts(
+      createQueryableFirestore({ supplier_review_queue: items }) as never,
+      QUEUE_AGE_NOW + run * FIVE_MINUTES,
+      (report) => recordSupplierOperationalAlert(db as never, report, { notificationEmail: 'admin@zyro.lk' }),
+    );
+  }
+  const alert = documents.get(`supplier_operational_alerts/${opened.alertId}`)!;
+  assert.equal(alert.status, 'resolved');
+  assert.equal(alert.incidentGeneration, 1);
+  assert.equal(collectionDocuments(documents, 'supplier_operational_alert_events')
+    .filter((event) => event.event === 'reopened').length, 0);
+  assert.equal(collectionDocuments(documents, 'mail').length, 1);
+  assert.equal(collectionDocuments(documents, 'notification_outbox').length, 1);
+});
+
+test('an open queue age alert re-detected on the next run keeps its generation and sends no new email', async () => {
+  const { db, documents } = createFakeFirestore();
+  const items = { 'old-queued': queueItemAged('queued', TWO_HOURS) };
+  for (let run = 0; run < 3; run += 1) {
+    await evaluateSupplierOperationalAlerts(
+      createQueryableFirestore({ supplier_review_queue: items }) as never,
+      QUEUE_AGE_NOW + run * FIVE_MINUTES,
+      (report) => recordSupplierOperationalAlert(db as never, report, { notificationEmail: 'admin@zyro.lk' }),
+    );
+  }
+  const alerts = collectionDocuments(documents, 'supplier_operational_alerts');
+  assert.equal(alerts.length, 1);
+  assert.equal(alerts[0].status, 'open');
+  assert.equal(alerts[0].incidentGeneration, 1);
+  assert.equal(alerts[0].occurrenceCount, 3);
+  assert.equal(collectionDocuments(documents, 'supplier_operational_alert_events').length, 1);
+  assert.equal(collectionDocuments(documents, 'notification_outbox').length, 1);
+  assert.equal(collectionDocuments(documents, 'mail').length, 1);
+});
+
+test('a genuine queue delay recurrence after resolution reopens exactly once with one new notification', async () => {
+  const { db, documents } = createFakeFirestore();
+  const report = (input: Parameters<typeof recordSupplierOperationalAlert>[1]) => recordSupplierOperationalAlert(
+    db as never,
+    input,
+    { notificationEmail: 'admin@zyro.lk' },
+  );
+  const oldQueued = { 'old-queued': queueItemAged('queued', TWO_HOURS) };
+  await evaluateSupplierOperationalAlerts(createQueryableFirestore({ supplier_review_queue: oldQueued }) as never, QUEUE_AGE_NOW, report);
+  const [alertId] = [...documents.keys()]
+    .filter((key) => key.startsWith('supplier_operational_alerts/'))
+    .map((key) => key.split('/')[1]);
+  await transitionSupplierOperationalAlert(db as never, alertId, 'resolved', undefined, QUEUE_AGE_NOW + 1_000);
+
+  const oldRetryable = { 'old-retryable': queueItemAged('retryable_failure', TWO_HOURS) };
+  await evaluateSupplierOperationalAlerts(createQueryableFirestore({ supplier_review_queue: oldRetryable }) as never, QUEUE_AGE_NOW + FIVE_MINUTES, report);
+  await evaluateSupplierOperationalAlerts(createQueryableFirestore({ supplier_review_queue: oldRetryable }) as never, QUEUE_AGE_NOW + 2 * FIVE_MINUTES, report);
+
+  const alert = documents.get(`supplier_operational_alerts/${alertId}`)!;
+  assert.equal(alert.status, 'open');
+  assert.equal(alert.incidentGeneration, 2);
+  const events = collectionDocuments(documents, 'supplier_operational_alert_events').map((event) => event.event).sort();
+  assert.deepEqual(events, ['opened', 'reopened', 'resolved']);
+  assert.equal(collectionDocuments(documents, 'notification_outbox').length, 2);
+  assert.equal(collectionDocuments(documents, 'mail').length, 2);
+});
+
+const monitorItemsForWorkBound = () => {
+  const items: Record<string, StoredDocument> = { 'old-queued': queueItemAged('queued', TWO_HOURS) };
+  for (let index = 0; index < 100; index += 1) {
+    items[`dead-letter-${index}`] = {
+      queueState: 'dead_letter',
+      queueCreatedAt: new Date(QUEUE_AGE_NOW - index).toISOString(),
+      supplierId: 'dropex',
+    };
+    items[`media-failed-${index}`] = {
+      queueState: 'review_pending',
+      queueCreatedAt: new Date(QUEUE_AGE_NOW - index).toISOString(),
+      supplierId: 'dropex',
+      mediaStatus: 'failed',
+      managedMedia: [],
+      mediaFailures: [{ reason: 'socket hang up', retryable: true }],
+      supplierSnapshot: { supplierId: 'dropex', imageUrls: [`https://supplier.example/${index}.png`] },
+    };
+  }
+  return items;
+};
+
+test('201 alert reports run with bounded concurrency capped at 10 instead of serially', async () => {
+  let inFlight = 0;
+  let maxInFlight = 0;
+  let completed = 0;
+  const delayMs = 20;
+  const startedAt = Date.now();
+  const result = await evaluateSupplierOperationalAlerts(
+    createQueryableFirestore({ supplier_review_queue: monitorItemsForWorkBound() }) as never,
+    QUEUE_AGE_NOW,
+    async () => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      inFlight -= 1;
+      completed += 1;
+    },
+  );
+  const elapsedMs = Date.now() - startedAt;
+
+  assert.equal(result.detected, 201);
+  assert.equal(completed, 201);
+  assert.equal(SUPPLIER_OPERATIONAL_ALERT_REPORT_CONCURRENCY, 10);
+  assert.equal(maxInFlight, 10);
+  assert.equal(inFlight, 0);
+  assert.ok(elapsedMs < (201 * delayMs) / 2, `201 reports took ${elapsedMs}ms; serial execution would need at least ${201 * delayMs}ms`);
+
+  const monitor = readFileSync('functions/src/scheduled/supplierOperationalAlerts.ts', 'utf8');
+  assert.doesNotMatch(monitor, /for \(const alert of alerts\) await report/u);
+  assert.match(monitor, /runWithConcurrencyLimit\(alerts, SUPPLIER_OPERATIONAL_ALERT_REPORT_CONCURRENCY/u);
+});
+
+test('bounded concurrency helper never exceeds its cap for any batch size', async () => {
+  for (const size of [0, 1, 9, 10, 11, 201, 503]) {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const seen: number[] = [];
+    await runWithConcurrencyLimit(Array.from({ length: size }, (_, index) => index), 10, async (item) => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((resolve) => setImmediate(resolve));
+      seen.push(item);
+      inFlight -= 1;
+    });
+    assert.equal(seen.length, size, `size ${size}`);
+    assert.deepEqual([...seen].sort((left, right) => left - right), Array.from({ length: size }, (_, index) => index));
+    assert.equal(maxInFlight, Math.min(size, 10), `size ${size}`);
+  }
+});
+
+test('one failed alert report fails the run after every other report settles', async () => {
+  const unhandled: unknown[] = [];
+  const onUnhandled = (reason: unknown) => { unhandled.push(reason); };
+  process.on('unhandledRejection', onUnhandled);
+  try {
+    let settled = 0;
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const failure = new Error('forced alert transaction failure');
+    await assert.rejects(
+      () => evaluateSupplierOperationalAlerts(
+        createQueryableFirestore({ supplier_review_queue: monitorItemsForWorkBound() }) as never,
+        QUEUE_AGE_NOW,
+        async (input) => {
+          inFlight += 1;
+          maxInFlight = Math.max(maxInFlight, inFlight);
+          try {
+            await new Promise((resolve) => setImmediate(resolve));
+            if (input.queueItemId === 'dead-letter-3') throw failure;
+            settled += 1;
+          } finally {
+            inFlight -= 1;
+          }
+        },
+      ),
+      (error: unknown) => {
+        assert.ok(error instanceof AggregateError);
+        assert.deepEqual(error.errors, [failure]);
+        assert.match(error.message, /1 of 201 supplier operational alert reports failed: forced alert transaction failure/u);
+        return true;
+      },
+    );
+    assert.equal(settled, 200);
+    assert.equal(inFlight, 0);
+    assert.ok(maxInFlight <= 10);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(unhandled, []);
+  } finally {
+    process.off('unhandledRejection', onUnhandled);
+  }
+});
+
+const createAtomicFakeFirestore = (initial: Record<string, StoredDocument> = {}) => {
+  const documents = new Map<string, StoredDocument>(Object.entries(initial));
+  const reference = (collectionName: string, id: string) => ({ collectionName, id, key: `${collectionName}/${id}` });
+  type Reference = ReturnType<typeof reference>;
+  const db = {
+    collection: (collectionName: string) => ({ doc: (id: string) => reference(collectionName, id) }),
+    runTransaction: async <T>(operation: (transaction: Record<string, unknown>) => Promise<T>) => {
+      const staged = new Map<string, StoredDocument>();
+      const result = await operation({
+        get: async (documentReference: Reference) => ({
+          exists: documents.has(documentReference.key),
+          id: documentReference.id,
+          data: () => documents.get(documentReference.key),
+        }),
+        set: (documentReference: Reference, data: StoredDocument, options?: { merge?: boolean }) => {
+          const base = staged.get(documentReference.key) || documents.get(documentReference.key) || {};
+          staged.set(documentReference.key, options?.merge ? { ...base, ...data } : data);
+        },
+        create: (documentReference: Reference, data: StoredDocument) => {
+          if (documents.has(documentReference.key) || staged.has(documentReference.key)) {
+            throw new Error(`Document ${documentReference.key} already exists.`);
+          }
+          staged.set(documentReference.key, data);
+        },
+      });
+      for (const [key, value] of staged) documents.set(key, value);
+      return result;
+    },
+  };
+  return { db, documents };
+};
+
+test('a failed alert transaction writes nothing and a retry of the same generation cannot duplicate email', async () => {
+  const recipient = 'admin@zyro.lk';
+  const failingInput = {
+    category: 'dead_letter_created' as const,
+    severity: 'critical' as const,
+    supplierId: 'dropex',
+    queueItemId: 'dead-letter-3',
+  };
+  const failingAlertId = supplierOperationalAlertId(failingInput);
+  const generationOneDeliveryId = createHash('sha256')
+    .update(`supplier-alert:${failingAlertId}:1:email:${recipient}`)
+    .digest('hex');
+  const { db, documents } = createAtomicFakeFirestore({
+    [`mail/${generationOneDeliveryId}`]: { to: [recipient], metadata: { alertId: failingAlertId } },
+  });
+
+  await assert.rejects(
+    () => evaluateSupplierOperationalAlerts(
+      createQueryableFirestore({ supplier_review_queue: monitorItemsForWorkBound() }) as never,
+      QUEUE_AGE_NOW,
+      (report) => recordSupplierOperationalAlert(db as never, report, { notificationEmail: recipient }),
+    ),
+    (error: unknown) => error instanceof AggregateError && error.errors.length === 1,
+  );
+
+  assert.equal(documents.has(`supplier_operational_alerts/${failingAlertId}`), false);
+  assert.equal(collectionDocuments(documents, 'supplier_operational_alert_events')
+    .some((event) => event.alertId === failingAlertId), false);
+  assert.equal(documents.has(`notification_outbox/${generationOneDeliveryId}`), false);
+  assert.equal(collectionDocuments(documents, 'mail').filter((mail) => (mail.metadata as StoredDocument)?.alertId === failingAlertId).length, 1);
+  assert.equal(collectionDocuments(documents, 'supplier_operational_alerts').length, 200);
+  assert.equal(collectionDocuments(documents, 'notification_outbox').length, 200);
+  assert.equal(collectionDocuments(documents, 'mail').length, 201);
+
+  await assert.rejects(() => evaluateSupplierOperationalAlerts(
+    createQueryableFirestore({ supplier_review_queue: monitorItemsForWorkBound() }) as never,
+    QUEUE_AGE_NOW + FIVE_MINUTES,
+    (report) => recordSupplierOperationalAlert(db as never, report, { notificationEmail: recipient }),
+  ));
+  assert.equal(collectionDocuments(documents, 'notification_outbox').length, 200);
+  assert.equal(collectionDocuments(documents, 'mail').length, 201);
+  const retried = collectionDocuments(documents, 'supplier_operational_alerts');
+  assert.equal(retried.every((alert) => alert.incidentGeneration === 1 && alert.occurrenceCount === 2), true);
 });

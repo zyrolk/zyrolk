@@ -11,6 +11,9 @@ import { classifySupplierMediaReadiness } from "../api/suppliers/supplierMediaRe
 const DEFAULT_ALERT_MONITOR_SCHEDULE = "every 5 minutes";
 const DEFAULT_QUEUE_AGE_THRESHOLD_MS = 60 * 60 * 1000;
 const MONITOR_QUERY_LIMIT = 100;
+export const SUPPLIER_OPERATIONAL_ALERT_REPORT_CONCURRENCY = 10;
+// Must match getSupplierReviewQueueMetrics, which the queue worker uses to resolve this alert.
+export const SUPPLIER_QUEUE_AGE_STATES = ["queued", "retryable_failure"] as const;
 
 export const SUPPLIER_OPERATIONAL_ALERT_MONITOR_SCHEDULE = String(
   process.env.SUPPLIER_OPERATIONAL_ALERT_MONITOR_SCHEDULE || DEFAULT_ALERT_MONITOR_SCHEDULE,
@@ -35,6 +38,31 @@ const mediaFailureReason = (record: Record<string, unknown>): string => {
   }
   return String(record.lastFailureReason || "");
 };
+
+export async function runWithConcurrencyLimit<T>(
+  items: readonly T[],
+  limit: number,
+  worker: (item: T) => Promise<unknown>,
+): Promise<void> {
+  const failures: unknown[] = [];
+  let nextIndex = 0;
+  const lane = async () => {
+    while (nextIndex < items.length) {
+      const item = items[nextIndex];
+      nextIndex += 1;
+      try {
+        await worker(item);
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, lane));
+  if (failures.length > 0) {
+    const firstMessage = failures[0] instanceof Error ? failures[0].message : String(failures[0]);
+    throw new AggregateError(failures, `${failures.length} of ${items.length} supplier operational alert reports failed: ${firstMessage}`);
+  }
+}
 
 export interface SupplierOperationalAlertEvaluationResult {
   detected: number;
@@ -62,7 +90,7 @@ export async function evaluateSupplierOperationalAlerts(
       .limit(MONITOR_QUERY_LIMIT)
       .get(),
     db.collection("supplier_review_queue")
-      .where("queueState", "in", ["queued", "review_pending", "retryable_failure"])
+      .where("queueState", "in", [...SUPPLIER_QUEUE_AGE_STATES])
       .orderBy("queueCreatedAt", "asc")
       .limit(1)
       .get(),
@@ -213,7 +241,7 @@ export async function evaluateSupplierOperationalAlerts(
     }
   }
 
-  for (const alert of alerts) await report({ ...alert, now });
+  await runWithConcurrencyLimit(alerts, SUPPLIER_OPERATIONAL_ALERT_REPORT_CONCURRENCY, (alert) => report({ ...alert, now }));
   return {
     detected: alerts.length,
     supplierFailures: supplierSnapshot.size,
