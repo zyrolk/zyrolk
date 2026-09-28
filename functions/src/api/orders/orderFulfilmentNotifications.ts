@@ -58,6 +58,13 @@ export const validNotificationEmail = (value: unknown): string => {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(email) && email !== "guest@zyro.lk" ? email : "";
 };
 
+export const orderHasCustomerAccount = (order: FirebaseFirestore.DocumentData | undefined): boolean => {
+  const customerUid = typeof order?.customerUid === "string" ? order.customerUid.trim() : "";
+  return Boolean(customerUid) && customerUid !== "guest";
+};
+
+export const GUEST_ORDER_UPDATE_GUIDANCE = "Keep your Order Number for reference. For order updates or tracking help, contact Zyro.lk customer support.";
+
 export const fulfilmentEmailNotificationsEnabled = (settings: FirebaseFirestore.DocumentData | undefined): boolean => (
   settings?.emailNotificationsEnabled !== false && settings?.orderNotificationsEnabled !== false
 );
@@ -207,6 +214,7 @@ export function createCustomerShipmentEmail(input: {
   orderNumber: string;
   groupId: string;
   customerEmail: unknown;
+  customerHasAccount: boolean;
   courierName: string;
   trackingNumber: string;
   trackingUrl: string | null;
@@ -218,12 +226,13 @@ export function createCustomerShipmentEmail(input: {
   const safeUrl = typeof input.trackingUrl === "string" && /^https:\/\//u.test(input.trackingUrl) ? input.trackingUrl : null;
   const urlText = safeUrl ? ` Track securely: ${safeUrl}` : "";
   const urlHtml = safeUrl ? `<p><a href="${escapeNotificationHtml(safeUrl)}">Track package</a></p>` : "";
+  const guidance = input.customerHasAccount ? "Check My Orders for the latest status." : GUEST_ORDER_UPDATE_GUIDANCE;
   enqueueTransactionalEmail(input.transaction, input.db, input.eventId, input.orderId, {
     to: validNotificationEmail(input.customerEmail),
     kind: "customer_fulfilment_shipped",
     subject: `Order ${input.orderNumber}: shipment dispatched`,
-    text: `A shipment for order ${input.orderNumber} is on the way. Items: ${summary}. Courier: ${input.courierName}. Tracking number: ${input.trackingNumber}.${urlText} Check My Orders for the latest status.`,
-    html: `<p>A shipment for order <strong>${escapeNotificationHtml(input.orderNumber)}</strong> is on the way.</p><p>Items: ${escapeNotificationHtml(summary)}</p><p>Courier: <strong>${escapeNotificationHtml(input.courierName)}</strong><br/>Tracking number: <strong>${escapeNotificationHtml(input.trackingNumber)}</strong></p>${urlHtml}<p>Check My Orders for the latest status.</p>`,
+    text: `A shipment for order ${input.orderNumber} is on the way. Items: ${summary}. Courier: ${input.courierName}. Tracking number: ${input.trackingNumber}.${urlText} ${guidance}`,
+    html: `<p>A shipment for order <strong>${escapeNotificationHtml(input.orderNumber)}</strong> is on the way.</p><p>Items: ${escapeNotificationHtml(summary)}</p><p>Courier: <strong>${escapeNotificationHtml(input.courierName)}</strong><br/>Tracking number: <strong>${escapeNotificationHtml(input.trackingNumber)}</strong></p>${urlHtml}<p>${escapeNotificationHtml(guidance)}</p>`,
   }, input.groupId);
 }
 

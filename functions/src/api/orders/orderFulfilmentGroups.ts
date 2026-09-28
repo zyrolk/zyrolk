@@ -10,6 +10,7 @@ import {
   createCustomerShipmentEmail,
   createSupplierAssignmentNotification,
   fulfilmentEmailNotificationsEnabled,
+  orderHasCustomerAccount,
   projectFulfilmentNotificationLines,
 } from "./orderFulfilmentNotifications";
 
@@ -757,6 +758,7 @@ export async function recordOrderFulfilmentTracking(input: {
       orderNumber: cleanText(order.orderNumber, 80) || orderId,
       groupId,
       customerEmail: order.customerEmail,
+      customerHasAccount: orderHasCustomerAccount(order),
       courierName: tracking.courierName,
       trackingNumber: tracking.trackingNumber,
       trackingUrl: tracking.trackingUrl,

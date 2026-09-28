@@ -5,7 +5,9 @@ import { appLogger } from "../api/logging";
 import {
   ORDER_EMAIL_MAX_ATTEMPTS, projectOrderEmailDelivery, safeOrderEmailFailure,
 } from "../api/orders/orderNotificationLogic";
-import { enqueueTransactionalEmail, fulfilmentNotificationId } from "../api/orders/orderFulfilmentNotifications";
+import {
+  enqueueTransactionalEmail, fulfilmentNotificationId, GUEST_ORDER_UPDATE_GUIDANCE, orderHasCustomerAccount,
+} from "../api/orders/orderFulfilmentNotifications";
 
 const ADMIN_EMAIL = "zyrolkofficial@gmail.com";
 
@@ -70,17 +72,20 @@ function paymentEmail(order: FirebaseFirestore.DocumentData, admin = false): Ema
   };
 }
 
-function statusEmail(order: FirebaseFirestore.DocumentData): EmailMessage | null {
+export function statusEmail(order: FirebaseFirestore.DocumentData): EmailMessage | null {
   const to = validEmail(order.customerEmail);
   if (!to) return null;
   const reference = clean(order.orderNumber, 80) || clean(order.id, 80);
   const status = clean(order.status, 40) || "updated";
+  const guidance = orderHasCustomerAccount(order)
+    ? "Sign in to My Orders for the latest tracking information."
+    : GUEST_ORDER_UPDATE_GUIDANCE;
   return {
     to,
     kind: "order_status",
     subject: `Order ${reference}: ${status}`,
-    text: `Your Zyro.lk order ${reference} is now ${status}. Sign in to My Orders for the latest tracking information.`,
-    html: `<p>Your Zyro.lk order <strong>${escapeHtml(reference)}</strong> is now <strong>${escapeHtml(status)}</strong>.</p><p>Sign in to My Orders for the latest tracking information.</p>`,
+    text: `Your Zyro.lk order ${reference} is now ${status}. ${guidance}`,
+    html: `<p>Your Zyro.lk order <strong>${escapeHtml(reference)}</strong> is now <strong>${escapeHtml(status)}</strong>.</p><p>${escapeHtml(guidance)}</p>`,
   };
 }
 
