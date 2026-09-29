@@ -245,6 +245,47 @@ test("supplier cancellation restores only unresolved demand and delivery does no
   assert.equal((await adminDb.collection("product_private").doc(delivered.productId).get()).data()?.supplierMetadata.localDemand.quantity, 1);
 });
 
+test("admin cancellation after reconciliation preserves another order's local demand", {
+  skip: canRunEmulator ? undefined : "Firestore and Functions Emulators are required.",
+  timeout: 180_000,
+}, async () => {
+  const fixture = await seedSettlementFixture(randomUUID().replaceAll("-", "").slice(0, 12), {
+    stock: 8,
+    localDemand: 2,
+  });
+  const readStock = async () => ({
+    publicStock: (await adminDb.collection("products").doc(fixture.productId).get()).data()?.stock,
+    localDemand: (await adminDb.collection("product_private").doc(fixture.productId).get()).data()?.supplierMetadata.localDemand.quantity,
+  });
+  assert.deepEqual(await readStock(), { publicStock: 8, localDemand: 2 });
+
+  await prepareSupplierInventorySettlement({ ...actionInput(fixture, 1), manualSupplierOrderPlaced: true });
+  await applyApprovedSupplierInventoryObservation(adminDb, {
+    offerId: fixture.offer.id,
+    productId: fixture.productId,
+    stock: 9,
+    observedAt: new Date(Date.now() + 60_000).toISOString(),
+    expectedStateVersion: 1,
+  });
+  assert.deepEqual(await readStock(), { publicStock: 7, localDemand: 2 });
+  const reconciled = await reconcileSupplierInventorySettlement({ ...actionInput(fixture, 2), acknowledgeFreshSupplierObservation: true });
+  assert.equal(reconciled.status, "reconciled");
+  assert.deepEqual(await readStock(), { publicStock: 8, localDemand: 1 });
+
+  const orderPrivate = await adminDb.collection("order_private").doc(fixture.orderId).get();
+  const result = await updateOrderStatus(fixture.orderId, "cancelled", undefined, adminDb, {
+    adminUid: "test-admin",
+    expectedOrderPrivateRevision: orderPrivate.data()?.revision,
+    expectedGroupRevisions: { [fixture.groupId]: 1 },
+  });
+  assert.deepEqual(result, { status: "cancelled", stockRestored: true });
+  assert.deepEqual(await readStock(), { publicStock: 8, localDemand: 1 });
+  const order = (await adminDb.collection("orders").doc(fixture.orderId).get()).data()!;
+  assert.equal(order.status, "cancelled");
+  assert.equal(order.stockRestorationApplied, true);
+  assert.equal(order.stockReservationStatus, "released");
+});
+
 test("supplier settlement races converge to one reconciliation and expiry respects settled demand", {
   skip: canRunEmulator ? undefined : "Firestore and Functions Emulators are required.",
   timeout: 180_000,

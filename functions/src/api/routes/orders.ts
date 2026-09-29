@@ -130,7 +130,7 @@ export async function updateOrderStatus(
         stock,
         quantity,
         restorationQuantity: tracksSupplierDemand
-          ? unreconciledSupplierOrderQuantity(privateValue, productId, quantity)
+          ? unreconciledSupplierOrderQuantity(privateSnap.exists ? privateSnap.data() : null, productId, quantity)
           : quantity,
       });
     }
