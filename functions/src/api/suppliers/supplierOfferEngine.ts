@@ -662,16 +662,22 @@ const activeSupplierPrivateProjection = (offer: SupplierProductOffer | null, exi
   },
 } : {};
 
+const SUPPLIER_VISIBILITY_FIELDS = ["isActive", "active", "visible"] as const;
+
+// A missing visibility field is not the same as false, so the pre-failover
+// snapshot records only the fields the product actually carried.
+const definedSupplierVisibility = (productValue: unknown): Record<string, unknown> => {
+  const product = asRecord(productValue);
+  return Object.fromEntries(SUPPLIER_VISIBILITY_FIELDS
+    .filter((field) => product[field] !== undefined)
+    .map((field) => [field, product[field]]));
+};
+
 const inactiveSupplierPrivateProjection = (existingPrivate: unknown = {}, currentProductValue: unknown = {}): Record<string, unknown> => {
   const metadata = asRecord(asRecord(existingPrivate).supplierMetadata);
-  const currentProduct = asRecord(currentProductValue);
   const priorVisibility = metadata.supplierFailoverDeactivated === true
     ? asRecord(metadata.failoverPreviousVisibility)
-    : {
-      isActive: currentProduct.isActive,
-      active: currentProduct.active,
-      visible: currentProduct.visible,
-    };
+    : definedSupplierVisibility(currentProductValue);
   return ({
   supplierOfferSelection: {
     ...parseSupplierOfferSelection(asRecord(existingPrivate).supplierOfferSelection),
@@ -1198,12 +1204,16 @@ export async function reconcileSupplierProductOfferFailover(
       const publicProjection: Record<string, unknown> = {
         stock: projectedStock,
         availability: projectedStock > 0 ? "in_stock" : "out_of_stock",
-        ...(previousVisibility.isActive !== undefined ? { isActive: previousVisibility.isActive } : {}),
-        ...(previousVisibility.active !== undefined ? { active: previousVisibility.active } : {}),
-        ...(previousVisibility.visible !== undefined ? { visible: previousVisibility.visible } : {}),
+        ...definedSupplierVisibility(previousVisibility),
       };
+      // Fields absent before failover are removed again rather than left at
+      // the fail-closed false value.
+      const absentVisibilityDeletes = Object.fromEntries(SUPPLIER_VISIBILITY_FIELDS
+        .filter((field) => !Object.hasOwn(publicProjection, field))
+        .map((field) => [field, FieldValue.delete()]));
       transaction.set(productReference, {
         ...publicProjection,
+        ...absentVisibilityDeletes,
         updatedAt: FieldValue.serverTimestamp(),
       }, { merge: true });
       transaction.set(privateReference, {
@@ -1297,9 +1307,11 @@ export async function reconcileSupplierProductOfferFailover(
           && existingProposal.proposedOriginalPrice === proposal.summary.proposedOriginalPrice
           && existingProposal.promotionOutcome === proposal.summary.promotionOutcome;
         if (!proposalUnchanged) {
-          const previousVisibility = failoverDeactivated
-            ? asRecord(metadata.failoverPreviousVisibility)
-            : { isActive: currentProduct.isActive, active: currentProduct.active, visible: currentProduct.visible };
+          const previousVisibility = definedSupplierVisibility(failoverDeactivated
+            ? metadata.failoverPreviousVisibility
+            : currentProduct);
+          const productWithoutVisibility = Object.fromEntries(Object.entries({ ...currentProduct, ...privateProduct })
+            .filter(([field]) => !(SUPPLIER_VISIBILITY_FIELDS as readonly string[]).includes(field)));
           const { proposedPrice, proposedOriginalPrice, previousPrice, previousOriginalPrice } = proposal.summary;
           const fieldChanges = [
             buildSupplierLifecycleFieldChange("availability", previousOffer.availability, "unavailable"),
@@ -1348,13 +1360,10 @@ export async function reconcileSupplierProductOfferFailover(
               },
               reconciliationAction: "supplier_offer_unavailable",
               productPayload: {
-                ...currentProduct,
-                ...privateProduct,
+                ...productWithoutVisibility,
                 ...proposal.payload,
                 id: productId,
-                ...(previousVisibility.isActive !== undefined ? { isActive: previousVisibility.isActive } : {}),
-                ...(previousVisibility.active !== undefined ? { active: previousVisibility.active } : {}),
-                ...(previousVisibility.visible !== undefined ? { visible: previousVisibility.visible } : {}),
+                ...previousVisibility,
                 supplierMetadata: {
                   ...metadata,
                   supplierFailoverDeactivated: false,

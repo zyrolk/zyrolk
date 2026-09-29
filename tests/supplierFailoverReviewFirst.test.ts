@@ -706,3 +706,131 @@ test('Step 2B G: once the configured offer recovers, the stale failover review c
   assert.equal(selectionOf(documents).activeOfferId, active.id);
   assert.equal(documents.get(`supplier_review_queue/${reviewId}`)?.queueState, 'suppressed');
 });
+
+const withoutProductFields = (documents: Map<string, StoredDocument>, fields: string[]) => {
+  const product = { ...documents.get(`products/${PRODUCT_ID}`) };
+  for (const field of fields) delete product[field];
+  documents.set(`products/${PRODUCT_ID}`, product);
+};
+const containsUndefined = (value: unknown): boolean => {
+  if (value === undefined) return true;
+  if (!value || typeof value !== 'object') return false;
+  const prototype = Object.getPrototypeOf(value);
+  if (!Array.isArray(value) && prototype !== Object.prototype && prototype !== null) return false;
+  return Object.values(value).some(containsUndefined);
+};
+const containsNonPlainObject = (value: unknown): boolean => {
+  if (!value || typeof value !== 'object') return false;
+  const prototype = Object.getPrototypeOf(value);
+  if (!Array.isArray(value) && prototype !== Object.prototype && prototype !== null) return true;
+  return Object.values(value).some(containsNonPlainObject);
+};
+const containsDeleteSentinel = (value: unknown): boolean => {
+  if (!value || typeof value !== 'object') return false;
+  if ((value as { constructor?: { name?: string } }).constructor?.name === 'DeleteTransform') return true;
+  return Object.values(value).some(containsDeleteSentinel);
+};
+// The fake store keeps server-timestamp sentinels unresolved in stored `updatedAt`.
+const withoutStoredTimestamp = ({ updatedAt: _updatedAt, ...value }: StoredDocument) => value;
+const failoverSnapshotOf = (documents: Map<string, StoredDocument>) => (
+  (documents.get(`product_private/${PRODUCT_ID}`)?.supplierMetadata as StoredDocument).failoverPreviousVisibility
+);
+const failoverAuditsOf = (documents: Map<string, StoredDocument>) => [...documents.entries()]
+  .filter(([key, value]) => key.startsWith('supplier_operations_audit/') && value.action === 'automatic_offer_failover')
+  .map(([, value]) => value);
+
+test('SH-7B visibility: missing active/visible fail closed without undefined and recover to absence', async () => {
+  const { db, documents, writes, active } = failoverFixture(850);
+  withoutProductFields(documents, ['active', 'visible']);
+
+  await reconcileSupplierProductOfferFailover(db as never, PRODUCT_ID, 'out of stock');
+
+  assert.equal(writes.some((write) => containsUndefined(write.data)), false);
+  assert.deepEqual(failoverSnapshotOf(documents), { isActive: true });
+  const failedClosed = documents.get(`products/${PRODUCT_ID}`) || {};
+  assert.equal(failedClosed.isActive, false);
+  assert.equal(failedClosed.active, false);
+  assert.equal(failedClosed.visible, false);
+
+  documents.set(`supplier_product_offers/${active.id}`, { ...active, stock: 12, availability: 'in_stock' });
+  const before = writes.length;
+  await reconcileSupplierProductOfferFailover(db as never, PRODUCT_ID, 'recovered');
+
+  assert.equal(writes.slice(before).some((write) => containsUndefined(write.data)), false);
+  const recovered = documents.get(`products/${PRODUCT_ID}`) || {};
+  assert.equal(recovered.isActive, true);
+  assert.equal(Object.hasOwn(recovered, 'active'), false);
+  assert.equal(Object.hasOwn(recovered, 'visible'), false);
+  assert.equal(recovered.stock, 10);
+  assert.equal(failoverSnapshotOf(documents), null);
+  for (const audit of failoverAuditsOf(documents)) assert.equal(containsNonPlainObject(audit.after), false);
+});
+
+test('SH-7B visibility: explicit true and false values are snapshotted and restored exactly', async () => {
+  for (const visibility of [
+    { isActive: true, active: false, visible: false },
+    { isActive: true, active: true, visible: true },
+    { isActive: false, active: true, visible: false },
+  ]) {
+    const { db, documents, active } = failoverFixture(850, visibility);
+
+    await reconcileSupplierProductOfferFailover(db as never, PRODUCT_ID, 'out of stock');
+    assert.deepEqual(failoverSnapshotOf(documents), visibility);
+
+    documents.set(`supplier_product_offers/${active.id}`, { ...active, stock: 12, availability: 'in_stock' });
+    await reconcileSupplierProductOfferFailover(db as never, PRODUCT_ID, 'recovered');
+
+    const recovered = documents.get(`products/${PRODUCT_ID}`) || {};
+    assert.deepEqual(
+      { isActive: recovered.isActive, active: recovered.active, visible: recovered.visible },
+      visibility,
+    );
+  }
+});
+
+test('SH-7B visibility: a product missing isActive stays non-public after recovery', async () => {
+  const { db, documents, active } = failoverFixture(850);
+  withoutProductFields(documents, ['isActive']);
+
+  await reconcileSupplierProductOfferFailover(db as never, PRODUCT_ID, 'out of stock');
+  assert.deepEqual(failoverSnapshotOf(documents), { active: true, visible: true });
+
+  documents.set(`supplier_product_offers/${active.id}`, { ...active, stock: 12, availability: 'in_stock' });
+  await reconcileSupplierProductOfferFailover(db as never, PRODUCT_ID, 'recovered');
+
+  const recovered = documents.get(`products/${PRODUCT_ID}`) || {};
+  assert.equal(Object.hasOwn(recovered, 'isActive'), false);
+  assert.notEqual(recovered.isActive, true);
+  assert.equal(recovered.active, true);
+  assert.equal(recovered.visible, true);
+});
+
+test('SH-7B visibility: review payload omits originally absent fields and never carries fail-closed false', async () => {
+  const { db, documents, replacement, reviewId } = failoverFixture(850);
+  withoutProductFields(documents, ['active', 'visible']);
+
+  await reconcileSupplierProductOfferFailover(db as never, PRODUCT_ID, 'out of stock');
+  const firstPayload = (documents.get(`supplier_review_queue/${reviewId}`)?.productPayload || {}) as StoredDocument;
+  assert.equal(firstPayload.isActive, true);
+  assert.equal(Object.hasOwn(firstPayload, 'active'), false, 'first payload active');
+  assert.equal(Object.hasOwn(firstPayload, 'visible'), false, 'first payload visible');
+  assert.equal(containsNonPlainObject(firstPayload), false, 'first payload non-plain');
+  assert.equal(containsDeleteSentinel(firstPayload), false, 'first payload delete sentinel');
+
+  // Rebuild the proposal while the public product is already failed closed.
+  const other = offer('source-c', { priority: 50, price: 880 });
+  documents.set(`supplier_product_offers/${other.id}`, { ...other });
+  documents.set(`supplier_product_offers/${replacement.id}`, { ...replacement, stock: 0, availability: 'out_of_stock' });
+  assert.equal(documents.get(`products/${PRODUCT_ID}`)?.active, false);
+  await reconcileSupplierProductOfferFailover(db as never, PRODUCT_ID, 'replacement changed');
+
+  const review = documents.get(`supplier_review_queue/${reviewId}`) || {};
+  assert.equal((review.supplierSnapshot as StoredDocument).failoverReplacementOfferId, other.id);
+  const rebuiltPayload = (review.productPayload || {}) as StoredDocument;
+  assert.equal(rebuiltPayload.isActive, true);
+  assert.equal(Object.hasOwn(rebuiltPayload, 'active'), false, 'rebuilt payload active');
+  assert.equal(Object.hasOwn(rebuiltPayload, 'visible'), false, 'rebuilt payload visible');
+  assert.equal(containsDeleteSentinel(rebuiltPayload), false, 'rebuilt payload delete sentinel');
+  assert.equal(containsNonPlainObject(withoutStoredTimestamp(rebuiltPayload)), false, 'rebuilt payload non-plain');
+  assert.equal(containsUndefined(rebuiltPayload), false, 'rebuilt payload undefined');
+});
