@@ -22,6 +22,12 @@ export const SERVER_FILTERED_FULL_CATALOG_CAPABILITIES: Readonly<SupplierConnect
   searchFilter: "server_side",
 });
 
+/** Dropex paginates by page number, so the connector translates absolute raw row offsets onto page x size. */
+export const DROPEX_CATALOG_SYNC_CAPABILITIES: Readonly<SupplierConnectorSyncCapabilities> = Object.freeze({
+  ...SERVER_FILTERED_FULL_CATALOG_CAPABILITIES,
+  catalogPosition: "absolute_raw_offset",
+});
+
 export function normalizeSupplierConnectorSyncCapabilities(
   value: unknown,
 ): Readonly<SupplierConnectorSyncCapabilities> {

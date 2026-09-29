@@ -11,7 +11,7 @@ import {
   SupplierInventoryObservation,
 } from "../types";
 import { SupplierOutboundPolicy } from "../../security/supplierOutboundRequest";
-import { SERVER_FILTERED_FULL_CATALOG_CAPABILITIES } from "../supplierSyncCapabilities";
+import { DROPEX_CATALOG_SYNC_CAPABILITIES } from "../supplierSyncCapabilities";
 import { normalizeDropexCredentialReference } from "../dropexCredentialProfiles";
 import { DROPEX_DEFAULT_PORTAL_URL } from "./constants";
 
@@ -22,7 +22,7 @@ export class DropexSupplierConnector implements SupplierConnector {
   public readonly enabled: boolean;
   public readonly priority: number;
   public readonly capabilities: readonly string[];
-  public readonly syncCapabilities: Readonly<SupplierConnectorSyncCapabilities> = SERVER_FILTERED_FULL_CATALOG_CAPABILITIES;
+  public readonly syncCapabilities: Readonly<SupplierConnectorSyncCapabilities> = DROPEX_CATALOG_SYNC_CAPABILITIES;
   private readonly outboundPolicy: SupplierOutboundPolicy;
   private readonly connectorService: DropexConnectorService;
   private readonly supplierId: string;

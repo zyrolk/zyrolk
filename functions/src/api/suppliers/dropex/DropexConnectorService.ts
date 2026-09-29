@@ -9,6 +9,7 @@ import {
 } from "./constants";
 import { fetchSupplierOutbound, SupplierOutboundPolicy, SupplierOutboundResponse } from "../../security/supplierOutboundRequest";
 import { SupplierCatalogPageRequest, SupplierCatalogPageResult } from "../types";
+import { encodeSupplierCatalogOffsetCursor, parseSupplierCatalogOffsetCursor } from "../supplierCatalogOffsetCursor";
 import {
   DropexHttpError,
   DROPEX_TRANSIENT_HTTP_MAX_ATTEMPTS,
@@ -453,11 +454,20 @@ export class DropexConnectorService {
     outboundPolicy: SupplierOutboundPolicy,
     request: SupplierCatalogPageRequest,
   ): Promise<SupplierCatalogPageResult> {
-    const page = Number(request.cursor || 0);
     const pageSize = Math.max(1, request.pageSize);
-    if (!Number.isInteger(page) || page < 0) {
-      throw new Error("Dropex catalog pagination cursor is invalid.");
+    const offset = request.cursor === null || request.cursor === "" || request.cursor === "0"
+      ? 0
+      : parseSupplierCatalogOffsetCursor(request.cursor);
+    if (offset === null) {
+      throw new Error(/^[0-9]+$/u.test(String(request.cursor))
+        ? "Dropex catalog page-number cursor predates absolute catalogue offsets and cannot be resumed."
+        : "Dropex catalog pagination cursor is invalid.");
     }
+    const page = Math.floor(offset / pageSize);
+    const skippedRows = offset % pageSize;
+    const rowBudget = request.maxRows === undefined
+      ? pageSize
+      : Math.max(0, Math.floor(request.maxRows));
 
     let activeSession = this.reusableSession(credentials);
     if (!activeSession) {
@@ -516,12 +526,13 @@ export class DropexConnectorService {
         || asRecordArray(pageRecord?.data)
         || asRecordArray(pageRecord?.products)
         || (pageRecord ? [pageRecord] : []);
+    const consumedRows = rawList.slice(skippedRows, Math.min(pageSize, skippedRows + rowBudget));
 
     const categoryLookup = await this.loadCategoryLookup(credentials, outboundPolicy);
     const parsedProducts: RawA2ZProduct[] = [];
     let invalidProducts = 0;
 
-    for (const item of rawList) {
+    for (const item of consumedRows) {
       try {
         const detail = asRecord(item.productDetail) || item;
         const productId = String(detail.id || item.productId || item.id || "").trim();
@@ -544,10 +555,11 @@ export class DropexConnectorService {
 
     const reportedTotal = Number(pageRecord?.totalElements ?? pageRecord?.total ?? pageRecord?.count);
     const currentPage = Number(pageRecord?.number ?? page);
-    const pageComplete = pageRecord?.last === true
+    const supplierPageIsLast = pageRecord?.last === true
       || (Number.isFinite(reportedTotal) && ((currentPage + 1) * pageSize) >= reportedTotal)
       || rawList.length < pageSize;
-    const nextCursor = pageComplete ? null : String(page + 1);
+    const pageComplete = supplierPageIsLast && skippedRows + consumedRows.length >= Math.min(rawList.length, pageSize);
+    const nextCursor = pageComplete ? null : encodeSupplierCatalogOffsetCursor(offset + consumedRows.length);
     const catalogTotal = Number.isSafeInteger(reportedTotal) && reportedTotal >= 0
       ? { count: reportedTotal, reliability: "reported" as const }
       : undefined;

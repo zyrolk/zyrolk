@@ -6,6 +6,7 @@ import {
   SupplierConnector,
   SupplierIncrementalCatalogRequest,
 } from "../api/suppliers/types";
+import { parseSupplierCatalogOffsetCursor } from "../api/suppliers/supplierCatalogOffsetCursor";
 
 export type SupplierCatalogTraversalStatus = "in_progress" | "paused" | "reconciling" | "completed" | "limited";
 export type SupplierCatalogTraversalTerminationReason = "catalog_complete" | "incremental_complete" | "limit_reached" | "paused" | null;
@@ -195,7 +196,9 @@ export function createSupplierCatalogTraversalCheckpoint(
   const requestedContinuationFingerprint = String(options.continuationFingerprint || "").trim();
   const requestedJobId = String(options.syncJobId || "").trim();
   const requestedTotalProductLimit = normalizeSupplierTotalProductLimit(options.totalProductLimit);
-  const restartRequested = options.catalogContinuation === "restart";
+  // Restart applies once per job: a checkpoint already written by this job is its own progress.
+  const restartRequested = options.catalogContinuation === "restart"
+    && !(requestedJobId && String(initial.syncJobId || "").trim() === requestedJobId);
   const legacyLimitedContinuation = options.catalogContinuation === "continue"
     && Boolean(requestedContinuationFingerprint)
     && requestedTotalProductLimit !== null
@@ -266,7 +269,9 @@ export function createSupplierCatalogTraversalCheckpoint(
     requestFingerprint: requestedFingerprint || null,
     continuationFingerprint: requestedContinuationFingerprint || initial.continuationFingerprint || null,
     syncJobId: requestedJobId || null,
-    totalProductLimit: limitedContinuation && requestedTotalProductLimit !== null
+    // Only a manual continuation may drop the saved cap; inferred automatic continuations stay bounded.
+    totalProductLimit: limitedContinuation
+      && (requestedTotalProductLimit !== null || options.continuationContract === "manual")
       ? requestedTotalProductLimit
       : resumable
       ? normalizeSupplierTotalProductLimit(initial.totalProductLimit ?? requestedTotalProductLimit)
@@ -300,6 +305,13 @@ export async function runSupplierCatalogTraversal(options: SupplierCatalogTraver
   });
   if (hasFilters && checkpoint.deletionReconciliationEligible) {
     checkpoint = { ...checkpoint, deletionReconciliationEligible: false };
+  }
+  const offsetPositioned = options.connector.syncCapabilities?.catalogPosition === "absolute_raw_offset";
+  if (offsetPositioned && checkpoint.cursor !== null && parseSupplierCatalogOffsetCursor(checkpoint.cursor) === null) {
+    throw new SupplierCatalogTraversalIntegrityError(
+      "The saved supplier catalogue checkpoint uses a page-number cursor that predates absolute catalogue offsets "
+      + "and cannot be converted safely. Use Start from beginning/restart.",
+    );
   }
 
   if (checkpoint.syncMode === "incremental" && options.connector.syncCapabilities?.incremental.supported !== true) {
@@ -348,13 +360,13 @@ export async function runSupplierCatalogTraversal(options: SupplierCatalogTraver
       await options.persistCheckpoint(checkpoint);
       return { complete: false, paused: false, limited: true, checkpoint };
     }
-    const requestedPageSize = Math.min(
-      normalizeSupplierCatalogPageSize(options.pageSize),
-      remainingLimit ?? Number.MAX_SAFE_INTEGER,
-    );
+    const supplierPageSize = normalizeSupplierCatalogPageSize(options.pageSize);
+    const requestedPageSize = Math.min(supplierPageSize, remainingLimit ?? Number.MAX_SAFE_INTEGER);
     const page = await options.connector.fetchProductPage({
       cursor: requestedCursor,
-      pageSize: requestedPageSize,
+      ...(offsetPositioned
+        ? { pageSize: supplierPageSize, maxRows: requestedPageSize }
+        : { pageSize: requestedPageSize }),
       mode: checkpoint.syncMode,
       filters: options.filters,
       incremental: checkpoint.syncMode === "incremental" ? options.incremental : undefined,

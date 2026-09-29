@@ -52,6 +52,11 @@ export interface SupplierInventoryObservation {
 export interface SupplierCatalogPageRequest {
   cursor: string | null;
   pageSize: number;
+  /**
+   * Raw supplier rows this call may consume. Only sent to connectors that declare
+   * `catalogPosition: "absolute_raw_offset"`; unconsumed rows stay reachable from `nextCursor`.
+   */
+  maxRows?: number;
   mode?: SupplierCatalogSyncMode;
   filters?: SupplierCatalogFilterRequest;
   incremental?: SupplierIncrementalCatalogRequest;
@@ -116,6 +121,11 @@ export interface SupplierConnectorSyncCapabilities {
   categoryFilter: SupplierCatalogFilterExecution;
   subcategoryFilter: SupplierCatalogFilterExecution;
   searchFilter: SupplierCatalogFilterExecution;
+  /**
+   * `absolute_raw_offset`: cursors are raw catalogue row offsets independent of page size,
+   * so traversal keeps a stable supplier page size and bounds consumption with `maxRows`.
+   */
+  catalogPosition?: "absolute_raw_offset";
 }
 
 export interface SupplierConnector {
