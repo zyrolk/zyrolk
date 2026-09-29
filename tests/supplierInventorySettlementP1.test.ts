@@ -139,6 +139,13 @@ const actionInput = (fixture: Awaited<ReturnType<typeof seedSettlementFixture>>,
   actorUid: "test-admin",
 });
 
+const observedAfterPreparation = async (fixture: Awaited<ReturnType<typeof seedSettlementFixture>>): Promise<string> => {
+  const settlements = (await adminDb.collection("order_private").doc(fixture.orderId).get()).data()?.supplierInventorySettlements;
+  const preparedAt = Date.parse(settlements?.find((settlement: { productId?: string }) => settlement.productId === fixture.productId)?.preparedAt);
+  assert.ok(Number.isFinite(preparedAt), "prepared settlement timestamp is required");
+  return new Date(preparedAt + 1_000).toISOString();
+};
+
 test("supplier settlement rejects stale observation, reconciles fresh stock, and is idempotent", {
   skip: canRunEmulator ? undefined : "Firestore and Functions Emulators are required.",
   timeout: 180_000,
@@ -164,7 +171,7 @@ test("supplier settlement rejects stale observation, reconciles fresh stock, and
     offerId: fixture.offer.id,
     productId: fixture.productId,
     stock: 9,
-    observedAt: "2026-09-26T00:00:00.000Z",
+    observedAt: await observedAfterPreparation(fixture),
     expectedStateVersion: 1,
   });
   assert.equal((await adminDb.collection("products").doc(fixture.productId).get()).data()?.stock, 8);
@@ -220,7 +227,7 @@ test("supplier cancellation restores only unresolved demand and delivery does no
     offerId: after.offer.id,
     productId: after.productId,
     stock: 9,
-    observedAt: "2026-09-26T00:00:00.000Z",
+    observedAt: await observedAfterPreparation(after),
     expectedStateVersion: 1,
   });
   await reconcileSupplierInventorySettlement({ ...actionInput(after, 2), acknowledgeFreshSupplierObservation: true });
@@ -264,7 +271,7 @@ test("admin cancellation after reconciliation preserves another order's local de
     offerId: fixture.offer.id,
     productId: fixture.productId,
     stock: 9,
-    observedAt: new Date(Date.now() + 60_000).toISOString(),
+    observedAt: await observedAfterPreparation(fixture),
     expectedStateVersion: 1,
   });
   assert.deepEqual(await readStock(), { publicStock: 7, localDemand: 2 });
@@ -296,7 +303,7 @@ test("supplier settlement races converge to one reconciliation and expiry respec
     offerId: fixture.offer.id,
     productId: fixture.productId,
     stock: 9,
-    observedAt: "2026-09-26T00:00:00.000Z",
+    observedAt: await observedAfterPreparation(fixture),
     expectedStateVersion: 1,
   });
   const results = await Promise.allSettled([
