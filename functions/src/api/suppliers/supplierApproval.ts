@@ -409,6 +409,22 @@ const cleanPendingRevision = (value: unknown): string => {
   return value.trim();
 };
 
+/**
+ * The pending-change document mirrors the queue record only at the revision the
+ * queue worker last completed. A re-observation that keeps the record
+ * review_pending advances the queue record alone, so a pending change carrying
+ * a different revision holds older supplier data and must not overlay it.
+ */
+export const supplierPendingChangeMatchesQueue = (
+  review: Record<string, unknown> | undefined,
+  pending: Record<string, unknown> | undefined,
+): boolean => {
+  if (!pending) return false;
+  if (!review) return true;
+  return String(review.supplierOfferPendingRevision ?? "").trim()
+    === String(pending.supplierOfferPendingRevision ?? "").trim();
+};
+
 export function buildAutoProductSku(productId: string): string {
   return buildZyroSkuCandidates(cleanText(productId, "Product ID", 160))[0];
 }
@@ -633,7 +649,11 @@ export async function decideSupplierQueueItem(
       transaction.get(reviewReference),
       transaction.get(pendingReference),
     ]);
-    const selectedSnapshot = requestedQueueItemId.startsWith("change-") && pendingSnapshot.exists
+    const currentPendingChange = pendingSnapshot.exists && supplierPendingChangeMatchesQueue(
+      reviewSnapshot.exists ? reviewSnapshot.data() : undefined,
+      pendingSnapshot.data(),
+    );
+    const selectedSnapshot = requestedQueueItemId.startsWith("change-") && currentPendingChange
       ? pendingSnapshot
       : reviewSnapshot;
     if (!selectedSnapshot.exists) throw new ApiError("Supplier review item was already processed or no longer exists.", 409);
@@ -676,7 +696,7 @@ export async function decideSupplierQueueItem(
 
     let queueItem: QueueItemRecord = {
       ...(reviewSnapshot.exists ? reviewSnapshot.data() : {}),
-      ...(pendingSnapshot.exists ? pendingSnapshot.data() : {}),
+      ...(currentPendingChange ? pendingSnapshot.data() : {}),
       id: requestedQueueItemId,
       reviewQueueItemId,
     };
