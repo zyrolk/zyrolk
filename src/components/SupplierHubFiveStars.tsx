@@ -89,6 +89,7 @@ import {
   supplierReviewStorefrontLabel,
   supplierReviewTerminalItem,
   supplierReviewActionableQueueCount,
+  supplierReviewLowStockHoldQueueCount,
   supplierBusinessErrorMessage,
   isSupplierReviewStaleObservationError,
   SUPPLIER_REVIEW_STALE_REFRESH_MESSAGE,
@@ -261,6 +262,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
   const [supplierReviewCursor, setSupplierReviewCursor] = useState<string | null>(null);
   const [supplierReviewLoading, setSupplierReviewLoading] = useState(false);
   const [supplierReviewActionableCount, setSupplierReviewActionableCount] = useState<number | null>(null);
+  const [supplierReviewLowStockHoldCount, setSupplierReviewLowStockHoldCount] = useState<number | null>(null);
   const [supplierQueueError, setSupplierQueueError] = useState<string | null>(null);
   const supplierQueueRequestIdRef = useRef(0);
   const supplierAuditRequestIdRef = useRef(0);
@@ -351,6 +353,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
       if (!response.ok || result.success !== true || !result.queues) return;
       if (requestId === supplierReviewCountRequestIdRef.current) {
         setSupplierReviewActionableCount(supplierReviewActionableQueueCount(result.queues));
+        setSupplierReviewLowStockHoldCount(supplierReviewLowStockHoldQueueCount(result.queues));
       }
     } catch {
       // Keep the last authoritative count while a transient summary request fails.
@@ -2217,6 +2220,11 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                     className={`min-h-10 shrink-0 rounded-xl px-3 text-[11px] font-black transition-colors ${reviewFilter === filter.id ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800'}`}
                   >
                     {filter.label}
+                    {filter.id === 'low_stock_hold' && supplierReviewLowStockHoldCount !== null && (
+                      <span className="ml-1.5" aria-label={`${supplierReviewLowStockHoldCount} products on low stock hold`}>
+                        {supplierReviewLowStockHoldCount}
+                      </span>
+                    )}
                   </button>
                 ))}
               </div>

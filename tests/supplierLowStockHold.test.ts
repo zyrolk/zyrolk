@@ -50,8 +50,10 @@ test("new supplier stock 0 through 3 is a visible low-stock hold", () => {
     assert.equal(validation.lowStockHold, true);
     assert.equal(validation.readyToPublish, false);
     assert.deepEqual(validation.errors, [lowSupplierStockValidationError()]);
-    assert.equal(reviewRecordMatchesBusinessFilter(record, "needs_attention"), true);
-    assert.equal(matchesProductReviewFilter(record, "needs_attention"), true);
+    assert.equal(reviewRecordMatchesBusinessFilter(record, "needs_attention"), false);
+    assert.equal(matchesProductReviewFilter(record, "needs_attention"), false);
+    assert.equal(reviewRecordMatchesBusinessFilter(record, "low_stock_hold"), true);
+    assert.equal(matchesProductReviewFilter(record, "low_stock_hold"), true);
     assert.equal(supplierReviewIsLowStockHold(record), true);
     assert.equal(supplierReviewStatusLabel(record), "Low Stock Hold");
   }
@@ -77,6 +79,8 @@ test("new supplier stock 4 clears the hold without changing the queue identity",
   assert.equal(recoveredValidation.readyToPublish, true);
   assert.deepEqual(recoveredValidation.errors, []);
   assert.equal(reviewRecordMatchesBusinessFilter(recovered, "needs_attention"), false);
+  assert.equal(reviewRecordMatchesBusinessFilter(recovered, "low_stock_hold"), false);
+  assert.equal(reviewRecordMatchesBusinessFilter(recovered, "new_products"), true);
 });
 
 test("unknown, invalid, and fractional stock preserve existing validation semantics", () => {

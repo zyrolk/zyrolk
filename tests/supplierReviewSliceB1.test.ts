@@ -93,8 +93,10 @@ test("B1-5..7 unpublished PRICE_CHANGED, DESCRIPTION_CHANGED and IMAGE_CHANGED r
     assert.equal((projected.productValidation as any).lowStockHold, true);
     assert.equal(supplierReviewIsLowStockHold(projected), true);
     assert.equal(supplierReviewStatusLabel(projected), "Low Stock Hold");
-    assert.equal(reviewRecordMatchesBusinessFilter(projected, "needs_attention"), true);
-    assert.equal(matchesProductReviewFilter(projected, "needs_attention"), true);
+    assert.equal(reviewRecordMatchesBusinessFilter(projected, "needs_attention"), false);
+    assert.equal(matchesProductReviewFilter(projected, "needs_attention"), false);
+    assert.equal(reviewRecordMatchesBusinessFilter(projected, "low_stock_hold"), true);
+    assert.equal(matchesProductReviewFilter(projected, "low_stock_hold"), true);
   }
 });
 

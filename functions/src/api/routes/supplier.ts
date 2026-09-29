@@ -174,6 +174,7 @@ const readSupplierReviewBusinessFilter = (value: unknown): SupplierReviewBusines
     "removed_products",
     "conflicts",
     "needs_attention",
+    "low_stock_hold",
     "approved_history",
   ];
   if (!allowed.includes(filter as SupplierReviewBusinessFilter)) {

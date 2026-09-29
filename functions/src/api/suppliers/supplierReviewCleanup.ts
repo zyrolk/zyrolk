@@ -34,6 +34,7 @@ const ACTIVE_REVIEW_FILTERS: SupplierReviewBusinessFilter[] = [
   "new_products",
   "product_updates",
   "needs_attention",
+  "low_stock_hold",
   "conflicts",
   "removed_products",
 ];

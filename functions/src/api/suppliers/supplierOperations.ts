@@ -1,6 +1,9 @@
 import { AggregateField, FieldPath, Firestore, Timestamp } from "firebase-admin/firestore";
 import { ApiError } from "../errors";
-import { reviewRecordIsActionable } from "../../scheduled/supplierReviewQueue";
+import {
+  classifySupplierReviewRecordForCounts,
+  SUPPLIER_REVIEW_CLASSIFICATION_FIELDS,
+} from "../../scheduled/supplierReviewQueue";
 import { SUPPLIER_OPERATIONAL_ALERT_CATEGORIES } from "./supplierOperationalAlerts";
 import { classifySupplierMediaReadiness } from "./supplierMediaReadiness";
 
@@ -338,11 +341,11 @@ export async function loadSupplierOperationsSummary(db: Firestore): Promise<Reco
   const supplierSnapshotPromise = db.collection("supplierSources").limit(1_000).get();
   const actionableStatusSnapshotPromise = db.collection("supplier_review_queue")
     .where("status", "in", ["Pending", "CONFLICT", "pending", "conflict", "Approved", "Rejected", "Suppressed", "Deleted", "Dismissed", "approved", "rejected", "suppressed", "deleted", "dismissed", "APPROVED", "REJECTED", "SUPPRESSED", "DELETED", "DISMISSED"])
-    .select("status", "reviewStatus", "queueState", "decisionAction", "decisionPendingRevision", "supplierOfferPendingRevision")
+    .select(...SUPPLIER_REVIEW_CLASSIFICATION_FIELDS)
     .get();
   const actionableQueueStateSnapshotPromise = db.collection("supplier_review_queue")
     .where("queueState", "in", ["queued", "leased", "processing", "review_pending", "conflict", "retryable_failure", "dead_letter"])
-    .select("status", "reviewStatus", "queueState", "decisionAction", "decisionPendingRevision", "supplierOfferPendingRevision")
+    .select(...SUPPLIER_REVIEW_CLASSIFICATION_FIELDS)
     .get();
   const queueStates = ["queued", "leased", "processing", "review_pending", "approved", "rejected", "conflict", "retryable_failure", "dead_letter", "suppressed"];
   const [
@@ -410,8 +413,10 @@ export async function loadSupplierOperationsSummary(db: Firestore): Promise<Reco
     ...actionableStatusSnapshot.docs,
     ...actionableQueueStateSnapshot.docs,
   ].map((document) => [document.id, document]));
-  const actionableReviewCount = [...actionableQueueDocuments.values()]
-    .filter((document) => reviewRecordIsActionable(document.data() as never)).length;
+  const reviewCountClasses = [...actionableQueueDocuments.values()]
+    .map((document) => classifySupplierReviewRecordForCounts(document.data() as never));
+  const actionableReviewCount = reviewCountClasses.filter((kind) => kind === "actionable").length;
+  const lowStockHoldReviewCount = reviewCountClasses.filter((kind) => kind === "low_stock_hold").length;
   const approvalEvents = approvalSnapshot.docs.map((document) => document.data());
   const histories = historySnapshot.docs.map((document) => document.data());
   const publishedToday = approvalEvents.filter((event) => event.action === "approve" || event.action === "approved").length;
@@ -484,6 +489,7 @@ export async function loadSupplierOperationsSummary(db: Firestore): Promise<Reco
       productsPublishedToday: publishedToday,
       totalProducts: totalOfferSnapshot.data().count,
       pendingReview: actionableReviewCount,
+      lowStockHold: lowStockHoldReviewCount,
       approvedProducts: approvedOfferSnapshot.data().count,
       updatedProducts: updatedReviewSnapshot.data().count,
       removedProducts: removedReviewSnapshot.data().count,
@@ -494,6 +500,7 @@ export async function loadSupplierOperationsSummary(db: Firestore): Promise<Reco
     queues: {
       ...queueCounts,
       actionable: actionableReviewCount,
+      lowStockHold: lowStockHoldReviewCount,
       pending: number(queueCounts.queued) + number(queueCounts.review_pending),
       retry: number(queueCounts.retryable_failure),
       queueAgeMs: oldestCreatedAt ? Math.max(0, now - new Date(oldestCreatedAt).getTime()) : 0,

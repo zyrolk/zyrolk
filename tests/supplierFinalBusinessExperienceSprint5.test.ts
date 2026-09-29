@@ -77,6 +77,7 @@ test('Product Review is the only normal approval workspace and uses business lan
     'Removed Products',
     'Conflicts',
     'Needs Attention',
+    'Low Stock Hold',
     'Review History',
   ]);
   for (const label of [

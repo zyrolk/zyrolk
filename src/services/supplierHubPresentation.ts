@@ -12,6 +12,7 @@ export type ProductReviewFilter =
   | 'removed_products'
   | 'conflicts'
   | 'needs_attention'
+  | 'low_stock_hold'
   | 'approved_history';
 
 export const PRODUCT_REVIEW_FILTERS: ReadonlyArray<{ id: ProductReviewFilter; label: string }> = [
@@ -20,6 +21,7 @@ export const PRODUCT_REVIEW_FILTERS: ReadonlyArray<{ id: ProductReviewFilter; la
   { id: 'removed_products', label: 'Removed Products' },
   { id: 'conflicts', label: 'Conflicts' },
   { id: 'needs_attention', label: 'Needs Attention' },
+  { id: 'low_stock_hold', label: 'Low Stock Hold' },
   { id: 'approved_history', label: 'Review History' },
 ];
 
@@ -713,12 +715,14 @@ export function matchesProductReviewFilter(item: ReviewPresentationItem, filter:
   if (isConflict(item)) return false;
   if (filter === 'removed_products') return isRemovedChange(comparisonStatus);
   if (isRemovedChange(comparisonStatus)) return false;
+  const lowStockHold = supplierReviewIsLowStockHold(item);
+  if (filter === 'low_stock_hold') return lowStockHold;
+  if (lowStockHold) return false;
   if (filter === 'new_products') return comparisonStatus === 'new_product';
   if (filter === 'needs_attention') {
     return item.productValidation?.readyToPublish === false
       || (item.productValidation?.missingFields?.length || 0) > 0
       || (item.productValidation?.errors?.length || 0) > 0
-      || supplierReviewIsLowStockHold(item)
       || ['failed', 'partial'].includes(normalized(item.mediaStatus))
       || ['retryable_failure', 'dead_letter'].includes(normalized(item.queueState));
   }
@@ -736,6 +740,12 @@ export function matchesProductChangeFilter(item: ChangePresentationItem, filter:
   if (filter === 'product_updates') return !isApproved(item) && !isConflict(item) && !isRemovedChange(item.changeType);
   if (filter === 'needs_attention') return ['retryable_failure', 'dead_letter'].includes(normalized(item.queueState));
   return false;
+}
+
+/** Reads the server-counted active records held for low supplier stock. */
+export function supplierReviewLowStockHoldQueueCount(queues: Record<string, unknown> | null | undefined): number | null {
+  const count = Number(queues?.lowStockHold);
+  return Number.isFinite(count) && count >= 0 ? Math.floor(count) : null;
 }
 
 /** Counts all active queue work represented by the authoritative operations summary. */

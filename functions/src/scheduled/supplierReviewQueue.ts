@@ -1411,6 +1411,7 @@ export type SupplierReviewBusinessFilter =
   | "removed_products"
   | "conflicts"
   | "needs_attention"
+  | "low_stock_hold"
   | "approved_history";
 
 export interface SupplierQueuePageResult {
@@ -1479,6 +1480,32 @@ const supplierReviewRecordProductLive = (record: SupplierQueueRecord): boolean =
   if (typeof comparison.matchedProductLive === "boolean") return comparison.matchedProductLive;
   return comparison.matchFound === true || asRecord(record.approvalBaseline).exists === true;
 };
+
+/**
+ * Every field read by the terminal-decision, conflict, removal and low-stock
+ * hold predicates. Projected reads that classify review records must select
+ * all of them so a count agrees with the business filter.
+ */
+export const SUPPLIER_REVIEW_CLASSIFICATION_FIELDS = [
+  "status",
+  "reviewStatus",
+  "queueState",
+  "decisionAction",
+  "decisionPendingRevision",
+  "supplierOfferPendingRevision",
+  "sourceId",
+  "stock",
+  "comparisonStatus",
+  "comparison.comparisonStatus",
+  "comparison.matchedProductLive",
+  "comparison.matchFound",
+  "approvalBaseline.exists",
+  "productPayload.stock",
+  "productPayload.supplierMetadata.supplierStockAvailable",
+  "supplierSnapshot.inventoryLevel",
+  "supplierSnapshot.supplierMetadata.supplierStockAvailable",
+  "supplierSnapshot.providedFields",
+] as const;
 
 export const supplierReviewRecordIsLowStockHold = (record: SupplierQueueRecord): boolean => {
   if (reviewRecordIsTerminalDecision(record)) return false;
@@ -1617,7 +1644,11 @@ const reviewComparisonHasPendingChange = (record: SupplierQueueRecord, compariso
     || (Array.isArray(record.fieldChanges) && record.fieldChanges.length > 0);
 };
 
-/** Mirrors the Product Review business filters on the server pagination boundary. */
+/**
+ * Mirrors the Product Review business filters on the server pagination boundary.
+ * Conflicts and removals keep precedence; any other active record that is on a
+ * low-stock hold belongs only to low_stock_hold until its stock recovers.
+ */
 export const reviewRecordMatchesBusinessFilter = (
   record: SupplierQueueRecord,
   filter: SupplierReviewBusinessFilter,
@@ -1631,13 +1662,15 @@ export const reviewRecordMatchesBusinessFilter = (
   if (reviewRecordIsConflict(record)) return false;
   if (filter === "removed_products") return reviewComparisonIsRemoval(comparisonStatus);
   if (reviewComparisonIsRemoval(comparisonStatus)) return false;
+  const lowStockHold = supplierReviewRecordIsLowStockHold(record);
+  if (filter === "low_stock_hold") return lowStockHold;
+  if (lowStockHold) return false;
   if (filter === "new_products") return comparisonStatus === "new_product";
   if (filter === "needs_attention") {
-    const validation = asRecord(record.productValidation);
+    const validation = asRecord(projectSupplierReviewLowStockHold(record).productValidation);
     return validation.readyToPublish === false
       || (Array.isArray(validation.missingFields) && validation.missingFields.length > 0)
       || (Array.isArray(validation.errors) && validation.errors.length > 0)
-      || (supplierReviewQueueStateFor(record) === "review_pending" && supplierReviewRecordIsLowStockHold(record))
       || ["failed", "partial"].includes(normalizedReviewValue(record.mediaStatus))
       || ["retryable_failure", "dead_letter"].includes(normalizedReviewValue(record.queueState));
   }
@@ -1646,6 +1679,17 @@ export const reviewRecordMatchesBusinessFilter = (
     && comparisonStatus !== "new_product"
     && !reviewComparisonIsRemoval(comparisonStatus)
     && reviewComparisonHasPendingChange(record, comparisonStatus);
+};
+
+/**
+ * Splits active review work for Product Review counts: a record on low-stock
+ * hold is counted only as held, never also as actionable.
+ */
+export const classifySupplierReviewRecordForCounts = (
+  record: SupplierQueueRecord,
+): "actionable" | "low_stock_hold" | null => {
+  if (!reviewRecordIsActionable(record)) return null;
+  return reviewRecordMatchesBusinessFilter(record, "low_stock_hold") ? "low_stock_hold" : "actionable";
 };
 
 /**
