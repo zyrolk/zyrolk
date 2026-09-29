@@ -109,6 +109,7 @@ import {
   resolveSupplierReviewQueueUpsertLifecycle,
   supplierReviewSourceImageUrls,
   supplierReviewQueueStateFor,
+  supplierReviewStaleDecisionFieldDeletes,
 } from "./supplierReviewQueue";
 import {
   normalizeSupplierCatalogPageSize,
@@ -117,7 +118,8 @@ import {
   SupplierCatalogTraversalCheckpoint,
 } from "./supplierCatalogTraversal";
 import {
-  isLowStockHoldForNewSupplierProduct,
+  isDropexLowStockReviewHold,
+  isSupplierProductLive,
   lowSupplierStockValidationError,
   LOW_STOCK_HOLD_SOURCE_ID,
 } from "../api/suppliers/supplierLowStockPolicy";
@@ -797,10 +799,10 @@ async function loadSupplierQueueCandidates(
   )))];
   const reviewSnapshots = await Promise.all([
     ...chunkValues(supplierCodes).map((codes) => (
-      adminDb.collection("supplier_review_queue").select("supplierCode", "barcode", "sourceId", "supplierId", "supplierPriority", "queueState", "status", "reviewStatus", "decisionAction", "canonicalProductId", "productId", "matchedProductId", "supplierOfferId", "productPayload", "supplierSnapshot", "comparison", "comparisonStatus", "approvalBaseline", "reconciliationAction", "createdAt", "queueCreatedAt").where("supplierCode", "in", codes).limit(300).get()
+      adminDb.collection("supplier_review_queue").select("supplierCode", "barcode", "sourceId", "supplierId", "supplierPriority", "queueState", "status", "reviewStatus", "decisionAction", "decisionPendingRevision", "supplierOfferPendingRevision", "canonicalProductId", "productId", "matchedProductId", "supplierOfferId", "productPayload", "supplierSnapshot", "comparison", "comparisonStatus", "approvalBaseline", "reconciliationAction", "createdAt", "queueCreatedAt").where("supplierCode", "in", codes).limit(300).get()
     )),
     ...chunkValues(supplierOfferIds).map((offerIds) => (
-      adminDb.collection("supplier_review_queue").select("supplierCode", "barcode", "sourceId", "supplierId", "supplierPriority", "queueState", "status", "reviewStatus", "decisionAction", "canonicalProductId", "productId", "matchedProductId", "supplierOfferId", "productPayload", "supplierSnapshot", "comparison", "comparisonStatus", "approvalBaseline", "reconciliationAction", "createdAt", "queueCreatedAt").where("supplierOfferId", "in", offerIds).limit(300).get()
+      adminDb.collection("supplier_review_queue").select("supplierCode", "barcode", "sourceId", "supplierId", "supplierPriority", "queueState", "status", "reviewStatus", "decisionAction", "decisionPendingRevision", "supplierOfferPendingRevision", "canonicalProductId", "productId", "matchedProductId", "supplierOfferId", "productPayload", "supplierSnapshot", "comparison", "comparisonStatus", "approvalBaseline", "reconciliationAction", "createdAt", "queueCreatedAt").where("supplierOfferId", "in", offerIds).limit(300).get()
     )),
   ]);
   const importSnapshots = await Promise.all(chunkValues(supplierCodes).flatMap((codes) => [
@@ -1767,6 +1769,15 @@ async function commitQueuedItems(items: SupplierSyncWrite[]): Promise<void> {
               });
             }
           }
+          else if (item === reviewWrite) {
+            transaction.set(reference, {
+              ...item.data,
+              ...supplierReviewStaleDecisionFieldDeletes(
+                currentReview?.exists ? currentReview.data() : null,
+                item.data.supplierOfferPendingRevision,
+              ),
+            }, { merge: true });
+          }
           else transaction.set(reference, item.data, { merge: true });
         }
         if (reviewWrite && !reviewHasStableIdentity) {
@@ -2102,9 +2113,10 @@ export async function refreshActiveSupplierReviewItem(
     refreshProductId || undefined,
   );
   const productValidationErrors = validateSupplierProductForApproval(productPayload, storeCategories, storeBrands, { supplierReview: true });
-  const refreshLowStockHold = isLowStockHoldForNewSupplierProduct({
-    isNewUnpublished: selectedComparison.status === "NEW_PRODUCT" && !effectiveMatch,
-    supplierSourceId: sourceId,
+  const refreshProductLive = isSupplierProductLive(effectiveMatch ? asRecord(effectiveMatch) : undefined);
+  const refreshLowStockHold = isDropexLowStockReviewHold({
+    source: sourceId,
+    productLive: refreshProductLive,
     stock: product.inventoryLevel,
     stockKnown: supplierStockWasProvided(product),
   });
@@ -2198,6 +2210,7 @@ export async function refreshActiveSupplierReviewItem(
     comparison: {
       matchFound: Boolean(effectiveMatch),
       matchedProductId: effectiveMatch?.id || null,
+      matchedProductLive: refreshProductLive,
       comparisonStatus: selectedComparison.status,
       changedFields: selectedComparison.changedFields,
       fieldChanges: selectedComparison.fieldChanges || [],
@@ -3914,9 +3927,10 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
             !inventoryAutomated && reactivation.reactivating,
           );
           const productValidationErrors = validateSupplierProductForApproval(productPayload, storeCategories, storeBrands, { supplierReview: true });
-          const lowStockHold = isLowStockHoldForNewSupplierProduct({
-            isNewUnpublished: comparison.status === "NEW_PRODUCT" && !effectiveMatch,
-            supplierSourceId: source.id,
+          const matchedProductLive = isSupplierProductLive(effectiveMatch ? asRecord(effectiveMatch) : undefined);
+          const lowStockHold = isDropexLowStockReviewHold({
+            source: source.id,
+            productLive: matchedProductLive,
             stock: product.inventoryLevel,
             stockKnown: supplierStockWasProvided(product),
           });
@@ -4003,6 +4017,7 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
             comparison: {
               matchFound: !!effectiveMatch,
               matchedProductId: effectiveMatch?.id || effectiveOwnOffer?.productId || duplicateOffer?.productId || skuWinner?.productId || barcodeWinner?.productId || null,
+              matchedProductLive,
               comparisonStatus: comparison.status,
               changedFields: comparison.changedFields,
               fieldChanges: comparison.fieldChanges || [],

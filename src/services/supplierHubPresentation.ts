@@ -28,6 +28,8 @@ export interface ReviewPresentationItem {
   reviewStatus?: unknown;
   queueState?: unknown;
   decisionAction?: unknown;
+  decisionPendingRevision?: unknown;
+  supplierOfferPendingRevision?: unknown;
   mediaStatus?: unknown;
   mediaReadiness?: unknown;
   mediaFailures?: unknown;
@@ -434,7 +436,22 @@ export function supplierReviewTerminalItem<T extends ReviewPresentationItem>(
     status: approved ? 'Approved' : 'Rejected',
     queueState: action,
     decisionAction: action,
+    decisionPendingRevision: item.supplierOfferPendingRevision ?? null,
   };
+}
+
+/**
+ * Mirrors the server rule: a decision is current only for the supplier
+ * observation revision it was made against. A newer queued observation makes
+ * the recorded decision stale.
+ */
+export function supplierReviewCurrentDecision(item: ReviewPresentationItem): string {
+  const decision = normalized(item.decisionAction);
+  if (!['approved', 'rejected', 'deleted', 'dismissed', 'suppressed'].includes(decision)) return '';
+  const decisionRevision = String(item.decisionPendingRevision || '').trim();
+  const pendingRevision = String(item.supplierOfferPendingRevision || '').trim();
+  const current = decisionRevision ? decisionRevision === pendingRevision : !pendingRevision;
+  return current ? decision : '';
 }
 
 export function supplierReviewStatusLabel(item: ReviewPresentationItem): string {
@@ -459,7 +476,7 @@ export function supplierReviewStatusLabel(item: ReviewPresentationItem): string 
 /** Terminal label for history cards; dismissed observations are not approvals. */
 export function supplierReviewTerminalLabel(item: ReviewPresentationItem): 'Approved' | 'Rejected' | 'Dismissed by admin' | 'Suppressed' | undefined {
   const state = normalized(item.queueState);
-  const decision = normalized(item.decisionAction);
+  const decision = supplierReviewCurrentDecision(item);
   const status = normalized(item.status);
   const reviewStatus = normalized(item.reviewStatus);
   if (decision === 'deleted' || decision === 'dismissed') return 'Dismissed by admin';
@@ -603,7 +620,7 @@ export function supplierReviewOperatorProblems(item: SupplierReviewQuickApproval
 /** Storefront publication state for review cards — never imply live visibility before approval. */
 export function supplierReviewStorefrontLabel(item: ReviewPresentationItem, draftIsActive: boolean): string {
   const status = normalized(item.status);
-  const decision = normalized(item.decisionAction);
+  const decision = supplierReviewCurrentDecision(item);
   const approved = status === 'approved' || decision === 'approved';
   if (!approved) return 'Not published';
   return draftIsActive ? 'Visible' : 'Hidden';
@@ -684,7 +701,7 @@ export const supplierReviewIsTerminalDecision = (item: ReviewPresentationItem): 
   || ['rejected', 'suppressed', 'deleted', 'dismissed'].includes(normalized(item.status))
   || ['approved', 'rejected', 'suppressed', 'deleted', 'dismissed'].includes(normalized(item.reviewStatus))
   || ['rejected', 'suppressed', 'deleted', 'dismissed'].includes(normalized(item.queueState))
-  || ['approved', 'rejected', 'deleted', 'dismissed', 'suppressed'].includes(normalized(item.decisionAction))
+  || Boolean(supplierReviewCurrentDecision(item))
 );
 
 export function matchesProductReviewFilter(item: ReviewPresentationItem, filter: ProductReviewFilter): boolean {

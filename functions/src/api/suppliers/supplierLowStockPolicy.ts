@@ -14,20 +14,61 @@ export interface NewSupplierProductStockPolicyInput {
   stockKnown: boolean;
 }
 
+export interface DropexLowStockReviewHoldInput {
+  source: unknown;
+  productLive: boolean;
+  stockKnown: boolean;
+  stock: unknown;
+}
+
+export const isLowStockHoldSource = (source: unknown): boolean => (
+  String(source || "").trim().toLowerCase() === LOW_STOCK_HOLD_SOURCE_ID
+);
+
 /**
- * Low Stock Hold applies only to a new, unpublished supplier-backed product.
+ * A canonical product is live only while it exists and neither visibility flag
+ * withdraws it. A missing, inactive or invisible product is not live.
+ */
+export const isSupplierProductLive = (product: Record<string, unknown> | null | undefined): boolean => (
+  Boolean(product)
+  && product!.isActive !== false
+  && product!.visible !== false
+);
+
+/**
+ * Low Stock Hold applies to any Dropex observation whose canonical product is
+ * not live, independent of the comparison status. Live products may fall to
+ * 0-3 units through the inventory automation without entering the hold.
  * Unknown and malformed inventory remain governed by the existing validation
  * paths and are deliberately not classified as low stock.
  */
-export const isLowStockHoldForNewSupplierProduct = (
-  input: NewSupplierProductStockPolicyInput,
-): boolean => (
-  input.isNewUnpublished
-  && String(input.supplierSourceId || "").trim().toLowerCase() === LOW_STOCK_HOLD_SOURCE_ID
-  && input.stockKnown
+export const isDropexLowStockReviewHold = (input: DropexLowStockReviewHoldInput): boolean => (
+  isLowStockHoldSource(input.source)
+  && input.productLive !== true
+  && input.stockKnown === true
   && Number.isInteger(input.stock)
   && Number(input.stock) >= 0
   && Number(input.stock) < MIN_SUPPLIER_STOCK_FOR_NEW_PUBLICATION
+);
+
+/** Legacy entry point retained for callers that only know "new and unpublished". */
+export const isLowStockHoldForNewSupplierProduct = (
+  input: NewSupplierProductStockPolicyInput,
+): boolean => isDropexLowStockReviewHold({
+  source: input.supplierSourceId,
+  productLive: !input.isNewUnpublished,
+  stockKnown: input.stockKnown,
+  stock: input.stock,
+});
+
+/**
+ * Publishing a not-live Dropex product requires trusted, known, integer stock
+ * of at least four units. Unknown or malformed stock fails closed.
+ */
+export const supplierStockAllowsPublication = (input: { stock: unknown; stockKnown: boolean }): boolean => (
+  input.stockKnown === true
+  && Number.isInteger(input.stock)
+  && Number(input.stock) >= MIN_SUPPLIER_STOCK_FOR_NEW_PUBLICATION
 );
 
 export const lowSupplierStockValidationError = () => ({

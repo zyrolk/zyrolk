@@ -42,7 +42,7 @@ import {
   SupplierCategoryMappingRecord,
 } from "../api/suppliers/supplierProductMapping";
 import {
-  isLowStockHoldForNewSupplierProduct,
+  isDropexLowStockReviewHold,
   lowSupplierStockValidationError,
 } from "../api/suppliers/supplierLowStockPolicy";
 
@@ -1466,22 +1466,27 @@ const supplierReviewRecordStockKnown = (record: SupplierQueueRecord): boolean =>
     || providedFields.includes("inventoryLevel");
 };
 
-const supplierReviewRecordIsNewUnpublished = (record: SupplierQueueRecord): boolean => {
+/**
+ * Product liveness as observed when the record was last written. Current
+ * records persist comparison.matchedProductLive. Legacy records fall back to
+ * the observation-time match flags: a record that observed no product is not
+ * live, while a legacy record that observed a product keeps its previous
+ * unheld presentation. matchedProductId is never used because it can be copied
+ * from an offer whose product does not exist. Approval re-reads the product.
+ */
+const supplierReviewRecordProductLive = (record: SupplierQueueRecord): boolean => {
   const comparison = asRecord(record.comparison);
-  const comparisonStatus = normalizedReviewValue(comparison.comparisonStatus || record.comparisonStatus);
-  const baseline = asRecord(record.approvalBaseline);
-  const matchedProductId = String(record.matchedProductId || comparison.matchedProductId || "").trim();
-  return comparisonStatus === "new_product"
-    && baseline.exists !== true
-    && !matchedProductId;
+  if (typeof comparison.matchedProductLive === "boolean") return comparison.matchedProductLive;
+  return comparison.matchFound === true || asRecord(record.approvalBaseline).exists === true;
 };
 
 export const supplierReviewRecordIsLowStockHold = (record: SupplierQueueRecord): boolean => {
+  if (reviewRecordIsTerminalDecision(record)) return false;
   const payload = asRecord(record.productPayload);
   const snapshot = asRecord(record.supplierSnapshot);
-  return isLowStockHoldForNewSupplierProduct({
-    isNewUnpublished: supplierReviewRecordIsNewUnpublished(record),
-    supplierSourceId: record.sourceId,
+  return isDropexLowStockReviewHold({
+    source: record.sourceId,
+    productLive: supplierReviewRecordProductLive(record),
     stock: record.stock ?? payload.stock ?? snapshot.inventoryLevel,
     stockKnown: supplierReviewRecordStockKnown(record),
   });
@@ -1532,13 +1537,56 @@ export const reviewRecordIsApproved = (record: SupplierQueueRecord): boolean => 
   || normalizedReviewValue(record.queueState) === "approved"
 );
 
+/**
+ * An administrator decision belongs to the supplier observation revision it
+ * was made against. When a newer observation has been queued the decision is
+ * stale and no longer terminal. A decision recorded without a revision stays
+ * current only while the record also has no pending revision.
+ */
+export const reviewRecordDecisionIsCurrent = (record: Record<string, unknown>): boolean => {
+  if (!["approved", "rejected", "deleted", "dismissed", "suppressed"].includes(normalizedReviewValue(record.decisionAction))) {
+    return false;
+  }
+  const decisionRevision = String(record.decisionPendingRevision || "").trim();
+  const pendingRevision = String(record.supplierOfferPendingRevision || "").trim();
+  return decisionRevision ? decisionRevision === pendingRevision : !pendingRevision;
+};
+
 export const reviewRecordIsTerminalDecision = (record: SupplierQueueRecord): boolean => (
   reviewRecordIsApproved(record)
   || ["rejected", "suppressed", "deleted", "dismissed"].includes(normalizedReviewValue(record.status))
   || ["rejected", "suppressed", "deleted", "dismissed"].includes(normalizedReviewValue(record.reviewStatus))
   || ["rejected", "suppressed", "deleted", "dismissed"].includes(normalizedReviewValue(record.queueState))
-  || ["approved", "rejected", "deleted", "dismissed", "suppressed"].includes(normalizedReviewValue(record.decisionAction))
+  || reviewRecordDecisionIsCurrent(record)
 );
+
+export const SUPPLIER_REVIEW_DECISION_METADATA_FIELDS = [
+  "decisionAction",
+  "decisionPendingRevision",
+  "decisionCompletedAt",
+  "decisionCompletedBy",
+  "decisionAuditId",
+  "decisionProductId",
+  "systemDecision",
+  "systemDecisionReason",
+] as const;
+
+/**
+ * Field deletes for a requeue write that carries a new pending revision. The
+ * previous decision metadata described an older observation; the immutable
+ * supplier_approval_audit trail keeps the history. A decision made against the
+ * incoming revision is left untouched.
+ */
+export const supplierReviewStaleDecisionFieldDeletes = (
+  existing: Record<string, unknown> | null | undefined,
+  nextPendingRevision: unknown,
+): Record<string, FieldValue> => {
+  const nextRevision = String(nextPendingRevision || "").trim();
+  if (!existing || !nextRevision) return {};
+  if (String(existing.decisionPendingRevision || "").trim() === nextRevision) return {};
+  const present = SUPPLIER_REVIEW_DECISION_METADATA_FIELDS.filter((field) => Object.hasOwn(existing, field));
+  return Object.fromEntries(present.map((field) => [field, FieldValue.delete()]));
+};
 
 export const reviewRecordIsActionable = (record: SupplierQueueRecord): boolean => (
   !reviewRecordIsTerminalDecision(record)

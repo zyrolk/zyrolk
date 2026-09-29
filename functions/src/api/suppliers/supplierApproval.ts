@@ -71,26 +71,28 @@ import {
 } from "./supplierProductIdentity";
 import { shouldReleaseSupplierPortalSkuClaim } from "./supplierPortalSkuClaims";
 import {
-  isLowStockHoldForNewSupplierProduct,
+  isLowStockHoldSource,
+  isSupplierProductLive,
   lowSupplierStockValidationError,
   LOW_SUPPLIER_STOCK_FOR_PUBLICATION_MESSAGE,
+  supplierStockAllowsPublication,
 } from "./supplierLowStockPolicy";
 import {
   projectSupplierAvailableStock,
   resolveSupplierLocalDemand,
 } from "../orders/supplierInventoryReconciliation";
 
+/**
+ * Guards any approval that makes a not-live Dropex product public (creation,
+ * reactivation or making it visible). Unknown or malformed stock fails closed.
+ */
 export function assertNewSupplierPublicationStock(input: {
   supplierSourceId: unknown;
   stock: unknown;
   stockKnown: boolean;
 }): void {
-  if (!isLowStockHoldForNewSupplierProduct({
-    isNewUnpublished: true,
-    supplierSourceId: input.supplierSourceId,
-    stock: input.stock,
-    stockKnown: input.stockKnown,
-  })) return;
+  if (!isLowStockHoldSource(input.supplierSourceId)) return;
+  if (supplierStockAllowsPublication({ stock: input.stock, stockKnown: input.stockKnown })) return;
   throw new ApiError(
     LOW_SUPPLIER_STOCK_FOR_PUBLICATION_MESSAGE,
     422,
@@ -683,13 +685,17 @@ export async function decideSupplierQueueItem(
     }
     const resolvedQueueIdentity = await resolveSupplierQueueIdentity(db, transaction, queueItem);
     const approvalBaselineCandidate = parseSupplierProductApprovalBaseline(queueItem.approvalBaseline);
-    const comparisonStatus = stringValue(
-      queueItem.comparisonStatus || record(queueItem.comparison).comparisonStatus,
-    ).toUpperCase();
+    // Creation is decided from the canonical product document read inside this
+    // transaction, never from the comparison status or stored match metadata.
+    // A baseline that recorded an existing product keeps the canonical ID so a
+    // product deleted after queueing still surfaces as an approval conflict.
+    const canonicalProductSnapshot = action === "approved" && resolvedQueueIdentity.canonicalProductId
+      ? await transaction.get(db.collection("products").doc(resolvedQueueIdentity.canonicalProductId))
+      : null;
+    const canonicalProductExists = canonicalProductSnapshot?.exists === true;
     const createsNewZyroProduct = action === "approved"
-      && comparisonStatus === "NEW_PRODUCT"
-      && approvalBaselineCandidate?.exists === false
-      && resolvedQueueIdentity.offer?.reviewStatus !== "approved";
+      && !canonicalProductExists
+      && approvalBaselineCandidate?.exists !== true;
     const supplierSnapshotForIdentity = record(queueItem.supplierSnapshot);
     const approvalProductId = createsNewZyroProduct
       ? buildZyroProductId({
@@ -723,11 +729,12 @@ export async function decideSupplierQueueItem(
       throw new ApiError("The supplier observation is no longer pending; reload Product Review.", 409);
     }
     const trustedStockObservation = currentPendingObservation?.effective || resolvedQueueIdentity.offer;
-    if (action === "approved" && createsNewZyroProduct) assertNewSupplierPublicationStock({
+    const assertTrustedPublicationStock = () => assertNewSupplierPublicationStock({
       supplierSourceId: trustedStockObservation?.sourceId || queueItem.sourceId,
       stock: trustedStockObservation?.stock,
       stockKnown: trustedStockObservation?.stockKnown === true,
     });
+    if (action === "approved" && createsNewZyroProduct) assertTrustedPublicationStock();
     const isSupplierOfferRemoval = action === "approved"
       && stringValue(queueItem.reconciliationAction) === "supplier_offer_unavailable";
     let approvedPayload = action === "approved" ? toPublicProductPayload(queueItem, effectiveDraft, approvedManagedMedia) : undefined;
@@ -1206,6 +1213,23 @@ export async function decideSupplierQueueItem(
             ),
         updatedAt: now,
       };
+      const targetProductWasLive = existingProductSnapshot?.exists === true
+        && isSupplierProductLive(existingProductSnapshot.data());
+      const approvalLeavesProductLive = isSupplierProductLive({
+        ...(existingProductSnapshot?.exists ? existingProductSnapshot.data() : {}),
+        ...approvedProductPayload,
+      });
+      if (!targetProductWasLive && approvalLeavesProductLive) {
+        if (isSupplierOfferRemoval) {
+          assertNewSupplierPublicationStock({
+            supplierSourceId: projectedSupplierOffer?.sourceId || queueItem.sourceId,
+            stock: projectedSupplierOffer?.stock,
+            stockKnown: projectedSupplierOffer?.stockKnown === true,
+          });
+        } else {
+          assertTrustedPublicationStock();
+        }
+      }
       const { publicData, commercialData } = splitProductData(approvedProductPayload);
       const publicPrice = Number(approvedProductPayload.price);
       const publicOriginalPrice = Number(approvedProductPayload.originalPrice);

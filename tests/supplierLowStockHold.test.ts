@@ -115,7 +115,11 @@ test("server approval guard rejects current trusted low stock and allows recover
     );
   }
   assert.doesNotThrow(() => assertNewSupplierPublicationStock({ supplierSourceId: "dropex", stock: 8, stockKnown: true }));
-  assert.doesNotThrow(() => assertNewSupplierPublicationStock({ supplierSourceId: "dropex", stock: 2, stockKnown: false }));
+  assert.throws(
+    () => assertNewSupplierPublicationStock({ supplierSourceId: "dropex", stock: 8, stockKnown: false }),
+    (error: any) => error?.statusCode === 422
+      && error?.details?.validationErrors?.[0]?.code === LOW_SUPPLIER_STOCK_FOR_PUBLICATION_CODE,
+  );
   assert.doesNotThrow(() => assertNewSupplierPublicationStock({ supplierSourceId: "a2z", stock: 2, stockKnown: true }));
 });
 

@@ -198,7 +198,13 @@ test('successful decisions render terminal state without stale Approve or Reject
     assert.match(markup, /View decision history/u);
   }
 
-  const dismissed = { ...readyItem, status: 'Rejected', queueState: 'suppressed', decisionAction: 'deleted' };
+  const dismissed = {
+    ...readyItem,
+    status: 'Rejected',
+    queueState: 'suppressed',
+    decisionAction: 'deleted',
+    decisionPendingRevision: readyItem.supplierOfferPendingRevision,
+  };
   assert.equal(supplierReviewTerminalLabel(dismissed), 'Dismissed by admin');
   assert.equal(supplierReviewTerminalLabel({ status: 'Pending', queueState: 'review_pending', decisionAction: 'dismissed' }), 'Dismissed by admin');
   assert.equal(supplierReviewTerminalLabel({ status: 'suppressed', queueState: 'review_pending' }), 'Suppressed');

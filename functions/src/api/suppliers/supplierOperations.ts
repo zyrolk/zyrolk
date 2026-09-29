@@ -338,11 +338,11 @@ export async function loadSupplierOperationsSummary(db: Firestore): Promise<Reco
   const supplierSnapshotPromise = db.collection("supplierSources").limit(1_000).get();
   const actionableStatusSnapshotPromise = db.collection("supplier_review_queue")
     .where("status", "in", ["Pending", "CONFLICT", "pending", "conflict", "Approved", "Rejected", "Suppressed", "Deleted", "Dismissed", "approved", "rejected", "suppressed", "deleted", "dismissed", "APPROVED", "REJECTED", "SUPPRESSED", "DELETED", "DISMISSED"])
-    .select("status", "reviewStatus", "queueState", "decisionAction")
+    .select("status", "reviewStatus", "queueState", "decisionAction", "decisionPendingRevision", "supplierOfferPendingRevision")
     .get();
   const actionableQueueStateSnapshotPromise = db.collection("supplier_review_queue")
     .where("queueState", "in", ["queued", "leased", "processing", "review_pending", "conflict", "retryable_failure", "dead_letter"])
-    .select("status", "reviewStatus", "queueState", "decisionAction")
+    .select("status", "reviewStatus", "queueState", "decisionAction", "decisionPendingRevision", "supplierOfferPendingRevision")
     .get();
   const queueStates = ["queued", "leased", "processing", "review_pending", "approved", "rejected", "conflict", "retryable_failure", "dead_letter", "suppressed"];
   const [
