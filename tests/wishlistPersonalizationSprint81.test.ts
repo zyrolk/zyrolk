@@ -159,7 +159,7 @@ test('recommendations never fabricate best-seller or co-purchase results', () =>
 });
 
 test('App preserves the existing wishlist document contract and adds bounded recent-ID account sync', () => {
-  assert.match(app, /updateDoc\(userRef, \{ wishlist: commerceWishlist \}\)/);
+  assert.match(app, /updateDoc\(userRef, \{ wishlist: firestoreWishlist \}\)/);
   assert.match(app, /userData\.wishlist/);
   assert.match(app, /userData\.recentlyViewedProductIds/);
   assert.match(app, /updateDoc\(userRef, \{ recentlyViewedProductIds: commerceRecentlyViewedIds \}\)/);

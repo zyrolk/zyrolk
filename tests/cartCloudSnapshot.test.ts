@@ -194,7 +194,7 @@ test('existing-user updateDoc and new-user setDoc both write the sanitized cart'
 test('browser-storage cart persistence still uses the unsanitized commerce cart', () => {
   assert.match(appSource, /const commerceCart = filterCommerceCartItems\(cart\);\s*writeStoredJson\(getBrowserStorage\('localStorage'\), 'zyro_cart', commerceCart\);/u);
   assert.match(appSource, /readStoredArray<CartItem>\(getBrowserStorage\('localStorage'\), 'zyro_cart'\)/u);
-  assert.match(appSource, /await updateDoc\(userRef, \{ wishlist: commerceWishlist \}\);/u);
+  assert.match(appSource, /await updateDoc\(userRef, \{ wishlist: firestoreWishlist \}\);/u);
 });
 
 test('checkout request shape from the in-memory cart is unchanged', () => {

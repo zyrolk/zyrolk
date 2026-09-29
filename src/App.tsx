@@ -38,6 +38,7 @@ import { isProductExplicitlyActive } from './services/storefront/productAvailabi
 import { resolveCustomerPromotion } from './services/products/promotionPolicy';
 import { canUseProductInCommerce, filterCommerceCartItems, filterCommerceProductIds, filterCommerceProducts } from './services/storefront/previewCommerceGuard';
 import { toFirestoreCartSnapshot } from './services/storefront/cartCloudSnapshot';
+import { toFirestoreWishlistSnapshot } from './services/storefront/wishlistCloudSnapshot';
 import { buildStorefrontUrl, parseStorefrontRoute } from './services/navigation/storefrontRoutes';
 import { formatCategoryDisplayName, resolveCategoryDisplayName, selectExploreMoreProducts } from './services/storefront/launchMerchandising';
 
@@ -706,10 +707,11 @@ export default function App() {
     const syncWishlistToFirestore = async () => {
       if (user && wishlistLoadedForUser === user.uid) {
         try {
+          const firestoreWishlist = toFirestoreWishlistSnapshot(commerceWishlist);
           const userRef = doc(db, "users", user.uid);
           const userDoc = await getDoc(userRef);
           if (userDoc.exists()) {
-            await updateDoc(userRef, { wishlist: commerceWishlist });
+            await updateDoc(userRef, { wishlist: firestoreWishlist });
           } else {
             await setDoc(userRef, {
               uid: user.uid,
@@ -717,7 +719,7 @@ export default function App() {
               displayName: user.displayName || user.email?.split('@')[0] || '',
               role: 'customer',
               createdAt: new Date().toISOString(),
-              wishlist: commerceWishlist
+              wishlist: firestoreWishlist
             });
           }
           setPersonalizationSyncError('');
