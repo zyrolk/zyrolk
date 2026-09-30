@@ -70,7 +70,6 @@ interface SupplierReviewEditorModalProps {
   onRefreshSupplier?: () => Promise<void>;
   onConfigureOffer: (offerId: string, patch: { priority?: number; enabled?: boolean }) => Promise<void>;
   onSelectOffer: (offerId: string, options: { locked: boolean; failoverEnabled: boolean }) => Promise<void>;
-  onActivateTaxonomyCandidate: (categoryId: string, subcategoryId?: string) => Promise<void>;
 }
 
 const money = (value: number | null | undefined): string => (
@@ -136,7 +135,6 @@ export default function SupplierReviewEditorModal({
   onRefreshSupplier,
   onConfigureOffer,
   onSelectOffer,
-  onActivateTaxonomyCandidate,
 }: SupplierReviewEditorModalProps) {
   const [draft, setDraft] = useState(initialDraft);
   const [isEditing, setIsEditing] = useState(false);
@@ -172,15 +170,13 @@ export default function SupplierReviewEditorModal({
     () => countStructuredSupplierSpecifications(draft.specifications),
     [draft.specifications],
   );
-  const suggestedCategory = useMemo(
-    () => categories.find((category) => category.id === item.categoryMapping?.targetCategoryId),
-    [categories, item.categoryMapping?.targetCategoryId],
-  );
   const suggestedBrand = useMemo(
     () => brands.find((brand) => brand.id === item.brandMapping?.mappedBrandId),
     [brands, item.brandMapping?.mappedBrandId],
   );
   const supplierMetadata = useMemo(() => supplierReviewRawMetadata(item), [item]);
+  const supplierSourceCategory = String(supplierMetadata.supplierCategory || item.categoryMapping?.supplierCategory || '').trim();
+  const supplierSourceSubcategory = String(supplierMetadata.supplierSubcategory || item.categoryMapping?.supplierSubcategory || '').trim();
   const dropexNewProductHasNoReferencePrice = String(item.sourceId || '').trim().toLowerCase() === 'dropex'
     && item.comparison?.comparisonStatus === 'NEW_PRODUCT';
   const selectedBrand = useMemo(
@@ -474,41 +470,16 @@ export default function SupplierReviewEditorModal({
             <div><span className="block text-[9px] font-black uppercase tracking-wider text-slate-400">Supplier</span><strong>{item.supplierName || 'Unknown Supplier'}</strong></div>
             <div><span className="block text-[9px] font-black uppercase tracking-wider text-slate-400">Supplier SKU</span><strong className="font-mono">{item.supplierCode}</strong></div>
             <div><span className="block text-[9px] font-black uppercase tracking-wider text-slate-400">Wholesale Price</span><strong>{formatSupplierCostLabel(draft.costPrice, draft.supplierCostAvailable)}</strong></div>
+            <div><span className="block text-[9px] font-black uppercase tracking-wider text-slate-400">Supplier source category</span><strong>{supplierSourceCategory || 'Not supplied'}</strong></div>
+            <div><span className="block text-[9px] font-black uppercase tracking-wider text-slate-400">Supplier source subcategory</span><strong>{supplierSourceSubcategory || 'Not supplied'}</strong></div>
           </div>
           </details>
 
           <details open className="order-[5] rounded-2xl border border-blue-500/20 bg-blue-500/5 p-4 text-xs">
-            <summary className="cursor-pointer font-black text-slate-700 outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-slate-200">Category and brand suggestions</summary>
-          <section className="mt-3 grid gap-3 sm:grid-cols-2" aria-labelledby="supplier-mapping-summary-title">
-            <div className="sm:col-span-2">
-              <h4 id="supplier-mapping-summary-title" className="flex items-center gap-2 font-black text-slate-800 dark:text-white"><Sparkles className="h-4 w-4 text-blue-500" />Intelligent mapping</h4>
-            </div>
-            <div className="rounded-xl bg-white/70 p-3 dark:bg-slate-900/60">
-              <span className="block text-[9px] font-black uppercase text-slate-400">Supplier category</span>
-              <strong>{supplierMetadata.supplierCategory || item.categoryMapping?.supplierCategory || 'Not supplied'}</strong>
-              {supplierMetadata.supplierSubcategory || item.categoryMapping?.supplierSubcategory ? <span className="mt-1 block text-[10px] text-slate-500">Subcategory: {String(supplierMetadata.supplierSubcategory || item.categoryMapping?.supplierSubcategory)}</span> : null}
-              {item.categoryMapping?.candidateCategoryId || item.categoryMapping?.candidateSubcategoryId ? (
-                <div className="mt-3 rounded-lg border border-amber-500/20 bg-amber-500/10 p-2 text-[10px] font-semibold text-amber-700 dark:text-amber-200">
-                  <p>{item.categoryMapping?.candidateCategoryId
-                    ? 'Supplier taxonomy is available as an inactive candidate. Map supplier category to an existing Zyro category before publishing; activate only when it is intentionally a new canonical category.'
-                    : 'Supplier subcategory is available as an inactive candidate. Map supplier category to an existing Zyro category before publishing.'}</p>
-                  {isEditing ? <button
-                    type="button"
-                    onClick={() => void onActivateTaxonomyCandidate(
-                      item.categoryMapping?.candidateCategoryId || item.categoryMapping?.targetCategoryId || '',
-                      item.categoryMapping?.candidateSubcategoryId,
-                    )}
-                    className="mt-2 rounded-lg bg-amber-600 px-3 py-2 text-[10px] font-black text-white"
-                  >Activate as new canonical category</button> : null}
-                </div>
-              ) : null}
-              {item.categoryMapping?.targetCategoryId ? <><div className="mt-2 flex flex-wrap items-center gap-2"><span className="text-[10px] text-slate-500">Suggested Category</span><strong className="text-xs text-blue-700 dark:text-blue-300">{suggestedCategory?.name || item.categoryMapping.targetCategoryId}</strong><span className="rounded-full bg-blue-500/10 px-2 py-0.5 text-[9px] font-black text-blue-600">{Math.round(Number(item.categoryMapping.confidence || 0))}% confidence</span></div>{isEditing ? <button type="button" onClick={() => setDraft((current) => {
-                const categoryDraft = updateSupplierReviewDraftField(current, 'category', { category: item.categoryMapping?.targetCategoryId || '' });
-                const subcategoryId = item.categoryMapping?.targetSubcategoryId || '';
-                return subcategoryId
-                  ? updateSupplierReviewDraftField(categoryDraft, 'subcategory', { subcategory: subcategoryId })
-                  : { ...categoryDraft, subcategory: '' };
-              })} disabled={draft.category === item.categoryMapping.targetCategoryId && draft.subcategory === (item.categoryMapping.targetSubcategoryId || '')} className="mt-2 rounded-lg bg-blue-600 px-3 py-2 text-[10px] font-black text-white disabled:cursor-not-allowed disabled:opacity-40">Apply</button> : null}</> : <p className="mt-2 rounded-lg border border-dashed border-blue-500/20 p-3 text-[10px] text-slate-500">No category suggestion is available. Select a category manually.</p>}
+            <summary className="cursor-pointer font-black text-slate-700 outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-slate-200">Brand suggestion</summary>
+          <section className="mt-3 grid gap-3" aria-labelledby="supplier-mapping-summary-title">
+            <div>
+              <h4 id="supplier-mapping-summary-title" className="flex items-center gap-2 font-black text-slate-800 dark:text-white"><Sparkles className="h-4 w-4 text-blue-500" />Brand suggestion</h4>
             </div>
             <div className="rounded-xl bg-white/70 p-3 dark:bg-slate-900/60">
               <span className="block text-[9px] font-black uppercase text-slate-400">Supplier brand</span>

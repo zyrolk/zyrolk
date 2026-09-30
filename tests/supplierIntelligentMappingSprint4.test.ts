@@ -167,7 +167,7 @@ test('Sprint 4 learned mapping IDs are stable and approval persists immutable ma
   assert.notEqual(supplierMappingDocumentId('source-a', 'phones'), supplierMappingDocumentId('source-b', 'phones'));
 
   const approval = readFileSync('functions/src/api/suppliers/supplierApproval.ts', 'utf8');
-  assert.match(approval, /supplier_category_mappings/);
+  assert.doesNotMatch(approval, /supplier_category_mappings/);
   assert.match(approval, /supplier_brand_mappings/);
   assert.match(approval, /mappingType: "learned"/);
   assert.match(approval, /supplier_mapping_audit/);
@@ -181,16 +181,16 @@ test('Sprint 4 queue UX exposes suggestion acceptance, confidence, missing field
   const quickCard = readFileSync('src/components/SupplierReviewQuickCard.tsx', 'utf8');
   const editor = readFileSync('src/components/SupplierReviewEditorModal.tsx', 'utf8');
   const sync = readFileSync('functions/src/scheduled/supplierSync.ts', 'utf8');
-  assert.match(sync, /suggestSupplierCategory/);
+  assert.match(sync, /buildSupplierTaxonomyMetadata/);
   assert.match(sync, /suggestSupplierBrand/);
   assert.match(sync, /readyToPublish/);
   assert.match(quickCard, /Review required/);
   assert.match(hub, /supplierReviewCanQuickApprove/);
-  assert.match(editor, /Suggested Category/);
-  assert.match(editor, /category: item\.categoryMapping\?\.targetCategoryId/);
+  assert.doesNotMatch(editor, /Suggested Category/);
+  assert.doesNotMatch(editor, /categoryMapping\?\.targetCategoryId/);
   assert.match(editor, /Suggested Brand/);
   assert.match(editor, /brand: item\.brandMapping\?\.mappedBrandId/);
-  assert.ok((editor.match(/>Apply<\/button>/g) || []).length >= 2);
+  assert.equal((editor.match(/>Apply<\/button>/g) || []).length, 1);
   assert.match(editor, /Category specifications/);
   assert.match(editor, /Ready to publish/);
 });
@@ -215,9 +215,8 @@ test('Sprint 4 admin category mapping workflow persists exact category and subca
   assert.match(adminMapping, /target subcategory does not belong to the selected active category/i);
   assert.match(adminMapping, /target category must be an active canonical category/i);
   assert.match(adminMapping, /supplierMappingDocumentId\(sourceId, normalizedCategory\)/);
-  assert.match(queue, /applyTrustedCategoryMappingsForReview/);
-  assert.match(approval, /existingCategoryMappingSnapshot/);
-  assert.match(approval, /mappedCategorySnapshot/);
+  assert.doesNotMatch(queue, /applyTrustedCategoryMappingsForReview|projectSupplierReviewTaxonomy/);
+  assert.doesNotMatch(approval, /existingCategoryMappingSnapshot|mappedCategorySnapshot/);
   assert.match(hub, /Map supplier category/);
   assert.match(hub, /Map supplier subcategory/);
   assert.match(hub, /category\.isActive !== false/);

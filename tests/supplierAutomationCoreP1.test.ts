@@ -27,8 +27,6 @@ import {
   suggestSupplierCategory,
   validateSupplierProductForApproval,
 } from '../functions/src/api/suppliers/supplierProductMapping';
-import { resolveSupplierApprovalMappedSubcategoryId } from '../functions/src/api/suppliers/supplierApproval';
-import { projectSupplierReviewTaxonomy } from '../functions/src/scheduled/supplierReviewQueue';
 import {
   activateSupplierTaxonomyCandidate,
   upsertSupplierTaxonomyCandidate,
@@ -550,54 +548,6 @@ test('P1 16A1 malformed child-scoped mappings never become parent mappings', () 
   });
   assert.equal(selected?.mapping.targetCategoryId, 'kitchen');
   assert.equal(selected?.mapping.mappingScope, 'parent');
-});
-
-test('P1 16A2 approval uses the shared child ID-first/name-fallback matcher', () => {
-  const mapping = {
-    sourceId: 'dropex', supplierCategory: 'Health & Beauty', normalizedCategory: 'health beauty',
-    supplierSubcategory: 'Hair Care', normalizedSupplierSubcategory: 'hair care', supplierSubcategoryId: '123',
-    mappingScope: 'child' as const, targetCategoryId: 'health', targetSubcategoryId: 'hair-care',
-    confidence: 100, mappingType: 'learned' as const, version: 1, updatedBy: 'admin',
-  };
-  assert.equal(resolveSupplierApprovalMappedSubcategoryId(mapping, 'Hair Care'), 'hair-care');
-  assert.equal(resolveSupplierApprovalMappedSubcategoryId(mapping, 'Hair Care', '999'), '');
-  assert.equal(resolveSupplierApprovalMappedSubcategoryId(mapping, 'Different Name', '123'), 'hair-care');
-  assert.equal(resolveSupplierApprovalMappedSubcategoryId({ ...mapping, sourceId: 'other-source' }, 'Hair Care'), 'hair-care');
-  assert.equal(resolveSupplierApprovalMappedSubcategoryId({ ...mapping, supplierCategory: 'Other Parent' }, 'Hair Care'), 'hair-care');
-});
-
-test('P1 16A3 lazy review projection drops stale inherited taxonomy but preserves admin-owned taxonomy', () => {
-  const parentSelection = {
-    scope: 'source' as const,
-    mapping: {
-      sourceId: 'dropex', supplierCategory: 'Health & Beauty', normalizedCategory: 'health beauty',
-      mappingScope: 'parent' as const, targetCategoryId: 'cat-b', targetSubcategoryId: '',
-      confidence: 100, mappingType: 'manual' as const, version: 2, updatedBy: 'admin',
-    },
-  };
-  const stale = projectSupplierReviewTaxonomy(
-    { id: 'review-stale', productPayload: { category: 'cat-a', subcategory: 'massage-wellness' } },
-    parentSelection,
-    { id: 'cat-b', isActive: true, subcategories: [{ id: 'audio', isActive: true }] },
-    'Health & Beauty', '', 'cat-b', '',
-  );
-  assert.equal((stale.productPayload as Data).category, 'cat-b');
-  assert.equal((stale.productPayload as Data).subcategory, '');
-
-  const explicit = projectSupplierReviewTaxonomy(
-    {
-      id: 'review-explicit',
-      productPayload: {
-        category: 'cat-a', subcategory: 'massage-wellness',
-        supplierFieldOwnership: { category: { owner: 'admin' }, subcategory: { owner: 'admin' } },
-      },
-    },
-    parentSelection,
-    { id: 'cat-b', isActive: true, subcategories: [{ id: 'audio', isActive: true }] },
-    'Health & Beauty', '', 'cat-b', '',
-  );
-  assert.equal((explicit.productPayload as Data).category, 'cat-a');
-  assert.equal((explicit.productPayload as Data).subcategory, 'massage-wellness');
 });
 
 test('P1 16B child mappings coexist under one supplier parent and resolve exact children first', () => {

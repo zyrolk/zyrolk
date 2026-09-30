@@ -59,7 +59,7 @@ const readQueueData = async (queueIds: string[]): Promise<Record<string, unknown
   return snapshots.map((snapshot) => snapshot.data() || {});
 };
 
-test("Supplier category mapping API, lazy review projection, and approval authority use emulator persistence", {
+test("Supplier category mapping API stays admin-managed while review listing and approval ignore it", {
   skip: canRunEmulator ? undefined : "Firestore, Auth, and Functions Emulators are required.",
   timeout: 240_000,
 }, async (t) => {
@@ -365,7 +365,7 @@ test("Supplier category mapping API, lazy review projection, and approval author
       assert.equal("current" in listedChild, false);
     });
 
-    await t.test("exact child unmap is admin-only, audited, and falls back without touching queue or products", async () => {
+    await t.test("exact child unmap is admin-only, audited, and mappings never classify queue or products", async () => {
       const beforeQueue = (await adminDb.collection("supplier_review_queue").doc(unmapQueueId).get()).data();
       const beforeProducts = (await adminDb.collection("products").get()).docs.map((document) => ({ id: document.id, data: document.data() }));
       const saved = await request("POST", "/supplier-category-mappings", adminToken, {
@@ -378,8 +378,8 @@ test("Supplier category mapping API, lazy review projection, and approval author
       assert.equal(saved.status, 200);
       const mappedPage = await listSupplierQueuePage(adminDb, { view: "review", state: "active", limit: 40 });
       const mappedItem = mappedPage.items.find((item) => item.id === unmapQueueId) as Record<string, unknown> | undefined;
-      assert.equal((mappedItem?.productPayload as Record<string, unknown>)?.category, categoryId);
-      assert.equal((mappedItem?.productPayload as Record<string, unknown>)?.subcategory, secondSubcategoryId);
+      assert.equal((mappedItem?.productPayload as Record<string, unknown>)?.category, "");
+      assert.equal((mappedItem?.productPayload as Record<string, unknown>)?.subcategory, "");
 
       const removalBody = {
         mappingId: unmapChildMappingId,
@@ -416,14 +416,18 @@ test("Supplier category mapping API, lazy review projection, and approval author
       assert.equal((await adminDb.collection("supplier_category_mappings").doc(mappingId).get()).data()?.targetSubcategoryId, "");
       assert.equal((await adminDb.collection("supplier_category_mappings").doc(childMappingId).get()).data()?.targetSubcategoryId, subcategoryId);
       const removalAudits = await adminDb.collection("supplier_mapping_audit").where("mappingId", "==", unmapChildMappingId).get();
-      assert.equal(removalAudits.docs.at(-1)?.data().action, "admin_mapping_removed");
+      assert.equal(
+        removalAudits.docs.some((document) => document.data().action === "admin_mapping_removed"),
+        true,
+        "the exact child unmap must write an admin_mapping_removed audit event",
+      );
 
       const readBack = await request("GET", `/supplier-category-mappings?sourceId=${encodeURIComponent(sourceId)}`, adminToken);
       const readBackBody = await readBack.json() as { mappings: Array<Record<string, unknown>> };
       assert.equal(readBackBody.mappings.some((mapping) => mapping.id === unmapChildMappingId), false);
       const fallbackPage = await listSupplierQueuePage(adminDb, { view: "review", state: "active", limit: 40 });
       const fallbackItem = fallbackPage.items.find((item) => item.id === unmapQueueId) as Record<string, unknown> | undefined;
-      assert.equal((fallbackItem?.productPayload as Record<string, unknown>)?.category, categoryId);
+      assert.equal((fallbackItem?.productPayload as Record<string, unknown>)?.category, "");
       assert.equal((fallbackItem?.productPayload as Record<string, unknown>)?.subcategory, "");
       assert.deepEqual((await adminDb.collection("supplier_review_queue").doc(unmapQueueId).get()).data(), beforeQueue);
       assert.deepEqual((await adminDb.collection("products").get()).docs.map((document) => ({ id: document.id, data: document.data() })), beforeProducts);
@@ -471,12 +475,12 @@ test("Supplier category mapping API, lazy review projection, and approval author
       const categoryOnlyPage = await listSupplierQueuePage(adminDb, { view: "review", state: "active", limit: 40 });
       const categoryOnlyReview = categoryOnlyPage.items.find((item) => item.id === categoryOnlyQueueId) as Record<string, unknown> | undefined;
       assert.ok(categoryOnlyReview);
-      assert.equal((categoryOnlyReview.productPayload as Record<string, unknown>).category, categoryId);
+      assert.equal((categoryOnlyReview.productPayload as Record<string, unknown>).category, "");
       assert.equal((categoryOnlyReview.productPayload as Record<string, unknown>).subcategory, "");
-      assert.equal((categoryOnlyReview.categoryMapping as Record<string, unknown>).requiresManualSelection, true);
+      assert.equal((categoryOnlyReview.categoryMapping as Record<string, unknown> | undefined)?.targetCategoryId, undefined);
     });
 
-    await t.test("existing pending review item receives lazy mapping without queue migration writes", async () => {
+    await t.test("review list returns stored taxonomy without mapping overlay or queue writes", async () => {
       const before = await readQueueData([queueId]);
       const secondQueueId = `mapping-review-child-id-${suffix}`;
       const staleQueueId = `mapping-review-stale-taxonomy-${suffix}`;
@@ -492,14 +496,14 @@ test("Supplier category mapping API, lazy review projection, and approval author
       assert.ok(mapped);
       assert.ok(mappedSecond);
       assert.ok(mappedStale);
-      assert.equal((mapped.productPayload as Record<string, unknown>).category, categoryId);
-      assert.equal((mapped.productPayload as Record<string, unknown>).subcategory, subcategoryId);
-      assert.equal((mapped.categoryMapping as Record<string, unknown>).targetCategoryId, categoryId);
-      assert.equal((mapped.categoryMapping as Record<string, unknown>).targetSubcategoryId, subcategoryId);
-      assert.equal((mappedSecond.productPayload as Record<string, unknown>).subcategory, secondSubcategoryId);
-      assert.equal((mappedSecond.categoryMapping as Record<string, unknown>).targetSubcategoryId, secondSubcategoryId);
+      assert.equal((mapped.productPayload as Record<string, unknown>).category, "");
+      assert.equal((mapped.productPayload as Record<string, unknown>).subcategory, "");
+      assert.equal((mapped.categoryMapping as Record<string, unknown> | undefined)?.targetCategoryId, undefined);
+      assert.equal((mappedSecond.productPayload as Record<string, unknown>).category, "");
+      assert.equal((mappedSecond.productPayload as Record<string, unknown>).subcategory, "");
+      assert.equal((mappedSecond.categoryMapping as Record<string, unknown> | undefined)?.targetSubcategoryId, undefined);
       assert.equal((mappedStale.productPayload as Record<string, unknown>).category, categoryId);
-      assert.equal((mappedStale.productPayload as Record<string, unknown>).subcategory, "");
+      assert.equal((mappedStale.productPayload as Record<string, unknown>).subcategory, subcategoryId);
       const after = await readQueueData([queueId]);
       assert.deepEqual(after, before);
       assert.equal(Object.hasOwn(after[0], "category"), false);
@@ -531,8 +535,8 @@ test("Supplier category mapping API, lazy review projection, and approval author
     });
 
     const { offerId, revision } = await seedOfferAndQueue();
-    await t.test("approval re-resolves trusted mapping and permits absent supplier brand", async () => {
-      const draft = parseSupplierApprovalDraft({
+    await t.test("approval commits the admin draft taxonomy without mapping re-projection and permits absent supplier brand", async () => {
+      const invalidDraft = parseSupplierApprovalDraft({
         productName: `${invalidQueueId} approved`,
         description: "A valid supplier review product description.",
         sellingPrice: 120,
@@ -547,6 +551,33 @@ test("Supplier category mapping API, lazy review projection, and approval author
         primaryImageUrl: `https://storage.example/${invalidQueueId}-managed.webp`,
         galleryImageUrls: [],
       });
+      assert.ok(invalidDraft);
+      await assert.rejects(
+        () => decideSupplierQueueItem(adminDb, invalidQueueId, "approved", {
+          uid: `mapping-admin-${suffix}`,
+          email: `mapping-admin-${suffix}@example.test`,
+        }, { draft: invalidDraft, expectedPendingRevision: revision }),
+        /validation failed|category/i,
+      );
+      assert.equal((await adminDb.collection("supplier_review_queue").doc(invalidQueueId).get()).data()?.queueState, "review_pending");
+
+      const draft = parseSupplierApprovalDraft({
+        productName: `${invalidQueueId} approved`,
+        description: "A valid supplier review product description.",
+        sellingPrice: 120,
+        costPrice: 80,
+        marketPrice: 120,
+        stock: 4,
+        category: otherCategoryId,
+        subcategory: otherSubcategoryId,
+        brand: "",
+        specifications: { Model: invalidQueueId },
+        isActive: false,
+        primaryImageUrl: `https://storage.example/${invalidQueueId}-managed.webp`,
+        galleryImageUrls: [],
+        fieldOwnership: { category: "admin", subcategory: "admin" },
+        editedFields: ["category", "subcategory"],
+      });
       assert.ok(draft);
       const result = await decideSupplierQueueItem(adminDb, invalidQueueId, "approved", {
         uid: `mapping-admin-${suffix}`,
@@ -554,14 +585,16 @@ test("Supplier category mapping API, lazy review projection, and approval author
       }, { draft, expectedPendingRevision: revision });
       assert.equal(result.success, true);
       const product = (await adminDb.collection("products").doc(result.productId!).get()).data()!;
-      assert.equal(product.category, categoryId);
-      assert.equal(product.subcategory, subcategoryId);
+      assert.equal(product.category, otherCategoryId);
+      assert.equal(product.subcategory, otherSubcategoryId);
       assert.equal(Object.hasOwn(product, "brand"), false);
       assert.equal((await adminDb.collection("supplier_product_offers").doc(offerId).get()).data()?.reviewStatus, "approved");
+      assert.equal((await adminDb.collection("supplier_category_mappings").doc(mappingId).get()).data()?.targetCategoryId, categoryId);
+      assert.equal((await adminDb.collection("supplier_category_mappings").doc(childMappingId).get()).data()?.targetSubcategoryId, subcategoryId);
       assert.equal((await adminDb.collection("supplier_category_mappings").doc(childMappingWithId).get()).data()?.targetSubcategoryId, secondSubcategoryId);
     });
 
-    await t.test("approval learns category without poisoning it with a product-only subcategory", async () => {
+    await t.test("approval never learns a category mapping or writes legacy category mappings", async () => {
       const noSubcategoryQueueId = `mapping-no-subcategory-${suffix}`;
       const supplierOnlyCategory = `Category Only Approval ${suffix}`;
       const seeded = await seedOfferAndQueue(noSubcategoryQueueId, supplierOnlyCategory, "");
@@ -591,15 +624,15 @@ test("Supplier category mapping API, lazy review projection, and approval author
       const product = (await adminDb.collection("products").doc(result.productId!).get()).data()!;
       assert.equal(product.category, categoryId);
       assert.equal(product.subcategory, subcategoryId);
-      const mapping = (await adminDb.collection("supplier_category_mappings")
-        .doc(supplierMappingDocumentId(sourceId, supplierOnlyCategory.toLocaleLowerCase())).get()).data()!;
-      assert.equal(mapping.targetCategoryId, categoryId);
-      assert.equal(mapping.targetSubcategoryId, "");
-      assert.equal(Object.hasOwn(mapping, "supplierSubcategory"), false);
-      assert.equal(Object.hasOwn(mapping, "normalizedSupplierSubcategory"), false);
+      const learnedMappingId = supplierMappingDocumentId(sourceId, supplierOnlyCategory.toLocaleLowerCase());
+      assert.equal((await adminDb.collection("supplier_category_mappings").doc(learnedMappingId).get()).exists, false);
+      const categoryLearningAudits = await adminDb.collection("supplier_mapping_audit")
+        .where("queueItemId", "==", noSubcategoryQueueId).get();
+      assert.equal(categoryLearningAudits.docs.some((document) => document.data().mappingKind === "category"), false);
+      assert.deepEqual((await adminDb.collection("supplier_settings").doc("config").get()).data()?.categoryMappings, {});
     });
 
-    await t.test("valid explicit taxonomy draft survives parent mapping retarget", async () => {
+    await t.test("explicit admin taxonomy draft is committed and does not retarget mappings", async () => {
       const explicitQueueId = `mapping-explicit-taxonomy-${suffix}`;
       const seeded = await seedOfferAndQueue(explicitQueueId, supplierCategory, "");
       const draft = parseSupplierApprovalDraft({
@@ -628,15 +661,24 @@ test("Supplier category mapping API, lazy review projection, and approval author
       const product = (await adminDb.collection("products").doc(result.productId!).get()).data()!;
       assert.equal(product.category, otherCategoryId);
       assert.equal(product.subcategory, otherSubcategoryId);
-      assert.equal((await adminDb.collection("supplier_category_mappings").doc(mappingId).get()).data()?.targetCategoryId, otherCategoryId);
+      assert.equal((await adminDb.collection("supplier_category_mappings").doc(mappingId).get()).data()?.targetCategoryId, categoryId);
       assert.equal((await adminDb.collection("supplier_category_mappings").doc(childMappingId).get()).data()?.targetSubcategoryId, subcategoryId);
     });
 
-    await t.test("legacy stale supplier-derived subcategory fails closed at approval", async () => {
+    await t.test("legacy supplier-derived stored taxonomy fails closed at approval without explicit admin taxonomy", async () => {
       const staleQueueId = `mapping-stale-approval-${suffix}`;
       const seeded = await seedOfferAndQueue(staleQueueId, supplierCategory, "");
       await adminDb.collection("supplier_review_queue").doc(staleQueueId).set({
         productPayload: { category: otherCategoryId, subcategory: otherSubcategoryId },
+        categoryMapping: {
+          supplierCategory,
+          targetCategoryId: otherCategoryId,
+          targetSubcategoryId: otherSubcategoryId,
+          confidence: 100,
+          mappingType: "learned",
+          autoSelected: true,
+          requiresManualSelection: false,
+        },
       }, { merge: true });
       const staleDraft = parseSupplierApprovalDraft({
         productName: `${staleQueueId} stale draft`,
@@ -652,7 +694,7 @@ test("Supplier category mapping API, lazy review projection, and approval author
         isActive: false,
         primaryImageUrl: `https://storage.example/${staleQueueId}-managed.webp`,
         galleryImageUrls: [],
-        fieldOwnership: { category: "admin", subcategory: "admin" },
+        fieldOwnership: { category: "supplier", subcategory: "supplier" },
         editedFields: [],
       });
       assert.ok(staleDraft);
@@ -661,13 +703,14 @@ test("Supplier category mapping API, lazy review projection, and approval author
           uid: `mapping-admin-${suffix}`,
           email: `mapping-admin-${suffix}@example.test`,
         }, { draft: staleDraft, expectedPendingRevision: seeded.revision }),
-        /subcategory|validation/i,
+        /category|validation/i,
       );
       assert.equal((await adminDb.collection("supplier_review_queue").doc(staleQueueId).get()).data()?.queueState, "review_pending");
+      assert.equal((await adminDb.collection("products").where("name", "==", `${staleQueueId} stale draft`).get()).empty, true);
       assert.equal((await adminDb.collection("supplier_category_mappings").doc(childMappingId).get()).data()?.targetSubcategoryId, subcategoryId);
     });
 
-    await t.test("parent retarget fences stale children and remaps only the selected child", async () => {
+    await t.test("admin mapping retarget and remap stay inert for pending review items", async () => {
       const secondQueueId = `mapping-review-child-id-${suffix}`;
       const retarget = await request("POST", "/supplier-category-mappings", adminToken, {
         sourceId,
@@ -682,9 +725,9 @@ test("Supplier category mapping API, lazy review projection, and approval author
       const fencedPage = await listSupplierQueuePage(adminDb, { view: "review", state: "active", limit: 40 });
       const fencedFirst = fencedPage.items.find((item) => item.id === queueId) as Record<string, unknown> | undefined;
       const fencedSecond = fencedPage.items.find((item) => item.id === secondQueueId) as Record<string, unknown> | undefined;
-      assert.equal((fencedFirst?.productPayload as Record<string, unknown>)?.category, otherCategoryId);
+      assert.equal((fencedFirst?.productPayload as Record<string, unknown>)?.category, "");
       assert.equal((fencedFirst?.productPayload as Record<string, unknown>)?.subcategory, "");
-      assert.equal((fencedSecond?.productPayload as Record<string, unknown>)?.category, otherCategoryId);
+      assert.equal((fencedSecond?.productPayload as Record<string, unknown>)?.category, "");
       assert.equal((fencedSecond?.productPayload as Record<string, unknown>)?.subcategory, "");
 
       const remap = await request("POST", "/supplier-category-mappings", adminToken, {
@@ -702,13 +745,13 @@ test("Supplier category mapping API, lazy review projection, and approval author
       const remappedPage = await listSupplierQueuePage(adminDb, { view: "review", state: "active", limit: 40 });
       const remappedFirst = remappedPage.items.find((item) => item.id === queueId) as Record<string, unknown> | undefined;
       const remappedSecond = remappedPage.items.find((item) => item.id === secondQueueId) as Record<string, unknown> | undefined;
-      assert.equal((remappedFirst?.productPayload as Record<string, unknown>)?.category, otherCategoryId);
-      assert.equal((remappedFirst?.productPayload as Record<string, unknown>)?.subcategory, otherSubcategoryId);
-      assert.equal((remappedSecond?.productPayload as Record<string, unknown>)?.category, otherCategoryId);
+      assert.equal((remappedFirst?.productPayload as Record<string, unknown>)?.category, "");
+      assert.equal((remappedFirst?.productPayload as Record<string, unknown>)?.subcategory, "");
+      assert.equal((remappedSecond?.productPayload as Record<string, unknown>)?.category, "");
       assert.equal((remappedSecond?.productPayload as Record<string, unknown>)?.subcategory, "");
     });
 
-    await t.test("approval fails closed after the trusted mapping is invalidated", async () => {
+    await t.test("approval without admin taxonomy fails closed regardless of mapping state", async () => {
       await adminDb.collection("supplier_category_mappings").doc(mappingId).delete();
       await adminDb.collection("supplier_category_mappings").doc(childMappingId).delete();
       const draft = parseSupplierApprovalDraft({

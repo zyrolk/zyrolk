@@ -488,6 +488,12 @@ export function createSupplierReviewDraft(item: SupplierReviewSourceItem): Suppl
         ? 'supplier'
         : (isNewProduct && !ADMIN_ONLY_REVIEW_FIELDS.has(field) ? 'supplier' : 'admin')),
   ])) as Record<string, SupplierProductFieldOwner>;
+  const legacySupplierDerivedTaxonomy = isNewProduct
+    && Boolean(String(payload?.category || '').trim())
+    && item.categoryMapping?.autoSelected === true
+    && String(item.categoryMapping.targetCategoryId || '').trim() === String(payload?.category || '').trim()
+    && storedOwnership.category?.owner !== 'admin'
+    && storedOwnership.subcategory?.owner !== 'admin';
 
   return {
     productSku: /^ZY-/iu.test(String(payload?.sku || '').trim()) ? String(payload?.sku).trim() : '',
@@ -514,8 +520,8 @@ export function createSupplierReviewDraft(item: SupplierReviewSourceItem): Suppl
     stock: supplierStockAvailable
       ? Math.max(0, Math.floor(finiteNumber(resolvedStock, 0)))
       : Math.max(0, Math.floor(finiteNumber(resolvedStock, Number.NaN))),
-    category: String(payload?.category || (item.categoryMapping?.autoSelected ? item.categoryMapping.targetCategoryId : '') || ''),
-    subcategory: String(payload?.subcategory || (item.categoryMapping?.autoSelected ? item.categoryMapping.targetSubcategoryId : '') || ''),
+    category: legacySupplierDerivedTaxonomy ? '' : String(payload?.category || ''),
+    subcategory: legacySupplierDerivedTaxonomy ? '' : String(payload?.subcategory || ''),
     brand: String(payload?.brand || (item.brandMapping?.autoSelected ? item.brandMapping.mappedBrandId : '') || ''),
     specifications: Object.fromEntries(Object.entries(specs).map(([key, value]) => [key, String(value || '')])),
     isActive: payload?.isActive !== false,

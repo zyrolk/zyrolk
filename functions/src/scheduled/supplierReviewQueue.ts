@@ -32,19 +32,13 @@ import {
   SUPPLIER_QUEUE_DEFAULT_RETRY_LIMIT,
 } from "../api/suppliers/supplierQueueLifecycle";
 import {
-  normalizeSupplierMappingValue,
-  isExplicitSupplierChildMapping,
-  selectSupplierCategoryMapping,
-  supplierChildMappingDocumentId,
-  supplierMappingDocumentId,
-  supplierSubcategoryMatchesMapping,
-  isCanonicalActiveCategory,
-  SupplierCategoryMappingRecord,
-} from "../api/suppliers/supplierProductMapping";
-import {
   isDropexLowStockReviewHold,
   lowSupplierStockValidationError,
 } from "../api/suppliers/supplierLowStockPolicy";
+import {
+  hasLegacySupplierDerivedReviewTaxonomy,
+  projectLegacySupplierDerivedReviewValidation,
+} from "../api/suppliers/supplierReviewTaxonomyAuthority";
 
 export const SUPPLIER_QUEUE_STATES = [
   "queued",
@@ -113,154 +107,6 @@ const asRecord = (value: unknown): Record<string, unknown> => value && typeof va
   : {};
 
 const asString = (value: unknown): string => typeof value === "string" ? value.trim() : "";
-
-const hasAdminTaxonomyOwnership = (payload: Record<string, unknown>): boolean => {
-  const ownership = asRecord(payload.supplierFieldOwnership);
-  return ["category", "subcategory"].some((field) => {
-    const entry = ownership[field];
-    return entry === "admin" || asString(asRecord(entry).owner) === "admin";
-  });
-};
-
-export const projectSupplierReviewTaxonomy = (
-  record: Record<string, unknown> & { id: string },
-  selection: { mapping: SupplierCategoryMappingRecord; scope: "source" | "global" },
-  category: Record<string, unknown>,
-  supplierCategory: string,
-  supplierSubcategory: string,
-  targetCategoryId: string,
-  targetSubcategoryId: string,
-): Record<string, unknown> & { id: string } => {
-  if (!isCanonicalActiveCategory(category)) return record;
-  const payload = asRecord(record.productPayload);
-  if (hasAdminTaxonomyOwnership(payload)) return record;
-  const activeSubcategories = Array.isArray(category.subcategories)
-    ? category.subcategories.filter((entry): entry is Record<string, unknown> => Boolean(entry && typeof entry === "object") && (entry as Record<string, unknown>).isActive !== false)
-    : [];
-  return {
-    ...record,
-    categoryMapping: {
-      ...asRecord(record.categoryMapping),
-      supplierCategory,
-      supplierSubcategory,
-      targetCategoryId,
-      targetSubcategoryId,
-      confidence: 100,
-      mappingType: asString(selection.mapping.mappingType) || "manual",
-      mappingSource: selection.scope,
-      autoSelected: true,
-      requiresManualSelection: activeSubcategories.length > 0 && !targetSubcategoryId,
-    },
-    productPayload: {
-      ...payload,
-      category: targetCategoryId,
-      subcategory: targetSubcategoryId,
-    },
-  };
-};
-
-const applyTrustedCategoryMappingsForReview = async (
-  db: Firestore,
-  records: Array<Record<string, unknown> & { id: string }>,
-): Promise<Array<Record<string, unknown> & { id: string }>> => {
-  const mappingKeys = new Map<string, {
-    sourceId: string;
-    supplierCategory: string;
-    supplierSubcategory: string;
-    supplierSubcategoryId: string;
-  }>();
-  for (const record of records) {
-    const snapshot = asRecord(record.supplierSnapshot);
-    const hierarchy = Array.isArray(snapshot.categoryHierarchy) ? snapshot.categoryHierarchy : [];
-    const sourceId = asString(record.sourceId) || asString(snapshot.sourceId);
-    const supplierCategory = asString(hierarchy[0]);
-    const supplierSubcategory = asString(hierarchy[1]);
-    const supplierSubcategoryId = asString(record.supplierSubcategoryId)
-      || asString(snapshot.supplierSubcategoryId)
-      || asString(asRecord(snapshot.extraAttributes).supplierSubcategoryId);
-    const normalizedCategory = normalizeSupplierMappingValue(supplierCategory);
-    const childBinding = supplierChildMappingDocumentId(sourceId, normalizedCategory, supplierSubcategory, supplierSubcategoryId);
-    if (sourceId && normalizedCategory) {
-      mappingKeys.set(`${sourceId}\u0000${normalizedCategory}\u0000${childBinding || "parent"}`, {
-        sourceId,
-        supplierCategory,
-        supplierSubcategory,
-        supplierSubcategoryId,
-      });
-    }
-  }
-  if (mappingKeys.size === 0) return records;
-  const mappingEntries = [...mappingKeys.entries()];
-  const mappingSnapshots = await Promise.all(mappingEntries.map(async ([, value]) => {
-    const collection = db.collection("supplier_category_mappings");
-    const parentSnapshot = await collection.doc(supplierMappingDocumentId(value.sourceId, normalizeSupplierMappingValue(value.supplierCategory))).get();
-    const childId = supplierChildMappingDocumentId(
-      value.sourceId,
-      normalizeSupplierMappingValue(value.supplierCategory),
-      value.supplierSubcategory,
-      value.supplierSubcategoryId,
-    );
-    const childSnapshot = childId ? await collection.doc(childId).get() : null;
-    return { parentSnapshot, childSnapshot };
-  }));
-  const categoryIds = [...new Set(mappingSnapshots.flatMap(({ parentSnapshot, childSnapshot }) => [
-    asString(parentSnapshot.data()?.targetCategoryId),
-    asString(childSnapshot?.data()?.targetCategoryId),
-  ]).filter(Boolean))];
-  const categorySnapshots = await Promise.all(categoryIds.map((id) => db.collection("categories").doc(id).get()));
-  const categories = new Map(categorySnapshots.map((snapshot) => [snapshot.id, snapshot.exists ? snapshot.data() || {} : null]));
-  const mappings = new Map(mappingEntries.map(([key], index) => {
-    const { parentSnapshot, childSnapshot } = mappingSnapshots[index];
-    return [key, [
-      ...(parentSnapshot.exists ? [parentSnapshot.data() as SupplierCategoryMappingRecord] : []),
-      ...(childSnapshot?.exists ? [childSnapshot.data() as SupplierCategoryMappingRecord] : []),
-    ]];
-  }));
-  return records.map((record) => {
-    const snapshot = asRecord(record.supplierSnapshot);
-    const hierarchy = Array.isArray(snapshot.categoryHierarchy) ? snapshot.categoryHierarchy : [];
-    const sourceId = asString(record.sourceId) || asString(snapshot.sourceId);
-    const supplierCategory = asString(hierarchy[0]);
-    const supplierSubcategory = asString(hierarchy[1]);
-    const supplierSubcategoryId = asString(record.supplierSubcategoryId)
-      || asString(snapshot.supplierSubcategoryId)
-      || asString(asRecord(snapshot.extraAttributes).supplierSubcategoryId);
-    const normalizedCategory = normalizeSupplierMappingValue(supplierCategory);
-    const childBinding = supplierChildMappingDocumentId(sourceId, normalizedCategory, supplierSubcategory, supplierSubcategoryId);
-    const mappingCandidates = mappings.get(`${sourceId}\u0000${normalizedCategory}\u0000${childBinding || "parent"}`) || [];
-    const selection = selectSupplierCategoryMapping({
-      sourceId,
-      normalizedCategory,
-      supplierSubcategory,
-      supplierSubcategoryId,
-      mappings: mappingCandidates,
-    });
-    if (!selection) return record;
-    const mapping = selection.mapping;
-    const targetCategoryId = asString(mapping.targetCategoryId);
-    const targetSubcategoryId = isExplicitSupplierChildMapping(mapping)
-      && supplierSubcategoryMatchesMapping(
-        mapping as SupplierCategoryMappingRecord,
-        supplierSubcategory,
-        supplierSubcategoryId,
-      ) ? asString(mapping.targetSubcategoryId) : "";
-    const category = categories.get(targetCategoryId);
-    if (!category || !isCanonicalActiveCategory(category)) return record;
-    const activeSubcategories = Array.isArray(category.subcategories)
-      ? category.subcategories.filter((entry): entry is Record<string, unknown> => Boolean(entry && typeof entry === "object") && (entry as Record<string, unknown>).isActive !== false)
-      : [];
-    if (targetSubcategoryId && !activeSubcategories.some((entry) => String(entry.id || "") === targetSubcategoryId)) return record;
-    return projectSupplierReviewTaxonomy(
-      record,
-      selection,
-      category,
-      supplierCategory,
-      supplierSubcategory,
-      targetCategoryId,
-      targetSubcategoryId,
-    );
-  });
-};
 
 const isCandidateSupplierMediaUrl = (value: string): boolean => {
   try {
@@ -1500,6 +1346,11 @@ export const SUPPLIER_REVIEW_CLASSIFICATION_FIELDS = [
   "comparison.matchedProductLive",
   "comparison.matchFound",
   "approvalBaseline.exists",
+  "categoryMapping.autoSelected",
+  "categoryMapping.targetCategoryId",
+  "productPayload.category",
+  "productPayload.supplierFieldOwnership.category",
+  "productPayload.supplierFieldOwnership.subcategory",
   "productPayload.stock",
   "productPayload.supplierMetadata.supplierStockAvailable",
   "supplierSnapshot.inventoryLevel",
@@ -1519,9 +1370,13 @@ export const supplierReviewRecordIsLowStockHold = (record: SupplierQueueRecord):
   });
 };
 
-export const projectSupplierReviewLowStockHold = <T extends SupplierQueueRecord>(record: T): T => {
-  const lowStockHold = supplierReviewRecordIsLowStockHold(record);
-  const validation = asRecord(record.productValidation);
+export const projectSupplierReviewLowStockHold = <T extends SupplierQueueRecord>(
+  record: T,
+  categoryRequiresSubcategory = false,
+): T => {
+  const projectedRecord = projectLegacySupplierDerivedReviewValidation(record, categoryRequiresSubcategory) as T;
+  const lowStockHold = supplierReviewRecordIsLowStockHold(projectedRecord);
+  const validation = asRecord(projectedRecord.productValidation);
   const existingErrors = Array.isArray(validation.errors) ? validation.errors : [];
   const nonLowStockErrors = existingErrors.filter((error) => (
     asRecord(error).code !== "LOW_SUPPLIER_STOCK_FOR_PUBLICATION"
@@ -1541,7 +1396,7 @@ export const projectSupplierReviewLowStockHold = <T extends SupplierQueueRecord>
     && missingFields.length === 0
     && errors.length === 0;
   return {
-    ...record,
+    ...projectedRecord,
     productValidation: {
       ...validation,
       lowStockHold,
@@ -1550,6 +1405,28 @@ export const projectSupplierReviewLowStockHold = <T extends SupplierQueueRecord>
       errors,
     },
   } as T;
+};
+
+type SupplierReviewCategoryRequirements = ReadonlyMap<string, boolean>;
+
+const supplierReviewCategoryId = (record: SupplierQueueRecord): string => (
+  asString(asRecord(record.productPayload).category)
+);
+
+const loadSupplierReviewCategoryRequirements = async (db: Firestore): Promise<Map<string, boolean>> => {
+  const snapshot = await db.collection("categories").get();
+  return new Map(snapshot.docs.map((document) => {
+    const data = asRecord(document.data());
+    const subcategories = Array.isArray(data.subcategories) ? data.subcategories : [];
+    const hasActiveSubcategory = subcategories.some((entry) => (
+      entry && typeof entry === "object" && !Array.isArray(entry)
+      && (entry as Record<string, unknown>).isActive !== false
+    ));
+    return [
+      document.id,
+      data.isActive === true && data.taxonomyCandidate !== true && hasActiveSubcategory,
+    ] as const;
+  }));
 };
 
 const reviewRecordIsConflict = (record: SupplierQueueRecord): boolean => (
@@ -1652,33 +1529,38 @@ const reviewComparisonHasPendingChange = (record: SupplierQueueRecord, compariso
 export const reviewRecordMatchesBusinessFilter = (
   record: SupplierQueueRecord,
   filter: SupplierReviewBusinessFilter,
+  categoryRequirements?: SupplierReviewCategoryRequirements,
 ): boolean => {
-  const comparisonStatus = normalizedReviewValue(
-    asRecord(record.comparison).comparisonStatus || record.comparisonStatus,
+  const projectedRecord = projectSupplierReviewLowStockHold(
+    record,
+    categoryRequirements?.get(supplierReviewCategoryId(record)) === true,
   );
-  if (filter === "approved_history") return reviewRecordIsTerminalDecision(record);
-  if (reviewRecordIsTerminalDecision(record)) return false;
-  if (filter === "conflicts") return reviewRecordIsConflict(record);
-  if (reviewRecordIsConflict(record)) return false;
+  const comparisonStatus = normalizedReviewValue(
+    asRecord(projectedRecord.comparison).comparisonStatus || projectedRecord.comparisonStatus,
+  );
+  if (filter === "approved_history") return reviewRecordIsTerminalDecision(projectedRecord);
+  if (reviewRecordIsTerminalDecision(projectedRecord)) return false;
+  if (filter === "conflicts") return reviewRecordIsConflict(projectedRecord);
+  if (reviewRecordIsConflict(projectedRecord)) return false;
   if (filter === "removed_products") return reviewComparisonIsRemoval(comparisonStatus);
   if (reviewComparisonIsRemoval(comparisonStatus)) return false;
-  const lowStockHold = supplierReviewRecordIsLowStockHold(record);
+  const lowStockHold = supplierReviewRecordIsLowStockHold(projectedRecord);
   if (filter === "low_stock_hold") return lowStockHold;
   if (lowStockHold) return false;
   if (filter === "new_products") return comparisonStatus === "new_product";
   if (filter === "needs_attention") {
-    const validation = asRecord(projectSupplierReviewLowStockHold(record).productValidation);
+    const validation = asRecord(projectedRecord.productValidation);
     return validation.readyToPublish === false
       || (Array.isArray(validation.missingFields) && validation.missingFields.length > 0)
       || (Array.isArray(validation.errors) && validation.errors.length > 0)
       || ["failed", "partial"].includes(normalizedReviewValue(record.mediaStatus))
       || ["retryable_failure", "dead_letter"].includes(normalizedReviewValue(record.queueState));
   }
-  return !reviewRecordIsApproved(record)
-    && !reviewRecordIsConflict(record)
+  return !reviewRecordIsApproved(projectedRecord)
+    && !reviewRecordIsConflict(projectedRecord)
     && comparisonStatus !== "new_product"
     && !reviewComparisonIsRemoval(comparisonStatus)
-    && reviewComparisonHasPendingChange(record, comparisonStatus);
+    && reviewComparisonHasPendingChange(projectedRecord, comparisonStatus);
 };
 
 /**
@@ -1732,6 +1614,12 @@ export async function listSupplierQueuePage(
     query = query.startAfter(cursor);
   }
 
+  let categoryRequirements: Map<string, boolean> | null = null;
+  const ensureCategoryRequirements = async (records: SupplierQueueRecord[]): Promise<void> => {
+    if (categoryRequirements || !records.some((record) => hasLegacySupplierDerivedReviewTaxonomy(record))) return;
+    categoryRequirements = await loadSupplierReviewCategoryRequirements(db);
+  };
+
   if (options.view === "review" && options.businessFilter) {
     const documents: FirebaseFirestore.QueryDocumentSnapshot[] = [];
     const batchLimit = Math.min(100, Math.max(50, pageLimit));
@@ -1745,12 +1633,15 @@ export async function listSupplierQueuePage(
         break;
       }
 
+      const records = snapshot.docs.map((document) => document.data() as SupplierQueueRecord);
+      await ensureCategoryRequirements(records);
+
       let pageFilledAt = -1;
       for (let index = 0; index < snapshot.docs.length; index += 1) {
         const document = snapshot.docs[index];
         const record = document.data() as SupplierQueueRecord;
         if (reviewRecordMatchesState(record, state as SupplierReviewQueuePageState)
-          && reviewRecordMatchesBusinessFilter(record, options.businessFilter)) {
+          && reviewRecordMatchesBusinessFilter(record, options.businessFilter, categoryRequirements || undefined)) {
           documents.push(document);
           if (documents.length === pageLimit) {
             pageFilledAt = index;
@@ -1776,33 +1667,34 @@ export async function listSupplierQueuePage(
       nextQuery = query.startAfter(lastScannedDocument);
     }
 
-    const rawDocuments = documents.map((document) => projectSupplierReviewLowStockHold({ id: document.id, ...document.data() }));
-    const mappedDocuments = options.view === "review"
-      ? await applyTrustedCategoryMappingsForReview(db, rawDocuments)
-      : rawDocuments;
+    const rawDocuments = documents.map((document) => projectSupplierReviewLowStockHold(
+      { id: document.id, ...document.data() },
+      categoryRequirements?.get(supplierReviewCategoryId(document.data() as SupplierQueueRecord)) === true,
+    ));
     return {
       view: options.view,
       state,
-      items: await decorateSupplierReviewQueueAdminMedia(mappedDocuments),
+      items: await decorateSupplierReviewQueueAdminMedia(rawDocuments),
       nextCursor,
     };
   }
 
   const snapshot = await query.limit(scanLimit).get();
+  await ensureCategoryRequirements(snapshot.docs.map((document) => document.data() as SupplierQueueRecord));
   const matched = snapshot.docs.filter((document) => options.view !== "review"
     || reviewRecordMatchesState(document.data() as SupplierQueueRecord, state as SupplierReviewQueuePageState));
   const pageDocuments = matched.slice(0, pageLimit);
   const cursorDocument = pageDocuments.length === pageLimit
     ? pageDocuments.at(-1)
     : snapshot.size === scanLimit ? snapshot.docs.at(-1) : null;
-   const rawDocuments = pageDocuments.map((document) => projectSupplierReviewLowStockHold({ id: document.id, ...document.data() }));
-  const mappedDocuments = options.view === "review"
-    ? await applyTrustedCategoryMappingsForReview(db, rawDocuments)
-    : rawDocuments;
+   const rawDocuments = pageDocuments.map((document) => projectSupplierReviewLowStockHold(
+    { id: document.id, ...document.data() },
+    categoryRequirements?.get(supplierReviewCategoryId(document.data() as SupplierQueueRecord)) === true,
+  ));
   return {
     view: options.view,
     state,
-    items: await decorateSupplierReviewQueueAdminMedia(mappedDocuments),
+    items: await decorateSupplierReviewQueueAdminMedia(rawDocuments),
     nextCursor: cursorDocument?.id || null,
   };
 }

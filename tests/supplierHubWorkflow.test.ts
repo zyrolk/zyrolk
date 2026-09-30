@@ -153,8 +153,8 @@ test("Supplier Hub exposes only individual business approval actions while Funct
   assert.doesNotMatch(supplierHub, /Bulk Delete/);
   assert.match(supplierHub, /postSupplierApi\('\/api\/supplier-sync'/);
   assert.doesNotMatch(supplierHub, /runLocalSupplierSync|commitSupplierSyncWrites|resolveSupplierCategory/);
-  assert.match(scheduledSync, /suggestSupplierCategory/);
-  assert.match(scheduledSync, /categoryMappingRecords/);
+  assert.match(scheduledSync, /buildSupplierTaxonomyMetadata/);
+  assert.doesNotMatch(scheduledSync, /suggestSupplierCategory\(|categoryMappingRecords/);
   assert.match(scheduledSync, /matchesSupplierCategoryFilter/);
   assert.match(scheduledSync, /settings\.categoryMappings/);
   assert.match(scheduledSync, /isSupplierSourceAutoSyncDue/);

@@ -179,7 +179,7 @@ test('same-named active subcategories stay scoped to the resolved parent', () =>
   assert.equal(taxonomyPlan, null);
 });
 
-test('admin can override auto-mapped category and brand values in the review draft', () => {
+test('supplier category mapping never pre-fills the draft; brand suggestion still does and admin can override both', () => {
   const autoMappedItem = {
     ...reviewItem,
     categoryMapping: {
@@ -197,7 +197,8 @@ test('admin can override auto-mapped category and brand values in the review dra
     },
   };
   const draft = createSupplierReviewDraft(autoMappedItem);
-  assert.equal(draft.category, 'electronics');
+  assert.equal(draft.category, '');
+  assert.equal(draft.subcategory, '');
   assert.equal(draft.brand, 'registered-brand');
 
   const overridden = updateSupplierReviewDraftField(
@@ -229,12 +230,11 @@ test('missing supplier category and brand leaves mapping unresolved but manual s
   assert.equal(errors.brand, undefined);
 });
 
-test('review catalog does not write taxonomy directly while sync owns candidate ingestion', () => {
+test('neither review catalog nor sync writes supplier taxonomy candidates', () => {
   const sync = projectFile('functions/src/scheduled/supplierSync.ts');
   const catalog = projectFile('functions/src/api/suppliers/supplierReviewCatalog.ts');
   assert.doesNotMatch(sync, /collection\("categories"\)\.doc\([^)]*\)\.set/);
-  assert.match(sync, /planSupplierTaxonomyCandidates/u);
-  assert.match(sync, /upsertSupplierTaxonomyCandidate/u);
+  assert.doesNotMatch(sync, /planSupplierTaxonomyCandidates|upsertSupplierTaxonomyCandidate|collection: "categories"/u);
   assert.doesNotMatch(catalog, /\.set\(/u);
 });
 

@@ -1000,24 +1000,6 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
     }
   };
 
-  const activateSupplierTaxonomyCandidate = async (categoryId: string, subcategoryId?: string) => {
-    try {
-      const response = await postSupplierApi(`/api/supplier-taxonomy-candidates/${encodeURIComponent(categoryId)}/activate`, {
-        ...(subcategoryId ? { subcategoryId } : {}),
-      });
-      const result = await response.json().catch(() => ({})) as { success?: boolean; error?: string };
-      if (!response.ok || result.success !== true) {
-        throw new Error(result.error || 'Supplier taxonomy candidate could not be activated.');
-      }
-      await Promise.all([loadReviewCatalog(), refreshSupplierQueueViews()]);
-      setSuccessMsg('Supplier taxonomy is active. Select it in the review before publishing.');
-      setTimeout(() => setSuccessMsg(null), 4000);
-    } catch (error) {
-      setErrorMsg(error instanceof Error ? error.message : 'Supplier taxonomy candidate could not be activated.');
-      setTimeout(() => setErrorMsg(null), 5000);
-    }
-  };
-
   const decideSupplierReviewQueueItem = async (
     queueItemId: string,
     action: 'approve' | 'reject' | 'delete',
@@ -3277,7 +3259,6 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
           onRefreshSupplier={() => handleRefreshSupplierReviewItem(editingReviewItem)}
           onConfigureOffer={configureSupplierOffer}
           onSelectOffer={selectSupplierOffer}
-          onActivateTaxonomyCandidate={activateSupplierTaxonomyCandidate}
           onClose={() => {
             if (processingChangeId !== editingReviewItem.id) {
               setEditingReviewItem(null);

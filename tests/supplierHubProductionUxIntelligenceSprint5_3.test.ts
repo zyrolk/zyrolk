@@ -51,7 +51,7 @@ test('review editor keeps every field while presenting mobile-friendly sections'
 });
 
 test('suggestions, validation checklist, and gallery controls reuse existing draft data', () => {
-  assert.match(editor, /Suggested Category/);
+  assert.doesNotMatch(editor, /Suggested Category/);
   assert.match(editor, /Suggested Brand/);
   assert.match(editor, /% confidence/);
   assert.match(editor, />Apply</);

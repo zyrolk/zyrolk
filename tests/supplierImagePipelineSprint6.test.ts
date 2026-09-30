@@ -224,7 +224,7 @@ test("Sprint 6 retains Sprint 1-5 onboarding, concurrency, traversal, mapping, a
   assert.match(projectFile("functions/src/api/suppliers/SupplierRegistry.ts"), /createConnector/u);
   assert.match(approval, /detectSupplierApprovalConflict/u);
   assert.match(sync, /runSupplierCatalogTraversal/u);
-  assert.match(sync, /suggestSupplierCategory/u);
+  assert.match(sync, /buildSupplierTaxonomyMetadata/u);
   assert.match(sync, /mergeSupplierProductMetadata/u);
   assert.match(queue, /ensureSupplierReviewQueueManagedMedia/u);
   assert.match(queue, /buildSupplierQueueFailureUpdate/u);

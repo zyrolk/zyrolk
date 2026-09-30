@@ -229,6 +229,7 @@ test('Sprint 5 keeps Sprint 1–4 authority, concurrency, traversal, and mapping
   assert.match(approval, /detectSupplierApprovalConflict/);
   assert.match(approval, /reconcileSupplierApprovalStock/);
   assert.match(sync, /runSupplierCatalogTraversal/);
-  assert.match(sync, /suggestSupplierCategory/);
+  assert.match(sync, /buildSupplierTaxonomyMetadata/);
+  assert.doesNotMatch(sync, /suggestSupplierCategory\(/);
   assert.match(sync, /suggestSupplierBrand/);
 });

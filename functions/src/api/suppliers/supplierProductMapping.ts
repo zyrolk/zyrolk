@@ -385,6 +385,31 @@ export function suggestSupplierCategory(input: {
   };
 }
 
+/**
+ * Supplier taxonomy is raw source metadata only. The result keeps the
+ * suggestion-compatible shape for review records but never names a Zyro
+ * category or subcategory; classification belongs to the administrator.
+ */
+export function buildSupplierTaxonomyMetadata(input: {
+  supplierCategories: readonly string[];
+}): SupplierCategorySuggestion {
+  const supplierValues = input.supplierCategories.map((item) => String(item || "").trim()).filter(Boolean);
+  const supplierCategory = supplierValues[0] || "";
+  const supplierSubcategory = supplierValues[1] || "";
+  return {
+    supplierCategory,
+    supplierSubcategory,
+    normalizedCategory: normalizeSupplierMappingValue(supplierCategory),
+    targetCategoryId: "",
+    targetSubcategoryId: "",
+    confidence: 0,
+    mappingType: "unmapped",
+    mappingSource: "none",
+    autoSelected: false,
+    requiresManualSelection: true,
+  };
+}
+
 const supplierCategoryMatches = (
   category: StoreCategoryMappingCandidate,
   normalizedCategory: string,

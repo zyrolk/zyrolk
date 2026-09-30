@@ -576,13 +576,20 @@ test('active NEW_PRODUCT refresh reuses the review and offer without creating a 
     assert.equal(resultPayload.price, 1650);
     assert.equal(result.item.costPrice, 720);
     assert.equal(result.item.marketPrice, 0);
-    assert.equal(resultPayload.category, 'vehicle-accessories');
+    assert.equal(resultPayload.category, '');
+    assert.equal(resultPayload.subcategory, '');
+    assert.equal((result.item.categoryMapping as Record<string, unknown>).supplierCategory, 'Vehicle Accessories');
+    assert.equal((result.item.categoryMapping as Record<string, unknown>).targetCategoryId, '');
     assert.equal(resultPayload.description, 'Fresh supplier description');
     assert.deepEqual(result.item.supplierSnapshot && (result.item.supplierSnapshot as Record<string, unknown>).categoryHierarchy, ['Vehicle Accessories']);
     assert.equal(resultPayload.published, true);
     assert.equal(Object.hasOwn(resultPayload, 'originalPrice'), false);
     assert.equal(Object.hasOwn(resultPayload, 'discount'), false);
-    assert.equal((result.item.productValidation as Record<string, unknown>).readyToPublish, true);
+    assert.equal((result.item.productValidation as Record<string, unknown>).readyToPublish, false);
+    assert.deepEqual(
+      ((result.item.productValidation as Record<string, unknown>).errors as Array<{ field: string }>).map((error) => error.field),
+      ['category'],
+    );
     assert.equal(result.stockAutomated, false);
     assert.equal(refreshedOffer.id, offerId);
     assert.equal(refreshedOffer.productId, null);
@@ -592,6 +599,7 @@ test('active NEW_PRODUCT refresh reuses the review and offer without creating a 
     assert.equal(refreshedPending.reviewQueueItemId, queueItemId);
     assert.notEqual(refreshedPending.revision, initialPending.revision);
     assert.equal(db.collections.get('products')?.size || 0, 0);
+    assert.deepEqual([...(db.collections.get('categories')?.keys() || [])], ['vehicle-accessories']);
     assert.equal(db.collections.get('product_private')?.size || 0, 0);
     assert.equal(db.collections.get('supplier_sync_jobs')?.size || 0, 0);
     assert.equal(db.collections.get('supplier_import_queue')?.size || 0, 0);
@@ -990,7 +998,8 @@ test('refresh route and sync helper are identity-bound, bounded, and use the cur
   assert.match(sync, /The canonical product for this review item could not be found/u);
   assert.match(sync, /buildSupplierProductComparison\(\s*product,\s*currentProduct \? \{ \.\.\.currentProduct \} : undefined/u);
   assert.match(sync, /buildProductPayload\(/u);
-  assert.match(sync, /planSupplierTaxonomyCandidates\(/u);
+  assert.match(sync, /buildSupplierTaxonomyMetadata\(/u);
+  assert.doesNotMatch(sync, /planSupplierTaxonomyCandidates\(/u);
   assert.match(sync, /stageSupplierOfferObservation\(/u);
   assert.match(sync, /commitQueuedItems\(queuedWrites\)/u);
   assert.match(connector, /REFRESH_MAX_PAGES = 20/u);

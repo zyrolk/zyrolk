@@ -13,11 +13,11 @@ import { projectCustomerProduct } from '../src/services/product-search/customerP
 import { buildStorefrontSeo } from '../src/services/seo/storefrontSeo';
 import { projectSupplierReviewCatalogRecords } from '../functions/src/api/suppliers/supplierReviewCatalog';
 import {
+  buildSupplierTaxonomyMetadata,
   isCanonicalActiveCategory,
   suggestSupplierCategory,
   validateSupplierProductForApproval,
 } from '../functions/src/api/suppliers/supplierProductMapping';
-import { projectSupplierReviewTaxonomy } from '../functions/src/scheduled/supplierReviewQueue';
 
 const canonicalCategory = {
   id: 'electronics',
@@ -108,27 +108,15 @@ test('canonical category authority requires explicit active non-candidate state'
   assert.deepEqual(validateSupplierProductForApproval(validApprovalProduct, [canonicalCategory], [], { supplierReview: true }), []);
 });
 
-test('candidate mappings cannot project into pending review items', () => {
-  const record = { id: 'review-candidate', productPayload: { category: '', subcategory: '' } };
-  const selection = {
-    scope: 'source' as const,
-    mapping: {
-      sourceId: 'dropex',
-      supplierCategory: 'Health & Beauty',
-      normalizedCategory: 'health beauty',
-      mappingScope: 'parent' as const,
-      targetCategoryId: candidateCategory.id,
-      targetSubcategoryId: candidateCategory.subcategories[0].id,
-      confidence: 100,
-      mappingType: 'learned' as const,
-      version: 1,
-      updatedBy: 'test',
-    },
-  };
-  assert.deepEqual(
-    projectSupplierReviewTaxonomy(record, selection, candidateCategory, 'Health & Beauty', 'Massage', candidateCategory.id, candidateCategory.subcategories[0].id),
-    record,
-  );
+test('supplier taxonomy metadata never projects a Zyro or candidate category into pending review items', () => {
+  const metadata = buildSupplierTaxonomyMetadata({ supplierCategories: ['Health & Beauty', 'Massage'] });
+  assert.equal(metadata.supplierCategory, 'Health & Beauty');
+  assert.equal(metadata.supplierSubcategory, 'Massage');
+  assert.equal(metadata.targetCategoryId, '');
+  assert.equal(metadata.targetSubcategoryId, '');
+  assert.equal(metadata.autoSelected, false);
+  assert.equal(metadata.requiresManualSelection, true);
+  assert.equal('candidateCategoryId' in metadata, false);
 });
 
 test('public projections and rendered storefront surfaces fail closed for supplier taxonomy IDs', () => {

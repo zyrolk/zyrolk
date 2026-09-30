@@ -77,19 +77,15 @@ import {
   SupplierReviewQueueIdentityInput,
 } from "../api/suppliers/supplierQueueIdentity";
 import {
+  buildSupplierTaxonomyMetadata,
   StoreBrandMappingCandidate,
   StoreCategoryMappingCandidate,
   suggestSupplierBrand,
-  suggestSupplierCategory,
   SupplierBrandMappingRecord,
   SupplierBrandSuggestion,
-  SupplierCategoryMappingRecord,
   SupplierCategorySuggestion,
-  SupplierTaxonomyCandidatePlan,
-  planSupplierTaxonomyCandidates,
   validateSupplierProductForApproval,
 } from "../api/suppliers/supplierProductMapping";
-import { upsertSupplierTaxonomyCandidate } from "../api/suppliers/supplierTaxonomy";
 import { matchesSupplierCategoryFilter, SupplierCategoryMappings } from "./supplierCategoryMapping";
 import {
   calculateSupplierInitialPricing,
@@ -1003,16 +999,11 @@ async function loadSupplierSources(requestedSourceIds: readonly string[] = []): 
 }
 
 async function loadSupplierProductMappings(sourceId: string): Promise<{
-  categoryMappings: SupplierCategoryMappingRecord[];
   brandMappings: SupplierBrandMappingRecord[];
 }> {
   const sourceScopes = [...new Set([sourceId, "*", "global"])];
-  const [categorySnapshot, brandSnapshot] = await Promise.all([
-    adminDb.collection("supplier_category_mappings").where("sourceId", "in", sourceScopes).get(),
-    adminDb.collection("supplier_brand_mappings").where("sourceId", "in", sourceScopes).get(),
-  ]);
+  const brandSnapshot = await adminDb.collection("supplier_brand_mappings").where("sourceId", "in", sourceScopes).get();
   return {
-    categoryMappings: categorySnapshot.docs.map((document) => document.data() as SupplierCategoryMappingRecord),
     brandMappings: brandSnapshot.docs.map((document) => document.data() as SupplierBrandMappingRecord),
   };
 }
@@ -1627,7 +1618,6 @@ interface SupplierSyncWrite {
   id: string;
   data: Record<string, unknown>;
   create?: boolean;
-  taxonomyCandidatePlan?: SupplierTaxonomyCandidatePlan;
   /** Queue record plus its initial audit event must commit together. */
   atomicGroup?: string;
   /** Optimistic fence for an offer read during comparison. */
@@ -1642,7 +1632,7 @@ interface SupplierSyncWrite {
 }
 
 function buildSupplierAutomationAuditWrite(input: {
-  action: "NEW_PRODUCT_DEFERRED_ZERO_STOCK" | "CATEGORY_AUTO_MATCHED";
+  action: "NEW_PRODUCT_DEFERRED_ZERO_STOCK";
   source: SupplierSource;
   offer: SupplierProductOffer;
   productId: string;
@@ -1691,16 +1681,6 @@ async function commitQueuedItems(items: SupplierSyncWrite[]): Promise<void> {
 
   for (let index = 0; index < items.length;) {
     const firstItem = items[index];
-    if (firstItem.taxonomyCandidatePlan) {
-      await flushBatch();
-      await upsertSupplierTaxonomyCandidate(
-        adminDb,
-        firstItem.taxonomyCandidatePlan,
-        String(firstItem.data.observedAt || new Date().toISOString()),
-      );
-      index += 1;
-      continue;
-    }
     let groupEnd = index + 1;
     if (firstItem.atomicGroup) {
       while (groupEnd < items.length && items[groupEnd].atomicGroup === firstItem.atomicGroup) groupEnd += 1;
@@ -2001,41 +1981,12 @@ export async function refreshActiveSupplierReviewItem(
     aliases: Array.isArray(brandDoc.data().aliases) ? brandDoc.data().aliases : [],
   }));
   const storedMappings = await loadSupplierProductMappings(sourceId);
-  const categoryMetadata = asRecord(product.extraAttributes);
   const supplierCategoryValues = product.categoryHierarchy && product.categoryHierarchy.length > 0
     ? product.categoryHierarchy
     : [product.supplierCategory, product.supplierSubcategory].filter((value): value is string => Boolean(refreshIdentityValue(value)));
-  const supplierCategory = refreshIdentityValue(product.supplierCategory || supplierCategoryValues[0]);
-  const supplierSubcategory = refreshIdentityValue(product.supplierSubcategory || supplierCategoryValues[1]);
-  const supplierKeywords = product.keywords || String(product.specifications?.keywords || product.specifications?.Keywords || "")
-    .split(/[,|]/gu).map((keyword) => keyword.trim()).filter(Boolean);
-  const productType = refreshIdentityValue(product.productType || product.specifications?.productType || product.specifications?.["Product Type"]);
-  const categoryMappingSuggestion = suggestSupplierCategory({
-    sourceId,
+  const categoryMapping: SupplierCategorySuggestion = buildSupplierTaxonomyMetadata({
     supplierCategories: supplierCategoryValues,
-    supplierSubcategoryId: String(categoryMetadata.supplierSubcategoryId || ""),
-    productTitle: product.title,
-    keywords: supplierKeywords,
-    productType,
-    categories: storeCategories,
-    mappings: storedMappings.categoryMappings,
   });
-  const taxonomyPlan = planSupplierTaxonomyCandidates({
-    sourceId,
-    supplierCategory,
-    supplierCategoryId: String(categoryMetadata.supplierCategoryId || ""),
-    supplierSubcategory,
-    supplierSubcategoryId: String(categoryMetadata.supplierSubcategoryId || ""),
-    categories: storeCategories,
-    mapping: categoryMappingSuggestion,
-  });
-  const categoryMapping: SupplierCategorySuggestion = {
-    ...categoryMappingSuggestion,
-    ...(taxonomyPlan ? {
-      ...(taxonomyPlan.categoryCandidate ? { candidateCategoryId: taxonomyPlan.categoryId } : {}),
-      ...(taxonomyPlan.subcategoryCandidate ? { candidateSubcategoryId: taxonomyPlan.subcategoryId } : {}),
-    } : {}),
-  };
   const supplierBrand = refreshIdentityValue(product.brand || product.specifications?.brand || product.specifications?.Brand);
   const brandMapping = suggestSupplierBrand({
     sourceId,
@@ -2274,14 +2225,6 @@ export async function refreshActiveSupplierReviewItem(
       data: queueData,
     },
   ];
-  if (taxonomyPlan) {
-    queuedWrites.push({
-      collection: "categories",
-      id: taxonomyPlan.categoryId,
-      data: { observedAt },
-      taxonomyCandidatePlan: taxonomyPlan,
-    });
-  }
   if (reviewer) {
     const auditReference = adminDb.collection("supplier_approval_audit").doc();
     queuedWrites.push({
@@ -3113,17 +3056,6 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
       let sourceQueueDepth = 0;
       const discoveredCategoryLabels = new Set<string>();
       const sourceWriteOffset = queuedWrites.length;
-      const legacyCategoryMappings: SupplierCategoryMappingRecord[] = Object.entries(settings.categoryMappings || {}).map(([supplierCategory, targetCategoryId]) => ({
-        sourceId: "global",
-        supplierCategory,
-        normalizedCategory: supplierCategory,
-        targetCategoryId: String(targetCategoryId || ""),
-        targetSubcategoryId: "",
-        confidence: 100,
-        mappingType: "manual",
-        version: 1,
-        updatedBy: "legacy-settings",
-      }));
       if (!dryRunMode) nonDrySourceCount++;
       await reportProgress({
         phase: "catalog_traversal",
@@ -3225,7 +3157,6 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
 
       try {
         const storedMappings = await loadSupplierProductMappings(source.id);
-        const categoryMappingRecords = [...storedMappings.categoryMappings, ...legacyCategoryMappings];
         const connector = connectorBySourceId.get(source.id) ||
           await SupplierRegistry.createConnectorForTarget(websiteUrl, endpoint, {
             id: source.id,
@@ -3852,51 +3783,12 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
             continue;
           }
           const supplierBrand = String(product.brand || product.specifications?.brand || product.specifications?.Brand || "").trim();
-          const supplierKeywords = product.keywords || String(product.specifications?.keywords || product.specifications?.Keywords || "")
-            .split(/[,|]/gu)
-            .map((keyword) => keyword.trim())
-            .filter(Boolean);
-          const productType = String(product.productType || product.specifications?.productType || product.specifications?.["Product Type"] || "").trim();
           const supplierCategoryValues = (product.categoryHierarchy && product.categoryHierarchy.length > 0)
             ? product.categoryHierarchy
             : [product.supplierCategory, product.supplierSubcategory].filter((value): value is string => Boolean(String(value || "").trim()));
-          const supplierCategory = String(product.supplierCategory || supplierCategoryValues[0] || "").trim();
-          const supplierSubcategory = String(product.supplierSubcategory || supplierCategoryValues[1] || "").trim();
-          const categoryMetadata = asRecord(product.extraAttributes);
-          const categoryMappingSuggestion = suggestSupplierCategory({
-            sourceId: source.id,
+          const categoryMapping: SupplierCategorySuggestion = buildSupplierTaxonomyMetadata({
             supplierCategories: supplierCategoryValues,
-            supplierSubcategoryId: String(categoryMetadata.supplierSubcategoryId || ""),
-            productTitle: product.title,
-            keywords: supplierKeywords,
-            productType,
-            categories: storeCategories,
-            mappings: categoryMappingRecords,
           });
-          const taxonomyPlan = planSupplierTaxonomyCandidates({
-            sourceId: source.id,
-            supplierCategory,
-            supplierCategoryId: String(categoryMetadata.supplierCategoryId || ""),
-            supplierSubcategory,
-            supplierSubcategoryId: String(categoryMetadata.supplierSubcategoryId || ""),
-            categories: storeCategories,
-            mapping: categoryMappingSuggestion,
-          });
-          const categoryMapping: SupplierCategorySuggestion = {
-            ...categoryMappingSuggestion,
-            ...(taxonomyPlan ? {
-              ...(taxonomyPlan.categoryCandidate ? { candidateCategoryId: taxonomyPlan.categoryId } : {}),
-              ...(taxonomyPlan.subcategoryCandidate ? { candidateSubcategoryId: taxonomyPlan.subcategoryId } : {}),
-            } : {}),
-          };
-          if (taxonomyPlan) {
-            queuedWrites.push({
-              collection: "categories",
-              id: taxonomyPlan.categoryId,
-              data: { observedAt: createdAt },
-              taxonomyCandidatePlan: taxonomyPlan,
-            });
-          }
           const brandMapping = suggestSupplierBrand({
             sourceId: source.id,
             supplierBrand,
@@ -4118,30 +4010,6 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
               data: queueData,
               atomicGroup: queueItemId,
             });
-            const previousCategoryMapping = asRecord(activeReviewQueueData?.categoryMapping);
-            if (
-              categoryMapping.autoSelected
-              && categoryMapping.targetCategoryId
-              && previousCategoryMapping.targetCategoryId !== categoryMapping.targetCategoryId
-            ) {
-              queuedWrites.push(buildSupplierAutomationAuditWrite({
-                action: "CATEGORY_AUTO_MATCHED",
-                source,
-                offer: supplierOffer,
-                productId: targetProductId,
-                batchId,
-                observedAt: createdAt,
-                reason: `Supplier category "${categoryMapping.supplierCategory}" matched active Zyro category "${categoryMapping.targetCategoryId}".`,
-                before: { supplierCategory: categoryMapping.supplierCategory },
-                after: {
-                  categoryId: categoryMapping.targetCategoryId,
-                  subcategoryId: categoryMapping.targetSubcategoryId || null,
-                  mappingType: categoryMapping.mappingType,
-                  mappingSource: categoryMapping.mappingSource,
-                },
-                atomicGroup: queueItemId,
-              }));
-            }
             if (queueLifecycle.requeueForMedia) {
               const auditReference = adminDb.collection("supplier_approval_audit").doc();
               queuedWrites.push({
