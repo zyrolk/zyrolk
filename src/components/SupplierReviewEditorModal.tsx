@@ -40,6 +40,10 @@ import {
   formatSupplierStockLabel,
 } from '../services/supplierCommerceSemantics';
 import { formatSupplierTimestamp } from '../services/supplierHubPresentation';
+import {
+  applyZyroCategorySuggestion,
+  suggestZyroCategory,
+} from '../services/categorySuggestion/suggestZyroCategory';
 
 interface SupplierReviewEditorModalProps {
   item: SupplierReviewSourceItem;
@@ -183,6 +187,26 @@ export default function SupplierReviewEditorModal({
     () => brands.find((brand) => brand.id === draft.brand),
     [brands, draft.brand],
   );
+  const categorySuggestion = useMemo(() => suggestZyroCategory({
+    productName: draft.productName,
+    description: draft.description,
+    productType: draft.productType,
+    model: draft.model,
+    brand: draft.brand,
+    keywords: draft.keywords,
+    specifications: draft.specifications,
+    categories,
+  }), [categories, draft.brand, draft.description, draft.keywords, draft.model, draft.productName, draft.productType, draft.specifications]);
+  const suggestedCategory = useMemo(
+    () => categories.find((category) => category.id === categorySuggestion.categoryId),
+    [categories, categorySuggestion.categoryId],
+  );
+  const suggestedSubcategory = suggestedCategory?.subcategories?.find(
+    (subcategory) => subcategory.id === categorySuggestion.subcategoryId,
+  );
+  const suggestionMatchesCurrentSelection = categorySuggestion.status === 'SUGGESTED'
+    && draft.category === categorySuggestion.categoryId
+    && String(draft.subcategory || '') === String(categorySuggestion.subcategoryId || '');
   const specificationsRequired = false;
   const validationChecklist = useMemo(() => {
     const checks: Array<{ label: string; fields: Array<keyof typeof validationErrors> }> = [
@@ -488,6 +512,45 @@ export default function SupplierReviewEditorModal({
             </div>
           </section>
           </details>
+
+          <section className="order-[6] rounded-2xl border border-violet-500/20 bg-violet-500/5 p-4 text-xs" aria-labelledby="zyro-category-suggestion-title">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h4 id="zyro-category-suggestion-title" className="flex items-center gap-2 font-black text-slate-800 dark:text-white"><Sparkles className="h-4 w-4 text-violet-500" />Category suggestion</h4>
+                <p className="mt-1 text-[10px] text-slate-500 dark:text-slate-400">Deterministic Zyro-owned product evidence only. Review before applying.</p>
+              </div>
+              {categorySuggestion.status === 'SUGGESTED' && <span className="rounded-full bg-violet-500/10 px-2 py-1 text-[9px] font-black text-violet-700 dark:text-violet-300">{categorySuggestion.confidence} confidence</span>}
+            </div>
+            {categorySuggestion.status === 'SUGGESTED' && suggestedCategory ? (
+              <div className="mt-3 rounded-xl bg-white/75 p-3 dark:bg-slate-900/60">
+                <span className="block text-[9px] font-black uppercase tracking-wide text-slate-400">Suggested</span>
+                <strong className="mt-1 block text-sm text-violet-800 dark:text-violet-200">{suggestedCategory.name || suggestedCategory.id}</strong>
+                {suggestedSubcategory && <span className="mt-1 block text-[11px] font-semibold text-slate-600 dark:text-slate-300">→ {suggestedSubcategory.name || suggestedSubcategory.id}</span>}
+                {categorySuggestion.reasons.length > 0 && <ul className="mt-2 space-y-1 text-[10px] font-semibold text-slate-600 dark:text-slate-300">{categorySuggestion.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul>}
+                {categorySuggestion.alternatives.length > 0 && (
+                  <div className="mt-2 text-[10px] text-slate-500">
+                    <span className="font-black uppercase tracking-wide">Alternative</span>
+                    <ul className="mt-1 space-y-1">
+                      {categorySuggestion.alternatives.map((alternative) => {
+                        const alternativeCategory = categories.find((category) => category.id === alternative.categoryId);
+                        const alternativeSubcategory = alternativeCategory?.subcategories?.find((subcategory) => subcategory.id === alternative.subcategoryId);
+                        return <li key={`${alternative.categoryId}-${alternative.subcategoryId || 'category'}`}>{alternativeCategory?.name || alternative.categoryId}{alternativeSubcategory ? ` → ${alternativeSubcategory.name || alternativeSubcategory.id}` : ''}</li>;
+                      })}
+                    </ul>
+                  </div>
+                )}
+                {suggestionMatchesCurrentSelection ? (
+                  <p className="mt-3 rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-[10px] font-bold text-emerald-700 dark:text-emerald-300">Matches current selection.</p>
+                ) : isEditing ? (
+                  <button type="button" onClick={() => setDraft((current) => applyZyroCategorySuggestion(current, categorySuggestion))} disabled={isPublishing} className="mt-3 min-h-10 rounded-lg bg-violet-600 px-3 py-2 text-[10px] font-black text-white hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50">Apply Suggestion</button>
+                ) : (
+                  <p className="mt-3 text-[10px] font-semibold text-slate-500">Choose Edit product data to apply this suggestion.</p>
+                )}
+              </div>
+            ) : (
+              <p className="mt-3 rounded-xl border border-dashed border-violet-500/25 bg-white/50 p-3 text-[10px] font-semibold text-slate-500 dark:bg-slate-900/40">No confident category match. Choose category and subcategory manually below.</p>
+            )}
+          </section>
 
           {importWarnings.length > 0 && (
             <section className="order-0 rounded-2xl border border-amber-500/25 bg-amber-500/10 p-4 text-xs" aria-labelledby="supplier-import-warnings-title">
