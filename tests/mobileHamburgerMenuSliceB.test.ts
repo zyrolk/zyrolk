@@ -72,8 +72,8 @@ test('hamburger menu has its own accessible label and 44px+ rows', () => {
 
 test('desktop navigation, search, cart and bottom dock stay unchanged', () => {
   assert.match(desktopNavLinks, /\{ id: 'deals', label: 'Deals', icon: Tag, action: navigateToDeals \}/);
-  assert.match(desktopNavLinks, /\{ id: 'new-arrivals', label: 'New Arrivals', icon: Sparkles, action: \(\) => navigateToPage\('products'\) \}/);
-  assert.match(desktopNavLinks, /\{ id: 'best-sellers', label: 'Best Sellers', icon: BarChart3, action: \(\) => navigateToPage\('products'\) \}/);
+  assert.match(desktopNavLinks, /\{ id: 'new-arrivals', label: 'New Arrivals', icon: Sparkles, action: \(\) => navigateToListingMode\('new-arrivals'\) \}/);
+  assert.match(desktopNavLinks, /\{ id: 'best-sellers', label: 'Best Sellers', icon: BarChart3, action: \(\) => navigateToListingMode\('best-sellers'\) \}/);
   assert.match(desktopNavLinks, /\{ id: 'today-offers', label: "Today's Offers", icon: Tag, action: navigateToDeals \}/);
   assert.match(navbar, /<nav aria-label="Primary storefront navigation">\s*\{navLinks\.map\(\(link\) => \(/);
   assert.match(navbar, /renderSearchBox\('mobile'\)/);

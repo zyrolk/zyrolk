@@ -39,7 +39,7 @@ import { resolveCustomerPromotion } from './services/products/promotionPolicy';
 import { canUseProductInCommerce, filterCommerceCartItems, filterCommerceProductIds, filterCommerceProducts } from './services/storefront/previewCommerceGuard';
 import { toFirestoreCartSnapshot } from './services/storefront/cartCloudSnapshot';
 import { toFirestoreWishlistSnapshot } from './services/storefront/wishlistCloudSnapshot';
-import { buildStorefrontUrl, parseStorefrontRoute } from './services/navigation/storefrontRoutes';
+import { buildStorefrontUrl, parseStorefrontRoute, StorefrontListingMode } from './services/navigation/storefrontRoutes';
 import { formatCategoryDisplayName, resolveCategoryDisplayName, selectExploreMoreProducts } from './services/storefront/launchMerchandising';
 
 // Components
@@ -263,6 +263,7 @@ const selectFilteredStorefrontProducts = (
   selectedCategory: string,
   priceRange: number,
   sortBy: string,
+  listingMode?: StorefrontListingMode,
 ): Product[] => {
   const activeProducts = sourceProducts.filter((product) => isProductExplicitlyActive(product.isActive));
   const matchingCustomerIds = new Set(
@@ -271,6 +272,7 @@ const selectFilteredStorefrontProducts = (
   return activeProducts.filter((product) => (
     matchingCustomerIds.has(product.id) &&
     (selectedCategory === 'all' || categoryMatches(product.category, selectedCategory)) &&
+    (!listingMode || (listingMode === 'new-arrivals' ? product.isNew : product.isBestSeller)) &&
     product.price <= priceRange
   )).sort((left, right) => {
     if (sortBy === 'price-asc') return left.price - right.price;
@@ -318,8 +320,31 @@ export default function App() {
   const [currentPage, setCurrentPage] = useState<string>(() => paymentReturnContext ? 'payment-return' : initialRouteRef.current.page);
   const [isAdminMode, setIsAdminMode] = useState<boolean>(() => initialRouteRef.current.page === 'admin');
   const [routedProductId, setRoutedProductId] = useState<string | null>(() => initialRouteRef.current.productId || null);
+  const [listingMode, setListingMode] = useState<StorefrontListingMode | undefined>(() => initialRouteRef.current.listingMode);
   const [isResolvingRoutedProduct, setIsResolvingRoutedProduct] = useState(Boolean(initialRouteRef.current.productId));
   const historyReadyRef = useRef(false);
+
+  const navigateToPage = useCallback((page: string) => {
+    setListingMode(undefined);
+    setCurrentPage(page);
+  }, []);
+
+  const handleSelectListingMode = useCallback((mode: StorefrontListingMode) => {
+    setListingMode(mode);
+    setCurrentPage('products');
+    setIsAdminMode(false);
+    setRoutedProductId(null);
+    setSelectedProduct(null);
+    setSelectedCategory('all');
+    setSearchQuery('');
+    setPriceRange(1000000);
+    setSortBy('featured');
+  }, []);
+
+  const handleSelectCategory = useCallback((categoryId: string) => {
+    setListingMode(undefined);
+    setSelectedCategory(categoryId);
+  }, []);
 
   useEffect(() => {
     if (!paymentReturnContext || typeof window === 'undefined') return;
@@ -383,6 +408,10 @@ export default function App() {
   const [selectedCategory, setSelectedCategory] = useState<string>(() => initialRouteRef.current.categoryId || 'all');
   const [priceRange, setPriceRange] = useState<number>(1000000); // Slider up to 1M LKR
   const [sortBy, setSortBy] = useState<string>("featured"); // featured, price-asc, price-desc, rating
+
+  useEffect(() => {
+    if (searchQuery.trim()) setListingMode(undefined);
+  }, [searchQuery]);
 
   // Modal / Drawer Toggles
   const [isCartOpen, setIsCartOpen] = useState<boolean>(false);
@@ -485,6 +514,7 @@ export default function App() {
       setIsAdminMode(route.page === 'admin');
       setSelectedCategory(route.categoryId || 'all');
       setSearchQuery(route.searchQuery || '');
+      setListingMode(route.listingMode);
       setRoutedProductId(route.productId || null);
       setSelectedProduct(null);
       setIsResolvingRoutedProduct(Boolean(route.productId));
@@ -501,6 +531,7 @@ export default function App() {
       categoryId: selectedCategory,
       productId: routedProductId,
       searchQuery,
+      listingMode,
     });
     const currentUrl = `${window.location.pathname}${window.location.search}`;
     if (currentUrl === nextUrl) {
@@ -514,7 +545,7 @@ export default function App() {
     if (!historyReadyRef.current) window.history.replaceState(state, '', nextUrl);
     else window.history.pushState(state, '', nextUrl);
     historyReadyRef.current = true;
-  }, [currentPage, isAdminMode, paymentReturnContext, routedProductId, searchQuery, selectedCategory]);
+  }, [currentPage, isAdminMode, listingMode, paymentReturnContext, routedProductId, searchQuery, selectedCategory]);
 
   useEffect(() => {
     const handleOnline = () => setIsOffline(false);
@@ -1268,7 +1299,8 @@ export default function App() {
     selectedCategory,
     priceRange,
     sortBy,
-  ), [priceRange, searchQuery, selectedCategory, sortBy, storefrontProducts]);
+    listingMode,
+  ), [listingMode, priceRange, searchQuery, selectedCategory, sortBy, storefrontProducts]);
 
   // Keep search and filter results complete without restoring the old full
   // collection listener. Cursor pages are scanned only while the catalog page
@@ -1284,6 +1316,7 @@ export default function App() {
           selectedCategory,
           priceRange,
           sortBy,
+          listingMode,
         ).length;
         if (currentMatches >= STOREFRONT_PRODUCT_PAGE_SIZE) break;
         const moreAvailable = await loadMoreProducts();
@@ -1292,7 +1325,7 @@ export default function App() {
     };
     void fillFilteredPage();
     return () => { cancelled = true; };
-  }, [currentPage, filteredProducts.length, hasMoreProducts, loadMoreProducts, loading, priceRange, searchQuery, selectedCategory, sortBy]);
+  }, [currentPage, filteredProducts.length, hasMoreProducts, listingMode, loadMoreProducts, loading, priceRange, searchQuery, selectedCategory, sortBy]);
 
   const activeProducts = useMemo(
     () => storefrontProducts.filter(product => isProductExplicitlyActive(product.isActive)),
@@ -1374,14 +1407,22 @@ export default function App() {
   const activeFilterCount = Number(Boolean(searchQuery.trim())) +
     Number(selectedCategory !== 'all') +
     Number(priceRange < 1000000) +
-    Number(sortBy !== 'featured');
+    Number(sortBy !== 'featured') +
+    Number(Boolean(listingMode));
 
   const clearAllFilters = useCallback(() => {
     setSelectedCategory('all');
     setPriceRange(1000000);
     setSearchQuery('');
     setSortBy('featured');
+    setListingMode(undefined);
   }, []);
+
+  const listingModeLabel = listingMode === 'new-arrivals'
+    ? 'New Arrivals'
+    : listingMode === 'best-sellers'
+      ? 'Best Sellers'
+      : undefined;
 
   const selectedProductResolution = useMemo(
     () => resolveSelectedProduct(selectedProduct, activeProducts, {
@@ -1467,7 +1508,7 @@ export default function App() {
       {!isAdminMode && (
         <Navbar
           currentPage={currentPage}
-          setCurrentPage={setCurrentPage}
+          setCurrentPage={navigateToPage}
           cartCount={cart.reduce((acc, item) => acc + item.quantity, 0)}
           wishlistCount={wishlist.length}
           onOpenCart={() => setIsCartOpen(true)}
@@ -1476,7 +1517,8 @@ export default function App() {
           products={customerProducts}
           categories={storefrontCategories}
           isLoading={loading}
-          onSelectCategory={setSelectedCategory}
+          onSelectCategory={handleSelectCategory}
+          onSelectListingMode={handleSelectListingMode}
           onSelectProduct={handleCustomerSearchSelection}
           onOpenAuthModal={() => setIsAuthModalOpen(true)}
           isAdminMode={isAdminMode}
@@ -2026,7 +2068,7 @@ export default function App() {
                         categoryCounts={categoryCounts}
                         activeProductCount={activeProductCount}
                         selectedCategory={selectedCategory}
-                        onSelectCategory={setSelectedCategory}
+                        onSelectCategory={handleSelectCategory}
                         priceRange={priceRange}
                         onPriceRangeChange={setPriceRange}
                         sortBy={sortBy}
@@ -2048,7 +2090,7 @@ export default function App() {
                     <div className="flex items-center justify-between gap-4">
                       <div>
                         <h2 className="text-lg font-black font-display text-slate-950">
-                          {selectedCategory === 'all' ? 'Explore All Products' : resolveCategoryDisplayName(selectedCategory, categories)}
+                          {listingModeLabel || (selectedCategory === 'all' ? 'Explore All Products' : resolveCategoryDisplayName(selectedCategory, categories))}
                         </h2>
                         <span className="mt-1 block text-xs font-medium text-slate-500" aria-live="polite">
                           {filteredProducts.length} {filteredProducts.length === 1 ? 'product' : 'products'} available
@@ -2079,6 +2121,11 @@ export default function App() {
 
                     {activeFilterCount > 0 && (
                       <div className="flex flex-wrap items-center gap-2" aria-label="Active filters">
+                        {listingModeLabel && (
+                          <button type="button" onClick={() => setListingMode(undefined)} className="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-blue-100 bg-blue-50 px-3 text-[11px] font-bold text-brand-blue focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20">
+                            {listingModeLabel} <X className="h-3.5 w-3.5" aria-hidden="true" />
+                          </button>
+                        )}
                         {searchQuery && (
                           <button type="button" onClick={() => setSearchQuery('')} className="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-blue-100 bg-blue-50 px-3 text-[11px] font-bold text-brand-blue focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20">
                             Search: “{searchQuery}” <X className="h-3.5 w-3.5" aria-hidden="true" />
@@ -2205,7 +2252,7 @@ export default function App() {
                       categoryCounts={categoryCounts}
                       activeProductCount={activeProductCount}
                       selectedCategory={selectedCategory}
-                      onSelectCategory={setSelectedCategory}
+                      onSelectCategory={handleSelectCategory}
                       priceRange={priceRange}
                       onPriceRangeChange={setPriceRange}
                       sortBy={sortBy}

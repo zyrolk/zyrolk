@@ -48,11 +48,18 @@ export interface StorefrontRoute {
   categoryId?: string;
   productId?: string;
   searchQuery?: string;
+  listingMode?: StorefrontListingMode;
 }
 
 export interface StorefrontUrlState extends StorefrontRoute {
   productId?: string | null;
 }
+
+export type StorefrontListingMode = 'new-arrivals' | 'best-sellers';
+
+const parseListingMode = (value: string | null): StorefrontListingMode | undefined => (
+  value === 'new-arrivals' || value === 'best-sellers' ? value : undefined
+);
 
 export const parseStorefrontRoute = (pathname: string, search = ''): StorefrontRoute => {
   const path = normalizePath(pathname);
@@ -77,10 +84,13 @@ export const parseStorefrontRoute = (pathname: string, search = ''): StorefrontR
     return { page: 'products', searchQuery };
   }
 
-  return { page: PATH_PAGES.get(path) || 'not-found' };
+  const page = PATH_PAGES.get(path) || 'not-found';
+  return page === 'products'
+    ? { page, listingMode: parseListingMode(params.get('view')) }
+    : { page };
 };
 
-export const buildStorefrontUrl = ({ page, categoryId, productId, searchQuery }: StorefrontUrlState): string => {
+export const buildStorefrontUrl = ({ page, categoryId, productId, searchQuery, listingMode }: StorefrontUrlState): string => {
   const cleanProductId = productId?.trim();
   if (cleanProductId) return `/products/${encodeURIComponent(cleanProductId)}`;
 
@@ -89,6 +99,9 @@ export const buildStorefrontUrl = ({ page, categoryId, productId, searchQuery }:
     if (cleanCategoryId && cleanCategoryId !== 'all') return `/categories/${encodeURIComponent(cleanCategoryId)}`;
     const cleanSearchQuery = searchQuery?.trim();
     if (cleanSearchQuery) return `/search?q=${encodeURIComponent(cleanSearchQuery)}`;
+    if (listingMode === 'new-arrivals' || listingMode === 'best-sellers') {
+      return `/products?view=${encodeURIComponent(listingMode)}`;
+    }
   }
 
   return PAGE_PATHS[page] || '/not-found';

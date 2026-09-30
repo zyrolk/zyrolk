@@ -15,6 +15,7 @@ import { searchCustomerProducts } from '../services/product-search/customerProdu
 import { normalizeSearchText } from '../services/product-search/productSearchMetadata';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import MarketplaceMegaMenu from './MarketplaceMegaMenu';
+import { StorefrontListingMode } from '../services/navigation/storefrontRoutes';
 
 const RECENT_SEARCHES_KEY = 'zyro_recent_searches';
 
@@ -34,6 +35,7 @@ interface NavbarProps {
   onOpenAuthModal: () => void;
   isAdminMode: boolean;
   setIsAdminMode: (admin: boolean) => void;
+  onSelectListingMode: (mode: StorefrontListingMode) => void;
   settings?: WebsiteSettings | null;
   isAdminUser: boolean;
 }
@@ -54,6 +56,7 @@ export default function Navbar({
   onOpenAuthModal,
   isAdminMode,
   setIsAdminMode,
+  onSelectListingMode,
   settings,
   isAdminUser
 }: NavbarProps) {
@@ -278,12 +281,19 @@ export default function Navbar({
     }, 0);
   };
 
+  const navigateToListingMode = (mode: StorefrontListingMode) => {
+    onSelectListingMode(mode);
+    setIsMobileMenuOpen(false);
+    setIsProfileOpen(false);
+    setIsMegaMenuOpen(false);
+  };
+
   const supportNavLink = { label: 'Support', icon: MessageCircle, action: () => navigateToPage('contact') };
 
   const navLinks = [
     { id: 'deals', label: 'Deals', icon: Tag, action: navigateToDeals },
-    { id: 'new-arrivals', label: 'New Arrivals', icon: Sparkles, action: () => navigateToPage('products') },
-    { id: 'best-sellers', label: 'Best Sellers', icon: BarChart3, action: () => navigateToPage('products') },
+    { id: 'new-arrivals', label: 'New Arrivals', icon: Sparkles, action: () => navigateToListingMode('new-arrivals') },
+    { id: 'best-sellers', label: 'Best Sellers', icon: BarChart3, action: () => navigateToListingMode('best-sellers') },
     { id: 'today-offers', label: "Today's Offers", icon: Tag, action: navigateToDeals }
   ];
 
