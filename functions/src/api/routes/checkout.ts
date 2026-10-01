@@ -31,6 +31,7 @@ import {
   ORDER_PRIVATE_COLLECTION,
   resolveOrderPrivateAttributionLines,
 } from "../orders/orderPrivateAttribution";
+import { buildGuestRecoveryMetadata, validateGuestRecoveryToken } from "../orders/guestOrderRecovery";
 import { isProductExplicitlyActive } from "../products/productAvailability";
 import { PRODUCT_PRIVATE_COLLECTION } from "../products/productCommercialData";
 import {
@@ -151,6 +152,7 @@ export function registerCheckoutRoutes(app: express.Express): void {
     let idempotencyKey: string | null;
     let requestHash: string;
     let validatedPaymentMethod: "cod" | "whatsapp_confirm" | "payhere";
+    let guestRecoveryToken: string | null = null;
     try {
       customerUid = await resolveCheckoutCustomerUid(req.header("Authorization"));
       if (requestedCustomerUid && requestedCustomerUid !== "guest" && requestedCustomerUid !== customerUid) {
@@ -161,6 +163,7 @@ export function registerCheckoutRoutes(app: express.Express): void {
       validatedCartItems = validateCheckoutCartItems(cartItems, { requireExpectedUnitPrice: true });
       idempotencyKey = getIdempotencyKeyFromValues(req.header("Idempotency-Key"), req.body?.idempotencyKey);
       requestHash = createCheckoutRequestHash(req.body, validatedCartItems);
+      if (customerUid === "guest") guestRecoveryToken = validateGuestRecoveryToken(req.body?.guestRecoveryToken);
       if (paymentMethod && paymentMethod !== "cod") throw new CheckoutError("Only Cash on Delivery is currently available", 400);
     } catch (error: any) {
       sendApiError(res, error, {
@@ -377,7 +380,12 @@ export function registerCheckoutRoutes(app: express.Express): void {
         };
 
         transaction.set(orderRef, orderData);
-        transaction.create(orderPrivateRef, buildOrderPrivateDocument(orderRef.id, privateLines, capturedAt));
+        transaction.create(orderPrivateRef, buildOrderPrivateDocument(
+          orderRef.id,
+          privateLines,
+          capturedAt,
+          guestRecoveryToken ? buildGuestRecoveryMetadata(guestRecoveryToken, capturedAt) : undefined,
+        ));
 
         const order = {
           id: orderRef.id,

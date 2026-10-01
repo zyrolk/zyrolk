@@ -152,6 +152,24 @@ test('a missing token is still rejected before verification', async () => {
   assert.deepEqual(JSON.parse(response.body), { error: 'App verification is required' });
 });
 
+test('guest tracking requires App Check but does not require Firebase Auth', async () => {
+  const missing = await send('POST', '/api/orders/guest-track', {}, { recoveryToken: 'bad' });
+  assert.equal(missing.status, 401);
+  assert.deepEqual(JSON.parse(missing.body), { error: 'App verification is required' });
+
+  const originalCollection = adminDb.collection;
+  (adminDb as unknown as { collection: typeof originalCollection }).collection = (() => ({
+    where: () => ({ limit: () => ({ get: async () => ({ size: 0, docs: [] }) }) }),
+  })) as unknown as typeof originalCollection;
+  try {
+    const authorizedByAppCheckOnly = await send('POST', '/api/orders/guest-track', { 'X-Firebase-AppCheck': 'session-token' }, { recoveryToken: 'bad' });
+    assert.equal(authorizedByAppCheckOnly.status, 401);
+    assert.deepEqual(JSON.parse(authorizedByAppCheckOnly.body), { error: 'Order details could not be verified.' });
+  } finally {
+    (adminDb as unknown as { collection: typeof originalCollection }).collection = originalCollection;
+  }
+});
+
 test('sitemap remains exempt from App Check', async () => {
   const originalCollection = adminDb.collection;
   (adminDb as unknown as { collection: () => unknown }).collection = () => ({ limit: () => ({ get: async () => ({ docs: [] }) }) });
@@ -246,7 +264,7 @@ test('ordinary App Check stays on getToken and the limited-use helper uses getLi
   assert.equal((source.match(/initializeAppCheck\(/g) || []).length, 1);
 });
 
-test('only the checkout order request uses limited-use tokens and its request shape is unchanged', () => {
+test('only the checkout order request uses limited-use tokens and guest recovery remains additive', () => {
   const drawer = readFileSync('src/features/checkout/PremiumCheckoutDrawer.tsx', 'utf8');
   const checkoutCall = drawer.slice(drawer.indexOf("fetchJson<{ success: boolean; order: Order; error?: string }>('/api/checkout', {") + 60);
   const couponCall = drawer.slice(drawer.indexOf("'/api/checkout/coupon'"), drawer.indexOf('const handleCheckout'));
@@ -255,8 +273,10 @@ test('only the checkout order request uses limited-use tokens and its request sh
   assert.doesNotMatch(couponCall, /getLimitedUse|appCheckHeaders/);
   assert.doesNotMatch(drawer, /X-Firebase-AppCheck/);
   assert.match(drawer, /headers: \{ 'Content-Type': 'application\/json', 'Idempotency-Key': idempotencyKey, \.\.\.\(token \? \{ Authorization: `Bearer \$\{token\}` \} : \{\}\) \},/);
-  assert.match(drawer, /body: JSON\.stringify\(\{ \.\.\.payload, idempotencyKey \}\),/);
-  assert.match(drawer, /const idempotencyKey = getIdempotencyKey\(JSON\.stringify\(payload\)\);/);
+  assert.match(drawer, /body: JSON\.stringify\(\{ \.\.\.requestPayload, idempotencyKey \}\),/);
+  assert.match(drawer, /const checkoutSignature = JSON\.stringify\(payload\);/);
+  assert.match(drawer, /const idempotencyKey = getIdempotencyKey\(checkoutSignature\);/);
+  assert.match(drawer, /guestRecoveryToken/);
   assert.match(drawer, /if \(previous\.key && previous\.signature === signature\) return previous\.key;/);
   assert.match(drawer, /window\.sessionStorage\.setItem\(IDEMPOTENCY_KEY, JSON\.stringify\(\{ key, signature \}\)\);/);
 

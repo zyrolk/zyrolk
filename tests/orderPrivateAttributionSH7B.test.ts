@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
@@ -17,6 +18,7 @@ import {
   reconcileSupplierProductOfferFailover,
   SupplierProductOffer,
 } from "../functions/src/api/suppliers/supplierOfferEngine";
+import { hashGuestRecoveryToken } from "../functions/src/api/orders/guestOrderRecovery";
 import { saveSupplierSource } from "../functions/src/api/suppliers/supplierAdminConfiguration";
 import { SUPPLIER_PORTAL_SOURCE_ID } from "../functions/src/api/suppliers/supplierPortalLogic";
 
@@ -25,6 +27,7 @@ const functionsHost = process.env.FUNCTIONS_EMULATOR_HOST;
 const projectId = process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT;
 const canRun = Boolean(firestoreHost && functionsHost && projectId?.startsWith("demo-"));
 const fixturePrefix = "sh7b-order-private";
+const makeGuestRecoveryToken = (seed: string): string => createHash("sha256").update(`${fixturePrefix}:${seed}`).digest("base64url");
 
 interface SupplierFixture {
   accountId: string;
@@ -136,7 +139,7 @@ const seedInternalProduct = async (scenario: string): Promise<{ productId: strin
 };
 
 let phoneSequence = 77_100_000;
-const checkout = async (scenario: string, cartItems: Array<{ productId: string; quantity: number; expectedUnitPrice: number }>, idempotencyKey = `${fixturePrefix}-${scenario}-key`) => {
+const checkout = async (scenario: string, cartItems: Array<{ productId: string; quantity: number; expectedUnitPrice: number }>, idempotencyKey = `${fixturePrefix}-${scenario}-key`, guestRecoveryToken?: string) => {
   phoneSequence += 1;
   const body = {
     customerUid: "guest",
@@ -148,6 +151,7 @@ const checkout = async (scenario: string, cartItems: Array<{ productId: string; 
     city: "Colombo",
     paymentMethod: "cod",
     cartItems,
+    ...(guestRecoveryToken ? { guestRecoveryToken } : {}),
   };
   const response = await fetch(`http://${functionsHost}/${projectId}/us-central1/api/api/checkout`, {
     method: "POST",
@@ -203,7 +207,8 @@ test("SH-7B captures immutable purchase-time supplier attribution through the re
 
   await t.test("supplier-backed checkout records the exact approved offer without changing customer price", async () => {
     const fixture = await seedSupplierProduct("single", { publicPrice: 1_500, offerPrice: 1_200 });
-    const result = await checkout("single", [{ productId: fixture.productId, quantity: 1, expectedUnitPrice: 1_500 }]);
+    const recoveryToken = makeGuestRecoveryToken("single");
+    const result = await checkout("single", [{ productId: fixture.productId, quantity: 1, expectedUnitPrice: 1_500 }], `${fixturePrefix}-single-key`, recoveryToken);
     assert.equal(result.response.status, 200, result.payload.error);
     const order = result.payload.order!;
     const privateOrder = await readPrivateOrder(order.id);
@@ -233,11 +238,39 @@ test("SH-7B captures immutable purchase-time supplier attribution through the re
       approvedOfferStockEvidence: 12,
       capturedAt: privateOrder.createdAt,
     });
+    assert.deepEqual(privateOrder.guestRecovery, {
+      version: 1,
+      tokenHash: hashGuestRecoveryToken(recoveryToken),
+      issuedAt: privateOrder.createdAt,
+    });
     assert.equal(order.items[0].price, 1_500);
-    const publicOrderJson = JSON.stringify((await adminDb.collection("orders").doc(order.id).get()).data());
+    const publicOrderSnapshot = await adminDb.collection("orders").doc(order.id).get();
+    const publicOrderData = publicOrderSnapshot.data()!;
+    const publicOrderJson = JSON.stringify(publicOrderData);
+    assert.equal(publicOrderData.items[0].price, 1_500);
+    assert.equal((await adminDb.collection("products").doc(fixture.productId).get()).data()?.stock, 7);
+    assert.equal((await adminDb.collection("product_private").doc(fixture.productId).get()).data()?.supplierMetadata?.localDemand?.quantity, 5);
+    assert.doesNotMatch(publicOrderJson, new RegExp(recoveryToken, "u"));
+    assert.doesNotMatch(publicOrderJson, new RegExp(hashGuestRecoveryToken(recoveryToken), "u"));
     for (const privateField of ["purchaseSupplierCost", "supplierOfferId", "supplierAccountId", "supplierItemCode"]) {
       assert.doesNotMatch(publicOrderJson, new RegExp(privateField, "u"));
     }
+
+    const idempotencyRecords = await adminDb.collection("checkout_idempotency")
+      .where("orderId", "==", order.id)
+      .get();
+    assert.equal(idempotencyRecords.size, 1);
+    const notificationRecords = await Promise.all([
+      adminDb.collection("notification_outbox").where("orderId", "==", order.id).get(),
+      adminDb.collection("supplier_notifications").where("orderId", "==", order.id).get(),
+    ]);
+    const persistedCheckoutRecords = JSON.stringify([
+      publicOrderData,
+      privateOrder,
+      ...idempotencyRecords.docs.map(document => document.data()),
+      ...notificationRecords.flatMap(snapshot => snapshot.docs.map(document => document.data())),
+    ]);
+    assert.doesNotMatch(persistedCheckoutRecords, new RegExp(recoveryToken, "u"));
 
     const retryResponse = await fetch(`http://${functionsHost}/${projectId}/us-central1/api/api/checkout`, {
       method: "POST",
@@ -248,6 +281,10 @@ test("SH-7B captures immutable purchase-time supplier attribution through the re
     assert.equal(retryResponse.status, 200);
     assert.equal(retry.order.id, order.id);
     assert.deepEqual(await readPrivateOrder(order.id), privateOrder);
+    assert.equal((await adminDb.collection("products").doc(fixture.productId).get()).data()?.stock, 7);
+    assert.equal((await adminDb.collection("product_private").doc(fixture.productId).get()).data()?.supplierMetadata?.localDemand?.quantity, 5);
+    assert.equal((await adminDb.collection("orders").get()).docs.filter(document => document.id === order.id).length, 1);
+    assert.equal((await adminDb.collection("order_private").get()).docs.filter(document => document.id === order.id).length, 1);
   });
 
   await t.test("mixed supplier carts capture independent immutable line attribution", async () => {
@@ -256,7 +293,7 @@ test("SH-7B captures immutable purchase-time supplier attribution through the re
     const result = await checkout("mixed", [
       { productId: supplierA.productId, quantity: 1, expectedUnitPrice: 1_500 },
       { productId: supplierB.productId, quantity: 2, expectedUnitPrice: 1_500 },
-    ]);
+    ], `${fixturePrefix}-mixed-key`, makeGuestRecoveryToken("mixed"));
     assert.equal(result.response.status, 200, result.payload.error);
     const privateOrder = await readPrivateOrder(result.payload.order!.id);
     assert.equal(privateOrder.lines.length, 2);
@@ -269,7 +306,7 @@ test("SH-7B captures immutable purchase-time supplier attribution through the re
 
   await t.test("offer failover and mutable catalogue/source changes cannot rewrite historical attribution", async () => {
     const selected = await seedSupplierProduct("history-a");
-    const result = await checkout("history", [{ productId: selected.productId, quantity: 1, expectedUnitPrice: 1_500 }]);
+    const result = await checkout("history", [{ productId: selected.productId, quantity: 1, expectedUnitPrice: 1_500 }], `${fixturePrefix}-history-key`, makeGuestRecoveryToken("history"));
     assert.equal(result.response.status, 200, result.payload.error);
     const orderId = result.payload.order!.id;
     const before = await readPrivateOrder(orderId);
@@ -359,7 +396,7 @@ test("SH-7B captures immutable purchase-time supplier attribution through the re
       ["inactive-account", { activeAccount: false }],
     ] as const) {
       const fixture = await seedSupplierProduct(scenario, options);
-      const result = await checkout(scenario, [{ productId: fixture.productId, quantity: 1, expectedUnitPrice: 1_500 }]);
+      const result = await checkout(scenario, [{ productId: fixture.productId, quantity: 1, expectedUnitPrice: 1_500 }], `${fixturePrefix}-${scenario}-key`, makeGuestRecoveryToken(scenario));
       assert.equal(result.response.status, 409);
       assert.match(result.payload.error || "", /supplier (routing is not configured|account is not active)/iu);
       assert.equal((await adminDb.collection("products").doc(fixture.productId).get()).data()?.stock, 8);
@@ -368,7 +405,7 @@ test("SH-7B captures immutable purchase-time supplier attribution through the re
 
   await t.test("a legitimate internal product records null supplier evidence", async () => {
     const fixture = await seedInternalProduct("internal");
-    const result = await checkout("internal", [{ productId: fixture.productId, quantity: 1, expectedUnitPrice: 900 }]);
+    const result = await checkout("internal", [{ productId: fixture.productId, quantity: 1, expectedUnitPrice: 900 }], `${fixturePrefix}-internal-key`, makeGuestRecoveryToken("internal"));
     assert.equal(result.response.status, 200, result.payload.error);
     const line = (await readPrivateOrder(result.payload.order!.id)).lines[0];
     assert.equal(line.fulfilmentMode, "internal");

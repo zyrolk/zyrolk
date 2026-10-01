@@ -37,6 +37,10 @@ const PAGE_COPY: Record<string, { title: string; description: string }> = {
     title: 'Contact & Support',
     description: 'Contact Zyro.lk for marketplace support, product questions and ordering assistance.',
   },
+  'track-order': {
+    title: 'Track Guest Order',
+    description: 'Securely review a guest order saved on this device.',
+  },
   'about-us': { title: 'About Us', description: 'Learn more about the Zyro.lk Sri Lankan marketplace.' },
   faq: { title: 'FAQs & Guides', description: 'Find Zyro.lk marketplace guidance and answers to common shopping questions.' },
   'return-policy': { title: 'Purchase Support Policy', description: 'Read the Zyro.lk purchase support policy.' },
@@ -158,7 +162,7 @@ export const buildStorefrontSeo = ({
     resolvedOrigin,
   );
   const keywords = cleanText(settings?.seoKeywords) || 'Zyro.lk, online marketplace Sri Lanka, online shopping Sri Lanka';
-  const isPrivateCustomerPage = ['wishlist', 'recently-viewed', 'compare', 'payment-return'].includes(currentPage) || currentPage.startsWith('account');
+  const isPrivateCustomerPage = ['wishlist', 'recently-viewed', 'compare', 'payment-return', 'track-order'].includes(currentPage) || currentPage.startsWith('account');
   const isMissingProduct = Boolean(requestedProductId) && !isProduct;
   const isMissingCategory = Boolean(requestedCategoryId) && !isCategory && !isProduct;
   const robots = isAdminMode || isMissingPage || isMissingProduct || isMissingCategory || isPrivateCustomerPage || isSearchPage

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import test from "node:test";
 import { deleteApp, initializeApp } from "firebase/app";
 import {
@@ -16,6 +16,7 @@ const authHost = process.env.FIREBASE_AUTH_EMULATOR_HOST;
 const functionsHost = process.env.FUNCTIONS_EMULATOR_HOST;
 const projectId = process.env.GCLOUD_PROJECT;
 const canRun = Boolean(firestoreHost && authHost && functionsHost && projectId?.startsWith("demo-"));
+const makeGuestRecoveryToken = (seed: string): string => createHash("sha256").update(`sh4:${seed}`).digest("base64url");
 
 test("SH-4 final manual Product API enforces the real Auth boundary and trusted persistence path", {
   skip: canRun ? undefined : "Firestore, Auth, and Functions Emulators are required.",
@@ -148,6 +149,7 @@ test("SH-4 final manual Product API enforces the real Auth boundary and trusted 
         district: "Colombo",
         city: "Colombo",
         paymentMethod: "cod",
+        guestRecoveryToken: makeGuestRecoveryToken(suffix),
         cartItems: [{ productId: created.productId, quantity: 1, expectedUnitPrice: draft.price }],
       }),
     });

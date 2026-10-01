@@ -7,6 +7,7 @@ const PAGE_PATHS: Readonly<Record<string, string>> = Object.freeze({
   'recently-viewed': '/recently-viewed',
   compare: '/compare',
   contact: '/contact',
+  'track-order': '/track-order',
   account: '/account',
   'account-orders': '/account/orders',
   'account-order-details': '/account/orders/details',

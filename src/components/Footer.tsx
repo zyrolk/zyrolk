@@ -129,6 +129,7 @@ export default function Footer({ setCurrentPage, onSelectCategory, settings, cat
             <h2 id="footer-help-title">Help & company</h2>
             <ul>
               <li><button type="button" onClick={() => setCurrentPage('contact')}>Contact & support</button></li>
+              <li><button type="button" onClick={() => setCurrentPage('track-order')}>Track an order</button></li>
               <li><button type="button" onClick={() => setCurrentPage('about-us')}>About us</button></li>
               <li><button type="button" onClick={() => setCurrentPage('faq')}>FAQs & guides</button></li>
               <li><button type="button" onClick={() => setCurrentPage('return-policy')}>Purchase support policy</button></li>

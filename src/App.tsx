@@ -67,6 +67,7 @@ const AccountCenter = lazy(() => import('./features/account/AccountCenter'));
 const WishlistExperience = lazy(() => import('./features/personalization/WishlistExperience'));
 const CompareProducts = lazy(() => import('./features/personalization/CompareProducts'));
 const PaymentReturnPage = lazy(() => import('./features/checkout/PaymentReturnPage'));
+const GuestOrderTrackingPage = lazy(() => import('./features/orders/GuestOrderTrackingPage'));
 const SupplierPortal = lazy(() => import('./features/supplier-portal/SupplierPortal'));
 const ProductFilters = lazy(() => import('./components/ProductFilters'));
 
@@ -286,6 +287,7 @@ const STOREFRONT_PAGE_IDS = new Set([
   'home', 'legacy-home', 'products', 'categories', 'wishlist', 'recently-viewed', 'compare', 'contact',
   'account', 'account-orders', 'account-order-details', 'account-profile', 'account-addresses', 'account-security', 'account-settings',
   'about-us', 'privacy-policy', 'terms-conditions', 'return-policy', 'warranty-policy', 'faq',
+  'track-order',
   'payment-return',
 ]);
 
@@ -2483,6 +2485,12 @@ export default function App() {
                   setCurrentPage('admin');
                 }}
               />
+            </Suspense>
+          )}
+
+          {currentPage === 'track-order' && (
+            <Suspense fallback={<LazyBlockFallback className="mx-auto my-12 min-h-96 max-w-4xl" label="Loading guest order tracking" />}>
+              <GuestOrderTrackingPage onNavigate={(page) => { setIsAdminMode(false); setCurrentPage(page); }} />
             </Suspense>
           )}
 

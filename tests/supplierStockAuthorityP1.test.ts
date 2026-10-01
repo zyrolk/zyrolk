@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { adminDb } from "../functions/src/api/firebase";
@@ -19,6 +19,7 @@ const canRunEmulator = Boolean(
   && process.env.FUNCTIONS_EMULATOR_HOST
   && String(process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT).startsWith("demo-"),
 );
+const makeGuestRecoveryToken = (seed: string): string => createHash("sha256").update(`p1-stock:${seed}`).digest("base64url");
 
 test("P1 stock authority separates supplier observation from local order demand", () => {
   assert.equal(supplierObservedStockFromPrivate(null), null);
@@ -114,6 +115,7 @@ test("P1 emulator checkout, confirmation, supplier observation, cancellation, an
   const functionsHost = process.env.FUNCTIONS_EMULATOR_HOST!;
   const projectId = process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT;
   const customerPhone = `077${Date.now().toString().slice(-7)}`;
+  const guestRecoveryToken = makeGuestRecoveryToken(suffix);
   const checkoutResponse = await fetch(`http://${functionsHost}/${projectId}/us-central1/api/api/checkout`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "Idempotency-Key": `p1-stock-checkout-${suffix}` },
@@ -126,6 +128,7 @@ test("P1 emulator checkout, confirmation, supplier observation, cancellation, an
       district: "Colombo",
       city: "Colombo",
       paymentMethod: "cod",
+      guestRecoveryToken,
       cartItems: [{ productId, quantity: 1, expectedUnitPrice: 1_500 }],
     }),
   });
@@ -148,6 +151,7 @@ test("P1 emulator checkout, confirmation, supplier observation, cancellation, an
       district: "Colombo",
       city: "Colombo",
       paymentMethod: "cod",
+      guestRecoveryToken,
       cartItems: [{ productId, quantity: 1, expectedUnitPrice: 1_500 }],
     }),
   });

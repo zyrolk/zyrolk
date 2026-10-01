@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import test from "node:test";
 import { initializeTestEnvironment, assertFails, assertSucceeds } from "@firebase/rules-unit-testing";
 import { readFileSync } from "node:fs";
@@ -34,6 +34,7 @@ const functionsHost = process.env.FUNCTIONS_EMULATOR_HOST;
 const projectId = process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT;
 const canRun = Boolean(firestoreHost && authHost && functionsHost && projectId?.startsWith("demo-"));
 const prefix = "p1-production-blockers";
+const makeGuestRecoveryToken = (seed: string): string => createHash("sha256").update(`${prefix}:${seed}`).digest("base64url");
 
 const portalMediaBody = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAEUlEQVQImWPgEpHjEpFjgFAABk4A8YCCZIUAAAAASUVORK5CYII=",
@@ -97,6 +98,7 @@ test("P1 production blockers fail closed at trusted and Rules boundaries", {
         district: "Colombo",
         city: "Colombo",
         paymentMethod: "cod",
+        guestRecoveryToken: makeGuestRecoveryToken(`price-${scenario}`),
         cartItems: [{ productId, quantity: 1, expectedUnitPrice: displayedPrice }],
       };
       const request = (payload = body) => fetch(`http://${functionsHost}/${projectId}/us-central1/api/api/checkout`, {
@@ -423,7 +425,7 @@ test("P1 production blockers fail closed at trusted and Rules boundaries", {
       const checkoutResponse = await fetch(`http://${functionsHost}/${projectId}/us-central1/api/api/checkout`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "Idempotency-Key": `${prefix}-portal-checkout-${suffix}`, "X-Forwarded-For": "203.0.113.61" },
-        body: JSON.stringify({ customerUid: "guest", customerName: "Portal Customer", customerPhone: "0772233445", customerEmail: "portal-checkout@example.test", customerAddress: "2 Portal Road", district: "Colombo", city: "Colombo", paymentMethod: "cod", cartItems: [{ productId, quantity: 1, expectedUnitPrice: 1_250 }] }),
+        body: JSON.stringify({ customerUid: "guest", customerName: "Portal Customer", customerPhone: "0772233445", customerEmail: "portal-checkout@example.test", customerAddress: "2 Portal Road", district: "Colombo", city: "Colombo", paymentMethod: "cod", guestRecoveryToken: makeGuestRecoveryToken(`portal-${suffix}`), cartItems: [{ productId, quantity: 1, expectedUnitPrice: 1_250 }] }),
       });
       const checkout = await checkoutResponse.json() as { order?: { id?: string }; error?: string };
       assert.equal(checkoutResponse.status, 200, checkout.error);

@@ -29,8 +29,15 @@ import {
   supplierObservedStockFromPrivate,
   withSupplierLocalDemand,
 } from "../orders/supplierInventoryReconciliation";
+import {
+  GUEST_RECOVERY_GENERIC_ERROR,
+  GuestOrderRecoveryError,
+  lookupGuestOrderByRecoveryToken,
+} from "../orders/guestOrderRecovery";
+import { CHECKOUT_RATE_LIMIT_WINDOW_MS, createCheckoutRateLimiter, getClientRateLimitKey } from "../checkout/checkoutLogic";
 
 const VALID_ORDER_STATUSES = new Set<string>(ORDER_STATUSES);
+const enforceGuestTrackingRateLimit = createCheckoutRateLimiter(new Map(), CHECKOUT_RATE_LIMIT_WINDOW_MS, 20);
 
 const requireCustomerAuth: express.RequestHandler = async (req, res, next) => {
   const match = (req.header("Authorization") || "").match(/^Bearer\s+(.+)$/i);
@@ -227,6 +234,29 @@ export async function updateOrderStatus(
 }
 
 export function registerOrderRoutes(app: express.Express): void {
+  app.post("/api/orders/guest-track", async (req, res) => {
+    try {
+      enforceGuestTrackingRateLimit(getClientRateLimitKey(req.header("x-forwarded-for"), req.ip));
+      const order = await lookupGuestOrderByRecoveryToken(adminDb, req.body?.recoveryToken);
+      res.json({ success: true, order });
+    } catch (error: any) {
+      if (Number(error?.statusCode) === 429) {
+        res.status(429).json({ error: "Please wait a moment before trying again." });
+        return;
+      }
+      if (error instanceof GuestOrderRecoveryError) {
+        res.status(401).json({ error: GUEST_RECOVERY_GENERIC_ERROR });
+        return;
+      }
+      sendApiError(res, error, {
+        logMessage: "Guest order tracking failed.",
+        fallbackMessage: GUEST_RECOVERY_GENERIC_ERROR,
+        fallbackStatusCode: 500,
+        context: { route: "/api/orders/guest-track" },
+      });
+    }
+  });
+
   app.post("/api/orders/:orderId/cancel", requireCustomerAuth, async (req, res) => {
     const orderId = String(req.params.orderId || "").trim();
     if (!orderId) {

@@ -19,6 +19,10 @@ import { Order } from '../../types';
 import { commerceAnalyticsItem, trackCommerceEvent, trackPurchaseOnce } from '../../services/observability/commerceAnalytics';
 import { describeDeliveryProgress, resolveDeliveryQuote } from '../../services/settings/shippingSettings';
 import { filterCommerceCartItems } from '../../services/storefront/previewCommerceGuard';
+import {
+  prepareGuestOrderRecoveryToken,
+  promoteGuestOrderRecoveryToken,
+} from '../orders/guestOrderRecovery';
 import './premiumCheckout.css';
 
 const IDEMPOTENCY_KEY = 'zyro.checkout.idempotency';
@@ -78,6 +82,7 @@ export default function PremiumCheckoutDrawer({
   const formHasAddressRef = useRef(Boolean(form.customerAddress));
   const isSubmittingRef = useRef(isSubmitting);
   const onCloseRef = useRef(onClose);
+  const guestRecoveryAttemptRef = useRef<{ signature: string; token: string } | null>(null);
 
   const commerceCartItems = useMemo(() => filterCommerceCartItems(cartItems), [cartItems]);
   const itemsSubtotal = useMemo(() => commerceCartItems.reduce((sum, item) => sum + item.product.price * item.quantity, 0), [commerceCartItems]);
@@ -235,14 +240,28 @@ export default function PremiumCheckoutDrawer({
           expectedUnitPrice: item.product.price,
         })),
       };
-      const idempotencyKey = getIdempotencyKey(JSON.stringify(payload));
+      const checkoutSignature = JSON.stringify(payload);
+      let guestRecoveryToken: string | undefined;
+      if (!user) {
+        const previousAttempt = guestRecoveryAttemptRef.current;
+        guestRecoveryToken = previousAttempt?.signature === checkoutSignature
+          ? previousAttempt.token
+          : await prepareGuestOrderRecoveryToken(checkoutSignature) || undefined;
+        if (guestRecoveryToken) guestRecoveryAttemptRef.current = { signature: checkoutSignature, token: guestRecoveryToken };
+      }
+      const idempotencyKey = getIdempotencyKey(checkoutSignature);
+      const requestPayload = guestRecoveryToken ? { ...payload, guestRecoveryToken } : payload;
       const result = await fetchJson<{ success: boolean; order: Order; error?: string }>('/api/checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-        body: JSON.stringify({ ...payload, idempotencyKey }),
+        body: JSON.stringify({ ...requestPayload, idempotencyKey }),
       }, { fallbackMessage: 'Checkout is temporarily unavailable. Your cart is still saved.', appCheckHeaders: getLimitedUseAppCheckRequestHeaders });
       if (!result.success) throw new Error(result.error || 'The order could not be placed.');
       setPlacedOrder(result.order);
+      if (!user && guestRecoveryToken) {
+        promoteGuestOrderRecoveryToken(guestRecoveryToken);
+        guestRecoveryAttemptRef.current = null;
+      }
       trackPurchaseOnce(result.order.id, result.order.totalPrice, 'cod', result.order.couponCode, analyticsItems);
       clearIdempotencyKey();
       clearCheckoutDraft(window.sessionStorage);
@@ -309,7 +328,7 @@ export default function PremiumCheckoutDrawer({
           <section><h3><PackageCheck aria-hidden="true" />Items</h3>{placedOrder.items.map(item => <div key={item.productId}><span>{item.name} × {item.quantity}</span><b>{formatPrice(item.price * item.quantity)}</b></div>)}</section>
           <section className="zy-confirmation-totals"><h3><CircleDollarSign aria-hidden="true" />Payment summary</h3><div><span>Subtotal</span><b>{formatPrice(orderSubtotal)}</b></div>{orderDiscount > 0 && <div className="is-discount"><span>Coupon {placedOrder.couponCode ? `(${placedOrder.couponCode})` : ''}</span><b>−{formatPrice(orderDiscount)}</b></div>}<div><span>Delivery</span><b>{orderDelivery === 0 ? 'Free' : formatPrice(orderDelivery)}</b></div><div className="is-total"><span>Cash on Delivery total</span><b>{formatPrice(placedOrder.totalPrice)}</b></div></section>
         </div>
-        <div className="zy-confirmation-actions">{user && <button type="button" onClick={() => { setPlacedOrder(null); onClose(); setCurrentPage?.('account-orders'); }}><PackageCheck aria-hidden="true" />View My Orders</button>}{settings?.whatsappNumber && <button type="button" onClick={() => sendWhatsApp(placedOrder)}><Phone aria-hidden="true" />Get order support on WhatsApp</button>}<button type="button" onClick={() => { setPlacedOrder(null); onClose(); }}><ShoppingBag aria-hidden="true" />Continue shopping</button></div>
+        <div className="zy-confirmation-actions">{user ? <button type="button" onClick={() => { setPlacedOrder(null); onClose(); setCurrentPage?.('account-orders'); }}><PackageCheck aria-hidden="true" />View My Orders</button> : <button type="button" onClick={() => { setPlacedOrder(null); onClose(); setCurrentPage?.('track-order'); }}><PackageCheck aria-hidden="true" />Track this order</button>}{settings?.whatsappNumber && <button type="button" onClick={() => sendWhatsApp(placedOrder)}><Phone aria-hidden="true" />Get order support on WhatsApp</button>}<button type="button" onClick={() => { setPlacedOrder(null); onClose(); }}><ShoppingBag aria-hidden="true" />Continue shopping</button></div>
       </main> : <form className="zy-checkout-layout" onSubmit={handleCheckout} noValidate><fieldset disabled={isCartReconciliationPending} style={{ border: 0, margin: 0, padding: 0, minInlineSize: 0 }}>
         <section className="zy-checkout-cart-column" aria-labelledby="checkout-cart-heading">
           <div className="zy-checkout-section-heading"><div><small>Step 1</small><h3 id="checkout-cart-heading">Your cart</h3></div><span>{commerceCartItems.length} {commerceCartItems.length === 1 ? 'item' : 'items'}</span></div>

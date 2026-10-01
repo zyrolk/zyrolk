@@ -13,6 +13,7 @@ import {
   projectSupplierOfferForAdmin,
   resolveActiveSupplierOffer,
 } from "../suppliers/supplierOfferEngine";
+import type { GuestRecoveryMetadata } from "./guestOrderRecovery";
 
 export { ORDER_PRIVATE_COLLECTION } from "./orderFulfilmentGroups";
 export const ORDER_PRIVATE_SCHEMA_VERSION = 2;
@@ -47,6 +48,7 @@ export interface OrderPrivateDocument {
   fulfilmentGroups: OrderFulfilmentGroup[];
   assignedSupplierAccountIds: string[];
   supplierLocalDemandTrackingVersion: number;
+  guestRecovery?: GuestRecoveryMetadata;
 }
 
 export interface CheckoutProductAttributionInput {
@@ -231,6 +233,7 @@ export function buildOrderPrivateDocument(
   orderId: string,
   lines: readonly OrderPrivateAttributionLine[],
   capturedAt: string,
+  guestRecovery?: GuestRecoveryMetadata,
 ): OrderPrivateDocument {
   const immutableLines = [...lines];
   const fulfilmentGroups = buildInitialFulfilmentGroups(immutableLines, capturedAt);
@@ -244,5 +247,6 @@ export function buildOrderPrivateDocument(
     fulfilmentGroups,
     assignedSupplierAccountIds: assignedAccountIds(fulfilmentGroups),
     supplierLocalDemandTrackingVersion: 1,
+    ...(guestRecovery ? { guestRecovery } : {}),
   };
 }
