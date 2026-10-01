@@ -125,6 +125,8 @@ const createFakeAdminDb = () => {
 
 const createRefreshGuardFixture = (options: {
   sourceId?: string;
+  supplierProductId?: string;
+  supplierSku?: string;
   rawPending?: unknown;
   omitRawPending?: boolean;
   queuePatch?: Record<string, unknown>;
@@ -133,8 +135,8 @@ const createRefreshGuardFixture = (options: {
   const db = createFakeAdminDb();
   const queueItemId = 'refresh-legacy-envelope';
   const sourceId = options.sourceId || 'dropex';
-  const supplierProductId = '4990';
-  const supplierSku = 'AZK1690';
+  const supplierProductId = options.supplierProductId || '4990';
+  const supplierSku = options.supplierSku || 'AZK1690';
   const offerId = buildSupplierOfferId(sourceId, supplierProductId, supplierSku);
   const observedAt = '2026-09-17T00:00:00.000Z';
   const initialOffer = buildSupplierProductOffer({
@@ -612,6 +614,111 @@ test('active NEW_PRODUCT refresh reuses the review and offer without creating a 
   }
 });
 
+test('ATF0280 legacy blank-SKU refresh commits current Dropex truth through the real connector/parser path', async () => {
+  const fixture = createRefreshGuardFixture({
+    supplierProductId: '4096',
+    supplierSku: 'ATF0280',
+    queuePatch: {
+      productPayload: { name: '5Pcs Combo Offer', costPrice: 1306, price: 1760, stock: 4 },
+    },
+    offerPatch: {
+      sku: '',
+      price: 1760,
+      cost: 1306,
+      stock: 4,
+    },
+  });
+  const originalCreateConnector = SupplierRegistry.createConnectorForSourceRecord;
+  const connectorService = new DropexConnectorService(
+    { supplierId: 'dropex', sourceId: 'dropex', credentialReference: 'test-profile' },
+    {
+      fetchOutbound: async (url) => {
+        if (url.includes('/auth/login')) return response({ access_token: jwtForAccount('reseller-1') });
+        if (url.includes('/re-seller-products/get')) {
+          return response({
+            content: [{
+              productDetail: {
+                id: '4096',
+                sku: 'ATF0280',
+                name: '5Pcs Combo Offer',
+                description: 'Fresh supplier description',
+              },
+              price: 2000,
+            }],
+            last: true,
+          });
+        }
+        if (url.includes('/product-categories')) return response([]);
+        if (url.includes('/products/4096/dto')) {
+          return response({
+            productDetail: {
+              id: '4096',
+              sku: 'ATF0280',
+              sellingPrice: 2750,
+              onHandInventory: 4,
+              description: 'Fresh supplier description',
+            },
+          });
+        }
+        throw new Error(`Unexpected Dropex endpoint in ATF0280 refresh test: ${url}`);
+      },
+    },
+  );
+  const outboundPolicy = {
+    approvedHosts: ['inventory.dropex.lk', 'user.dropex.lk'],
+    connector: 'dropex' as const,
+  };
+  try {
+    SupplierRegistry.createConnectorForSourceRecord = async () => ({
+      id: 'dropex',
+      name: 'Dropex',
+      connectorType: 'dropex',
+      enabled: true,
+      priority: 100,
+      capabilities: [],
+      fetchProducts: async () => ({ products: [], targetUrl: '' }),
+      fetchProductPage: async () => ({ products: [], targetUrl: '', nextCursor: null, complete: true }),
+      testConnection: async () => ({ success: true, status: 'Connected', productsCount: 0, sampleProduct: null }),
+      fetchExactProductForRefresh: (target: { supplierProductId: string; sku: string }) => connectorService.fetchExactProductForRefresh(
+        { username: 'test-user', password: 'test-password' },
+        outboundPolicy,
+        target,
+      ),
+    } as never);
+
+    const result = await withPatchedAdminDb(fixture.db, () => refreshActiveSupplierReviewItem(fixture.queueItemId));
+    const queue = fixture.db.collections.get('supplier_review_queue')?.get(fixture.queueItemId) as Record<string, unknown>;
+    const offer = fixture.db.collections.get('supplier_product_offers')?.get(fixture.offerId) as Record<string, unknown>;
+    const payload = result.item.productPayload as Record<string, unknown>;
+    const pending = offer.pendingObservation as Record<string, unknown>;
+
+    assert.equal(queue.supplierCode, 'ATF0280');
+    assert.equal(queue.costPrice, 2000);
+    assert.equal((queue.productPayload as Record<string, unknown>).price, 2750);
+    assert.equal(queue.stock, 4);
+    assert.equal(payload.costPrice, 2000);
+    assert.equal(payload.price, 2750);
+    assert.equal(result.item.costPrice, 2000);
+    assert.equal((result.item.productPayload as Record<string, unknown>).price, 2750);
+    assert.equal(result.item.stock, 4);
+    assert.equal(offer.sku, 'ATF0280');
+    assert.equal(offer.cost, 2000);
+    assert.equal(offer.price, 2750);
+    assert.equal(offer.stock, 4);
+    assert.equal((offer.supplierSnapshot as Record<string, unknown>).wholesalePrice, 2000);
+    assert.equal((offer.supplierSnapshot as Record<string, unknown>).recommendedRetailPrice, 2750);
+    assert.equal((offer.supplierSnapshot as Record<string, unknown>).inventoryLevel, 4);
+    assert.equal(pending.reviewQueueItemId, fixture.queueItemId);
+    assert.notEqual(pending.revision, fixture.initialPending.revision);
+    assert.equal(queue.supplierOfferPendingRevision, pending.revision);
+    assert.equal(fixture.db.collections.get('products')?.size || 0, 0);
+    assert.equal(fixture.db.collections.get('product_private')?.size || 0, 0);
+    assert.equal(fixture.db.collections.get('supplier_sync_jobs')?.size || 0, 0);
+  } finally {
+    SupplierRegistry.createConnectorForSourceRecord = originalCreateConnector;
+  }
+});
+
 test('legacy stale canonical revision still authorizes one fresh refresh in place', async () => {
   const fixture = createRefreshGuardFixture();
   const stalePending = {
@@ -726,6 +833,45 @@ test('legacy refresh compatibility remains fail closed for invalid envelopes and
     {
       name: 'supplier offer identity mismatch',
       fixture: createRefreshGuardFixture({ offerPatch: { sku: 'OTHER-SKU' } }),
+      error: /identities are inconsistent/u,
+    },
+    {
+      name: 'legacy blank SKU with conflicting nested SKU',
+      fixture: createRefreshGuardFixture({
+        offerPatch: {
+          sku: '',
+          supplierSnapshot: { supplierProductId: '4990', supplierSku: 'OTHER-SKU', sku: 'OTHER-SKU' },
+        },
+      }),
+      error: /identities are inconsistent/u,
+    },
+    {
+      name: 'legacy blank SKU with conflicting nested product ID',
+      fixture: createRefreshGuardFixture({
+        offerPatch: {
+          sku: '',
+          supplierSnapshot: { supplierProductId: 'OTHER-ID', supplierSku: 'AZK1690', sku: 'AZK1690' },
+        },
+      }),
+      error: /identities are inconsistent/u,
+    },
+    {
+      name: 'legacy blank SKU without nested identity',
+      fixture: createRefreshGuardFixture({
+        offerPatch: { sku: '', supplierSnapshot: {} },
+        rawPending: (() => {
+          const pending = createRefreshGuardFixture().initialPending;
+          return {
+            ...pending,
+            effective: {
+              ...pending.effective,
+              sku: '',
+              supplierProductId: '',
+              supplierSnapshot: {},
+            },
+          };
+        })(),
+      }),
       error: /identities are inconsistent/u,
     },
     {

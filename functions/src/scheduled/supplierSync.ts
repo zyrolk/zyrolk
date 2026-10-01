@@ -1876,6 +1876,77 @@ const refreshLegacyPendingEnvelopeIsValid = (
     && pending.revision === queuePendingRevision;
 };
 
+const refreshIdentityValues = (...values: unknown[]): string[] => values
+  .map(refreshIdentityValue)
+  .filter((value) => value.length > 0);
+
+/**
+ * Legacy offers can have an empty top-level SKU even though their nested
+ * supplier snapshot and pending observation retain the original identity.
+ * Treat that shape as valid only when every available nested identity agrees
+ * with the queue identity. An empty SKU is never a wildcard.
+ */
+const refreshOfferIdentityIsConsistent = (
+  existingOffer: SupplierProductOffer,
+  rawOffer: Record<string, unknown>,
+  sourceId: string,
+  supplierProductId: string,
+  supplierSku: string,
+): boolean => {
+  const rawSnapshot = asRecord(rawOffer.supplierSnapshot);
+  const rawPending = asRecord(rawOffer.pendingObservation);
+  const rawPendingSnapshot = asRecord(rawPending.supplierSnapshot);
+  const offerSnapshot = asRecord(existingOffer.supplierSnapshot);
+  const offerPending = asRecord(existingOffer.pendingObservation);
+  const offerPendingEffective = asRecord(offerPending.effective);
+  const offerPendingSnapshot = asRecord(offerPendingEffective.supplierSnapshot);
+  const nestedSkuValues = refreshIdentityValues(
+    rawSnapshot.sku,
+    rawSnapshot.supplierSku,
+    rawPending.sku,
+    rawPending.supplierSku,
+    rawPendingSnapshot.sku,
+    rawPendingSnapshot.supplierSku,
+    offerSnapshot.sku,
+    offerSnapshot.supplierSku,
+    offerPending.sku,
+    offerPending.supplierSku,
+    offerPendingSnapshot.sku,
+    offerPendingSnapshot.supplierSku,
+    offerPendingEffective.sku,
+  );
+  const nestedProductIdValues = refreshIdentityValues(
+    rawSnapshot.supplierProductId,
+    rawPending.supplierProductId,
+    rawPendingSnapshot.supplierProductId,
+    offerSnapshot.supplierProductId,
+    offerPending.supplierProductId,
+    offerPendingSnapshot.supplierProductId,
+    offerPendingEffective.supplierProductId,
+  );
+  const nestedSourceValues = refreshIdentityValues(
+    rawSnapshot.sourceId,
+    rawPending.sourceId,
+    rawPendingSnapshot.sourceId,
+    offerSnapshot.sourceId,
+    offerPending.sourceId,
+    offerPendingSnapshot.sourceId,
+    offerPendingEffective.sourceId,
+  );
+  const topLevelSku = refreshIdentityValue(existingOffer.sku);
+  const skuConsistent = topLevelSku
+    ? refreshIdentityMatches(topLevelSku, supplierSku)
+      && nestedSkuValues.every((value) => refreshIdentityMatches(value, supplierSku))
+    : nestedSkuValues.length > 0
+      && nestedSkuValues.every((value) => refreshIdentityMatches(value, supplierSku));
+  const productIdConsistent = nestedProductIdValues.every((value) => refreshIdentityMatches(value, supplierProductId));
+  const sourceConsistent = nestedSourceValues.every((value) => refreshIdentityMatches(value, sourceId));
+  return skuConsistent
+    && productIdConsistent
+    && sourceConsistent
+    && (topLevelSku.length > 0 || nestedProductIdValues.length > 0);
+};
+
 export const refreshReviewIsNewProduct = (queueItem: Record<string, unknown>): boolean => {
   const comparison = asRecord(queueItem.comparison);
   const comparisonStatus = refreshIdentityValue(
@@ -1952,7 +2023,7 @@ export async function refreshActiveSupplierReviewItem(
     existingOffer.id !== deterministicOfferId
     || existingOffer.sourceId !== sourceId
     || !refreshIdentityMatches(existingOffer.supplierProductId, supplierProductId)
-    || !refreshIdentityMatches(existingOffer.sku, supplierSku)
+    || !refreshOfferIdentityIsConsistent(existingOffer, rawOffer, sourceId, supplierProductId, supplierSku)
   ) {
     throw new ApiError("The review item and supplier offer identities are inconsistent.", 409);
   }
