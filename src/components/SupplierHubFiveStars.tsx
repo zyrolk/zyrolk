@@ -93,6 +93,8 @@ import {
   supplierBusinessErrorMessage,
   isSupplierReviewStaleObservationError,
   SUPPLIER_REVIEW_STALE_REFRESH_MESSAGE,
+  SUPPLIER_REVIEW_FRESHNESS_REFRESH_MESSAGE,
+  SUPPLIER_REVIEW_FRESHNESS_HOLD_MESSAGE,
   formatSupplierTimestamp,
   formatSupplierDuration,
   supplierAdministratorLabel,
@@ -1011,8 +1013,15 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
       error?: string;
       status?: string;
       conflict?: ReviewQueueItem['approvalConflict'];
+      details?: { code?: string };
     };
     if (response.status === 409 && result.status === 'conflict' && result.conflict) return result;
+    if (result.details?.code === 'SUPPLIER_DATA_CHANGED') {
+      return { success: false, status: 'supplier_freshness_conflict', error: result.error };
+    }
+    if (result.details?.code === 'SUPPLIER_DATA_UNVERIFIED') {
+      return { success: false, status: 'supplier_freshness_unverified', error: result.error };
+    }
     if (response.status === 409 && isSupplierReviewStaleObservationError(result.error)) {
       return { success: false, status: 'stale_observation', error: result.error };
     }
@@ -1520,7 +1529,10 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
   };
 
   // --- REVIEW QUEUE APPROVAL HANDLERS ---
-  const reconcileStaleSupplierReviewItem = async (item: ReviewQueueItem) => {
+  const reconcileStaleSupplierReviewItem = async (
+    item: ReviewQueueItem,
+    message = SUPPLIER_REVIEW_STALE_REFRESH_MESSAGE,
+  ) => {
     setRejectingReviewItem((current) => (current?.id === item.id ? null : current));
     setRejectionReasonDraft('');
     setEditingReviewItem((current) => (current?.id === item.id ? null : current));
@@ -1528,7 +1540,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
     setSupplierOfferError(null);
     await refreshSupplierQueueViews();
     setErrorMsg(null);
-    setSuccessMsg(SUPPLIER_REVIEW_STALE_REFRESH_MESSAGE);
+    setSuccessMsg(message);
     setTimeout(() => setSuccessMsg(null), 6000);
   };
 
@@ -1543,6 +1555,16 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
       });
       if (result.status === 'stale_observation') {
         await reconcileStaleSupplierReviewItem(item);
+        return;
+      }
+      if (result.status === 'supplier_freshness_conflict') {
+        await reconcileStaleSupplierReviewItem(item, SUPPLIER_REVIEW_FRESHNESS_REFRESH_MESSAGE);
+        return;
+      }
+      if (result.status === 'supplier_freshness_unverified') {
+        void refreshSupplierQueueViews();
+        setErrorMsg(result.error || SUPPLIER_REVIEW_FRESHNESS_HOLD_MESSAGE);
+        setTimeout(() => setErrorMsg(null), 6000);
         return;
       }
       if (result.success !== true && result.status === 'conflict') {

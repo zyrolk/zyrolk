@@ -523,3 +523,134 @@ test("F1 emulator: pending-change revision consistency after re-observation", {
     )));
   }
 });
+
+test("F1 emulator: approval revalidates current Dropex supplier truth before publication", {
+  skip: canRun ? undefined : "Firestore Emulator is required.",
+  timeout: 300_000,
+}, async () => {
+  assert.match(process.env.FIRESTORE_EMULATOR_HOST || "", /^(127\.0\.0\.1|localhost):\d+$/u);
+  await seedSource();
+  const commercial = identityFor("freshness-commercial");
+  const stock = identityFor("freshness-stock");
+  const unresolved = identityFor("freshness-unresolved");
+  const reviewIds: string[] = [];
+
+  try {
+    setCatalogProduct(commercial, {
+      costPrice: 1_306,
+      wholesalePrice: 1_306,
+      price: 1_760,
+      recommendedRetailPrice: 1_760,
+      inventoryLevel: 4,
+    });
+    await runSync();
+    const commercialReview = await reviewForIdentity(commercial);
+    reviewIds.push(commercialReview.id);
+    const commercialInitial = await prepareReview(commercialReview.id, commercial);
+    const commercialRevisionA = await pendingRevision(commercialInitial);
+
+    setCatalogProduct(commercial, {
+      costPrice: 2_000,
+      wholesalePrice: 2_000,
+      price: 2_750,
+      recommendedRetailPrice: 2_750,
+      inventoryLevel: 4,
+    });
+    const productsBeforeConflict = await productCount();
+    await assert.rejects(approve(commercialReview.id, {
+      draft: approvalDraft(commercialReview.id, commercialInitial),
+      expectedPendingRevision: commercialRevisionA,
+    }), (error: any) => {
+      assert.equal(error?.statusCode, 409);
+      assert.match(String(error?.message || ""), /Supplier data changed/u);
+      assert.equal(error?.details?.code, "SUPPLIER_DATA_CHANGED");
+      return true;
+    });
+
+    const commercialFresh = await reviewData(commercialReview.id);
+    const commercialRevisionB = await pendingRevision(commercialFresh);
+    assert.notEqual(commercialRevisionB, commercialRevisionA);
+    assert.equal(commercialFresh.costPrice, 2_000);
+    assert.equal(commercialFresh.productPayload.costPrice, 2_000);
+    assert.equal(commercialFresh.productPayload.price, 2_750);
+    assert.equal(commercialFresh.stock, 4);
+    assert.equal(commercialFresh.queueState, "review_pending");
+    assert.equal(await productCount(), productsBeforeConflict, "stale approval created no public product");
+
+    const preview = await refreshActiveSupplierReviewItem(
+      commercialReview.id,
+      ADMIN,
+      { mode: "preview", skipLiveInventoryAutomation: true, requireAuthoritativeSupplierCommerce: true },
+      adminDb,
+    );
+    assert.equal(preview.previousSupplierObservation?.revision, commercialRevisionB);
+    assert.equal(preview.supplierObservation.effective.cost, 2_000);
+    assert.equal(preview.supplierObservation.effective.price, 2_750);
+    assert.equal(preview.supplierObservation.effective.stock, 4);
+    assert.equal((await pendingRevision(await reviewData(commercialReview.id))), commercialRevisionB, "unchanged truth created no extra revision");
+
+    const approved = await approve(commercialReview.id, {
+      draft: approvalDraft(commercialReview.id, commercialFresh),
+      expectedPendingRevision: commercialRevisionB,
+    });
+    assert.equal(approved.success, true, JSON.stringify(approved));
+    assert.equal((await reviewData(commercialReview.id)).decisionPendingRevision, commercialRevisionB);
+
+    setCatalogProduct(stock, {
+      costPrice: 487,
+      wholesalePrice: 487,
+      price: 656,
+      recommendedRetailPrice: 656,
+      inventoryLevel: 74,
+    });
+    await runSync();
+    const stockReview = await reviewForIdentity(stock);
+    reviewIds.push(stockReview.id);
+    const stockInitial = await prepareReview(stockReview.id, stock);
+    const stockRevisionA = await pendingRevision(stockInitial);
+    setCatalogProduct(stock, { inventoryLevel: 18 });
+    await assert.rejects(approve(stockReview.id, {
+      draft: approvalDraft(stockReview.id, stockInitial),
+      expectedPendingRevision: stockRevisionA,
+    }), (error: any) => {
+      assert.equal(error?.statusCode, 409);
+      assert.equal(error?.details?.code, "SUPPLIER_DATA_CHANGED");
+      return true;
+    });
+    const stockFresh = await reviewData(stockReview.id);
+    assert.equal(stockFresh.productPayload.stock, 18);
+    assert.equal(stockFresh.productValidation.lowStockHold, false);
+
+    setCatalogProduct(unresolved, {
+      costPrice: 487,
+      wholesalePrice: 487,
+      price: 656,
+      recommendedRetailPrice: 656,
+      inventoryLevel: 18,
+    });
+    await runSync();
+    const unresolvedReview = await reviewForIdentity(unresolved);
+    reviewIds.push(unresolvedReview.id);
+    const unresolvedInitial = await prepareReview(unresolvedReview.id, unresolved);
+    const unresolvedRevision = await pendingRevision(unresolvedInitial);
+    catalog.delete(unresolved);
+    await assert.rejects(approve(unresolvedReview.id, {
+      draft: approvalDraft(unresolvedReview.id, unresolvedInitial),
+      expectedPendingRevision: unresolvedRevision,
+    }), (error: any) => {
+      assert.equal(error?.statusCode, 422);
+      assert.equal(error?.details?.code, "SUPPLIER_DATA_UNVERIFIED");
+      return true;
+    });
+    const unresolvedAfter = await reviewData(unresolvedReview.id);
+    assert.equal(await pendingRevision(unresolvedAfter), unresolvedRevision);
+    assert.equal(unresolvedAfter.queueState, "review_pending");
+  } finally {
+    await Promise.all(reviewIds.map(async (reviewId) => {
+      const review = await reviewData(reviewId);
+      if (review.supplierOfferId) {
+        await adminDb.collection("supplier_product_offers").doc(String(review.supplierOfferId)).set({ enabled: false }, { merge: true });
+      }
+    }));
+  }
+});

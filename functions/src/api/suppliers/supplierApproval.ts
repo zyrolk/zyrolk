@@ -76,6 +76,10 @@ import {
   resolveSupplierLocalDemand,
 } from "../orders/supplierInventoryReconciliation";
 import { hasLegacySupplierDerivedReviewTaxonomy } from "./supplierReviewTaxonomyAuthority";
+import {
+  refreshReviewIsNewProduct,
+  revalidateSupplierReviewItemForApproval,
+} from "../../scheduled/supplierSync";
 
 export { hasLegacySupplierDerivedReviewTaxonomy } from "./supplierReviewTaxonomyAuthority";
 
@@ -609,10 +613,44 @@ export async function decideSupplierQueueItem(
   let approvedManagedMedia: SupplierManagedMediaAsset[] | undefined;
   if (action === "approved") {
     const preApprovalSnapshot = await db.collection("supplier_review_queue").doc(reviewQueueItemId).get();
-    const preApprovalQueueState = String(preApprovalSnapshot.data()?.queueState || "").toLowerCase();
+    const preApprovalPendingSnapshot = requestedQueueItemId.startsWith("change-")
+      ? await db.collection("supplier_pending_changes").doc(`change-${reviewQueueItemId}`).get()
+      : null;
+    const preApprovalReviewData = preApprovalSnapshot.data() || {};
+    const preApprovalPendingData = preApprovalPendingSnapshot?.exists
+      ? preApprovalPendingSnapshot.data() || {}
+      : undefined;
+    const preApprovalData = preApprovalPendingData
+      && supplierPendingChangeMatchesQueue(preApprovalReviewData, preApprovalPendingData)
+      ? preApprovalPendingData
+      : preApprovalReviewData;
+    const preApprovalQueueState = String(preApprovalData.queueState || "").toLowerCase();
+    const preApprovalSupplierSource = String(
+      preApprovalData.sourceId
+        || preApprovalData.supplierId
+        || preApprovalData.connector
+        || record(preApprovalData.supplierSnapshot).sourceId
+        || record(preApprovalData.supplierSnapshot).supplierId
+        || "",
+    ).trim().toLowerCase();
     const queueReadyForApproval = preApprovalQueueState === "review_pending"
       || (preApprovalQueueState === "conflict" && options.resolveConflict === true);
+    const isDropexReview = preApprovalSupplierSource === "dropex";
     if (queueReadyForApproval) {
+      const currentPendingRevision = cleanPendingRevision(preApprovalData.supplierOfferPendingRevision);
+      if (currentPendingRevision || requestedPendingRevision) {
+        if (!currentPendingRevision || !requestedPendingRevision || currentPendingRevision !== requestedPendingRevision) {
+          throw new ApiError("Product Review changed after it was opened; reload before deciding.", 409);
+        }
+      }
+      if (isDropexReview && refreshReviewIsNewProduct(preApprovalData)) {
+        await revalidateSupplierReviewItemForApproval(
+          db,
+          reviewQueueItemId,
+          reviewer,
+          requestedPendingRevision || "",
+        );
+      }
     const requestedImages = options.draft
       ? normalizeImages(options.draft.primaryImageUrl, options.draft.galleryImageUrls)
       : undefined;

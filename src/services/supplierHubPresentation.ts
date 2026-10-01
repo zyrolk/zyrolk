@@ -5,6 +5,10 @@ export type SupplierHubSection = 'suppliers' | 'review' | 'activity' | 'settings
 
 export const SUPPLIER_REVIEW_STALE_REFRESH_MESSAGE =
   'This product changed while it was open. Product Review has been refreshed.';
+export const SUPPLIER_REVIEW_FRESHNESS_REFRESH_MESSAGE =
+  'Supplier data changed. The review has been refreshed. Please review the latest price, stock and availability before approving.';
+export const SUPPLIER_REVIEW_FRESHNESS_HOLD_MESSAGE =
+  'Current supplier data could not be verified. This product cannot be approved yet.';
 
 export type ProductReviewFilter =
   | 'new_products'
@@ -337,7 +341,9 @@ export function isSupplierReviewStaleObservationError(message: unknown): boolean
     || text.includes('reload product review')
     || text.includes('changed after it was opened')
     || text.includes('observation changed')
-    || text.includes('already processed or no longer exists');
+    || text.includes('already processed or no longer exists')
+    || text.includes('supplier data changed')
+    || text.includes('current supplier data could not be verified');
 }
 
 export function supplierReviewCanQuickApprove(item: SupplierReviewQuickApprovalItem): boolean {
