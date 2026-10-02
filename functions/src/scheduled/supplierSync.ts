@@ -1880,6 +1880,24 @@ const refreshIdentityValues = (...values: unknown[]): string[] => values
   .map(refreshIdentityValue)
   .filter((value) => value.length > 0);
 
+const REFRESH_LEGACY_PRODUCT_ID_LIMIT = 180;
+
+const refreshLegacyCanonicalProductIdIsConsistent = (
+  claimedCanonicalProductId: string,
+  offerProductId: string,
+  rawPending: Record<string, unknown>,
+): boolean => {
+  if (!claimedCanonicalProductId) return true;
+  if (offerProductId === claimedCanonicalProductId) return true;
+  const effective = asRecord(rawPending.effective);
+  const nestedCanonicalProductId = refreshIdentityValue(asRecord(effective.catalogPayload).id);
+  return Boolean(
+    offerProductId
+    && offerProductId === claimedCanonicalProductId.slice(0, REFRESH_LEGACY_PRODUCT_ID_LIMIT)
+    && nestedCanonicalProductId === claimedCanonicalProductId,
+  );
+};
+
 /**
  * Legacy offers can have an empty top-level SKU even though their nested
  * supplier snapshot and pending observation retain the original identity.
@@ -1988,7 +2006,12 @@ export async function refreshActiveSupplierReviewItem(
   const identity = getSupplierQueueIdentityCandidate(queueItem);
   const sourceId = refreshIdentityValue(identity.sourceId);
   const supplierProductId = refreshIdentityValue(identity.supplierProductId);
-  const supplierSku = refreshIdentityValue(queueItem.supplierCode || asRecord(queueItem.supplierSnapshot).sku);
+  const supplierSku = refreshIdentityValue(
+    queueItem.supplierCode
+      || queueItem.supplierSku
+      || queueItem.supplierItemCode
+      || asRecord(queueItem.supplierSnapshot).sku,
+  );
   const claimedOfferId = refreshIdentityValue(queueItem.supplierOfferId);
   const claimedCanonicalProductId = refreshIdentityValue(
     queueItem.canonicalProductId
@@ -1996,7 +2019,7 @@ export async function refreshActiveSupplierReviewItem(
       || asRecord(queueItem.productPayload).id
       || queueItem.matchedProductId,
   );
-  if (!sourceId || !supplierProductId || !supplierSku || !claimedOfferId) {
+  if (!sourceId || !supplierProductId || !supplierSku) {
     throw new ApiError("This legacy supplier review item does not contain a complete refresh identity.", 409);
   }
 
@@ -2006,7 +2029,7 @@ export async function refreshActiveSupplierReviewItem(
   if (!isDropexSource(source)) throw new ApiError("Single-product refresh is currently supported only for Dropex reviews.", 409);
 
   const deterministicOfferId = buildSupplierOfferId(sourceId, supplierProductId, supplierSku);
-  if (claimedOfferId !== deterministicOfferId) {
+  if (claimedOfferId && claimedOfferId !== deterministicOfferId) {
     throw new ApiError("This review item does not reference its deterministic supplier offer.", 409);
   }
   const offerSnapshot = await refreshDb.collection(SUPPLIER_PRODUCT_OFFERS_COLLECTION).doc(deterministicOfferId).get();
@@ -2015,7 +2038,11 @@ export async function refreshActiveSupplierReviewItem(
   const existingOffer = projectSupplierOfferForAdmin({ id: offerSnapshot.id, ...rawOffer });
   if (!existingOffer) throw new ApiError("The supplier offer for this review item is invalid.", 409);
   const offerProductId = refreshIdentityValue(existingOffer.productId);
-  if (claimedCanonicalProductId && offerProductId && claimedCanonicalProductId !== offerProductId) {
+  const rawPending = asRecord(rawOffer.pendingObservation);
+  if (
+    claimedCanonicalProductId
+    && !refreshLegacyCanonicalProductIdIsConsistent(claimedCanonicalProductId, offerProductId, rawPending)
+  ) {
     throw new ApiError("The review item and supplier offer identities are inconsistent.", 409);
   }
   const refreshProductId = claimedCanonicalProductId || offerProductId;
@@ -2031,10 +2058,17 @@ export async function refreshActiveSupplierReviewItem(
   const pendingRevision = refreshIdentityValue(queueItem.supplierOfferPendingRevision);
   const legacyPendingEnvelopeIsValid = pending === null
     && refreshLegacyPendingEnvelopeIsValid(rawOffer.pendingObservation, queueItemId, queueItem.supplierOfferPendingRevision);
-  if (
-    (!pending && !legacyPendingEnvelopeIsValid)
-    || (pending && (pending.reviewQueueItemId !== queueItemId || !pendingRevision || pendingRevision !== pending.revision))
-  ) {
+  const legacyOwnedPendingObservationIsValid = !pendingRevision
+    && pending !== null
+    && pending.reviewQueueItemId === queueItemId
+    && pending.revision.length > 0
+    && refreshIdentityMatches(pending.effective.sourceId, sourceId)
+    && refreshIdentityMatches(pending.effective.supplierProductId, supplierProductId)
+    && refreshIdentityMatches(pending.effective.sku, supplierSku);
+  if (pendingRevision
+    ? ((!pending && !legacyPendingEnvelopeIsValid)
+      || (pending && (pending.reviewQueueItemId !== queueItemId || pendingRevision !== pending.revision)))
+    : !legacyOwnedPendingObservationIsValid) {
     throw new ApiError("This review item does not have a current pending supplier observation to refresh.", 409);
   }
 

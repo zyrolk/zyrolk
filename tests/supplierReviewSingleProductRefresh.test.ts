@@ -211,6 +211,117 @@ const createRefreshGuardFixture = (options: {
   return { db, queueItemId, supplierProductId, supplierSku, offerId, initialPending };
 };
 
+const ATF0280_CANONICAL_PRODUCT_ID = '5pcs-combo-offer-3d-enlarge-screen-mobile-phone-f2-3pcs-magic-nano-stickers-car-mobile-phone-gravity-phone-holder-multifunctional-car-number-plate-mobile-phone-holder-metal-foldable-laptop-stand';
+
+const createAtf0280LegacyLinkageFixture = () => {
+  const db = createFakeAdminDb();
+  const queueItemId = 'dropex-atf0280';
+  const sourceId = 'dropex';
+  const supplierProductId = '4096';
+  const supplierSku = 'ATF0280';
+  const offerId = buildSupplierOfferId(sourceId, supplierProductId, supplierSku);
+  const observedAt = '2026-09-07T04:57:33.546Z';
+  const initialOffer = buildSupplierProductOffer({
+    sourceId,
+    supplierId: sourceId,
+    supplierProductId,
+    sku: supplierSku,
+    productId: ATF0280_CANONICAL_PRODUCT_ID,
+    price: 1760,
+    cost: 1306,
+    stock: 4,
+    stockKnown: true,
+    availability: 'in_stock',
+    priority: 100,
+    lastSyncAt: observedAt,
+    reviewStatus: 'review_pending',
+    catalogPayload: {
+      id: ATF0280_CANONICAL_PRODUCT_ID,
+      name: '5Pcs Combo Offer',
+      price: 1760,
+      costPrice: 1306,
+      stock: 4,
+    },
+    supplierSnapshot: {
+      sourceId,
+      supplierId: sourceId,
+      supplierProductId,
+      supplierSku,
+      sku: supplierSku,
+      wholesalePrice: 1306,
+      recommendedRetailPrice: 2750,
+      inventoryLevel: 4,
+    },
+    timestamp: observedAt,
+  });
+  const initialPending = buildSupplierOfferPendingObservation({
+    offer: initialOffer,
+    kind: 'catalog_upsert',
+    reviewQueueItemId: queueItemId,
+    observedAt,
+    traversalId: '45c3ca3e-803f-48dd-a379-90ed93c35ee1',
+  });
+  const queueItem = {
+    id: queueItemId,
+    queueState: 'review_pending',
+    status: 'Pending',
+    sourceId,
+    supplierId: sourceId,
+    sku: '',
+    supplierSku,
+    supplierProductId,
+    canonicalProductId: ATF0280_CANONICAL_PRODUCT_ID,
+    productId: ATF0280_CANONICAL_PRODUCT_ID,
+    productPayload: {
+      id: ATF0280_CANONICAL_PRODUCT_ID,
+      name: '5Pcs Combo Offer',
+      costPrice: 1306,
+      price: 1760,
+      stock: 4,
+    },
+    comparisonStatus: 'NEW_PRODUCT',
+    comparison: { comparisonStatus: 'NEW_PRODUCT', status: 'NEW_PRODUCT', matchFound: false },
+    createdAt: observedAt,
+    queueCreatedAt: observedAt,
+  };
+  const source = {
+    supplierId: sourceId,
+    supplierName: 'Dropex',
+    connectorType: sourceId,
+    supplierType: sourceId,
+    sourceStatus: 'active',
+    enabled: true,
+    websiteUrl: 'https://supplier.example',
+    endpoint: '',
+    authentication: { credentialProfile: 'test-profile' },
+    syncSchedule: 'Off',
+  };
+  const offer = {
+    ...initialOffer,
+    stateVersion: 1,
+    pendingObservation: initialPending,
+  } as Record<string, unknown>;
+
+  db.collections.set('supplierSources', new Map([[sourceId, source]]));
+  db.collections.set('supplier_settings', new Map([['config', { defaultMarkup: 0, defaultProfitMargin: 0, defaultImageLimit: 10 }]]));
+  db.collections.set('categories', new Map([['vehicle-accessories', { name: 'Vehicle Accessories', isActive: true, subcategories: [] }]]));
+  db.collections.set('brands', new Map());
+  db.collections.set('supplier_product_offers', new Map([[offerId, offer]]));
+  db.collections.set('supplier_review_queue', new Map([[queueItemId, queueItem]]));
+
+  return {
+    db,
+    queueItemId,
+    sourceId,
+    supplierProductId,
+    supplierSku,
+    offerId,
+    canonicalProductId: ATF0280_CANONICAL_PRODUCT_ID,
+    legacyProductId: ATF0280_CANONICAL_PRODUCT_ID.slice(0, 180),
+    initialPending,
+  };
+};
+
 const withPatchedAdminDb = async <T>(
   db: ReturnType<typeof createFakeAdminDb>,
   action: () => Promise<T>,
@@ -615,19 +726,7 @@ test('active NEW_PRODUCT refresh reuses the review and offer without creating a 
 });
 
 test('ATF0280 legacy blank-SKU refresh commits current Dropex truth through the real connector/parser path', async () => {
-  const fixture = createRefreshGuardFixture({
-    supplierProductId: '4096',
-    supplierSku: 'ATF0280',
-    queuePatch: {
-      productPayload: { name: '5Pcs Combo Offer', costPrice: 1306, price: 1760, stock: 4 },
-    },
-    offerPatch: {
-      sku: '',
-      price: 1760,
-      cost: 1306,
-      stock: 4,
-    },
-  });
+  const fixture = createAtf0280LegacyLinkageFixture();
   const originalCreateConnector = SupplierRegistry.createConnectorForSourceRecord;
   const connectorService = new DropexConnectorService(
     { supplierId: 'dropex', sourceId: 'dropex', credentialReference: 'test-profile' },
@@ -693,9 +792,12 @@ test('ATF0280 legacy blank-SKU refresh commits current Dropex truth through the 
     const pending = offer.pendingObservation as Record<string, unknown>;
 
     assert.equal(queue.supplierCode, 'ATF0280');
+    assert.equal(queue.supplierOfferId, fixture.offerId);
     assert.equal(queue.costPrice, 2000);
     assert.equal((queue.productPayload as Record<string, unknown>).price, 2750);
     assert.equal(queue.stock, 4);
+    assert.equal(queue.canonicalProductId, fixture.canonicalProductId);
+    assert.equal(queue.productId, fixture.canonicalProductId);
     assert.equal(payload.costPrice, 2000);
     assert.equal(payload.price, 2750);
     assert.equal(result.item.costPrice, 2000);
@@ -705,6 +807,7 @@ test('ATF0280 legacy blank-SKU refresh commits current Dropex truth through the 
     assert.equal(offer.cost, 2000);
     assert.equal(offer.price, 2750);
     assert.equal(offer.stock, 4);
+    assert.equal(offer.productId, fixture.legacyProductId);
     assert.equal((offer.supplierSnapshot as Record<string, unknown>).wholesalePrice, 2000);
     assert.equal((offer.supplierSnapshot as Record<string, unknown>).recommendedRetailPrice, 2750);
     assert.equal((offer.supplierSnapshot as Record<string, unknown>).inventoryLevel, 4);
@@ -716,6 +819,138 @@ test('ATF0280 legacy blank-SKU refresh commits current Dropex truth through the 
     assert.equal(fixture.db.collections.get('supplier_sync_jobs')?.size || 0, 0);
   } finally {
     SupplierRegistry.createConnectorForSourceRecord = originalCreateConnector;
+  }
+});
+
+test('ATF0280 legacy linkage and canonical compatibility remain fail closed for invalid identities', async () => {
+  const cases: Array<{
+    name: string;
+    mutate: (fixture: ReturnType<typeof createAtf0280LegacyLinkageFixture>) => void;
+    error: RegExp;
+  }> = [
+    {
+      name: 'deterministic offer missing',
+      mutate: (fixture) => fixture.db.collections.get('supplier_product_offers')?.delete(fixture.offerId),
+      error: /deterministic supplier offer.*could not be found/u,
+    },
+    {
+      name: 'wrong non-empty SKU',
+      mutate: (fixture) => {
+        const offer = fixture.db.collections.get('supplier_product_offers')?.get(fixture.offerId);
+        if (offer) offer.sku = 'WRONG-SKU';
+      },
+      error: /identities are inconsistent/u,
+    },
+    {
+      name: 'wrong supplier product ID',
+      mutate: (fixture) => {
+        const offer = fixture.db.collections.get('supplier_product_offers')?.get(fixture.offerId);
+        if (offer) offer.supplierProductId = 'WRONG-ID';
+      },
+      error: /identities are inconsistent/u,
+    },
+    {
+      name: 'wrong source',
+      mutate: (fixture) => {
+        const offer = fixture.db.collections.get('supplier_product_offers')?.get(fixture.offerId);
+        if (offer) offer.sourceId = 'other-supplier';
+      },
+      error: /identities are inconsistent/u,
+    },
+    {
+      name: 'pending observation owned by another queue',
+      mutate: (fixture) => {
+        const offer = fixture.db.collections.get('supplier_product_offers')?.get(fixture.offerId);
+        const pending = offer?.pendingObservation as Record<string, unknown> | undefined;
+        if (pending) pending.reviewQueueItemId = 'different-queue-item';
+      },
+      error: /current pending supplier observation/u,
+    },
+    {
+      name: 'pending observation revision absent',
+      mutate: (fixture) => {
+        const offer = fixture.db.collections.get('supplier_product_offers')?.get(fixture.offerId);
+        const pending = offer?.pendingObservation as Record<string, unknown> | undefined;
+        if (pending) pending.revision = '';
+      },
+      error: /current pending supplier observation/u,
+    },
+    {
+      name: 'arbitrary truncated canonical product ID',
+      mutate: (fixture) => {
+        const offer = fixture.db.collections.get('supplier_product_offers')?.get(fixture.offerId);
+        if (offer) offer.productId = `${fixture.legacyProductId.slice(0, -1)}x`;
+      },
+      error: /identities are inconsistent/u,
+    },
+    {
+      name: 'nested full canonical product ID mismatch',
+      mutate: (fixture) => {
+        const offer = fixture.db.collections.get('supplier_product_offers')?.get(fixture.offerId);
+        if (offer) offer.pendingObservation = buildSupplierOfferPendingObservation({
+          offer: buildSupplierProductOffer({
+            sourceId: fixture.sourceId,
+            supplierId: fixture.sourceId,
+            supplierProductId: fixture.supplierProductId,
+            sku: fixture.supplierSku,
+            productId: fixture.legacyProductId,
+            price: 1760,
+            cost: 1306,
+            stock: 4,
+            stockKnown: true,
+            availability: 'in_stock',
+            lastSyncAt: '2026-09-07T04:57:33.546Z',
+            catalogPayload: { id: 'different-canonical-product' },
+            supplierSnapshot: {
+              sourceId: fixture.sourceId,
+              supplierId: fixture.sourceId,
+              supplierProductId: fixture.supplierProductId,
+              supplierSku: fixture.supplierSku,
+              sku: fixture.supplierSku,
+            },
+            timestamp: '2026-09-07T04:57:33.546Z',
+          }),
+          kind: 'catalog_upsert',
+          reviewQueueItemId: fixture.queueItemId,
+          observedAt: '2026-09-07T04:57:33.546Z',
+          traversalId: '45c3ca3e-803f-48dd-a379-90ed93c35ee1',
+        });
+      },
+      error: /identities are inconsistent/u,
+    },
+    {
+      name: 'conflicting nested supplier identity',
+      mutate: (fixture) => {
+        const offer = fixture.db.collections.get('supplier_product_offers')?.get(fixture.offerId);
+        if (offer) offer.supplierSnapshot = {
+          sourceId: fixture.sourceId,
+          supplierProductId: fixture.supplierProductId,
+          supplierSku: 'WRONG-SKU',
+          sku: 'WRONG-SKU',
+        };
+      },
+      error: /identities are inconsistent/u,
+    },
+    {
+      name: 'wrong deterministic offer linkage',
+      mutate: (fixture) => {
+        const queue = fixture.db.collections.get('supplier_review_queue')?.get(fixture.queueItemId);
+        if (queue) queue.supplierOfferId = 'offer-wrong-linkage';
+      },
+      error: /deterministic supplier offer/u,
+    },
+  ];
+
+  for (const testCase of cases) {
+    const fixture = createAtf0280LegacyLinkageFixture();
+    testCase.mutate(fixture);
+    await withPatchedAdminDb(fixture.db, async () => {
+      await assert.rejects(
+        refreshActiveSupplierReviewItem(fixture.queueItemId),
+        testCase.error,
+        testCase.name,
+      );
+    });
   }
 });
 
