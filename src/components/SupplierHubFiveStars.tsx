@@ -674,6 +674,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
   }, [activeSubTab, editingSourceId, onNestedNavigationChange]);
 
   const [processingChangeId, setProcessingChangeId] = useState<string | null>(null);
+  const [savingReviewDraftId, setSavingReviewDraftId] = useState<string | null>(null);
   const [refreshingReviewItemId, setRefreshingReviewItemId] = useState<string | null>(null);
   const refreshingReviewItemIdRef = useRef<string | null>(null);
   const [refreshFeedback, setRefreshFeedback] = useState<{ kind: 'success' | 'error'; message: string } | null>(null);
@@ -1086,6 +1087,41 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
         refreshingReviewItemIdRef.current = null;
         setRefreshingReviewItemId(null);
       }
+    }
+  };
+
+  const handleSaveSupplierReviewDraft = async (
+    item: ReviewQueueItem,
+    draft: { category: string; subcategory: string },
+  ): Promise<void> => {
+    if (processingChangeId || savingReviewDraftId || refreshingReviewItemId) return;
+    setSavingReviewDraftId(item.id);
+    try {
+      const response = await patchSupplierApi(`/api/supplier-review-queue/${encodeURIComponent(item.id)}/draft`, {
+        categoryId: draft.category,
+        subcategoryId: draft.subcategory,
+        expectedPendingRevision: item.supplierOfferPendingRevision,
+        expectedUpdatedAt: item.updatedAt,
+      });
+      const result = await response.json().catch(() => ({})) as {
+        success?: boolean;
+        status?: string;
+        error?: string;
+        item?: Record<string, unknown> & { id?: string };
+      };
+      if (!response.ok || result.success !== true || !result.item?.id) {
+        throw new Error(response.status === 409
+          ? (result.error || 'This review changed after it was opened. Reload before saving.')
+          : (result.error || 'Supplier review changes could not be saved.'));
+      }
+      const savedItem = result.item as unknown as ReviewQueueItem;
+      setReviewQueue((current) => current.map((candidate) => candidate.id === item.id ? savedItem : candidate));
+      setEditingReviewItem(savedItem);
+      setSuccessMsg('Changes saved. The review remains pending.');
+      setTimeout(() => setSuccessMsg(null), 5000);
+      void refreshSupplierQueueViews();
+    } finally {
+      setSavingReviewDraftId(null);
     }
   };
 
@@ -3269,6 +3305,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
           brands={brands}
           validCategoryIds={validCategoryIds}
           isPublishing={processingChangeId === editingReviewItem.id}
+          isSaving={savingReviewDraftId === editingReviewItem.id}
           offers={supplierOffers}
           offerSelection={supplierOfferSelection}
           offersLoading={supplierOffersLoading}
@@ -3282,13 +3319,14 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
           onConfigureOffer={configureSupplierOffer}
           onSelectOffer={selectSupplierOffer}
           onClose={() => {
-            if (processingChangeId !== editingReviewItem.id) {
+            if (processingChangeId !== editingReviewItem.id && savingReviewDraftId !== editingReviewItem.id) {
               setEditingReviewItem(null);
               setSupplierOffers([]);
               setSupplierOfferError(null);
             }
           }}
           onRemove={() => setRemovingReviewItem(editingReviewItem)}
+          onSaveDraft={(draft) => handleSaveSupplierReviewDraft(editingReviewItem, draft)}
           onPublish={(draft) => handleApproveReviewItem(editingReviewItem, draft)}
         />
       )}

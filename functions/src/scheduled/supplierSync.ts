@@ -87,6 +87,7 @@ import {
   SupplierCategorySuggestion,
   validateSupplierProductForApproval,
 } from "../api/suppliers/supplierProductMapping";
+import { parseSupplierProductFieldOwnership } from "../api/suppliers/supplierFieldOwnership";
 import { matchesSupplierCategoryFilter, SupplierCategoryMappings } from "./supplierCategoryMapping";
 import {
   calculateSupplierInitialPricing,
@@ -1161,6 +1162,34 @@ export function buildProductPayload(
   };
 }
 
+/**
+ * Supplier refresh owns supplier observations, but an administrator-owned
+ * pending-review taxonomy selection is a canonical Zyro override. Preserve
+ * only those two fields for NEW_PRODUCT review records; all other refreshed
+ * payload fields continue to come from the current supplier observation.
+ */
+export function preserveAdminOwnedReviewTaxonomy(
+  freshPayload: Record<string, unknown>,
+  existingReviewPayload: unknown,
+): Record<string, unknown> {
+  const existing = asRecord(existingReviewPayload);
+  const ownership = parseSupplierProductFieldOwnership(existing.supplierFieldOwnership);
+  const preservedOwnership: Record<string, unknown> = {};
+  const nextPayload = { ...freshPayload };
+  for (const field of ["category", "subcategory"] as const) {
+    if (ownership[field]?.owner !== "admin" || !Object.hasOwn(existing, field)) continue;
+    nextPayload[field] = existing[field];
+    preservedOwnership[field] = ownership[field];
+  }
+  if (Object.keys(preservedOwnership).length > 0) {
+    nextPayload.supplierFieldOwnership = {
+      ...asRecord(freshPayload.supplierFieldOwnership),
+      ...preservedOwnership,
+    };
+  }
+  return nextPayload;
+}
+
 export function buildSupplierReviewQueueImagePayload(
   mediaGallery: readonly string[] | undefined,
 ): { imageUrl: string } {
@@ -2013,11 +2042,15 @@ export async function refreshActiveSupplierReviewItem(
       || asRecord(queueItem.supplierSnapshot).sku,
   );
   const claimedOfferId = refreshIdentityValue(queueItem.supplierOfferId);
+  const rawProductPayload = asRecord(queueItem.productPayload);
+  const explicitCanonicalProductId = queueItem.canonicalProductId
+    || queueItem.productId
+    || queueItem.matchedProductId
+    || asRecord(queueItem.comparison).matchedProductId;
   const claimedCanonicalProductId = refreshIdentityValue(
-    queueItem.canonicalProductId
-      || queueItem.productId
-      || asRecord(queueItem.productPayload).id
-      || queueItem.matchedProductId,
+    refreshReviewIsNewProduct(queueItem)
+      ? explicitCanonicalProductId
+      : explicitCanonicalProductId || rawProductPayload.id,
   );
   if (!sourceId || !supplierProductId || !supplierSku) {
     throw new ApiError("This legacy supplier review item does not contain a complete refresh identity.", 409);
@@ -2222,7 +2255,7 @@ export async function refreshActiveSupplierReviewItem(
     stock: effectiveMatch.stock,
     ...(asRecord(effectiveMatch).availability !== undefined ? { availability: asRecord(effectiveMatch).availability } : {}),
   } as ExistingProduct : undefined;
-  const productPayload = buildProductPayload(
+  const productPayload = preserveAdminOwnedReviewTaxonomy(buildProductPayload(
     product,
     productPayloadBase,
     categoryMapping,
@@ -2232,7 +2265,7 @@ export async function refreshActiveSupplierReviewItem(
     settings,
     source,
     refreshProductId || undefined,
-  );
+  ), queueItem.productPayload);
   const productValidationErrors = validateSupplierProductForApproval(productPayload, storeCategories, storeBrands, { supplierReview: true });
   const refreshProductLive = isSupplierProductLive(effectiveMatch ? asRecord(effectiveMatch) : undefined);
   const refreshLowStockHold = isDropexLowStockReviewHold({

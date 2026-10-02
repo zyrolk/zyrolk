@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, ArrowDown, ArrowUp, Check, Image, LockKeyhole, Package, Pencil, Plus, RefreshCw, Sparkles, Trash2, X } from 'lucide-react';
+import { AlertTriangle, ArrowDown, ArrowUp, Check, Image, LockKeyhole, Package, Pencil, Plus, RefreshCw, Save, Sparkles, Trash2, X } from 'lucide-react';
 import {
   buildSupplierFailoverProposalSummary,
   buildSupplierReviewMetadataSections,
@@ -58,9 +58,11 @@ interface SupplierReviewEditorModalProps {
   brands: Array<{ id: string; name: string; isActive?: boolean }>;
   validCategoryIds: readonly string[];
   isPublishing: boolean;
+  isSaving: boolean;
   onClose: () => void;
   onRemove: () => void;
   onPublish: (draft: SupplierReviewDraft) => Promise<void>;
+  onSaveDraft: (draft: { category: string; subcategory: string }) => Promise<void>;
   offers: SupplierOfferView[];
   offerSelection: SupplierOfferSelectionView;
   offersLoading: boolean;
@@ -124,9 +126,11 @@ export default function SupplierReviewEditorModal({
   brands,
   validCategoryIds,
   isPublishing,
+  isSaving,
   onClose,
   onRemove,
   onPublish,
+  onSaveDraft,
   offers,
   offerSelection,
   offersLoading,
@@ -143,6 +147,7 @@ export default function SupplierReviewEditorModal({
   const [draft, setDraft] = useState(initialDraft);
   const [isEditing, setIsEditing] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [saveFeedback, setSaveFeedback] = useState<{ kind: 'success' | 'error'; message: string } | null>(null);
   const [galleryInput, setGalleryInput] = useState('');
   const [galleryInputError, setGalleryInputError] = useState('');
   const [specificationName, setSpecificationName] = useState('');
@@ -363,6 +368,23 @@ export default function SupplierReviewEditorModal({
     setSubmitted(true);
     if (Object.keys(validationErrors).length > 0 || isPublishing) return;
     await onPublish(draft);
+  };
+
+  const handleSaveDraft = async () => {
+    setSubmitted(true);
+    if (validationErrors.category || validationErrors.subcategory || isSaving || isPublishing) return;
+    setSaveFeedback(null);
+    try {
+      await onSaveDraft({ category: draft.category, subcategory: String(draft.subcategory || '') });
+      setSubmitted(false);
+      setIsEditing(false);
+      setSaveFeedback({ kind: 'success', message: 'Changes saved. The review remains pending.' });
+    } catch (error) {
+      setSaveFeedback({
+        kind: 'error',
+        message: error instanceof Error ? error.message : 'Changes could not be saved.',
+      });
+    }
   };
 
   const beginEditing = () => {
@@ -1079,7 +1101,16 @@ export default function SupplierReviewEditorModal({
           </div>
 
           <div className="shrink-0 border-t border-slate-100 bg-white/95 px-4 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] backdrop-blur dark:border-slate-800 dark:bg-[#111928]/95 sm:px-6">
-          {refreshFeedback ? (
+          {saveFeedback ? (
+            <div
+              role={saveFeedback.kind === 'error' ? 'alert' : 'status'}
+              aria-live="polite"
+              className={`mb-3 flex items-start gap-2 rounded-xl border px-3 py-2 text-xs font-semibold ${saveFeedback.kind === 'error' ? 'border-red-500/20 bg-red-500/10 text-red-600 dark:text-red-300' : 'border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'}`}
+            >
+              {saveFeedback.kind === 'error' ? <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" /> : <Check className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />}
+              <span>{saveFeedback.message}</span>
+            </div>
+          ) : refreshFeedback ? (
             <div
               role={refreshFeedback.kind === 'error' ? 'alert' : 'status'}
               aria-live="polite"
@@ -1090,21 +1121,24 @@ export default function SupplierReviewEditorModal({
             </div>
           ) : null}
           <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-            <button type="button" onClick={onClose} disabled={isPublishing} className="min-h-11 w-full rounded-xl border border-slate-200 px-4 text-xs font-bold text-slate-500 disabled:opacity-50 dark:border-slate-700 sm:w-auto">Close</button>
+            <button type="button" onClick={onClose} disabled={isPublishing || isSaving} className="min-h-11 w-full rounded-xl border border-slate-200 px-4 text-xs font-bold text-slate-500 disabled:opacity-50 dark:border-slate-700 sm:w-auto">Close</button>
             {refreshEligible && onRefreshSupplier ? (
-              <button type="button" onClick={() => void onRefreshSupplier()} disabled={isPublishing || isRefreshing} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-blue-500/30 bg-blue-500/10 px-4 text-xs font-black text-blue-700 hover:bg-blue-500/20 disabled:cursor-not-allowed disabled:opacity-50 dark:text-blue-300">
+              <button type="button" onClick={() => void onRefreshSupplier()} disabled={isPublishing || isSaving || isRefreshing} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-blue-500/30 bg-blue-500/10 px-4 text-xs font-black text-blue-700 hover:bg-blue-500/20 disabled:cursor-not-allowed disabled:opacity-50 dark:text-blue-300">
                 <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} aria-hidden="true" />{isRefreshing ? 'Refreshing…' : 'Refresh from Supplier'}
               </button>
             ) : null}
-            <button type="button" onClick={onRemove} disabled={isPublishing} className="min-h-11 w-full rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 text-xs font-black text-amber-700 hover:bg-amber-500/20 disabled:cursor-not-allowed disabled:opacity-50 dark:text-amber-300">Remove from Review</button>
+            <button type="button" onClick={onRemove} disabled={isPublishing || isSaving} className="min-h-11 w-full rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 text-xs font-black text-amber-700 hover:bg-amber-500/20 disabled:cursor-not-allowed disabled:opacity-50 dark:text-amber-300">Remove from Review</button>
             {!isEditing ? (
               <button ref={detailsActionRef} type="button" onClick={beginEditing} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 text-xs font-black text-white hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 sm:w-auto" aria-describedby="supplier-review-read-only-note">
                 <Pencil className="h-4 w-4" aria-hidden="true" />Edit product data
               </button>
             ) : (
               <>
-                <button type="button" onClick={cancelEditing} disabled={isPublishing} className="min-h-11 w-full rounded-xl border border-slate-200 px-4 text-xs font-bold text-slate-600 disabled:opacity-50 dark:border-slate-700 dark:text-slate-300 sm:w-auto">Cancel editing</button>
-                 <button type="submit" disabled={isPublishing || hasChecklistBlocker} aria-describedby={hasChecklistBlocker ? 'supplier-publish-blocked-reason' : undefined} title={hasChecklistBlocker ? `Publishing blocked: ${[...Object.values(validationErrors), ...(lowStockHold ? ['Supplier stock must be at least 4 units before publication.'] : [])].join(' ')}` : 'Approve and publish this product'} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 text-xs font-black text-white disabled:cursor-not-allowed disabled:bg-slate-600 sm:w-auto">
+                <button type="button" onClick={cancelEditing} disabled={isPublishing || isSaving} className="min-h-11 w-full rounded-xl border border-slate-200 px-4 text-xs font-bold text-slate-600 disabled:opacity-50 dark:border-slate-700 dark:text-slate-300 sm:w-auto">Cancel editing</button>
+                <button type="button" onClick={() => void handleSaveDraft()} disabled={isPublishing || isSaving || isRefreshing} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-blue-500/30 bg-blue-500/10 px-5 text-xs font-black text-blue-700 hover:bg-blue-500/20 disabled:cursor-not-allowed disabled:opacity-50 dark:text-blue-300">
+                  <Save className="h-4 w-4" />{isSaving ? 'Saving...' : 'Save Changes'}
+                </button>
+                <button type="submit" disabled={isPublishing || isSaving || hasChecklistBlocker} aria-describedby={hasChecklistBlocker ? 'supplier-publish-blocked-reason' : undefined} title={hasChecklistBlocker ? `Publishing blocked: ${[...Object.values(validationErrors), ...(lowStockHold ? ['Supplier stock must be at least 4 units before publication.'] : [])].join(' ')}` : 'Approve and publish this product'} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 text-xs font-black text-white disabled:cursor-not-allowed disabled:bg-slate-600 sm:w-auto">
                   <Check className="h-4 w-4" />{isPublishing ? 'Publishing...' : 'Approve & Publish'}
                 </button>
               </>

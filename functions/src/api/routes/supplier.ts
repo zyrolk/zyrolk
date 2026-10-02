@@ -8,6 +8,10 @@ import {
   parseSupplierReviewQueueItemIds,
 } from "../suppliers/supplierApproval";
 import {
+  parseSupplierReviewDraftInput,
+  saveSupplierReviewDraft,
+} from "../suppliers/supplierReviewDraft";
+import {
   executeSupplierReviewCleanup,
   previewSupplierReviewCleanup,
 } from "../suppliers/supplierReviewCleanup";
@@ -709,6 +713,24 @@ export function registerSupplierRoutes(app: express.Express): void {
         logMessage: "Supplier Product Review refresh failed.",
         fallbackMessage: "Supplier review item could not be refreshed from Dropex.",
         context: { route: req.path, action: "refresh" },
+      });
+    }
+  });
+
+  app.patch("/api/supplier-review-queue/:queueItemId/draft", requireSupplierHubAdmin, async (req, res) => {
+    try {
+      const result = await saveSupplierReviewDraft(
+        adminDb,
+        readQueueItemId(req.params.queueItemId),
+        parseSupplierReviewDraftInput(req.body),
+        reviewerFor(res),
+      );
+      res.status(200).json({ success: true, status: "review_pending", ...result });
+    } catch (error: unknown) {
+      sendSupplierFailure(res, error, {
+        logMessage: "Supplier Product Review draft save failed.",
+        fallbackMessage: "Supplier review changes could not be saved.",
+        context: { route: req.path, action: "save_draft" },
       });
     }
   });
