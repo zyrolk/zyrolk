@@ -80,11 +80,17 @@ const queueFixture = (overrides: Stored = {}): Stored => ({
   checkpoint: "offset:40",
   productPayload: {
     name: "Magic Pad",
+    description: "Original review description",
     category: "supplier-derived",
     subcategory: "",
     costPrice: 1310,
     price: 1999,
     stock: 4,
+    imageUrl: "https://example.test/magic-pad.jpg",
+    imageUrls: ["https://example.test/magic-pad.jpg"],
+    isActive: true,
+    active: true,
+    visible: true,
     supplierFieldOwnership: {
       category: { owner: "supplier", sourceId: "dropex" },
       subcategory: { owner: "supplier", sourceId: "dropex" },
@@ -110,6 +116,14 @@ const categories = {
     isActive: true,
     taxonomyCandidate: true,
     subcategories: [],
+  },
+  "home-kitchen": {
+    isActive: true,
+    subcategories: [{ id: "kitchen-tools", name: "Kitchen Tools", isActive: true }],
+  },
+  "home-garden": {
+    isActive: true,
+    subcategories: [{ id: "household", name: "Household", isActive: true }],
   },
 };
 
@@ -396,15 +410,347 @@ test("taxonomy draft save persists admin taxonomy and leaves review pending/comm
   assert.equal((result.item.productPayload as Stored).category, "baby-kids");
   assert.equal((result.item.productPayload as Stored).subcategory, "baby-toys");
   assert.deepEqual(saved.productValidation, {
-    readyToPublish: false,
-    missingFields: ["category", "subcategory"],
-    errors: [
-      { field: "category", code: "invalid", message: "Select a category." },
-      { field: "subcategory", code: "required", message: "Select a subcategory." },
-    ],
+    readyToPublish: true,
+    missingFields: [],
+    errors: [],
   });
   assert.equal(saved.publicProductId, undefined);
   assert.deepEqual(fixture.collections.get("supplier_product_offers")!.get("offer-1"), beforeOffer);
+});
+
+test("SHX1092-like taxonomy save clears stale subcategory validation metadata", async () => {
+  const base = queueFixture();
+  const fixture = createFakeDb(queueFixture({
+    title: "Meileyi Vegetable Slicer",
+    supplierSku: "SHX1092",
+    supplierProductId: "4096",
+    productPayload: {
+      ...(base.productPayload as Stored),
+      name: "Meileyi Vegetable Slicer",
+      category: "supplier-derived",
+      subcategory: "",
+    },
+    productValidation: {
+      readyToPublish: false,
+      missingFields: ["subcategory"],
+      errors: [{ field: "subcategory", code: "invalid", message: "Select an active subcategory belonging to the category." }],
+    },
+  }), categories);
+
+  await saveSupplierReviewDraft(
+    fixture.db as never,
+    "review-1",
+    parseSupplierReviewDraftInput({
+      categoryId: "home-kitchen",
+      subcategoryId: "kitchen-tools",
+      expectedPendingRevision: REVISION,
+      expectedUpdatedAt: UPDATED_AT,
+    }),
+    { uid: "admin-1", email: "admin@example.test" },
+  );
+
+  const saved = fixture.collections.get("supplier_review_queue")!.get("review-1")!;
+  assert.equal((saved.productPayload as Stored).category, "home-kitchen");
+  assert.equal((saved.productPayload as Stored).subcategory, "kitchen-tools");
+  assert.deepEqual(saved.productValidation, { readyToPublish: true, missingFields: [], errors: [] });
+  assert.equal(saved.queueState, "review_pending");
+  assert.equal(saved.publicProductId, undefined);
+});
+
+test("SHX2063-like taxonomy save clears stale subcategory validation metadata", async () => {
+  const base = queueFixture();
+  const fixture = createFakeDb(queueFixture({
+    title: "Folding Multifunction Storage Laundry Basket",
+    supplierSku: "SHX2063",
+    supplierProductId: "4097",
+    productPayload: {
+      ...(base.productPayload as Stored),
+      name: "Folding Multifunction Storage Laundry Basket",
+      category: "supplier-derived",
+      subcategory: "",
+    },
+    productValidation: {
+      readyToPublish: false,
+      missingFields: ["subcategory"],
+      errors: [{ field: "subcategory", code: "invalid", message: "Select an active subcategory belonging to the category." }],
+    },
+  }), categories);
+
+  await saveSupplierReviewDraft(
+    fixture.db as never,
+    "review-1",
+    parseSupplierReviewDraftInput({
+      categoryId: "home-garden",
+      subcategoryId: "household",
+      expectedPendingRevision: REVISION,
+      expectedUpdatedAt: UPDATED_AT,
+    }),
+    { uid: "admin-1", email: "admin@example.test" },
+  );
+
+  const saved = fixture.collections.get("supplier_review_queue")!.get("review-1")!;
+  assert.equal((saved.productPayload as Stored).category, "home-garden");
+  assert.equal((saved.productPayload as Stored).subcategory, "household");
+  assert.deepEqual(saved.productValidation, { readyToPublish: true, missingFields: [], errors: [] });
+  assert.equal(saved.queueState, "review_pending");
+  assert.equal(saved.publicProductId, undefined);
+});
+
+test("taxonomy draft save preserves an unrelated blocker and its warning", async () => {
+  const base = queueFixture();
+  const fixture = createFakeDb(queueFixture({
+    productPayload: {
+      ...(base.productPayload as Stored),
+      description: "",
+      category: "supplier-derived",
+      subcategory: "",
+    },
+    productValidation: {
+      readyToPublish: false,
+      missingFields: ["subcategory", "description"],
+      errors: [
+        { field: "subcategory", code: "invalid", message: "Select an active subcategory belonging to the category." },
+        { field: "description", code: "required", message: "Full description is required." },
+      ],
+      warnings: [{ code: "brand_missing", message: "Brand is not set." }],
+    },
+  }), categories);
+
+  await saveSupplierReviewDraft(
+    fixture.db as never,
+    "review-1",
+    parseSupplierReviewDraftInput({
+      categoryId: "home-kitchen",
+      subcategoryId: "kitchen-tools",
+      expectedPendingRevision: REVISION,
+      expectedUpdatedAt: UPDATED_AT,
+    }),
+    { uid: "admin-1", email: "admin@example.test" },
+  );
+
+  const validation = fixture.collections.get("supplier_review_queue")!.get("review-1")!.productValidation as Stored;
+  assert.equal(validation.readyToPublish, false);
+  assert.deepEqual(validation.missingFields, ["description"]);
+  assert.deepEqual(validation.errors, [{ field: "description", code: "required", message: "Full description is required." }]);
+  assert.deepEqual(validation.warnings, [{ code: "brand_missing", message: "Brand is not set." }]);
+});
+
+test("taxonomy draft save reconciles resolved current errors instead of preserving stale history", async () => {
+  const base = queueFixture();
+  const fixture = createFakeDb(queueFixture({
+    productPayload: {
+      ...(base.productPayload as Stored),
+      category: "supplier-derived",
+      subcategory: "",
+      description: "Now present",
+      price: 1999,
+      costPrice: 1310,
+    },
+    productValidation: {
+      readyToPublish: false,
+      missingFields: ["subcategory", "description"],
+      errors: [
+        { field: "subcategory", code: "invalid", message: "Select an active subcategory belonging to the category." },
+        { field: "description", code: "required", message: "Full description is required." },
+        { field: "price", code: "below_supplier_cost", message: "Selling price must be at least the supplier cost." },
+      ],
+    },
+  }), categories);
+
+  await saveSupplierReviewDraft(
+    fixture.db as never,
+    "review-1",
+    parseSupplierReviewDraftInput({
+      categoryId: "home-kitchen",
+      subcategoryId: "kitchen-tools",
+      expectedPendingRevision: REVISION,
+      expectedUpdatedAt: UPDATED_AT,
+    }),
+    { uid: "admin-1", email: "admin@example.test" },
+  );
+
+  const validation = fixture.collections.get("supplier_review_queue")!.get("review-1")!.productValidation as Stored;
+  assert.deepEqual(validation.missingFields, []);
+  assert.deepEqual(validation.errors, []);
+  assert.equal(validation.readyToPublish, true);
+});
+
+test("taxonomy draft save removes resolved taxonomy warnings but keeps current import warnings", async () => {
+  const fixture = createFakeDb(queueFixture({
+    productValidation: {
+      readyToPublish: false,
+      missingFields: ["category", "subcategory"],
+      errors: [{ field: "category", code: "invalid", message: "Select an active canonical Zyro category." }],
+      warnings: [
+        { field: "category", code: "missing_category", message: "The supplier category still requires an approved category mapping." },
+        { field: "brand", code: "missing_brand", message: "The supplier did not provide a brand." },
+      ],
+    },
+  }), categories);
+
+  await saveSupplierReviewDraft(
+    fixture.db as never,
+    "review-1",
+    parseSupplierReviewDraftInput({
+      categoryId: "home-kitchen",
+      subcategoryId: "kitchen-tools",
+      expectedPendingRevision: REVISION,
+      expectedUpdatedAt: UPDATED_AT,
+    }),
+    { uid: "admin-1", email: "admin@example.test" },
+  );
+
+  const validation = fixture.collections.get("supplier_review_queue")!.get("review-1")!.productValidation as Stored;
+  assert.deepEqual(validation.warnings, [{ field: "brand", code: "missing_brand", message: "The supplier did not provide a brand." }]);
+  assert.equal(validation.readyToPublish, true);
+});
+
+test("taxonomy draft save derives a real current blocker even when old metadata omitted it", async () => {
+  const base = queueFixture();
+  const fixture = createFakeDb(queueFixture({
+    productPayload: {
+      ...(base.productPayload as Stored),
+      category: "supplier-derived",
+      subcategory: "",
+      description: "",
+    },
+    productValidation: {
+      readyToPublish: false,
+      missingFields: ["subcategory"],
+      errors: [{ field: "subcategory", code: "invalid", message: "Select an active subcategory belonging to the category." }],
+    },
+  }), categories);
+
+  await saveSupplierReviewDraft(
+    fixture.db as never,
+    "review-1",
+    parseSupplierReviewDraftInput({
+      categoryId: "home-kitchen",
+      subcategoryId: "kitchen-tools",
+      expectedPendingRevision: REVISION,
+      expectedUpdatedAt: UPDATED_AT,
+    }),
+    { uid: "admin-1", email: "admin@example.test" },
+  );
+
+  const validation = fixture.collections.get("supplier_review_queue")!.get("review-1")!.productValidation as Stored;
+  assert.deepEqual(validation.missingFields, ["description"]);
+  assert.deepEqual(validation.errors, [{ field: "description", code: "required", message: "Full description is required." }]);
+  assert.equal(validation.readyToPublish, false);
+});
+
+test("taxonomy draft save recomputes low-stock hold in both directions", async () => {
+  const holdFixture = createFakeDb(queueFixture({
+    sourceId: "dropex",
+    supplierSnapshot: {
+      ...(queueFixture().supplierSnapshot as Stored),
+      providedFields: ["stock"],
+    },
+    productPayload: {
+      ...(queueFixture().productPayload as Stored),
+      stock: 5,
+      category: "supplier-derived",
+      subcategory: "",
+    },
+    productValidation: {
+      readyToPublish: false,
+      missingFields: ["stock", "subcategory"],
+      errors: [
+        { field: "stock", code: "LOW_SUPPLIER_STOCK_FOR_PUBLICATION", message: "Supplier stock must be at least 4 units before publication." },
+        { field: "subcategory", code: "invalid", message: "Select an active subcategory belonging to the category." },
+      ],
+      lowStockHold: true,
+    },
+  }), categories);
+  await saveSupplierReviewDraft(
+    holdFixture.db as never,
+    "review-1",
+    parseSupplierReviewDraftInput({
+      categoryId: "home-kitchen",
+      subcategoryId: "kitchen-tools",
+      expectedPendingRevision: REVISION,
+      expectedUpdatedAt: UPDATED_AT,
+    }),
+    { uid: "admin-1", email: "admin@example.test" },
+  );
+  const released = holdFixture.collections.get("supplier_review_queue")!.get("review-1")!.productValidation as Stored;
+  assert.equal(released.lowStockHold, false);
+  assert.deepEqual(released.missingFields, []);
+  assert.deepEqual(released.errors, []);
+  assert.equal(released.readyToPublish, true);
+
+  const newHoldFixture = createFakeDb(queueFixture({
+    sourceId: "dropex",
+    supplierSnapshot: {
+      ...(queueFixture().supplierSnapshot as Stored),
+      providedFields: ["stock"],
+    },
+    productPayload: {
+      ...(queueFixture().productPayload as Stored),
+      stock: 2,
+      category: "supplier-derived",
+      subcategory: "",
+    },
+    productValidation: {
+      readyToPublish: true,
+      missingFields: ["subcategory"],
+      errors: [{ field: "subcategory", code: "invalid", message: "Select an active subcategory belonging to the category." }],
+      lowStockHold: false,
+    },
+  }), categories);
+  await saveSupplierReviewDraft(
+    newHoldFixture.db as never,
+    "review-1",
+    parseSupplierReviewDraftInput({
+      categoryId: "home-kitchen",
+      subcategoryId: "kitchen-tools",
+      expectedPendingRevision: REVISION,
+      expectedUpdatedAt: UPDATED_AT,
+    }),
+    { uid: "admin-1", email: "admin@example.test" },
+  );
+  const held = newHoldFixture.collections.get("supplier_review_queue")!.get("review-1")!.productValidation as Stored;
+  assert.equal(held.lowStockHold, true);
+  assert.deepEqual(held.missingFields, ["stock"]);
+  assert.deepEqual(held.errors, [{ field: "stock", code: "LOW_SUPPLIER_STOCK_FOR_PUBLICATION", message: "Supplier stock must be at least 4 units before publication." }]);
+  assert.equal(held.readyToPublish, false);
+});
+
+test("taxonomy-only blocker becomes ready metadata without changing pending state", async () => {
+  const base = queueFixture();
+  const fixture = createFakeDb(queueFixture({
+    productPayload: {
+      ...(base.productPayload as Stored),
+      category: "supplier-derived",
+      subcategory: "",
+    },
+    productValidation: {
+      readyToPublish: false,
+      missingFields: ["category", "subcategory"],
+      errors: [
+        { field: "category", code: "invalid", message: "Select a category." },
+        { field: "subcategory", code: "required", message: "Select a subcategory." },
+      ],
+    },
+  }), categories);
+
+  await saveSupplierReviewDraft(
+    fixture.db as never,
+    "review-1",
+    parseSupplierReviewDraftInput({
+      categoryId: "home-garden",
+      subcategoryId: "household",
+      expectedPendingRevision: REVISION,
+      expectedUpdatedAt: UPDATED_AT,
+    }),
+    { uid: "admin-1", email: "admin@example.test" },
+  );
+
+  const saved = fixture.collections.get("supplier_review_queue")!.get("review-1")!;
+  assert.deepEqual(saved.productValidation, { readyToPublish: true, missingFields: [], errors: [] });
+  assert.equal(saved.queueState, "review_pending");
+  assert.equal(saved.status, "Pending");
+  assert.equal(fixture.collections.get("products")?.size || 0, 0);
 });
 
 test("taxonomy draft save rejects invalid taxonomy and stale queue tokens", async () => {
@@ -441,6 +787,7 @@ test("taxonomy draft save rejects invalid taxonomy and stale queue tokens", asyn
   );
 
   const stale = createFakeDb(queueFixture(), categories);
+  const staleBefore = structuredClone(stale.collections.get("supplier_review_queue")!.get("review-1"));
   await assert.rejects(
     saveSupplierReviewDraft(
       stale.db as never,
@@ -455,6 +802,7 @@ test("taxonomy draft save rejects invalid taxonomy and stale queue tokens", asyn
     ),
     /changed after it was opened/u,
   );
+  assert.deepEqual(stale.collections.get("supplier_review_queue")!.get("review-1"), staleBefore);
 
   for (const field of [
     "costPrice",
@@ -484,6 +832,7 @@ test("taxonomy draft save rejects invalid taxonomy and stale queue tokens", asyn
   }
 
   const terminal = createFakeDb(queueFixture({ queueState: "approved", status: "Approved" }), categories);
+  const terminalBefore = structuredClone(terminal.collections.get("supplier_review_queue")!.get("review-1"));
   await assert.rejects(
     saveSupplierReviewDraft(
       terminal.db as never,
@@ -498,6 +847,7 @@ test("taxonomy draft save rejects invalid taxonomy and stale queue tokens", asyn
     ),
     /Only a pending supplier review item/u,
   );
+  assert.deepEqual(terminal.collections.get("supplier_review_queue")!.get("review-1"), terminalBefore);
 });
 
 test("taxonomy draft save rejects an inactive canonical category without mutation", async () => {
