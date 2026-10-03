@@ -15,6 +15,7 @@ import {
   resolveSupplierReviewApprovalMediaSelection,
   retryDeadLetterSupplierReviewQueueItem,
 } from '../functions/src/scheduled/supplierReviewQueue';
+import { SUPPLIER_MEDIA_FAILURE_CODE } from '../functions/src/api/suppliers/supplierMediaReadiness';
 import type { SupplierMediaPipelineDependencies } from '../functions/src/api/suppliers/supplierMediaPipeline';
 
 type StoredDocument = Record<string, unknown>;
@@ -268,6 +269,157 @@ const decisionFixture = (state = 'review_pending') => {
     }),
   };
 };
+
+type ApprovalMediaCase = 'optional-warnings' | 'primary-failure' | 'zero-usable' | 'unknown-failure' | 'source-index-mismatch';
+
+const approvalMediaFixture = (mediaCase: ApprovalMediaCase) => {
+  const fixture = decisionFixture();
+  const sourceImageUrls = [
+    'https://supplier.example/shx2063-primary.png',
+    'https://supplier.example/shx2063-gallery.png',
+    'https://supplier.example/shx2063-oversized-1.png',
+    'https://supplier.example/shx2063-oversized-2.png',
+  ];
+  const observedDropexOffer = offer('dropex', 200, {
+    reviewStatus: 'review_pending',
+    productId: 'canonical-product',
+  });
+  const pendingObservation = buildSupplierOfferPendingObservation({
+    offer: observedDropexOffer,
+    kind: 'catalog_upsert',
+    reviewQueueItemId: 'review-1',
+    observedAt: '2026-07-26T00:00:00.000Z',
+    traversalId: 'shx2063-media-context',
+  });
+  const dropexOffer = { ...observedDropexOffer, stateVersion: 1, pendingObservation };
+  const successfulAssets = [0, 1].map((index) => ({
+    ...managedMedia[0],
+    assetId: `${index + 1}`.repeat(64),
+    contentHash: `${index + 1}`.repeat(64),
+    supplierId: 'dropex',
+    sourceId: 'dropex',
+    productId: 'canonical-product',
+    originalSupplierUrl: sourceImageUrls[index],
+    firebaseStorageUrl: `https://storage.example/shx2063-${index}.webp`,
+    isPrimary: index === 0,
+    sortOrder: index,
+  }));
+  const managedAssets = mediaCase === 'zero-usable'
+    ? [{ ...successfulAssets[0], imageStatus: 'failed', isPrimary: false }]
+    : mediaCase === 'primary-failure'
+      ? [successfulAssets[1]]
+      : successfulAssets;
+  const optionalFailure = (sourceIndex: number, originalSupplierUrl: string) => ({
+    code: SUPPLIER_MEDIA_FAILURE_CODE.IMAGE_TOO_LARGE,
+    originalSupplierUrl,
+    retryable: false,
+    sourceIndex,
+    isPrimary: false,
+  });
+  const mediaFailures = mediaCase === 'optional-warnings'
+    ? [optionalFailure(3, sourceImageUrls[2]), optionalFailure(4, sourceImageUrls[3])]
+    : mediaCase === 'primary-failure'
+      ? [{ code: SUPPLIER_MEDIA_FAILURE_CODE.VALIDATION, originalSupplierUrl: sourceImageUrls[0], retryable: false, sourceIndex: 1, isPrimary: true }]
+      : mediaCase === 'zero-usable'
+        ? [{ code: SUPPLIER_MEDIA_FAILURE_CODE.VALIDATION, originalSupplierUrl: sourceImageUrls[0], retryable: true, sourceIndex: 1, isPrimary: true }]
+        : mediaCase === 'unknown-failure'
+          ? [{ code: 'UNEXPECTED_FAILURE', originalSupplierUrl: sourceImageUrls[2], retryable: false, sourceIndex: 3, isPrimary: false }]
+          : [optionalFailure(3, 'https://supplier.example/not-the-indexed-source.png')];
+  const currentQueue = fixture.documents.get('supplier_review_queue/review-1') || {};
+  const currentPayload = (currentQueue.productPayload || {}) as StoredDocument;
+  const currentSnapshot = (currentQueue.supplierSnapshot || {}) as StoredDocument;
+  fixture.documents.set('supplier_review_queue/review-1', {
+    ...currentQueue,
+    sourceId: 'dropex',
+    supplierId: 'dropex',
+    supplierCode: 'dropex-sku',
+    supplierOfferId: dropexOffer.id,
+    supplierOfferPendingRevision: pendingObservation.revision,
+    comparisonStatus: 'PRICE_CHANGED',
+    mediaSourceImageUrls: sourceImageUrls,
+    mediaStatus: 'ready',
+    mediaFailures,
+    managedMedia: managedAssets,
+    supplierSnapshot: {
+      ...currentSnapshot,
+      sourceId: 'dropex',
+      supplierId: 'dropex',
+      supplierProductId: 'dropex-item',
+      supplierSku: 'dropex-sku',
+      imageUrls: sourceImageUrls,
+    },
+    productPayload: {
+      ...currentPayload,
+      id: 'canonical-product',
+      imageUrl: managedAssets[0]?.firebaseStorageUrl,
+      imageUrls: managedAssets.map((asset) => asset.firebaseStorageUrl),
+    },
+  });
+  fixture.documents.set(`supplier_product_offers/${dropexOffer.id}`, dropexOffer);
+  return { ...fixture, pendingRevision: pendingObservation.revision, sourceImageUrls, successfulAssets };
+};
+
+test('approval preserves full supplier source context while publishing only healthy managed media', async () => {
+  const fixture = approvalMediaFixture('optional-warnings');
+  const result = await decideSupplierQueueItem(
+    fixture.db as never,
+    'review-1',
+    'approved',
+    { uid: 'admin-1', email: 'admin@zyro.lk' },
+    {
+      expectedPendingRevision: fixture.pendingRevision,
+      draft: {
+        productName: 'Supplier B product',
+        sellingPrice: 140,
+        costPrice: 100,
+        stock: 20,
+        category: 'category-1',
+        subcategory: 'subcategory-1',
+        brand: 'brand-1',
+        specifications: {},
+        isActive: true,
+        primaryImageUrl: fixture.successfulAssets[0].firebaseStorageUrl,
+        galleryImageUrls: [fixture.successfulAssets[1].firebaseStorageUrl],
+        editedFields: ['imageUrl', 'imageUrls'],
+      },
+    },
+  );
+
+  assert.equal(result.success, true, JSON.stringify(result));
+  const approvedProductId = result.productId!;
+  const publicProduct = fixture.documents.get(`products/${approvedProductId}`) || {};
+  assert.deepEqual(publicProduct.imageUrls, fixture.successfulAssets.map((asset) => asset.firebaseStorageUrl));
+  assert.deepEqual(
+    (fixture.documents.get(`product_private/${approvedProductId}`)?.supplierMedia as StoredDocument[]).map((asset) => asset.originalSupplierUrl),
+    fixture.successfulAssets.map((asset) => asset.originalSupplierUrl),
+  );
+  const publicImageUrls = publicProduct.imageUrls as string[];
+  assert.equal(publicImageUrls.includes(fixture.sourceImageUrls[2]), false);
+  assert.equal(publicImageUrls.includes(fixture.sourceImageUrls[3]), false);
+  assert.equal(fixture.documents.get('supplier_review_queue/review-1')?.queueState, 'approved');
+});
+
+for (const mediaCase of ['primary-failure', 'zero-usable', 'unknown-failure', 'source-index-mismatch'] as const) {
+  test(`approval fails closed for ${mediaCase} media`, async () => {
+    const fixture = approvalMediaFixture(mediaCase);
+    const beforeProductCount = [...fixture.documents.keys()].filter((key) => key.startsWith('products/')).length;
+
+    await assert.rejects(
+      decideSupplierQueueItem(
+        fixture.db as never,
+        'review-1',
+        'approved',
+        { uid: 'admin-1', email: 'admin@zyro.lk' },
+        { expectedPendingRevision: fixture.pendingRevision },
+      ),
+      /blocking image failure|valid managed product image is required/u,
+    );
+
+    assert.equal([...fixture.documents.keys()].filter((key) => key.startsWith('products/')).length, beforeProductCount);
+    assert.equal(fixture.documents.get('supplier_review_queue/review-1')?.queueState, 'review_pending');
+    assert.equal(fixture.writes.some((write) => write.key.startsWith('products/')), false);
+  });
+}
 
 test('no-draft approval removes stale promotion after a supplier price invalidates it', async () => {
   const fixture = decisionFixture();

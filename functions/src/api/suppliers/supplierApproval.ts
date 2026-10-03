@@ -32,7 +32,10 @@ import {
   reconcileSupplierApprovalStock,
   SupplierApprovalConflict,
 } from "./supplierApprovalConcurrency";
-import { ensureSupplierReviewQueueManagedMedia } from "../../scheduled/supplierReviewQueue";
+import {
+  ensureSupplierReviewQueueManagedMedia,
+  supplierReviewQueueSourceImageUrls,
+} from "../../scheduled/supplierReviewQueue";
 import type { SupplierManagedMediaAsset, SupplierMediaPipelineDependencies } from "./supplierMediaPipeline";
 import {
   applySupplierProductFieldOwnership,
@@ -452,20 +455,22 @@ export const toPublicProductPayload = (
     ? [...managedMediaOverride]
     : extractSupplierMediaFromRecord(queueItem.managedMedia || record(queueItem.supplierSnapshot).managedMedia);
   const supplierSnapshot = record(queueItem.supplierSnapshot);
-  const sourceImageUrls = managedMediaOverride
-    ? managedMedia.map((asset) => asset.originalSupplierUrl)
+  const resolvedSourceImageUrls = supplierReviewQueueSourceImageUrls(queueItem);
+  const sourceImageUrls = resolvedSourceImageUrls.length > 0
+    ? resolvedSourceImageUrls
     : Array.isArray(queueItem.mediaSourceImageUrls)
-    ? queueItem.mediaSourceImageUrls.filter((value): value is string => typeof value === "string")
-    : Array.isArray(supplierSnapshot.mediaGallery)
-    ? supplierSnapshot.mediaGallery.filter((value): value is string => typeof value === "string")
-    : Array.isArray(supplierSnapshot.imageUrls)
-      ? supplierSnapshot.imageUrls.filter((value): value is string => typeof value === "string")
-      : (Array.isArray(originalPayload.imageUrls)
-        ? originalPayload.imageUrls.filter((value): value is string => typeof value === "string")
-      : []);
+      ? queueItem.mediaSourceImageUrls.filter((value): value is string => typeof value === "string")
+      : Array.isArray(supplierSnapshot.mediaGallery)
+        ? supplierSnapshot.mediaGallery.filter((value): value is string => typeof value === "string")
+        : Array.isArray(supplierSnapshot.imageUrls)
+          ? supplierSnapshot.imageUrls.filter((value): value is string => typeof value === "string")
+          : [];
   const mediaReadiness = classifySupplierMediaReadiness({
     supplierId: queueItem.supplierId || supplierSnapshot.supplierId || queueItem.sourceId,
     sourceImageUrls,
+    ...(managedMediaOverride?.[0]?.originalSupplierUrl
+      ? { primarySourceImageUrl: managedMediaOverride[0].originalSupplierUrl }
+      : {}),
     managedMedia,
     mediaFailures: queueItem.mediaFailures,
   });

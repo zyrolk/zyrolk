@@ -24,6 +24,7 @@ export interface SupplierMediaAssetLike {
 export interface SupplierMediaReadinessInput {
   supplierId?: unknown;
   sourceImageUrls?: unknown;
+  primarySourceImageUrl?: unknown;
   managedMedia?: unknown;
   mediaFailures?: unknown;
 }
@@ -79,7 +80,11 @@ export function classifySupplierMediaReadiness(input: SupplierMediaReadinessInpu
   const failures = (Array.isArray(input.mediaFailures) ? input.mediaFailures : []).filter(isRecord);
   const warningFailures = failures.filter((failure) => isOptionalSupplierMediaWarning(failure, sourceImageUrls, input.supplierId));
   const blockingFailures = failures.filter((failure) => !isOptionalSupplierMediaWarning(failure, sourceImageUrls, input.supplierId));
-  const trustedPrimarySourceUrl = typeof sourceImageUrls[0] === "string" ? sourceImageUrls[0].trim() : "";
+  const explicitPrimarySourceUrl = typeof input.primarySourceImageUrl === "string"
+    ? input.primarySourceImageUrl.trim()
+    : "";
+  const trustedPrimarySourceUrl = explicitPrimarySourceUrl
+    || (typeof sourceImageUrls[0] === "string" ? sourceImageUrls[0].trim() : "");
   const hasUsablePrimary = Boolean(trustedPrimarySourceUrl)
     && assets.some((asset) => asset.isPrimary === true
       && String(asset.originalSupplierUrl || "").trim() === trustedPrimarySourceUrl);
