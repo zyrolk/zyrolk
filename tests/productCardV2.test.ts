@@ -38,6 +38,15 @@ test('Product Card V2 preserves every existing interaction and commerce flow', (
   assert.doesNotMatch(productCard, /demo|sample rating|fake stock/iu);
 });
 
+test('Product Card V2 reconciles cached image completion without weakening error handling', () => {
+  assert.match(productCard, /const imageRef = useRef<HTMLImageElement \| null>\(null\)/);
+  assert.match(productCard, /setIsImageLoaded\(false\);\s*const image = imageRef\.current;\s*if \(image\?\.complete && image\.naturalWidth > 0\) \{\s*setIsImageLoaded\(true\);/);
+  assert.match(productCard, /ref=\{imageRef\}/);
+  assert.match(productCard, /onLoad=\{\(\) => setIsImageLoaded\(true\)\}/);
+  assert.match(productCard, /onError=\{\(e\) => \{[\s\S]*PRODUCT_IMAGE_FALLBACK[\s\S]*setIsImageLoaded\(true\);/);
+  assert.doesNotMatch(productCard, /naturalWidth\s*===\s*0[\s\S]*setIsImageLoaded\(true\)/);
+});
+
 test('Product Card V2 has fixed geometry, contained imagery, and aligned commerce rows', () => {
   assert.match(styles, /\.zy-product-card\s*\{[\s\S]*height: 40rem;[\s\S]*grid-template-rows: 56% 44%/);
   assert.match(styles, /\.zy-product-card-image\s*\{[\s\S]*aspect-ratio: 1;[\s\S]*object-fit: contain/);

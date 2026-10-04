@@ -28,6 +28,7 @@ function ProductCard({
 }: ProductCardProps) {
   const [isAdded, setIsAdded] = useState(false);
   const [isImageLoaded, setIsImageLoaded] = useState(false);
+  const imageRef = useRef<HTMLImageElement | null>(null);
   const addedTimerRef = useRef<number | null>(null);
   const categoryDisplayName = useCategoryDisplayName();
   const stockLabel = product.stock <= 0
@@ -45,6 +46,10 @@ function ProductCard({
 
   useEffect(() => {
     setIsImageLoaded(false);
+    const image = imageRef.current;
+    if (image?.complete && image.naturalWidth > 0) {
+      setIsImageLoaded(true);
+    }
   }, [product.id, product.imageUrl]);
 
   const handleCardAddToCart = (event: React.MouseEvent) => {
@@ -130,6 +135,7 @@ function ProductCard({
           decoding="async"
           width="600"
           height="600"
+          ref={imageRef}
           className={`zy-product-card-image ${isImageLoaded ? 'is-loaded' : 'is-loading'}`}
           onLoad={() => setIsImageLoaded(true)}
           onError={(e) => {
