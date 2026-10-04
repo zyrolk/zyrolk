@@ -119,14 +119,27 @@
 .zy-checkout-items article > aside button:hover { color: #dc2626; background: #fef2f2; }
 .zy-checkout-items article > aside svg { width: 1rem; }
 
-.zy-delivery-progress { margin-top: 1.1rem; padding: 1rem; border-radius: 1rem; color: #14532d; background: #f0fdf4; }
-.zy-delivery-progress > div { display: flex; align-items: center; gap: 0.75rem; }
-.zy-delivery-progress svg { flex: 0 0 auto; width: 1.25rem; }
-.zy-delivery-progress span { display: grid; gap: 0.15rem; }
-.zy-delivery-progress b { font-size: 0.82rem; }
-.zy-delivery-progress small { color: #3f7652; font-size: 0.72rem; }
-.zy-delivery-progress > i { display: block; height: 0.35rem; margin-top: 0.8rem; overflow: hidden; border-radius: 999px; background: #ccebd5; }
-.zy-delivery-progress > i > b { display: block; height: 100%; border-radius: inherit; background: #16a34a; transition: width 300ms ease; }
+.zy-delivery-rewards { display: grid; gap: 0.4rem; margin-top: 1.1rem; padding: 0.55rem 0.8rem 0.5rem; border: 1px solid #dbe6f5; border-radius: 1rem; color: #1e3a8a; background: linear-gradient(135deg, #f8fbff, #fff); }
+.zy-delivery-rewards-heading { display: flex; align-items: flex-start; gap: 0.7rem; }
+.zy-delivery-rewards-heading > svg { flex: 0 0 auto; width: 1.15rem; margin-top: 0.1rem; color: #2563eb; }
+.zy-delivery-rewards-heading > div { display: grid; min-width: 0; gap: 0.12rem; }
+.zy-delivery-rewards-heading strong { color: #1e3a8a; font-size: 0.62rem; letter-spacing: 0.05em; line-height: 1.15; text-transform: uppercase; }
+.zy-delivery-rewards-heading p { margin: 0; color: #0f172a; font-size: 0.76rem; font-weight: 800; line-height: 1.2; }
+.zy-delivery-rewards-heading small { color: #526b91; font-size: 0.62rem; line-height: 1.2; }
+.zy-delivery-rewards-track { display: grid; grid-template-columns: 1fr 1fr; gap: 0.25rem; height: 0.3rem; }
+.zy-delivery-rewards-track > span { display: block; overflow: hidden; border-radius: 999px; background: #dbeafe; }
+.zy-delivery-rewards-track i { display: block; height: 100%; border-radius: inherit; background: #2563eb; transition: width 300ms ease; }
+.zy-delivery-rewards-milestones { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; margin: 0; padding: 0; list-style: none; }
+.zy-delivery-rewards-milestones li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 0.3rem; min-width: 0; color: #64748b; line-height: 1.1; }
+.zy-delivery-rewards-marker { display: grid; width: 1.1rem; height: 1.1rem; place-items: center; border: 1px solid #bfdbfe; border-radius: 999px; color: #2563eb; background: #eff6ff; font-size: 0.58rem; font-weight: 800; }
+.zy-delivery-rewards-marker svg { width: 0.75rem; }
+.zy-delivery-rewards-milestones li > span:nth-child(2) { display: grid; min-width: 0; gap: 0.05rem; }
+.zy-delivery-rewards-milestones b { overflow: hidden; color: #1e293b; font-size: 0.64rem; text-overflow: ellipsis; white-space: nowrap; }
+.zy-delivery-rewards-milestones small { overflow: hidden; font-size: 0.58rem; text-overflow: ellipsis; white-space: nowrap; }
+.zy-delivery-rewards-milestones em { font-size: 0.54rem; font-style: normal; white-space: nowrap; }
+.zy-delivery-rewards-milestones li.is-unlocked { color: #2563eb; }
+.zy-delivery-rewards-milestones li.is-unlocked .zy-delivery-rewards-marker { color: #fff; border-color: #2563eb; background: #2563eb; }
+.zy-delivery-rewards-milestones li.is-unlocked b { color: #1d4ed8; }
 
 .zy-coupon-card { margin-top: 1rem; padding: 1rem; border: 1px dashed #93b4ed; border-radius: 1rem; background: #f6f9ff; }
 .zy-coupon-card > div:first-child { display: flex; align-items: center; gap: 0.7rem; }
@@ -261,7 +274,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .zy-checkout-overlay, .zy-premium-checkout, .zy-address-skeleton, .zy-payment-option-skeleton, .zy-delivery-progress > i > b, .zy-place-order, .is-spinning { animation: none !important; transition: none !important; }
+  .zy-checkout-overlay, .zy-premium-checkout, .zy-address-skeleton, .zy-payment-option-skeleton, .zy-delivery-rewards-track i, .zy-place-order, .is-spinning { animation: none !important; transition: none !important; }
 }
 
 @media print {

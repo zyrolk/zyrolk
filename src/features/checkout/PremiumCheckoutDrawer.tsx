@@ -2,9 +2,10 @@ import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from 'reac
 import { collection, limit, onSnapshot, query } from 'firebase/firestore';
 import {
   BadgePercent, Check, CheckCircle2, ChevronRight, CircleDollarSign, Copy, Home, LoaderCircle,
-  LockKeyhole, MapPin, Minus, PackageCheck, Phone, Plus, ShieldCheck, ShoppingBag, Trash2, Truck, X,
+  LockKeyhole, MapPin, Minus, PackageCheck, Phone, Plus, ShieldCheck, ShoppingBag, Trash2, X,
 } from 'lucide-react';
 import type { CartDrawerProps } from '../../components/CartDrawer';
+import DeliveryRewards from '../../components/DeliveryRewards';
 import { db } from '../../firebase';
 import { fetchJson, NetworkRequestError } from '../../services/network/fetchJson';
 import { reportClientIssue } from '../../services/observability/clientDiagnostics';
@@ -334,7 +335,7 @@ export default function PremiumCheckoutDrawer({
           <div className="zy-checkout-section-heading"><div><small>Step 1</small><h3 id="checkout-cart-heading">Your cart</h3></div><span>{commerceCartItems.length} {commerceCartItems.length === 1 ? 'item' : 'items'}</span></div>
           {commerceCartItems.length === 0 ? <div className="zy-checkout-empty"><ShoppingBag aria-hidden="true" /><strong>Your cart is empty</strong><p>Add a product before starting checkout.</p><button type="button" onClick={onClose}>Continue shopping</button></div> : <div className="zy-checkout-items">{commerceCartItems.map(item => <article key={item.product.id}><img src={item.product.imageUrl} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" /><div><strong>{item.product.name}</strong><small>{formatPrice(item.product.price)} each</small><span><button type="button" onClick={() => onUpdateQuantity(item.product.id, Math.max(1, item.quantity - 1))} disabled={item.quantity <= 1} aria-label={`Decrease ${item.product.name}`}><Minus /></button><b aria-live="polite">{item.quantity}</b><button type="button" onClick={() => onUpdateQuantity(item.product.id, Math.min(item.product.stock, item.quantity + 1))} disabled={item.quantity >= item.product.stock} aria-label={`Increase ${item.product.name}`}><Plus /></button></span></div><aside><b>{formatPrice(item.product.price * item.quantity)}</b><button type="button" onClick={() => onRemoveItem(item.product.id)} aria-label={`Remove ${item.product.name}`}><Trash2 /></button></aside></article>)}</div>}
 
-          {commerceCartItems.length > 0 && <><div className="zy-delivery-progress"><div><Truck aria-hidden="true" /><span><b>{deliveryProgress.headline}</b><small>{deliveryProgress.detail}</small></span></div><i><b style={{ width: `${deliveryProgress.progressPercent}%` }} /></i></div>
+          {commerceCartItems.length > 0 && <><DeliveryRewards subtotal={itemsSubtotal} deliveryQuote={deliveryQuote} formatPrice={formatPrice} />
           <div className="zy-coupon-card"><div><BadgePercent aria-hidden="true" /><span><b>Have a coupon?</b><small>Codes are validated securely against the live order subtotal.</small></span></div><div><input value={couponInput} onChange={event => { setCouponInput(event.target.value.toUpperCase()); setCouponError(''); }} maxLength={40} placeholder="Enter coupon code" aria-label="Coupon code" aria-describedby={couponError ? 'coupon-error' : undefined} /><button type="button" onClick={applyCoupon} disabled={couponLoading || !couponInput.trim()}>{couponLoading ? <LoaderCircle className="is-spinning" /> : couponQuote ? 'Reapply' : 'Apply'}</button></div>{couponQuote && <p className="is-success"><Check />Coupon {couponQuote.code} applied: save {formatPrice(couponQuote.discountAmount)} <button type="button" onClick={() => { setCouponQuote(null); setCouponInput(''); }}>Remove</button></p>}{couponError && <p id="coupon-error" className="is-error" role="alert">{couponError}</p>}</div></>}
         </section>
 

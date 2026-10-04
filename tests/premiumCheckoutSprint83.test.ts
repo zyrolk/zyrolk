@@ -143,14 +143,14 @@ test('delivery progress uses the resolved fee for its free and completed states'
   assert.equal(zeroFeeAtThreshold.deliveryFee, 0);
   assert.equal(zeroThreshold.deliveryFee, 0);
 
-  const progressStart = checkout.indexOf('<div className="zy-delivery-progress">');
+  const progressStart = checkout.indexOf('<DeliveryRewards subtotal={itemsSubtotal} deliveryQuote={deliveryQuote} formatPrice={formatPrice} />');
   const progressEnd = checkout.indexOf('<div className="zy-coupon-card">', progressStart);
   assert.notEqual(progressStart, -1);
   assert.notEqual(progressEnd, -1);
   const deliveryProgress = checkout.slice(progressStart, progressEnd);
 
-  assert.match(deliveryProgress, /<b>\{deliveryProgress\.headline\}<\/b><small>\{deliveryProgress\.detail\}<\/small>/);
-  assert.match(deliveryProgress, /width:\s*`\$\{deliveryProgress\.progressPercent\}%`/);
+  assert.match(deliveryProgress, /DeliveryRewards subtotal=\{itemsSubtotal\} deliveryQuote=\{deliveryQuote\} formatPrice=\{formatPrice\}/);
+  assert.doesNotMatch(deliveryProgress, /deliveryProgress\.showSaving/);
   assert.doesNotMatch(deliveryProgress, /itemsSubtotal >= freeDeliveryThreshold/);
   assert.match(checkout, /const deliveryQuote = resolveDeliveryQuote\(settings, form\.district, itemsSubtotal\)/);
   assert.match(checkout, /const deliveryFee = deliveryQuote\.deliveryFee/);
@@ -164,6 +164,8 @@ test('premium one-page checkout includes accessible validation, focus containmen
   assert.match(checkout, /document\.getElementById\(`checkout-\$\{firstError\}`\)\?\.focus\(\)/);
   assert.match(checkout, /aria-busy=\{isSubmitting\}/);
   assert.match(checkoutStyles, /grid-template-columns: minmax\(0, 1\.08fr\)/);
+  assert.match(checkoutStyles, /\.zy-delivery-rewards/);
+  assert.doesNotMatch(checkoutStyles, /\.zy-delivery-progress/);
   assert.match(checkoutStyles, /@media \(max-width: 600px\)[\s\S]*\.zy-place-order \{ position: sticky/);
   assert.match(checkoutStyles, /@media \(prefers-reduced-motion: reduce\)/);
 });

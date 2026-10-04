@@ -21,6 +21,7 @@ import ProductSpecificationsPanel from '../features/product-experience/ProductSp
 import RelatedProductsRail from '../features/product-experience/RelatedProductsRail';
 import { useCategoryDisplayName } from './CategoryDisplayContext';
 import ProductReviewsAndQuestions from '../features/reviews/ProductReviewsAndQuestions';
+import { DeliveryRewardsNote } from './DeliveryRewards';
 
 interface ProductDetailModalProps {
   product: Product | null;
@@ -241,8 +242,6 @@ export default function ProductDetailModal({
 
   if (!isOpen || !product) return null;
 
-  const promotion = resolveCustomerPromotion(product);
-
   // LKR formatting
   const formatPrice = (amount: number) => {
     return new Intl.NumberFormat('en-LK', {
@@ -252,6 +251,8 @@ export default function ProductDetailModal({
       maximumFractionDigits: 0
     }).format(amount);
   };
+
+  const promotion = resolveCustomerPromotion(product);
 
   // Swipe gesture handlers
   const handleTouchStart = (e: React.TouchEvent) => {
@@ -716,6 +717,7 @@ export default function ProductDetailModal({
                       <div>
                         <span className="text-xs font-bold text-slate-800 block">Delivery available</span>
                         <span className="text-[10px] text-slate-400 block font-light">Final delivery details are confirmed at checkout.</span>
+                        <DeliveryRewardsNote settings={settings} formatPrice={formatPrice} />
                       </div>
                     </div>
                   </div>

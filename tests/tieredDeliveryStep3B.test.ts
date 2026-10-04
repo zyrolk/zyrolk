@@ -209,6 +209,7 @@ test('Step 3B checkout messages: standard, reduced, free and tier-off copy with 
   assert.equal(message(5200, LAUNCH).progressPercent, 100);
 
   const drawer = read('src/features/checkout/PremiumCheckoutDrawer.tsx');
+  assert.match(drawer, /<DeliveryRewards subtotal=\{itemsSubtotal\} deliveryQuote=\{deliveryQuote\} formatPrice=\{formatPrice\} \/>/);
   assert.match(drawer, /deliveryProgress\.showSaving && <div><span>Standard delivery<\/span><b><s>\{formatPrice\(deliveryQuote\.standardCharge\)\}<\/s><\/b><\/div>/);
   assert.match(drawer, /deliveryProgress\.showSaving && <div className="is-discount"><span>You save \{formatPrice\(deliveryQuote\.saving\)\} on delivery<\/span><\/div>/);
 });
