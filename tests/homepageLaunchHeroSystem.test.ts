@@ -160,7 +160,8 @@ test('motion: crossfade, gentle zoom, text rise, paused autoplay and reduced-mot
 test('campaign hero keeps legacy selectors out and stays aligned with the category grid', () => {
   assert.doesNotMatch(hero, /zy-ai-hero|zy-hero-v2/);
   assert.match(styles, /\.zy-campaign-hero \{[\s\S]*width: min\(100%, 80rem\);[\s\S]*margin-inline: auto;/);
-  assert.match(styles, /height: clamp\(18\.75rem, calc\(\(100vw - 1\.3rem\) \* 8 \/ 9\), 21\.25rem\);/);
+  assert.match(styles, /height: clamp\(17rem, calc\(\(100vw - 1\.3rem\) \* 7\.5 \/ 9\), 20rem\);/);
+  assert.match(styles, /height: clamp\(20rem, calc\(25vw \+ 8rem\), 24rem\);/);
   assert.match(styles, /\.zy-campaign-hero-cta \{[\s\S]*?min-height: 2\.75rem;/);
 });
 

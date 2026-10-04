@@ -19,7 +19,7 @@
 
 .zy-campaign-hero-stage {
   position: relative;
-  height: clamp(26rem, 32vw, 30.5rem);
+  height: clamp(24rem, 29vw, 28rem);
   overflow: hidden;
   isolation: isolate;
   border: 1px solid rgba(15, 23, 42, 0.06);
@@ -445,7 +445,7 @@
 
 @media (max-width: 1023px) and (min-width: 768px) {
   .zy-campaign-hero-stage {
-    height: 25rem;
+    height: clamp(20rem, calc(25vw + 8rem), 24rem);
   }
 
   .zy-campaign-hero-slide {
@@ -472,7 +472,7 @@
   }
 
   .zy-campaign-hero-stage {
-    height: clamp(18.75rem, calc((100vw - 1.3rem) * 8 / 9), 21.25rem);
+    height: clamp(17rem, calc((100vw - 1.3rem) * 7.5 / 9), 20rem);
     box-shadow: 0 18px 36px -28px rgba(15, 23, 42, 0.45);
   }
 
