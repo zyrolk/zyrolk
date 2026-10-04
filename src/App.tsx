@@ -41,6 +41,8 @@ import { toFirestoreCartSnapshot } from './services/storefront/cartCloudSnapshot
 import { toFirestoreWishlistSnapshot } from './services/storefront/wishlistCloudSnapshot';
 import { buildStorefrontUrl, parseStorefrontRoute, StorefrontListingMode } from './services/navigation/storefrontRoutes';
 import { formatCategoryDisplayName, resolveCategoryDisplayName, selectExploreMoreProducts } from './services/storefront/launchMerchandising';
+import { catalogStatusFromProductPage } from './services/storefront/catalogState';
+import type { StorefrontCatalogStatus } from './services/storefront/catalogState';
 
 // Components
 import Navbar from './components/Navbar';
@@ -392,6 +394,7 @@ export default function App() {
   const [hasMoreProducts, setHasMoreProducts] = useState<boolean>(false);
   const [loadingMoreProducts, setLoadingMoreProducts] = useState<boolean>(false);
   const [catalogFullyLoaded, setCatalogFullyLoaded] = useState<boolean>(false);
+  const [catalogStatus, setCatalogStatus] = useState<StorefrontCatalogStatus>('loading');
   const [catalogActiveCount, setCatalogActiveCount] = useState<number | null>(null);
   const [catalogCategoryCounts, setCatalogCategoryCounts] = useState<Record<string, number>>({});
 
@@ -832,6 +835,7 @@ export default function App() {
         setLoading(false);
         setCategoriesLoading(false);
         setSettingsUnavailable(true);
+        setCatalogStatus(current => current === 'loading' ? 'timeout' : current);
       }, 8000);
       
       // Live listener on website settings
@@ -841,6 +845,7 @@ export default function App() {
         setStorefrontDataError('Some live marketplace information could not be refreshed. You can retry without losing your cart.');
         if (blocksProducts) setCatalogFullyLoaded(false);
         if (blocksProducts) setLoading(false);
+        if (blocksProducts) setCatalogStatus('error');
       };
 
       const handleCategoryFailure = (error: unknown) => {
@@ -905,6 +910,7 @@ export default function App() {
         setCatalogFullyLoaded(!page.hasMore);
         setStorefrontDataError(null);
         setLoading(false);
+        setCatalogStatus(catalogStatusFromProductPage(page.products.length));
       }, error => handleDataFailure('products', error, true));
       void loadStorefrontHomepageProducts(db)
         .then((homepageProducts) => {
@@ -1598,6 +1604,7 @@ export default function App() {
               reviews={homepageReviews}
               wishlistProductIds={wishlistProductIds}
               loading={loading}
+              catalogStatus={catalogStatus}
               categoriesLoading={categoriesLoading}
               categoriesError={categoriesLoadError}
               onExploreProducts={() => { setCurrentPage('products'); setSelectedCategory('all'); }}

@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { ArrowRight, Grid3X3, Layers3 } from 'lucide-react';
 import { Category, Product, WebsiteSettings } from '../types';
+import { shouldShowCatalogFallback } from '../services/storefront/catalogState';
+import type { StorefrontCatalogStatus } from '../services/storefront/catalogState';
 import HeroBanner from './HeroBanner';
 import HomepageCustomerReviews, { HomepageReview } from './HomepageCustomerReviews';
 import HomepageDealStrip from './HomepageDealStrip';
@@ -46,6 +48,7 @@ interface MarketplaceHomePhase1Props {
   reviews: readonly HomepageReview[];
   wishlistProductIds: ReadonlySet<string>;
   loading: boolean;
+  catalogStatus?: StorefrontCatalogStatus;
   categoriesLoading?: boolean;
   categoriesError?: string | null;
   onExploreProducts: () => void;
@@ -89,6 +92,7 @@ export default function MarketplaceHomePhase1({
   reviews,
   wishlistProductIds,
   loading,
+  catalogStatus = loading ? 'loading' : products.length > 0 ? 'ready' : 'empty',
   categoriesLoading = loading,
   categoriesError = null,
   onExploreProducts,
@@ -158,6 +162,16 @@ export default function MarketplaceHomePhase1({
       ? newArrivalProducts
       : recommendedProducts;
   const hasLiveDeals = discountedProducts.length > 0;
+  const hasAnyLiveShelfProducts = [
+    discountedProducts,
+    featuredProducts,
+    newArrivalProducts,
+    bestSellerProducts,
+    recommendedProducts,
+  ].some(shelfProducts => shelfProducts.length > 0);
+  const catalogFallbackKind = shouldShowCatalogFallback(catalogStatus, loading, hasAnyLiveShelfProducts)
+    ? catalogStatus
+    : null;
 
   const renderShelf = (shelf: {
     id: string;
@@ -396,6 +410,38 @@ export default function MarketplaceHomePhase1({
                 )}
               </button>
             ))}
+          </div>
+        </section>
+      )}
+
+      {catalogFallbackKind && (
+        <section
+          className="zy-home-catalog-state mx-auto mt-4 w-[calc(100%-1rem)] max-w-[80rem] rounded-2xl border border-slate-200 bg-white px-4 py-5 shadow-sm sm:px-6 sm:py-6"
+          role={catalogFallbackKind === 'empty' ? 'status' : 'alert'}
+          aria-live="polite"
+          aria-labelledby="homepage-catalog-state-title"
+        >
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <span className="text-[0.65rem] font-black uppercase tracking-[0.16em] text-brand-blue">
+                {catalogFallbackKind === 'empty' ? 'Catalogue update' : 'Still reconnecting'}
+              </span>
+              <h2 id="homepage-catalog-state-title" className="mt-1 text-lg font-black tracking-tight text-slate-900 sm:text-xl">
+                {catalogFallbackKind === 'empty' ? 'Products are being prepared' : 'Products are taking a little longer to load'}
+              </h2>
+              <p className="mt-1 max-w-2xl text-sm leading-relaxed text-slate-600">
+                {catalogFallbackKind === 'empty'
+                  ? 'Browse categories to discover the collections currently available on Zyro.lk.'
+                  : 'Browse categories while we reconnect to the live catalogue.'}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={onBrowseCategories}
+              className="inline-flex min-h-11 shrink-0 items-center justify-center rounded-full bg-brand-blue px-4 py-2 text-sm font-black text-white transition hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-brand-blue focus:ring-offset-2"
+            >
+              Browse Categories
+            </button>
           </div>
         </section>
       )}
