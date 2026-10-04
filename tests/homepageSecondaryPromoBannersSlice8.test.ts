@@ -21,10 +21,13 @@ test('Slice 8 keeps live secondary banners first and fills only local preview de
 });
 
 test('Slice 8 sits before the product discovery shelves in the reference-led flow', () => {
-  assert.ok(homepage.indexOf('zy-home-secondary-promos') < homepage.indexOf("id: 'homepage-new-arrivals'"));
-  assert.ok(homepage.indexOf("id: 'homepage-new-arrivals'") < homepage.indexOf("id: 'homepage-featured-products'"));
-  assert.ok(homepage.indexOf("id: 'homepage-featured-products'") < homepage.indexOf("id: 'homepage-best-sellers'"));
-  assert.ok(homepage.indexOf('zy-home-secondary-promos') < homepage.indexOf("id: 'homepage-recommended-products'"));
+  const primaryShelf = Math.min(homepage.indexOf('renderShelf(flashDealsShelf)'), homepage.indexOf('renderShelf(newArrivalsShelf)'));
+  const secondaryPromos = homepage.indexOf('zy-home-secondary-promos');
+  assert.ok(primaryShelf < secondaryPromos);
+  assert.ok(secondaryPromos < homepage.indexOf('hasLiveDeals && homepageSections.newArrivals.enabled && renderShelf(newArrivalsShelf)'));
+  assert.ok(homepage.indexOf('renderShelf(featuredShelf)') < homepage.indexOf('renderShelf(bestSellersShelf)'));
+  assert.ok(homepage.indexOf('renderShelf(bestSellersShelf)') < homepage.indexOf('renderShelf(recommendedShelf)'));
+  assert.ok(secondaryPromos < homepage.indexOf('renderShelf(recommendedShelf)'));
   assert.match(homepage, /aria-label="Explore more categories"/);
   assert.match(homepage, /Discover more/);
   assert.match(homepage, /Shop Now/);

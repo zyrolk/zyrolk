@@ -54,7 +54,8 @@ test('empty Featured, Best Sellers and Flash Deals shelves stay hidden', () => {
   assert.match(homepage, /const shouldShowPreviewShelf = Boolean\(previewPresentation\) && shelf\.tone === 'recommended' && !hasLiveProducts;/u);
   assert.match(homepage, /if \(loading \|\| hasLiveProducts\) \{/u);
   assert.match(homepage, /if \(!shouldShowPreviewShelf \|\| !previewPresentation\) return null;/u);
-  for (const shelf of ['flashDeals', 'featured', 'bestSellers']) {
-    assert.match(homepage, new RegExp(`homepageSections\\.${shelf}\\.enabled && renderShelf\\(`, 'u'));
-  }
+  assert.match(homepage, /const hasLiveDeals = homepageSections\.flashDeals\.enabled && discountedProducts\.length > 0/u);
+  assert.match(homepage, /hasLiveDeals\s*\?\s*renderShelf\(flashDealsShelf\)/u);
+  assert.match(homepage, /homepageSections\.featured\.enabled && renderShelf\(featuredShelf\)/u);
+  assert.match(homepage, /homepageSections\.bestSellers\.enabled && renderShelf\(bestSellersShelf\)/u);
 });

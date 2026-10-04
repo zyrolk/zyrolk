@@ -25,8 +25,9 @@ test('Slice 5 keeps live category cards first and fills only local preview densi
 
 test('Slice 5 keeps the row before the new deal strip and existing lower homepage content', () => {
   assert.doesNotMatch(homepage, /<HomepageTrustStrip\s*\/>/);
-  assert.ok(homepage.indexOf('zy-home-category-promos') < homepage.indexOf('zy-foundation-shelf-stack'));
-  assert.ok(homepage.indexOf('zy-home-category-promos') < homepage.indexOf('<HomepageDealStrip'));
+  const firstShelf = Math.min(homepage.indexOf('renderShelf(flashDealsShelf)'), homepage.indexOf('renderShelf(newArrivalsShelf)'));
+  assert.ok(homepage.indexOf('zy-home-category-promos') < firstShelf);
+  assert.ok(firstShelf < homepage.indexOf('zy-home-secondary-promos'));
   assert.match(homepage, /zy-home-category-promos-header/);
   assert.match(homepage, /zy-home-category-promo-cta/);
 });

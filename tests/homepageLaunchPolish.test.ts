@@ -17,10 +17,12 @@ test('Sprint 75B keeps the active homepage focused on shopping discovery and liv
   assert.match(homepage, /import HomepageCustomerReviews/);
   assert.doesNotMatch(homepage, /<HomepageWhyChoose \/>/);
   assert.doesNotMatch(homepage, /<HomepageTrustStrip\s*\/>/);
-  assert.ok(homepage.indexOf('zy-home-category-promos') < homepage.indexOf('<HomepageDealStrip'));
-  assert.ok(homepage.indexOf('<HomepageDealStrip') < homepage.indexOf('zy-home-secondary-promos'));
-  assert.ok(homepage.indexOf('zy-home-category-promos') < homepage.indexOf('zy-foundation-shelf-stack'));
+  const firstShelf = Math.min(homepage.indexOf('renderShelf(flashDealsShelf)'), homepage.indexOf('renderShelf(newArrivalsShelf)'));
+  assert.ok(homepage.indexOf('zy-home-category-promos') < firstShelf);
+  assert.ok(firstShelf < homepage.indexOf('zy-home-secondary-promos'));
   assert.ok(homepage.indexOf('zy-foundation-shelf-stack') < homepage.indexOf('<HomepageCustomerReviews'));
+  assert.doesNotMatch(homepage, /HomepageDealStrip|Shop Today['’]s Picks|Featured picks/);
+  assert.match(homepage, /const hasLiveDeals = homepageSections\.flashDeals\.enabled && discountedProducts\.length > 0/);
   assert.match(homepage, /reviews\.length > 0/);
   assert.match(homepage, /enabled=\{settings\?\.enableReviews !== false\}/);
 });
@@ -95,13 +97,12 @@ test('Sprint 75B styles are premium, responsive, mobile-scrollable, and motion-s
   assert.match(styles, /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.zy-launch-why,[\s\S]*\.zy-launch-reviews \{ animation: none/);
 });
 
-test('mobile homepage reserves dock clearance and keeps the neutral discovery strip compact', () => {
+test('mobile homepage reserves dock clearance without retaining the generic discovery strip', () => {
   assert.match(styles, /\.zy-launch-footer \{ padding: 0\.8rem 0 calc\(5\.25rem \+ env\(safe-area-inset-bottom\)\); \}/);
   assert.match(styles, /\.zy-launch-footer \{[\s\S]*padding: clamp\(2\.5rem, 6vw, 5rem\) 0 1\.5rem;/);
-  assert.match(penpotStyles, /@media \(max-width: 767px\)[\s\S]*\.zy-home-deal-strip \{[\s\S]*min-height: 7\.5rem;[\s\S]*padding: 0\.65rem 0\.8rem;/);
-  assert.match(penpotStyles, /@media \(max-width: 389px\)[\s\S]*\.zy-home-deal-strip \{[\s\S]*min-height: 7\.25rem;/);
   assert.match(penpotStyles, /@media \(max-width: 767px\)[\s\S]*\.zy-home-secondary-promos \{[\s\S]*margin-block: 0\.75rem 0\.25rem;/);
   assert.doesNotMatch(homepage, /20% off|countdown|flash sale/iu);
+  assert.doesNotMatch(penpotStyles, /zy-home-deal-strip/);
 });
 
 test('Sprint 75B does not duplicate or replace the shared ProductCard contract', () => {

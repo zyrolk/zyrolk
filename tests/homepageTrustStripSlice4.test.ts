@@ -29,7 +29,8 @@ test('Slice 4 keeps the existing four factual reassurance claims', () => {
 
 test('Slice 4 preserves the reusable trust data shape while the homepage opts out', () => {
   assert.doesNotMatch(homepage, /<HomepageTrustStrip\s*\/>/);
-  assert.match(homepage, /HomepageDealStrip/);
+  assert.doesNotMatch(homepage, /HomepageDealStrip|Shop Today['’]s Picks|Featured picks/);
+  assert.match(homepage, /renderShelf\(flashDealsShelf\)/);
   assert.match(trust, /TRUST_ITEMS/);
   assert.match(trust, /TRUST_ITEMS\.map/);
   assert.match(trust, /aria-label="Why customers can shop with confidence"/);

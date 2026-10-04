@@ -43,8 +43,9 @@ test('homepage shows only a compact customer-safe fallback for confirmed non-rea
 test('homepage order keeps catalog fallback at the shelf boundary', () => {
   const promo = homepage.indexOf('zy-home-secondary-promos');
   const fallback = homepage.indexOf('zy-home-catalog-state');
-  const shelves = homepage.indexOf('zy-foundation-shelf-stack');
-  assert.ok(promo >= 0 && fallback > promo && shelves > fallback);
-  assert.match(homepage, /<HomepageDealStrip/u);
+  const laterShelves = homepage.indexOf('hasLiveDeals && homepageSections.newArrivals.enabled && renderShelf(newArrivalsShelf)');
+  assert.ok(promo >= 0 && fallback > promo && laterShelves > fallback);
+  assert.ok(Math.min(homepage.indexOf('renderShelf(flashDealsShelf)'), homepage.indexOf('renderShelf(newArrivalsShelf)')) < promo);
+  assert.doesNotMatch(homepage, /HomepageDealStrip|Shop Today['’]s Picks|Featured picks/u);
   assert.match(homepage, /zy-home-secondary-promos/u);
 });

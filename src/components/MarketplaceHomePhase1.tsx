@@ -5,7 +5,6 @@ import { shouldShowCatalogFallback } from '../services/storefront/catalogState';
 import type { StorefrontCatalogStatus } from '../services/storefront/catalogState';
 import HeroBanner from './HeroBanner';
 import HomepageCustomerReviews, { HomepageReview } from './HomepageCustomerReviews';
-import HomepageDealStrip from './HomepageDealStrip';
 import StorefrontProductShelf from './StorefrontProductShelf';
 import HomepagePreviewProductShelf from './HomepagePreviewProductShelf';
 import { HomepagePreviewProductArt } from './HomepagePreviewProductCard';
@@ -156,12 +155,7 @@ export default function MarketplaceHomePhase1({
   const recommendedShelfTitle = homepageSections.recommended.title === 'Recommended Products'
     ? 'Explore More'
     : homepageSections.recommended.title;
-  const dealStripProducts = discountedProducts.length > 0
-    ? discountedProducts
-    : newArrivalProducts.length > 0
-      ? newArrivalProducts
-      : recommendedProducts;
-  const hasLiveDeals = discountedProducts.length > 0;
+  const hasLiveDeals = homepageSections.flashDeals.enabled && discountedProducts.length > 0;
   const hasAnyLiveShelfProducts = [
     discountedProducts,
     featuredProducts,
@@ -214,6 +208,67 @@ export default function MarketplaceHomePhase1({
         onBrowse={onExploreProducts}
       />
     );
+  };
+
+  const flashDealsShelf = {
+    id: 'homepage-flash-deals',
+    eyebrow: 'Live savings',
+    tone: 'deals' as const,
+    title: homepageSections.flashDeals.title,
+    subtitle: homepageSections.flashDeals.subtitle,
+    products: discountedProducts,
+    emptyState: {
+      title: 'No live deals right now',
+      description: 'Products with a genuine active discount will appear here automatically.',
+    },
+  };
+  const newArrivalsShelf = {
+    id: 'homepage-new-arrivals',
+    eyebrow: 'Recently added',
+    tone: 'new' as const,
+    title: homepageSections.newArrivals.title,
+    subtitle: homepageSections.newArrivals.subtitle,
+    products: newArrivalProducts,
+    emptyState: {
+      title: 'No new arrivals right now',
+      description: 'Products marked as new will appear here automatically.',
+    },
+  };
+  const featuredShelf = {
+    id: 'homepage-featured-products',
+    eyebrow: 'Marketplace spotlight',
+    tone: 'featured' as const,
+    title: homepageSections.featured.title,
+    subtitle: homepageSections.featured.subtitle,
+    products: featuredProducts,
+    emptyState: {
+      title: 'No featured products right now',
+      description: 'Published products selected as featured will appear here automatically.',
+    },
+  };
+  const bestSellersShelf = {
+    id: 'homepage-best-sellers',
+    eyebrow: 'Popular picks',
+    tone: 'best-seller' as const,
+    title: homepageSections.bestSellers.title,
+    subtitle: homepageSections.bestSellers.subtitle,
+    products: bestSellerProducts,
+    emptyState: {
+      title: 'No best sellers right now',
+      description: 'Published products marked as best sellers will appear here automatically.',
+    },
+  };
+  const recommendedShelf = {
+    id: 'homepage-recommended-products',
+    eyebrow: 'Explore more',
+    tone: 'recommended' as const,
+    title: recommendedShelfTitle,
+    subtitle: homepageSections.recommended.subtitle,
+    products: recommendedProducts,
+    emptyState: {
+      title: 'More products are being refreshed',
+      description: 'Available published products will appear here as the live catalog is updated.',
+    },
   };
 
   return (
@@ -362,15 +417,13 @@ export default function MarketplaceHomePhase1({
         </section>
       )}
 
-      <HomepageDealStrip
-        products={dealStripProducts}
-        hasLiveDeals={hasLiveDeals}
-        title={hasLiveDeals ? homepageSections.flashDeals.title : 'Shop Today\'s Picks'}
-        subtitle={hasLiveDeals
-          ? homepageSections.flashDeals.subtitle
-          : 'A few live picks worth exploring from the current catalogue.'}
-        onExploreProducts={onExploreProducts}
-      />
+      <div className="zy-foundation-container zy-foundation-shelf-stack">
+        {hasLiveDeals
+          ? renderShelf(flashDealsShelf)
+          : homepageSections.newArrivals.enabled
+            ? renderShelf(newArrivalsShelf)
+            : null}
+      </div>
 
       {secondaryPromoItems.length > 0 && (
         <section className="zy-home-secondary-promos" data-zy-reveal aria-label="Explore more categories">
@@ -447,70 +500,10 @@ export default function MarketplaceHomePhase1({
       )}
 
       <div className="zy-foundation-container zy-foundation-shelf-stack">
-        {homepageSections.flashDeals.enabled && renderShelf({
-          id: 'homepage-flash-deals',
-          eyebrow: 'Live savings',
-          tone: 'deals',
-          title: homepageSections.flashDeals.title,
-          subtitle: homepageSections.flashDeals.subtitle,
-          products: discountedProducts,
-          emptyState: {
-            title: 'No live deals right now',
-            description: 'Products with a genuine active discount will appear here automatically.',
-          },
-        })}
-
-        {homepageSections.newArrivals.enabled && renderShelf({
-          id: 'homepage-new-arrivals',
-          eyebrow: 'Recently added',
-          tone: 'new',
-          title: homepageSections.newArrivals.title,
-          subtitle: homepageSections.newArrivals.subtitle,
-          products: newArrivalProducts,
-          emptyState: {
-            title: 'No new arrivals right now',
-            description: 'Products marked as new will appear here automatically.',
-          },
-        })}
-
-        {homepageSections.featured.enabled && renderShelf({
-          id: 'homepage-featured-products',
-          eyebrow: 'Marketplace spotlight',
-          tone: 'featured',
-          title: homepageSections.featured.title,
-          subtitle: homepageSections.featured.subtitle,
-          products: featuredProducts,
-          emptyState: {
-            title: 'No featured products right now',
-            description: 'Published products selected as featured will appear here automatically.',
-          },
-        })}
-
-        {homepageSections.bestSellers.enabled && renderShelf({
-          id: 'homepage-best-sellers',
-          eyebrow: 'Popular picks',
-          tone: 'best-seller',
-          title: homepageSections.bestSellers.title,
-          subtitle: homepageSections.bestSellers.subtitle,
-          products: bestSellerProducts,
-          emptyState: {
-            title: 'No best sellers right now',
-            description: 'Published products marked as best sellers will appear here automatically.',
-          },
-        })}
-
-        {homepageSections.recommended.enabled && renderShelf({
-          id: 'homepage-recommended-products',
-          eyebrow: 'Explore more',
-          tone: 'recommended',
-          title: recommendedShelfTitle,
-          subtitle: homepageSections.recommended.subtitle,
-          products: recommendedProducts,
-          emptyState: {
-            title: 'More products are being refreshed',
-            description: 'Available published products will appear here as the live catalog is updated.',
-          },
-        })}
+        {hasLiveDeals && homepageSections.newArrivals.enabled && renderShelf(newArrivalsShelf)}
+        {homepageSections.featured.enabled && renderShelf(featuredShelf)}
+        {homepageSections.bestSellers.enabled && renderShelf(bestSellersShelf)}
+        {homepageSections.recommended.enabled && renderShelf(recommendedShelf)}
       </div>
 
       {reviews.length > 0 && (

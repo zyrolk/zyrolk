@@ -23,9 +23,7 @@ const editor = readFileSync('src/components/HeroSliderEditor.tsx', 'utf8');
 const admin = readFileSync('src/components/AdminDashboard.tsx', 'utf8');
 const app = readFileSync('src/App.tsx', 'utf8');
 const homepage = readFileSync('src/components/MarketplaceHomePhase1.tsx', 'utf8');
-const dealStrip = readFileSync('src/components/HomepageDealStrip.tsx', 'utf8');
 const styles = readFileSync('src/styles/launchMerchandising.css', 'utf8');
-const penpotStyles = readFileSync('src/styles/storefrontPenpot.css', 'utf8');
 
 const legacyBanner = (overrides: Partial<HeroBannerSettings> = {}): HeroBannerSettings => ({
   id: 'legacy-1',
@@ -177,19 +175,18 @@ test('campaign hero keeps legacy selectors out and stays aligned with the catego
   assert.match(styles, /\.zy-campaign-hero-cta \{[\s\S]*?min-height: 2\.75rem;/);
 });
 
-test('homepage flow removes the trust strip and places a truthful deal strip before wide category banners', () => {
+test('homepage flow removes generic deal filler and prioritizes real product shelves', () => {
   assert.doesNotMatch(homepage, /import HomepageTrustStrip from/);
   assert.doesNotMatch(homepage, /<HomepageTrustStrip\s*\/>/);
-  const dealIndex = homepage.indexOf('<HomepageDealStrip');
+  const dealIndex = homepage.indexOf('renderShelf(flashDealsShelf)');
+  const newArrivalsIndex = homepage.indexOf('renderShelf(newArrivalsShelf)');
   const secondaryIndex = homepage.indexOf('{secondaryPromoItems.length > 0');
-  assert.ok(dealIndex > homepage.indexOf('</section>'));
-  assert.ok(dealIndex < secondaryIndex);
-  assert.match(homepage, /const dealStripProducts = discountedProducts\.length > 0/);
-  assert.match(homepage, /hasLiveDeals=\{hasLiveDeals\}/);
-  assert.match(dealStrip, /products\.slice\(0, 3\)\.filter\(product => product\.imageUrl\)/);
-  assert.match(dealStrip, /hasLiveDeals \? 'Live savings' : 'Featured picks'/);
-  assert.doesNotMatch(dealStrip, /20% OFF|countdown|promotionEnabled/);
-  assert.match(penpotStyles, /\.zy-home-deal-strip/);
+  assert.ok(Math.min(dealIndex, newArrivalsIndex) < secondaryIndex);
+  assert.match(homepage, /const hasLiveDeals = homepageSections\.flashDeals\.enabled && discountedProducts\.length > 0/);
+  assert.match(homepage, /renderShelf\(flashDealsShelf\)/);
+  assert.match(homepage, /renderShelf\(newArrivalsShelf\)/);
+  assert.match(homepage, /hasLiveDeals && homepageSections\.newArrivals\.enabled && renderShelf\(newArrivalsShelf\)/);
+  assert.doesNotMatch(homepage, /HomepageDealStrip|Shop Today['’]s Picks|Featured picks/);
 });
 
 test('admin editor: sequential sortOrder, new fields and backward-compatible payload', () => {

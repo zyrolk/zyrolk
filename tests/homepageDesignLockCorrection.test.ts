@@ -61,15 +61,17 @@ test('homepage remains the existing live-data flow with the preferred reference 
     'zy-foundation-hero-wrap',
     'zy-foundation-category-dock',
     'zy-home-category-promos',
-    '<HomepageDealStrip',
+    'PRIMARY_SHELF',
     'zy-home-secondary-promos',
-    "id: 'homepage-new-arrivals'",
-    "id: 'homepage-featured-products'",
-    "id: 'homepage-best-sellers'",
-    "id: 'homepage-recommended-products'",
+    'hasLiveDeals && homepageSections.newArrivals.enabled && renderShelf(newArrivalsShelf)',
+    'renderShelf(featuredShelf)',
+    'renderShelf(bestSellersShelf)',
+    'renderShelf(recommendedShelf)',
   ];
-  const positions = order.map(marker => homepage.indexOf(marker));
+  const primaryShelf = Math.min(homepage.indexOf('renderShelf(flashDealsShelf)'), homepage.indexOf('renderShelf(newArrivalsShelf)'));
+  const positions = order.map(marker => marker === 'PRIMARY_SHELF' ? primaryShelf : homepage.indexOf(marker));
   assert.ok(positions.every(position => position >= 0));
   assert.ok(positions.every((position, index) => index === 0 || position > positions[index - 1]));
   assert.doesNotMatch(homepage, /<HomepageTrustStrip\s*\/>/);
+  assert.doesNotMatch(homepage, /HomepageDealStrip|Shop Today['’]s Picks|Featured picks/);
 });

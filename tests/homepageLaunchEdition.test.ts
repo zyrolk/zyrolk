@@ -14,10 +14,10 @@ test('Sprint 75A retains all four premium homepage surfaces', () => {
   assert.match(homepage, /zy-launch-home/);
   assert.match(homepage, /<HeroBanner/);
   assert.match(homepage, /zy-foundation-category-dock/);
-  assert.equal((homepage.match(/renderShelf\(\{/g) || []).length, 5);
+  assert.equal((homepage.match(/const (?:flashDeals|newArrivals|featured|bestSellers|recommended)Shelf = \{/g) || []).length, 5);
   assert.match(homepage, /<StorefrontProductShelf/);
   assert.doesNotMatch(homepage, /<HomepageTrustStrip\s*\/>/);
-  assert.match(homepage, /<HomepageDealStrip/);
+  assert.doesNotMatch(homepage, /HomepageDealStrip|Shop Today['’]s Picks|Featured picks/);
   assert.doesNotMatch(homepage, /<Footer/iu);
 });
 

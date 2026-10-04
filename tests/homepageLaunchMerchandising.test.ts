@@ -182,11 +182,13 @@ test('homepage keeps the approved merchandising order and category authority', (
     'zy-foundation-hero-wrap',
     'zy-foundation-category-dock',
     'zy-home-category-promos',
+    'PRIMARY_SHELF',
     'zy-home-secondary-promos',
-    "id: 'homepage-flash-deals'",
-    "id: 'homepage-recommended-products'",
+    'renderShelf(featuredShelf)',
+    'renderShelf(recommendedShelf)',
   ];
-  const positions = order.map(marker => homepage.indexOf(marker));
+  const primaryShelf = Math.min(homepage.indexOf('renderShelf(flashDealsShelf)'), homepage.indexOf('renderShelf(newArrivalsShelf)'));
+  const positions = order.map(marker => marker === 'PRIMARY_SHELF' ? primaryShelf : homepage.indexOf(marker));
   assert.ok(positions.every(position => position >= 0));
   assert.ok(positions.every((position, index) => index === 0 || position > positions[index - 1]));
   assert.match(homepage, /onClick: \(\) => onSelectCategory\(category\.id\)/);
