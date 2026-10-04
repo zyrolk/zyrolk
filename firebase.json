@@ -78,6 +78,10 @@
         "function": "api"
       },
       {
+        "source": "/products/*",
+        "function": "api"
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }

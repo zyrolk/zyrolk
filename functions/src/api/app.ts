@@ -11,6 +11,7 @@ import { registerAdminProductRoutes } from "./routes/adminProducts";
 import { adminAppCheck, adminAuth, adminDb } from "./firebase";
 import { appLogger } from "./logging";
 import { recordSupplierOperationalAlertSafely } from "./suppliers/supplierOperationalAlerts";
+import { createPublicProductMetadataHandler, isPublicProductMetadataRequest } from "./products/publicProductMetadata";
 
 const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
@@ -95,7 +96,8 @@ export function createApiApp(): express.Express {
     // Functions only bypass App Check when running in the Firebase emulator and
     // serving an exact loopback host. Deployed Functions always verify tokens.
     const isFunctionsEmulatorRequest = process.env.FUNCTIONS_EMULATOR === "true" && isExactLocalhost(req.hostname || "");
-    if (isFunctionsEmulatorRequest || !runtimeConfig.requireAppCheck || req.path === "/sitemap.xml") {
+    if (isFunctionsEmulatorRequest || !runtimeConfig.requireAppCheck || req.path === "/sitemap.xml"
+      || isPublicProductMetadataRequest(req.method, req.path)) {
       next();
       return;
     }
@@ -151,6 +153,11 @@ export function createApiApp(): express.Express {
   });
   registerSupplierRoutes(app);
   registerSupplierPortalRoutes(app, { db: adminDb, auth: adminAuth });
+
+  app.get("/products/:documentId", createPublicProductMetadataHandler({
+    db: adminDb,
+    logError: (message, error) => appLogger.error(message, { error }),
+  }));
 
   app.post("/api/monitoring/client-error", (req, res) => {
     const context = typeof req.body?.context === "string" ? req.body.context.trim().slice(0, 100) : "client-error";
