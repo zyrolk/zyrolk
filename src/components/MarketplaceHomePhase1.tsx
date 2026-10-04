@@ -3,7 +3,7 @@ import { ArrowRight, Grid3X3, Layers3 } from 'lucide-react';
 import { Category, Product, WebsiteSettings } from '../types';
 import HeroBanner from './HeroBanner';
 import HomepageCustomerReviews, { HomepageReview } from './HomepageCustomerReviews';
-import HomepageTrustStrip from './HomepageTrustStrip';
+import HomepageDealStrip from './HomepageDealStrip';
 import StorefrontProductShelf from './StorefrontProductShelf';
 import HomepagePreviewProductShelf from './HomepagePreviewProductShelf';
 import { HomepagePreviewProductArt } from './HomepagePreviewProductCard';
@@ -152,6 +152,12 @@ export default function MarketplaceHomePhase1({
   const recommendedShelfTitle = homepageSections.recommended.title === 'Recommended Products'
     ? 'Explore More'
     : homepageSections.recommended.title;
+  const dealStripProducts = discountedProducts.length > 0
+    ? discountedProducts
+    : newArrivalProducts.length > 0
+      ? newArrivalProducts
+      : recommendedProducts;
+  const hasLiveDeals = discountedProducts.length > 0;
 
   const renderShelf = (shelf: {
     id: string;
@@ -291,10 +297,6 @@ export default function MarketplaceHomePhase1({
         )}
       </section>
 
-      <div className="zy-foundation-container zy-launch-trust-wrap" data-zy-reveal>
-        <HomepageTrustStrip />
-      </div>
-
       {promoCategoryItems.length > 0 && (
         <section className="zy-home-category-promos" data-zy-reveal aria-labelledby="homepage-category-promos-title">
           <header className="zy-home-category-promos-header">
@@ -345,6 +347,16 @@ export default function MarketplaceHomePhase1({
           </div>
         </section>
       )}
+
+      <HomepageDealStrip
+        products={dealStripProducts}
+        hasLiveDeals={hasLiveDeals}
+        title={hasLiveDeals ? homepageSections.flashDeals.title : 'Shop Today\'s Picks'}
+        subtitle={hasLiveDeals
+          ? homepageSections.flashDeals.subtitle
+          : 'A few live picks worth exploring from the current catalogue.'}
+        onExploreProducts={onExploreProducts}
+      />
 
       {secondaryPromoItems.length > 0 && (
         <section className="zy-home-secondary-promos" data-zy-reveal aria-label="Explore more categories">

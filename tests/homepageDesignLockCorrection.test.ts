@@ -60,8 +60,8 @@ test('homepage remains the existing live-data flow with the preferred reference 
   const order = [
     'zy-foundation-hero-wrap',
     'zy-foundation-category-dock',
-    '<HomepageTrustStrip />',
     'zy-home-category-promos',
+    '<HomepageDealStrip',
     'zy-home-secondary-promos',
     "id: 'homepage-new-arrivals'",
     "id: 'homepage-featured-products'",
@@ -71,4 +71,5 @@ test('homepage remains the existing live-data flow with the preferred reference 
   const positions = order.map(marker => homepage.indexOf(marker));
   assert.ok(positions.every(position => position >= 0));
   assert.ok(positions.every((position, index) => index === 0 || position > positions[index - 1]));
+  assert.doesNotMatch(homepage, /<HomepageTrustStrip\s*\/>/);
 });

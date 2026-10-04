@@ -23,10 +23,10 @@ test('Slice 5 keeps live category cards first and fills only local preview densi
   assert.doesNotMatch(homepage, /up to \d+%|limited[- ]time|save \d+|fake|mock|sample|urgent/iu);
 });
 
-test('Slice 5 keeps the row directly after trust and before the existing lower homepage content', () => {
-  assert.ok(homepage.indexOf('<HomepageTrustStrip />') < homepage.indexOf('zy-home-category-promos'));
-  assert.ok(homepage.indexOf('<HomepageTrustStrip />') < homepage.indexOf('zy-home-category-promos'));
+test('Slice 5 keeps the row before the new deal strip and existing lower homepage content', () => {
+  assert.doesNotMatch(homepage, /<HomepageTrustStrip\s*\/>/);
   assert.ok(homepage.indexOf('zy-home-category-promos') < homepage.indexOf('zy-foundation-shelf-stack'));
+  assert.ok(homepage.indexOf('zy-home-category-promos') < homepage.indexOf('<HomepageDealStrip'));
   assert.match(homepage, /zy-home-category-promos-header/);
   assert.match(homepage, /zy-home-category-promo-cta/);
 });

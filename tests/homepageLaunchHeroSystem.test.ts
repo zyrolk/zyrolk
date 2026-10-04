@@ -23,7 +23,9 @@ const editor = readFileSync('src/components/HeroSliderEditor.tsx', 'utf8');
 const admin = readFileSync('src/components/AdminDashboard.tsx', 'utf8');
 const app = readFileSync('src/App.tsx', 'utf8');
 const homepage = readFileSync('src/components/MarketplaceHomePhase1.tsx', 'utf8');
+const dealStrip = readFileSync('src/components/HomepageDealStrip.tsx', 'utf8');
 const styles = readFileSync('src/styles/launchMerchandising.css', 'utf8');
+const penpotStyles = readFileSync('src/styles/storefrontPenpot.css', 'utf8');
 
 const legacyBanner = (overrides: Partial<HeroBannerSettings> = {}): HeroBannerSettings => ({
   id: 'legacy-1',
@@ -169,9 +171,25 @@ test('motion: crossfade, gentle zoom, text rise, paused autoplay and reduced-mot
 test('campaign hero keeps legacy selectors out and stays aligned with the category grid', () => {
   assert.doesNotMatch(hero, /zy-ai-hero|zy-hero-v2/);
   assert.match(styles, /\.zy-campaign-hero \{[\s\S]*width: min\(100%, 80rem\);[\s\S]*margin-inline: auto;/);
-  assert.match(styles, /height: clamp\(17rem, calc\(\(100vw - 1\.3rem\) \* 7\.5 \/ 9\), 20rem\);/);
+  assert.match(styles, /height: clamp\(16rem, calc\(50vw \+ 4\.75rem\), 18\.125rem\);/);
+  assert.match(styles, /@media \(max-width: 767px\) and \(min-width: 431px\)[\s\S]*height: clamp\(18\.125rem, calc\(8\.93vw \+ 15\.72rem\), 20rem\);/);
   assert.match(styles, /height: clamp\(20rem, calc\(25vw \+ 8rem\), 24rem\);/);
   assert.match(styles, /\.zy-campaign-hero-cta \{[\s\S]*?min-height: 2\.75rem;/);
+});
+
+test('homepage flow removes the trust strip and places a truthful deal strip before wide category banners', () => {
+  assert.doesNotMatch(homepage, /import HomepageTrustStrip from/);
+  assert.doesNotMatch(homepage, /<HomepageTrustStrip\s*\/>/);
+  const dealIndex = homepage.indexOf('<HomepageDealStrip');
+  const secondaryIndex = homepage.indexOf('{secondaryPromoItems.length > 0');
+  assert.ok(dealIndex > homepage.indexOf('</section>'));
+  assert.ok(dealIndex < secondaryIndex);
+  assert.match(homepage, /const dealStripProducts = discountedProducts\.length > 0/);
+  assert.match(homepage, /hasLiveDeals=\{hasLiveDeals\}/);
+  assert.match(dealStrip, /products\.slice\(0, 3\)\.filter\(product => product\.imageUrl\)/);
+  assert.match(dealStrip, /hasLiveDeals \? 'Live savings' : 'Featured picks'/);
+  assert.doesNotMatch(dealStrip, /20% OFF|countdown|promotionEnabled/);
+  assert.match(penpotStyles, /\.zy-home-deal-strip/);
 });
 
 test('admin editor: sequential sortOrder, new fields and backward-compatible payload', () => {

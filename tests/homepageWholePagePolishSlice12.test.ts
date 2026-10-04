@@ -10,8 +10,8 @@ test('Slice 12 keeps the reference-led homepage order without changing product p
   const order = [
     'zy-foundation-hero-wrap',
     'phase-one-categories-title',
-    '<HomepageTrustStrip />',
     'zy-home-category-promos',
+    '<HomepageDealStrip',
     'zy-home-secondary-promos',
     "id: 'homepage-flash-deals'",
     "id: 'homepage-new-arrivals'",
@@ -27,6 +27,7 @@ test('Slice 12 keeps the reference-led homepage order without changing product p
   assert.match(homepage, /const recommendedShelfTitle = homepageSections\.recommended\.title === 'Recommended Products'\s+\? 'Explore More'/);
   assert.match(homepage, /title: recommendedShelfTitle/);
   assert.match(homepage, /title: 'More products are being refreshed'/);
+  assert.doesNotMatch(homepage, /<HomepageTrustStrip\s*\/>/);
 });
 
 test('Slice 12 aligns the active homepage to one scoped width and compact rhythm', () => {

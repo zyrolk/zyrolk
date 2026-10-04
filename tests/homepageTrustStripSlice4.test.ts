@@ -27,9 +27,9 @@ test('Slice 4 keeps the existing four factual reassurance claims', () => {
   assert.doesNotMatch(trust, /Secure Payments|card payments?|online payments?|PayHere|100% Safe|Easy Returns|guaranteed|24\/7/iu);
 });
 
-test('Slice 4 preserves the existing homepage placement and static data shape', () => {
-  assert.match(homepage, /<HomepageTrustStrip \/>/);
-  assert.ok(homepage.indexOf('<HomepageTrustStrip />') < homepage.indexOf('zy-home-category-promos'));
+test('Slice 4 preserves the reusable trust data shape while the homepage opts out', () => {
+  assert.doesNotMatch(homepage, /<HomepageTrustStrip\s*\/>/);
+  assert.match(homepage, /HomepageDealStrip/);
   assert.match(trust, /TRUST_ITEMS/);
   assert.match(trust, /TRUST_ITEMS\.map/);
   assert.match(trust, /aria-label="Why customers can shop with confidence"/);

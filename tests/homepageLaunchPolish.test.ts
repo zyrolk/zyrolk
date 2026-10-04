@@ -15,7 +15,9 @@ test('Sprint 75B keeps the active homepage focused on shopping discovery and liv
   assert.doesNotMatch(homepage, /import HomepageWhyChoose from '\.\/HomepageWhyChoose'/);
   assert.match(homepage, /import HomepageCustomerReviews/);
   assert.doesNotMatch(homepage, /<HomepageWhyChoose \/>/);
-  assert.ok(homepage.indexOf('<HomepageTrustStrip />') < homepage.indexOf('zy-home-category-promos'));
+  assert.doesNotMatch(homepage, /<HomepageTrustStrip\s*\/>/);
+  assert.ok(homepage.indexOf('zy-home-category-promos') < homepage.indexOf('<HomepageDealStrip'));
+  assert.ok(homepage.indexOf('<HomepageDealStrip') < homepage.indexOf('zy-home-secondary-promos'));
   assert.ok(homepage.indexOf('zy-home-category-promos') < homepage.indexOf('zy-foundation-shelf-stack'));
   assert.ok(homepage.indexOf('zy-foundation-shelf-stack') < homepage.indexOf('<HomepageCustomerReviews'));
   assert.match(homepage, /reviews\.length > 0/);
