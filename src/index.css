@@ -3214,7 +3214,7 @@ textarea {
   .zy-launch-review-card { width: min(82vw, 19rem); min-width: min(82vw, 19rem); scroll-snap-align: start; }
   .zy-launch-reviews-empty { min-height: 13rem; align-items: flex-start; flex-direction: column; }
 
-  .zy-launch-footer { padding: 0.8rem 0 0.75rem; }
+  .zy-launch-footer { padding: 0.8rem 0 calc(5.25rem + env(safe-area-inset-bottom)); }
   .zy-launch-footer-container { width: min(100% - 1rem, 86rem); }
   .zy-launch-footer-cta { grid-template-columns: 1fr; gap: 0.7rem; border-radius: 1.15rem; padding: 0.85rem; }
   .zy-launch-footer-cta-icon { width: 2.65rem; height: 2.65rem; border-radius: 0.85rem; }

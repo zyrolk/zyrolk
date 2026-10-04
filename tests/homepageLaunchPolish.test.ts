@@ -9,6 +9,7 @@ const reviews = readFileSync('src/components/HomepageCustomerReviews.tsx', 'utf8
 const footer = readFileSync('src/components/Footer.tsx', 'utf8');
 const productCard = readFileSync('src/components/ProductCard.tsx', 'utf8');
 const styles = readFileSync('src/index.css', 'utf8');
+const penpotStyles = readFileSync('src/styles/storefrontPenpot.css', 'utf8');
 const catalog = readFileSync('src/services/storefront/storefrontCatalog.ts', 'utf8');
 
 test('Sprint 75B keeps the active homepage focused on shopping discovery and live reviews', () => {
@@ -92,6 +93,15 @@ test('Sprint 75B styles are premium, responsive, mobile-scrollable, and motion-s
   assert.match(styles, /@media \(max-width: 767px\)[\s\S]*\.zy-launch-reviews-grid[\s\S]*scroll-snap-type: x mandatory/);
   assert.match(styles, /@media \(max-width: 389px\)[\s\S]*\.zy-launch-why-grid \{ grid-template-columns: 1fr/);
   assert.match(styles, /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.zy-launch-why,[\s\S]*\.zy-launch-reviews \{ animation: none/);
+});
+
+test('mobile homepage reserves dock clearance and keeps the neutral discovery strip compact', () => {
+  assert.match(styles, /\.zy-launch-footer \{ padding: 0\.8rem 0 calc\(5\.25rem \+ env\(safe-area-inset-bottom\)\); \}/);
+  assert.match(styles, /\.zy-launch-footer \{[\s\S]*padding: clamp\(2\.5rem, 6vw, 5rem\) 0 1\.5rem;/);
+  assert.match(penpotStyles, /@media \(max-width: 767px\)[\s\S]*\.zy-home-deal-strip \{[\s\S]*min-height: 7\.5rem;[\s\S]*padding: 0\.65rem 0\.8rem;/);
+  assert.match(penpotStyles, /@media \(max-width: 389px\)[\s\S]*\.zy-home-deal-strip \{[\s\S]*min-height: 7\.25rem;/);
+  assert.match(penpotStyles, /@media \(max-width: 767px\)[\s\S]*\.zy-home-secondary-promos \{[\s\S]*margin-block: 0\.75rem 0\.25rem;/);
+  assert.doesNotMatch(homepage, /20% off|countdown|flash sale/iu);
 });
 
 test('Sprint 75B does not duplicate or replace the shared ProductCard contract', () => {
