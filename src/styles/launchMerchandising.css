@@ -211,7 +211,7 @@
   position: absolute;
   z-index: 1;
   inset: 0;
-  background: linear-gradient(90deg, rgba(var(--zy-ch-scrim), 0.92) 0%, rgba(var(--zy-ch-scrim), 0.7) 30%, rgba(var(--zy-ch-scrim), 0) 56%);
+  background: linear-gradient(90deg, rgba(var(--zy-ch-scrim), 0.74) 0%, rgba(var(--zy-ch-scrim), 0.42) 28%, rgba(var(--zy-ch-scrim), 0) 50%);
   content: '';
   pointer-events: none;
 }
@@ -532,9 +532,7 @@
   }
 
   .zy-campaign-hero-slide[data-artwork='true']::after {
-    background:
-      linear-gradient(180deg, rgba(var(--zy-ch-scrim), 0.9) 0%, rgba(var(--zy-ch-scrim), 0.62) 42%, rgba(var(--zy-ch-scrim), 0) 68%),
-      linear-gradient(90deg, rgba(var(--zy-ch-scrim), 0.55) 0%, rgba(var(--zy-ch-scrim), 0) 58%);
+    background: linear-gradient(180deg, rgba(var(--zy-ch-scrim), 0.78) 0%, rgba(var(--zy-ch-scrim), 0.44) 36%, rgba(var(--zy-ch-scrim), 0) 60%);
   }
 
   .zy-campaign-hero-artwork img {
