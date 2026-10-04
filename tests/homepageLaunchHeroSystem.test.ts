@@ -154,7 +154,16 @@ test('motion: crossfade, gentle zoom, text rise, paused autoplay and reduced-mot
   assert.doesNotMatch(hero, /setInterval/);
   assert.match(hero, /onMouseEnter=\{\(\) => setIsPlaying\(false\)\}/);
   assert.match(hero, /onFocusCapture=\{\(\) => setIsPlaying\(false\)\}/);
+  assert.match(hero, /key=\{activeSlide\.id\}/);
+  assert.match(styles, /@keyframes zy-campaign-hero-copy-rise[\s\S]*opacity: 0;[\s\S]*transform: translateY\(var\(--zy-ch-copy-shift, 8px\)\)[\s\S]*opacity: 1;/);
+  assert.match(styles, /@keyframes zy-campaign-hero-cta-rise[\s\S]*transform: translateY\(6px\) scale\(0\.98\)[\s\S]*transform: translateY\(0\) scale\(1\)/);
+  assert.match(styles, /\.zy-campaign-hero-badge \{[\s\S]*animation: zy-campaign-hero-copy-rise 340ms[^;]*both;/);
+  assert.match(styles, /\.zy-campaign-hero-copy h1 \{[\s\S]*--zy-ch-copy-shift: 12px;[\s\S]*animation: zy-campaign-hero-copy-rise 480ms[^;]*80ms both;/);
+  assert.match(styles, /\.zy-campaign-hero-subtitle \{[\s\S]*animation: zy-campaign-hero-copy-rise 400ms[^;]*150ms both;/);
+  assert.match(styles, /\.zy-campaign-hero-cta \{[\s\S]*animation: zy-campaign-hero-cta-rise 350ms[^;]*220ms both;/);
+  assert.doesNotMatch(styles, /zy-campaign-hero-(?:copy|cta)-(?:rise|rise-cta)[^\n]*infinite/);
   assert.match(styles, /@media \(prefers-reduced-motion: reduce\)[\s\S]*animation: none !important/);
+  assert.match(styles, /\.zy-campaign-hero-copy,\s*\.zy-campaign-hero-copy > \* \{[\s\S]*opacity: 1 !important;[\s\S]*transform: none !important;/);
 });
 
 test('campaign hero keeps legacy selectors out and stays aligned with the category grid', () => {
