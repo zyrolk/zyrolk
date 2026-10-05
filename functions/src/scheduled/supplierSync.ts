@@ -46,6 +46,11 @@ import {
 } from "../api/suppliers/supplierSyncAccountGuard";
 import { createSupplierSyncJob, SupplierSyncJobProgressInput } from "../api/suppliers/supplierSyncJobs";
 import {
+  assertSupplierSyncCursor,
+  commitSupplierSyncPage,
+  getSupplierSyncPageCommit,
+} from "../api/suppliers/supplierSyncEvidence";
+import {
   fingerprintSupplierSyncRequest,
   fingerprintSupplierSyncContinuationScope,
   normalizeSupplierSyncRequest,
@@ -377,6 +382,7 @@ interface SyncMetrics {
   productsQueued: number;
   productsImported: number;
   productsUpdated: number;
+  productsRejected: number;
   productsDeleted: number;
   productsSkipped: number;
   productsFailed: number;
@@ -400,6 +406,8 @@ export interface SupplierSyncRunOptions {
   batchId?: string;
   syncRequest?: SupplierSyncRequest;
   control?: {
+    attemptId?: string;
+    attemptNumber?: number;
     reportProgress(progress: SupplierSyncJobProgressInput): Promise<void>;
     reportAttemptContext?(context: {
       sourceId: string;
@@ -419,6 +427,7 @@ export interface SupplierSyncRunResult {
   productsQueued: number;
   productsImported: number;
   productsUpdated: number;
+  productsRejected: number;
   productsDeleted: number;
   productsSkipped: number;
   productsFailed: number;
@@ -1636,6 +1645,7 @@ async function writeHistory(
     productsQueued: metrics.productsQueued,
     productsImported: metrics.productsImported,
     productsUpdated: metrics.productsUpdated,
+    productsRejected: metrics.productsRejected,
     productsDeleted: metrics.productsDeleted,
     productsSkipped: metrics.productsSkipped,
     productsFailed: metrics.productsFailed,
@@ -3114,6 +3124,7 @@ const buildRunResult = (
   productsQueued: metrics.productsQueued,
   productsImported: metrics.productsImported,
   productsUpdated: metrics.productsUpdated,
+  productsRejected: metrics.productsRejected,
   productsDeleted: metrics.productsDeleted,
   productsSkipped: metrics.productsSkipped,
   productsFailed: metrics.productsFailed,
@@ -3149,6 +3160,7 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
     productsQueued: 0,
     productsImported: 0,
     productsUpdated: 0,
+    productsRejected: 0,
     productsDeleted: 0,
     productsSkipped: 0,
     productsFailed: 0,
@@ -3490,6 +3502,7 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
           && source.catalogSync?.syncJobId === batchId;
         const initialTraversalPages = resumesTraversal ? Number(source.catalogSync?.pagesProcessed || 0) : 0;
         const initialResumeCount = resumesTraversal ? Number(source.catalogSync?.resumeCount || 0) : 0;
+        const initialTraversalRejected = resumesTraversal ? Number(source.catalogSync?.productsRejected || 0) : 0;
         const hasPersistentFilters = Boolean(source.settings?.categoriesFilter?.length || source.settings?.brandFilter);
         // Limited / filtered / incremental runs must never reconcile removals for
         // products that were intentionally left unscanned.
@@ -3500,6 +3513,76 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
         const incrementalRequest = syncRequest.mode === "incremental"
           ? resolveSupplierIncrementalCatalogRequest(connector.syncCapabilities!, source)
           : undefined;
+        const buildSourceCheckpointPatch = (checkpoint: SupplierCatalogTraversalCheckpoint): Record<string, unknown> => ({
+          catalogCursor: checkpoint.cursor,
+          catalogSync: checkpoint,
+          catalogSyncMetrics: {
+            pagesProcessed: checkpoint.pagesProcessed,
+            productsScanned: checkpoint.productsScanned,
+            productsObserved: checkpoint.productsObserved,
+            productsImported: checkpoint.productsImported,
+            productsRejected: checkpoint.productsRejected || 0,
+            invalidProducts: checkpoint.invalidProducts,
+            deletionReconciliationEligible: checkpoint.deletionReconciliationEligible,
+            cursor: checkpoint.cursor,
+            syncMode: checkpoint.syncMode,
+            totalProductLimit: checkpoint.totalProductLimit,
+            catalogTotalProducts: checkpoint.catalogTotalProducts,
+            catalogTotalReliability: checkpoint.catalogTotalReliability,
+            terminationReason: checkpoint.terminationReason,
+            elapsedTimeMs: Math.max(0, Date.now() - new Date(checkpoint.startedAt).getTime()),
+            lastCompletedTraversal: checkpoint.syncMode === "full"
+              && checkpoint.deletionReconciliationEligible
+              && checkpoint.terminationReason === "catalog_complete"
+              ? checkpoint.traversalId
+              : null,
+            resumeCount: checkpoint.resumeCount,
+            updatedAt: checkpoint.lastCheckpointAt,
+          },
+          ...(checkpoint.syncMode === "full"
+            && checkpoint.deletionReconciliationEligible
+            && checkpoint.terminationReason === "catalog_complete" ? {
+            lastCompletedCatalogTraversal: {
+              traversalId: checkpoint.traversalId,
+              pagesProcessed: checkpoint.pagesProcessed,
+              productsScanned: checkpoint.productsScanned,
+              productsImported: checkpoint.productsImported,
+              startedAt: checkpoint.startedAt,
+              completedAt: checkpoint.lastCheckpointAt,
+              deltaToken: checkpoint.deltaToken,
+              resumeCount: checkpoint.resumeCount,
+            },
+          } : {}),
+        });
+        const reportSourceCheckpoint = async (checkpoint: SupplierCatalogTraversalCheckpoint): Promise<void> => {
+          if (hasWritableSources) {
+            await heartbeatSyncExecutionLocks(sources.filter((candidate) => candidate.settings?.dryRunMode !== true), batchId);
+          }
+          const hasSingleSourceTotal = totalSourceCount === 1 && checkpoint.catalogTotalProducts !== null;
+          const isLimitUpperBound = totalSourceCount === 1
+            && checkpoint.totalProductLimit !== null
+            && !hasSingleSourceTotal;
+          await reportProgress({
+            phase: checkpoint.status === "reconciling" ? "reconciling" : "catalog_traversal",
+            totalSources: totalSourceCount,
+            currentSourceId: source.id,
+            pagesProcessed: metrics.pagesProcessed + Math.max(0, checkpoint.pagesProcessed - initialTraversalPages),
+            determination: hasSingleSourceTotal
+              && checkpoint.catalogTotalReliability === "exact"
+              && checkpoint.totalProductLimit === null
+              ? "determinate"
+              : "indeterminate",
+            basis: hasSingleSourceTotal
+              ? "catalog_total"
+              : isLimitUpperBound ? "limit_upper_bound" : "unknown",
+            totalProducts: hasSingleSourceTotal
+              ? checkpoint.catalogTotalProducts
+              : isLimitUpperBound ? checkpoint.totalProductLimit : null,
+            totalProductsReliability: hasSingleSourceTotal
+              ? checkpoint.catalogTotalReliability
+              : isLimitUpperBound ? "reported" : "unknown",
+          });
+        };
         const traversalResult = await runSupplierCatalogTraversal({
           connector,
           pageSize: normalizeSupplierCatalogPageSize(sourcePageSize),
@@ -3530,73 +3613,62 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
             });
           },
           persistCheckpoint: async (checkpoint) => {
-            if (!dryRunMode) await adminDb.collection("supplierSources").doc(source.id).set({
-              catalogCursor: checkpoint.cursor,
-              catalogSync: checkpoint,
-              catalogSyncMetrics: {
-                pagesProcessed: checkpoint.pagesProcessed,
-                productsScanned: checkpoint.productsScanned,
-                productsObserved: checkpoint.productsObserved,
-                productsImported: checkpoint.productsImported,
-                invalidProducts: checkpoint.invalidProducts,
-                deletionReconciliationEligible: checkpoint.deletionReconciliationEligible,
-                cursor: checkpoint.cursor,
-                syncMode: checkpoint.syncMode,
-                totalProductLimit: checkpoint.totalProductLimit,
-                catalogTotalProducts: checkpoint.catalogTotalProducts,
-                catalogTotalReliability: checkpoint.catalogTotalReliability,
-                terminationReason: checkpoint.terminationReason,
-                elapsedTimeMs: Math.max(0, Date.now() - new Date(checkpoint.startedAt).getTime()),
-                lastCompletedTraversal: checkpoint.syncMode === "full"
-                  && checkpoint.deletionReconciliationEligible
-                  && checkpoint.terminationReason === "catalog_complete"
-                  ? checkpoint.traversalId
-                  : null,
-                resumeCount: checkpoint.resumeCount,
-                updatedAt: checkpoint.lastCheckpointAt,
-              },
-              ...(checkpoint.syncMode === "full"
-                && checkpoint.deletionReconciliationEligible
-                && checkpoint.terminationReason === "catalog_complete" ? {
-                lastCompletedCatalogTraversal: {
-                  traversalId: checkpoint.traversalId,
-                  pagesProcessed: checkpoint.pagesProcessed,
-                  productsScanned: checkpoint.productsScanned,
-                  productsImported: checkpoint.productsImported,
-                  startedAt: checkpoint.startedAt,
-                  completedAt: checkpoint.lastCheckpointAt,
-                  deltaToken: checkpoint.deltaToken,
-                  resumeCount: checkpoint.resumeCount,
-                },
-              } : {}),
-            }, { merge: true });
-            if (hasWritableSources) {
-              await heartbeatSyncExecutionLocks(sources.filter((candidate) => candidate.settings?.dryRunMode !== true), batchId);
+            if (!dryRunMode) await adminDb.collection("supplierSources").doc(source.id).set(buildSourceCheckpointPatch(checkpoint), { merge: true });
+            await reportSourceCheckpoint(checkpoint);
+          },
+          pageIdentity: source.id,
+          assertPageCursor: async ({ cursorBefore }) => {
+            if (!dryRunMode) await assertSupplierSyncCursor(adminDb, source.id, cursorBefore);
+          },
+          getPageCommit: async ({ pageCommitId }) => {
+            if (dryRunMode || !options.control?.attemptId) return null;
+            const committed = await getSupplierSyncPageCommit(adminDb, batchId, pageCommitId);
+            if (committed) await assertSupplierSyncCursor(
+              adminDb,
+              source.id,
+              committed.cursorAfter,
+            );
+            return committed ? { checkpointAfter: committed.checkpointAfter as unknown as SupplierCatalogTraversalCheckpoint } : null;
+          },
+          commitPage: async ({ checkpointBefore, checkpointAfter, pageCommitId, pageFingerprint, pageMetrics }) => {
+            if (dryRunMode || !options.control?.attemptId) {
+              if (!dryRunMode) await adminDb.collection("supplierSources").doc(source.id).set(buildSourceCheckpointPatch(checkpointAfter), { merge: true });
+              await reportSourceCheckpoint(checkpointAfter);
+              return checkpointAfter;
             }
-            const hasSingleSourceTotal = totalSourceCount === 1 && checkpoint.catalogTotalProducts !== null;
-            const isLimitUpperBound = totalSourceCount === 1
-              && checkpoint.totalProductLimit !== null
-              && !hasSingleSourceTotal;
-            await reportProgress({
-              phase: checkpoint.status === "reconciling" ? "reconciling" : "catalog_traversal",
-              totalSources: totalSourceCount,
-              currentSourceId: source.id,
-              pagesProcessed: metrics.pagesProcessed + Math.max(0, checkpoint.pagesProcessed - initialTraversalPages),
-              determination: hasSingleSourceTotal
-                && checkpoint.catalogTotalReliability === "exact"
-                && checkpoint.totalProductLimit === null
-                ? "determinate"
-                : "indeterminate",
-              basis: hasSingleSourceTotal
-                ? "catalog_total"
-                : isLimitUpperBound ? "limit_upper_bound" : "unknown",
-              totalProducts: hasSingleSourceTotal
-                ? checkpoint.catalogTotalProducts
-                : isLimitUpperBound ? checkpoint.totalProductLimit : null,
-              totalProductsReliability: hasSingleSourceTotal
-                ? checkpoint.catalogTotalReliability
-                : isLimitUpperBound ? "reported" : "unknown",
+            const pageCounters = {
+              scanned: pageMetrics.productsScanned,
+              processed: (pageMetrics.productsNew || 0)
+                + (pageMetrics.productsUpdated || 0)
+                + (pageMetrics.productsUnchanged || 0)
+                + (pageMetrics.productsRejected || 0)
+                + (pageMetrics.productsFailed || 0),
+              queued: pageMetrics.productsQueued || 0,
+              new: pageMetrics.productsNew || 0,
+              changeCandidates: pageMetrics.productsUpdated || 0,
+              unchanged: pageMetrics.productsUnchanged || 0,
+              rejected: pageMetrics.productsRejected || 0,
+              failed: pageMetrics.productsFailed || 0,
+              warnings: 0,
+              pages: 1,
+            };
+            const committed = await commitSupplierSyncPage({
+              db: adminDb,
+              jobId: batchId,
+              sourceId: source.id,
+              attemptId: options.control.attemptId,
+              attemptNumber: options.control.attemptNumber || 1,
+              traversalId: checkpointAfter.traversalId,
+              pageCommitId,
+              cursorBefore: checkpointBefore.cursor,
+              cursorAfter: checkpointAfter.cursor,
+              pageFingerprint,
+              counters: pageCounters,
+              checkpointAfter: checkpointAfter as unknown as Record<string, unknown>,
+              sourcePatch: buildSourceCheckpointPatch(checkpointAfter),
             });
+            await reportSourceCheckpoint(checkpointAfter);
+            return committed.record.checkpointAfter as unknown as SupplierCatalogTraversalCheckpoint;
           },
           reconcileDeletedProducts: async (checkpoint) => {
             if (dryRunMode) return;
@@ -3608,6 +3680,10 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
           processPage: async (fetched, traversalCheckpoint) => {
             const pageWriteOffset = queuedWrites.length;
             const queuedBeforePage = metrics.productsQueued;
+            const importedBeforePage = metrics.productsImported;
+            const updatedBeforePage = metrics.productsUpdated;
+            const skippedBeforePage = metrics.productsSkipped;
+            const failedBeforePage = metrics.productsFailed;
         const normalizedProducts = normalizeSupplierProducts(fetched.products);
         const pageInvalidProducts = normalizedProducts.failed + Math.max(0, Number(fetched.invalidProducts || 0));
         metrics.productsDiscovered += fetched.products.length + Math.max(0, Number(fetched.invalidProducts || 0));
@@ -3673,6 +3749,7 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
         );
 
         const productsToProcess = products;
+        const pageRejected = Math.max(0, retrievedProducts.length - productsToProcess.length);
         const existingProducts = allExistingProducts;
         const filteredOfferSightings = buildFilteredSupplierOfferSightings(
           source.id,
@@ -4378,6 +4455,12 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
             return {
               productsScanned: productsToProcess.length,
               productsImported: pageImported,
+              productsQueued: metrics.productsQueued - queuedBeforePage,
+              productsNew: metrics.productsImported - importedBeforePage,
+              productsUpdated: metrics.productsUpdated - updatedBeforePage,
+              productsUnchanged: metrics.productsSkipped - skippedBeforePage,
+              productsRejected: pageRejected,
+              productsFailed: metrics.productsFailed - failedBeforePage,
               invalidProducts: pageInvalidProducts,
             };
           },
@@ -4386,6 +4469,9 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
         const sourceFinishedAt = Date.now();
         metrics.pagesProcessed += Math.max(0, traversalResult.checkpoint.pagesProcessed - initialTraversalPages);
         metrics.resumeCount += Math.max(0, traversalResult.checkpoint.resumeCount - initialResumeCount);
+        // Missing-product reconciliation is tracked by productsDeleted/queued;
+        // only page-level terminal rejections belong in the processed equation.
+        metrics.productsRejected += Math.max(0, Number(traversalResult.checkpoint.productsRejected || 0) - initialTraversalRejected);
         metrics.sourceCursors[source.id] = traversalResult.checkpoint.cursor;
         metrics.sourceTerminationReasons[source.id] = traversalResult.checkpoint.terminationReason || "unknown";
         if (traversalResult.limited) metrics.limitedSourceIds.push(source.id);
@@ -4606,6 +4692,7 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
         productsQueued: metrics.productsQueued,
         productsImported: metrics.productsImported,
         productsUpdated: metrics.productsUpdated,
+        productsRejected: metrics.productsRejected,
         productsDeleted: metrics.productsDeleted,
         productsSkipped: metrics.productsSkipped,
         productsFailed: metrics.productsFailed,

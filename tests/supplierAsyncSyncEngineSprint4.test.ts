@@ -64,7 +64,7 @@ class FakeFirestore {
 }
 
 test('Sprint 4 defines the canonical asynchronous sync lifecycle and valid transitions', () => {
-  assert.deepEqual(SUPPLIER_SYNC_JOB_STATES, ['pending', 'running', 'waiting', 'completed', 'failed', 'cancelled']);
+  assert.deepEqual(SUPPLIER_SYNC_JOB_STATES, ['pending', 'running', 'waiting', 'completed', 'completed_with_issues', 'failed', 'cancelled']);
   assert.equal(canTransitionSupplierSyncJob('pending', 'running'), true);
   assert.equal(canTransitionSupplierSyncJob('running', 'waiting'), true);
   assert.equal(canTransitionSupplierSyncJob('running', 'completed'), true);

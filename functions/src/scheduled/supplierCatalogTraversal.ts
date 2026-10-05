@@ -7,6 +7,7 @@ import {
   SupplierIncrementalCatalogRequest,
 } from "../api/suppliers/types";
 import { parseSupplierCatalogOffsetCursor } from "../api/suppliers/supplierCatalogOffsetCursor";
+import { buildSupplierSyncPageCommitId } from "../api/suppliers/supplierSyncEvidence";
 
 export type SupplierCatalogTraversalStatus = "in_progress" | "paused" | "reconciling" | "completed" | "limited";
 export type SupplierCatalogTraversalTerminationReason = "catalog_complete" | "incremental_complete" | "limit_reached" | "paused" | null;
@@ -19,6 +20,7 @@ export interface SupplierCatalogTraversalCheckpoint {
   /** Connector products observed before business filtering. */
   productsObserved: number;
   productsImported: number;
+  productsRejected?: number;
   invalidProducts: number;
   deletionReconciliationEligible: boolean;
   resumeCount: number;
@@ -47,6 +49,12 @@ export interface SupplierCatalogTraversalCheckpoint {
 export interface SupplierCatalogPageMetrics {
   productsScanned: number;
   productsImported: number;
+  productsQueued?: number;
+  productsNew?: number;
+  productsUpdated?: number;
+  productsUnchanged?: number;
+  productsRejected?: number;
+  productsFailed?: number;
   invalidProducts?: number;
 }
 
@@ -76,6 +84,23 @@ export interface SupplierCatalogTraversalOptions {
   reconcileDeletedProducts(checkpoint: SupplierCatalogTraversalCheckpoint): Promise<void>;
   shouldPause?: () => boolean;
   onStart?: (checkpoint: SupplierCatalogTraversalCheckpoint) => Promise<void> | void;
+  pageIdentity?: string;
+  assertPageCursor?: (context: {
+    cursorBefore: string | null;
+    pageCommitId: string;
+  }) => Promise<void> | void;
+  getPageCommit?: (context: {
+    cursorBefore: string | null;
+    pageCommitId: string;
+    pageFingerprint: string;
+  }) => Promise<{ checkpointAfter: SupplierCatalogTraversalCheckpoint } | null>;
+  commitPage?: (context: {
+    checkpointBefore: SupplierCatalogTraversalCheckpoint;
+    checkpointAfter: SupplierCatalogTraversalCheckpoint;
+    pageCommitId: string;
+    pageFingerprint: string;
+    pageMetrics: SupplierCatalogPageMetrics;
+  }) => Promise<SupplierCatalogTraversalCheckpoint>;
   now?: () => number;
   traversalId?: string;
   catalogContinuation?: "continue" | "restart";
@@ -254,6 +279,7 @@ export function createSupplierCatalogTraversalCheckpoint(
     productsObserved: resumedProductsObserved,
     productsObservedAtBatchStart,
     productsImported: resumable ? safeCount(initial.productsImported) : 0,
+    productsRejected: resumable ? safeCount(initial.productsRejected) : 0,
     invalidProducts: resumable ? safeCount(initial.invalidProducts) : 0,
     deletionReconciliationEligible: resumable
       ? initial.deletionReconciliationEligible !== false
@@ -380,6 +406,12 @@ export async function runSupplierCatalogTraversal(options: SupplierCatalogTraver
       throw new Error("Supplier connector returned more products than the bounded page request allowed.");
     }
     const fingerprint = pageFingerprint(page);
+    const pageCommitId = buildSupplierSyncPageCommitId(
+      options.syncJobId || "supplier-sync",
+      options.pageIdentity || "supplier",
+      checkpoint.traversalId,
+      requestedCursor,
+    );
     const recentPageFingerprints = boundedFingerprints(checkpoint.recentPageFingerprints);
     const recentCursorFingerprints = boundedFingerprints(checkpoint.recentCursorFingerprints);
     if (recentPageFingerprints.includes(fingerprint)) {
@@ -392,47 +424,63 @@ export async function runSupplierCatalogTraversal(options: SupplierCatalogTraver
       throw new SupplierCatalogTraversalIntegrityError("Supplier connector returned a cyclic catalogue cursor.");
     }
 
-    const pageMetrics = await options.processPage(page, checkpoint);
-    const pageInvalidProducts = safeCount(pageMetrics.invalidProducts);
-    const productsObserved = checkpoint.productsObserved + pageObservedProducts;
-    const limitReached = checkpoint.totalProductLimit !== null
-      && (productsObserved - batchBaseline) >= checkpoint.totalProductLimit;
-    const deletionReconciliationEligible = checkpoint.deletionReconciliationEligible
-      && pageInvalidProducts === 0
-      && !limitReached;
-    const catalogTotal = mergeCatalogTotal(checkpoint, page);
-    checkpoint = {
-      ...checkpoint,
-      ...catalogTotal,
-      cursor: page.complete ? null : page.nextCursor,
-      pagesProcessed: checkpoint.pagesProcessed + 1,
-      productsScanned: checkpoint.productsScanned + safeCount(pageMetrics.productsScanned),
-      productsObserved,
-      productsImported: checkpoint.productsImported + safeCount(pageMetrics.productsImported),
-      invalidProducts: checkpoint.invalidProducts + pageInvalidProducts,
-      deltaToken: typeof page.deltaToken === "string" && page.deltaToken ? page.deltaToken : checkpoint.deltaToken,
-      deletionReconciliationEligible,
-      lastCheckpointAt: new Date(now()).toISOString(),
-      lastPageFingerprint: fingerprint,
-      recentPageFingerprints: appendBoundedFingerprint(recentPageFingerprints, fingerprint),
-      recentCursorFingerprints: requestedCursor
-        ? appendBoundedFingerprint(recentCursorFingerprints, cursorFingerprint(requestedCursor))
-        : recentCursorFingerprints,
-      terminationReason: limitReached
-        ? "limit_reached"
-        : page.complete
-          ? checkpoint.syncMode === "incremental" ? "incremental_complete" : "catalog_complete"
-          : null,
-      status: limitReached
-        ? "limited"
-        : page.complete && deletionReconciliationEligible
-          ? "reconciling"
+    const existingPageCommit = await options.getPageCommit?.({
+      cursorBefore: requestedCursor,
+      pageCommitId,
+      pageFingerprint: fingerprint,
+    });
+    if (existingPageCommit) {
+      checkpoint = existingPageCommit.checkpointAfter;
+    } else {
+      await options.assertPageCursor?.({ cursorBefore: requestedCursor, pageCommitId });
+      const checkpointBefore = checkpoint;
+      const pageMetrics = await options.processPage(page, checkpointBefore);
+      const pageInvalidProducts = safeCount(pageMetrics.invalidProducts);
+      const productsObserved = checkpointBefore.productsObserved + pageObservedProducts;
+      const limitReached = checkpointBefore.totalProductLimit !== null
+        && (productsObserved - batchBaseline) >= checkpointBefore.totalProductLimit;
+      const deletionReconciliationEligible = checkpointBefore.deletionReconciliationEligible
+        && pageInvalidProducts === 0
+        && !limitReached;
+      const catalogTotal = mergeCatalogTotal(checkpointBefore, page);
+      const checkpointAfter: SupplierCatalogTraversalCheckpoint = {
+        ...checkpointBefore,
+        ...catalogTotal,
+        cursor: page.complete ? null : page.nextCursor,
+        pagesProcessed: checkpointBefore.pagesProcessed + 1,
+        productsScanned: checkpointBefore.productsScanned + safeCount(pageMetrics.productsScanned),
+        productsObserved,
+        productsImported: checkpointBefore.productsImported + safeCount(pageMetrics.productsImported),
+        productsRejected: safeCount(checkpointBefore.productsRejected) + safeCount(pageMetrics.productsRejected),
+        invalidProducts: checkpointBefore.invalidProducts + pageInvalidProducts,
+        deltaToken: typeof page.deltaToken === "string" && page.deltaToken ? page.deltaToken : checkpointBefore.deltaToken,
+        deletionReconciliationEligible,
+        lastCheckpointAt: new Date(now()).toISOString(),
+        lastPageFingerprint: fingerprint,
+        recentPageFingerprints: appendBoundedFingerprint(recentPageFingerprints, fingerprint),
+        recentCursorFingerprints: requestedCursor
+          ? appendBoundedFingerprint(recentCursorFingerprints, cursorFingerprint(requestedCursor))
+          : recentCursorFingerprints,
+        terminationReason: limitReached
+          ? "limit_reached"
           : page.complete
-            ? "completed"
-            : "in_progress",
-    };
-    await options.persistCheckpoint(checkpoint);
+            ? checkpointBefore.syncMode === "incremental" ? "incremental_complete" : "catalog_complete"
+            : null,
+        status: limitReached
+          ? "limited"
+          : page.complete && deletionReconciliationEligible
+            ? "reconciling"
+            : page.complete
+              ? "completed"
+              : "in_progress",
+      };
+      checkpoint = options.commitPage
+        ? await options.commitPage({ checkpointBefore, checkpointAfter, pageCommitId, pageFingerprint: fingerprint, pageMetrics })
+        : checkpointAfter;
+      if (!options.commitPage) await options.persistCheckpoint(checkpoint);
+    }
 
+    const limitReached = checkpoint.terminationReason === "limit_reached";
     if (limitReached) return { complete: false, paused: false, limited: true, checkpoint };
 
     if (page.complete) {

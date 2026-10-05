@@ -9,6 +9,7 @@ export const SUPPLIER_SYNC_JOB_STATES = [
   "running",
   "waiting",
   "completed",
+  "completed_with_issues",
   "failed",
   "cancelled",
 ] as const;
@@ -73,6 +74,7 @@ export interface SupplierSyncAttemptCounters {
 export type SupplierSyncAttemptStatus = "running" | "waiting" | "completed" | "failed" | "cancelled";
 
 export interface SupplierSyncJobAttemptRecord extends Record<string, unknown> {
+  evidenceVersion: number;
   attemptId: string;
   jobId: string;
   attemptNumber: number;
@@ -127,6 +129,12 @@ export interface SupplierSyncJobRecord extends Record<string, unknown> {
   lastAttemptCompletedAt?: string | null;
   stopReason?: string | null;
   cumulativeCounters?: SupplierSyncCumulativeCounters;
+  evidenceVersion?: number;
+  reconciliationStatus?: "VERIFIED" | "ISSUES" | "LEGACY_UNVERIFIED";
+  reconciliationIssues?: Array<Record<string, unknown>>;
+  reconciliationAttemptCount?: number;
+  reconciliationPageCommitCount?: number;
+  reconciledAt?: string | null;
   requestedBy: { uid: string; email: string };
   syncRequest?: SupplierSyncRequest;
   progress: SupplierSyncJobProgress;
@@ -221,7 +229,7 @@ const emptyCumulativeCounters = (): SupplierSyncCumulativeCounters => ({
   new: 0,
   changeCandidates: 0,
   unchanged: 0,
-  rejected: null,
+  rejected: 0,
   failed: 0,
   warnings: 0,
   pages: 0,
@@ -424,7 +432,7 @@ export function calculateSupplierSyncJobProgress(
   const totalProductsReliability = requestedReliability === "exact" && !totalIsConsistent
     ? "reported"
     : requestedReliability;
-  const terminallyCompleted = phase === "completed";
+  const terminallyCompleted = phase === "completed" || phase === "completed_with_issues";
   const hasExactTotal = !terminallyCompleted
     && input.determination !== "indeterminate"
     && totalProductsReliability === "exact"
@@ -489,14 +497,14 @@ export function normalizeSupplierSyncJobProgress(
   const isCurrentModel = Number(raw.modelVersion) === 2;
   const progressAtMs = toMillis(raw.updatedAt) || toMillis(job.updatedAt) || toMillis(job.finishedAt) || now;
   const startedAtMs = toMillis(job.startedAt) || toMillis(job.createdAt) || progressAtMs;
-  const phase = state === "completed" ? "completed" : String(raw.phase || state || "pending");
+  const phase = state === "completed" || state === "completed_with_issues" ? "completed" : String(raw.phase || state || "pending");
   return calculateSupplierSyncJobProgress(startedAtMs, {
     ...raw,
     phase,
     determination: isCurrentModel
       ? raw.determination as SupplierSyncProgressDetermination
       : "indeterminate",
-    basis: state === "completed"
+    basis: state === "completed" || state === "completed_with_issues"
       ? "completed"
       : isCurrentModel ? raw.basis as SupplierSyncProgressBasis : "unknown",
     productsObserved: cleanCount(raw.productsObserved ?? raw.productsDiscovered),
@@ -539,9 +547,10 @@ export function canLeaseSupplierSyncJob(record: Record<string, unknown>, now = D
 export function canTransitionSupplierSyncJob(from: SupplierSyncJobState, to: SupplierSyncJobState): boolean {
   const transitions: Record<SupplierSyncJobState, readonly SupplierSyncJobState[]> = {
     pending: ["running", "cancelled"],
-    running: ["waiting", "completed", "failed", "cancelled"],
+    running: ["waiting", "completed", "completed_with_issues", "failed", "cancelled"],
     waiting: ["pending", "running", "failed", "cancelled"],
     completed: [],
+    completed_with_issues: [],
     failed: ["pending"],
     cancelled: ["pending"],
   };
@@ -567,6 +576,7 @@ export async function createSupplierSyncJob(
   const record: SupplierSyncJobRecord = {
     id: reference.id,
     schemaVersion: 1,
+    evidenceVersion: 2,
     state: "pending",
     jobType,
     trigger: input.trigger,
@@ -778,6 +788,7 @@ export async function beginSupplierSyncAttempt(
       : {};
     const attemptNumber = Math.max(1, cleanCount(data.attemptCount));
     const record: SupplierSyncJobAttemptRecord = {
+      evidenceVersion: 2,
       attemptId,
       jobId,
       attemptNumber,
@@ -884,6 +895,8 @@ export async function finalizeSupplierSyncAttempt(
     errorCode?: string | null;
     errorMessageSafe?: string | null;
     retryable?: boolean | null;
+    /** Slice 2 page commits already applied these counters atomically. */
+    countersAlreadyApplied?: boolean;
   },
   now = Date.now(),
 ): Promise<SupplierSyncJobAttemptRecord | null> {
@@ -902,20 +915,24 @@ export async function finalizeSupplierSyncAttempt(
     if (!attemptSnapshot.exists) throw new Error("Supplier sync attempt record is missing.");
     const previous = { attemptId, jobId, ...attemptSnapshot.data() } as SupplierSyncJobAttemptRecord;
     if (previous.status !== "running") return previous;
-    const counters = attemptCounters(input.counters);
+    const counters = input.countersAlreadyApplied
+      ? attemptCounters(previous.counters)
+      : attemptCounters(input.counters);
     const current = normalizeCumulativeCounters(job.cumulativeCounters);
-    const next: SupplierSyncCumulativeCounters = {
-      scanned: current.scanned + counters.scanned,
-      processed: current.processed + counters.processed,
-      queued: current.queued + counters.queued,
-      new: current.new + counters.new,
-      changeCandidates: current.changeCandidates + counters.changeCandidates,
-      unchanged: current.unchanged + counters.unchanged,
-      rejected: current.rejected === null || counters.rejected === null ? null : current.rejected + counters.rejected,
-      failed: current.failed + counters.failed,
-      warnings: current.warnings + counters.warnings,
-      pages: current.pages + counters.pages,
-    };
+    const next: SupplierSyncCumulativeCounters = input.countersAlreadyApplied
+      ? current
+      : {
+        scanned: current.scanned + counters.scanned,
+        processed: current.processed + counters.processed,
+        queued: current.queued + counters.queued,
+        new: current.new + counters.new,
+        changeCandidates: current.changeCandidates + counters.changeCandidates,
+        unchanged: current.unchanged + counters.unchanged,
+        rejected: current.rejected === null || counters.rejected === null ? null : current.rejected + counters.rejected,
+        failed: current.failed + counters.failed,
+        warnings: current.warnings + counters.warnings,
+        pages: current.pages + counters.pages,
+      };
     const cursorAfter = cleanCursorMap(input.cursorAfter);
     const nextAttempt: SupplierSyncJobAttemptRecord = {
       ...previous,
@@ -933,7 +950,9 @@ export async function finalizeSupplierSyncAttempt(
     transaction.set(jobReference, {
       cumulativeCounters: next,
       durableCursor: Object.keys(cursorAfter).length > 0 ? cursorAfter : job.durableCursor || null,
-      ...(input.status === "completed" ? { finalCursor: Object.keys(cursorAfter).length > 0 ? cursorAfter : job.finalCursor || null } : {}),
+      ...(input.status === "completed" && Object.keys(cursorAfter).length > 0
+        ? { finalCursor: cursorAfter }
+        : {}),
       lastAttemptCompletedAt: completedAt,
       stopReason: input.stopReason ?? null,
       updatedAt: new Date(now).toISOString(),
@@ -1065,7 +1084,7 @@ async function finishOwnedSupplierSyncJob(
   jobId: string,
   workerId: string,
   leaseId: string,
-  state: "waiting" | "completed" | "failed" | "cancelled",
+  state: "waiting" | "completed" | "completed_with_issues" | "failed" | "cancelled",
   patch: Record<string, unknown>,
   now: number,
 ): Promise<boolean> {
@@ -1097,13 +1116,14 @@ export const completeSupplierSyncJob = (
   result: Record<string, unknown>,
   progress: SupplierSyncJobProgress,
   now = Date.now(),
-): Promise<boolean> => finishOwnedSupplierSyncJob(db, jobId, workerId, leaseId, "completed", {
+  completionState: "completed" | "completed_with_issues" = "completed",
+): Promise<boolean> => finishOwnedSupplierSyncJob(db, jobId, workerId, leaseId, completionState, {
   result,
   progress: {
     ...progress,
     determination: "determinate",
     basis: "completed",
-    phase: "completed",
+    phase: completionState === "completed" ? "completed" : "completed_with_issues",
     percent: 100,
     etaMs: 0,
     etaAt: new Date(now).toISOString(),
@@ -1268,11 +1288,32 @@ export async function recoverExpiredSupplierSyncJobs(db: Firestore, now = Date.n
       const current = await transaction.get(document.ref);
       const data = current.data() || {};
       if (stateFor(data.state) !== "running" || toMillis(data.leaseExpiresAt) > now) return false;
+      const activeAttemptId = typeof data.leaseId === "string"
+        ? safeAttemptId(`lease-${data.leaseId}`)
+        : null;
+      const activeAttemptReference = activeAttemptId
+        ? document.ref.collection("attempts").doc(activeAttemptId)
+        : null;
+      const activeAttemptSnapshot = activeAttemptReference
+        ? await transaction.get(activeAttemptReference)
+        : null;
       const retryCount = cleanCount(data.retryCount) + 1;
       const retryLimit = Math.max(1, cleanCount(data.retryLimit) || DEFAULT_RETRY_LIMIT);
       const terminal = retryCount >= retryLimit;
       if (terminal) {
         await clearOwnedManualReservations(db, transaction, { id: current.id, ...data } as SupplierSyncJobRecord);
+      }
+      if (activeAttemptReference && activeAttemptSnapshot?.exists && activeAttemptSnapshot.data()?.status === "running") {
+        transaction.set(activeAttemptReference, {
+          status: "failed",
+          completedAt: new Date(now).toISOString(),
+          stopReason: "worker_lease_expired",
+          errorClass: "SYSTEM_ERROR",
+          errorCode: "LEASE_EXPIRED",
+          errorMessageSafe: "Worker lease expired before the attempt finalized.",
+          retryable: true,
+          updatedAt: new Date(now).toISOString(),
+        }, { merge: true });
       }
       transaction.set(document.ref, {
         state: terminal ? "failed" : "waiting",
@@ -1346,7 +1387,13 @@ export function projectSupplierSyncJobForAdmin(job: SupplierSyncJobRecord): Reco
     lastAttemptStartedAt: job.lastAttemptStartedAt || null,
     lastAttemptCompletedAt: job.lastAttemptCompletedAt || null,
     cumulativeCounters: job.cumulativeCounters || null,
-    evidenceStatus: job.cumulativeCounters ? "current" : "legacy",
+    evidenceStatus: job.evidenceVersion === 2 && job.cumulativeCounters ? "current" : "legacy",
+    evidenceVersion: job.evidenceVersion || null,
+    reconciliationStatus: job.reconciliationStatus || (job.evidenceVersion === 2 ? null : "LEGACY_UNVERIFIED"),
+    reconciliationIssues: job.reconciliationIssues || [],
+    reconciliationAttemptCount: job.reconciliationAttemptCount ?? null,
+    reconciliationPageCommitCount: job.reconciliationPageCommitCount ?? null,
+    reconciledAt: job.reconciledAt || null,
     stopReason: job.stopReason || null,
     cancellationRequestedAt: job.cancellationRequestedAt || null,
     progress: normalizeSupplierSyncJobProgress(job),
