@@ -5,6 +5,7 @@ import {
   buildSupplierQueueFailureUpdate,
   buildSupplierQueueLifecycle,
   canLeaseSupplierQueueItem,
+  createSupplierQueueProcessingTelemetry,
   classifySupplierQueueFailure,
   isSupplierQueueLeaseExpired,
   leaseSupplierReviewQueueItem,
@@ -28,14 +29,43 @@ const createFakeFirestore = (initial: Record<string, StoredDocument>) => {
   const db = {
     collection: (collectionName: string) => ({
       doc: (id?: string) => reference(collectionName, id || `generated-${++generatedId}`),
-      where: () => {
+      where: (field: string, operator: string, value: unknown) => {
+        const filters: Array<{ field: string; operator: string; value: unknown }> = [];
+        const orders: Array<{ field: unknown; direction: string }> = [];
+        filters.push({ field, operator, value });
+        const requestedLimit = { value: Number.POSITIVE_INFINITY };
         const query = {
-          where: () => query,
-          orderBy: () => query,
-          limit: () => query,
+          where: (nestedField: string, nestedOperator: string, nestedValue: unknown) => {
+            filters.push({ field: nestedField, operator: nestedOperator, value: nestedValue });
+            return query;
+          },
+          orderBy: (orderField: unknown, direction = "asc") => {
+            orders.push({ field: orderField, direction });
+            return query;
+          },
+          limit: (limit: number) => {
+            requestedLimit.value = limit;
+            return query;
+          },
           get: async () => ({
             docs: [...documents.entries()]
               .filter(([key]) => key.startsWith(`${collectionName}/`))
+              .filter(([, data]) => filters.every(({ field, operator, value }) => {
+                const actual = data[field];
+                if (operator === "==") return actual === value;
+                if (operator === "<=") return String(actual || "") <= String(value);
+                return true;
+              }))
+              .sort(([leftKey, leftData], [rightKey, rightData]) => {
+                for (const order of orders) {
+                  const leftValue = typeof order.field === "string" ? leftData[order.field] : leftKey.slice(collectionName.length + 1);
+                  const rightValue = typeof order.field === "string" ? rightData[order.field] : rightKey.slice(collectionName.length + 1);
+                  const comparison = String(leftValue || "").localeCompare(String(rightValue || ""));
+                  if (comparison) return order.direction === "desc" ? -comparison : comparison;
+                }
+                return 0;
+              })
+              .slice(0, requestedLimit.value)
               .map(([key, data]) => ({ id: key.slice(collectionName.length + 1), data: () => data })),
           }),
         };
@@ -165,6 +195,82 @@ test('sequential queue processing captures a fresh timestamp for every item in a
   assert.equal(results.length, 2);
   assert.equal(documents.get('supplier_review_queue/review-first')?.leaseId, `worker-long-running:1:${startedAt}`);
   assert.equal(documents.get('supplier_review_queue/review-second')?.leaseId, `worker-long-running:1:${startedAt + (10 * 60 * 1000)}`);
+});
+
+test('runtime admission budget finishes the in-flight item and leaves the next item untouched', async () => {
+  const startedAt = Date.now();
+  const deadline = startedAt + 1_000;
+  let currentTime = startedAt;
+  let firstItemFinished = false;
+  const telemetry = createSupplierQueueProcessingTelemetry();
+  const { db, documents } = createFakeFirestore({
+    'supplier_review_queue/review-first': {
+      id: 'review-first',
+      ...buildSupplierQueueLifecycle(new Date(startedAt - 1).toISOString()),
+      queueCreatedAt: new Date(startedAt - 2).toISOString(),
+    },
+    'supplier_review_queue/review-second': {
+      id: 'review-second',
+      ...buildSupplierQueueLifecycle(new Date(startedAt - 1).toISOString()),
+      queueCreatedAt: new Date(startedAt - 1).toISOString(),
+    },
+  });
+
+  const results = await processDueSupplierReviewQueueItems(db as never, 'worker-budget', startedAt, 10, {
+    currentTime: () => currentTime,
+    runtimeDeadlineMs: deadline,
+    telemetry,
+    verifyWorkerOwnership: () => {
+      if (!firstItemFinished && documents.get('supplier_review_queue/review-first')?.queueState === 'review_pending') {
+        firstItemFinished = true;
+        currentTime = deadline;
+      }
+    },
+  });
+
+  assert.deepEqual(results.map((result) => result.queueItemId), ['review-first']);
+  assert.equal(documents.get('supplier_review_queue/review-first')?.queueState, 'review_pending');
+  assert.equal(documents.get('supplier_review_queue/review-second')?.queueState, 'queued');
+  assert.equal(documents.get('supplier_review_queue/review-second')?.leaseOwner, undefined);
+  assert.equal(telemetry.deadlineReached, true);
+  assert.equal(telemetry.itemsSkippedByRuntimeBudget, 1);
+  assert.equal(telemetry.itemsLeased, 1);
+  assert.equal(telemetry.itemsStarted, 1);
+  assert.equal(telemetry.itemsCompleted, 1);
+});
+
+test('eligible queue progress is fair across repeated bounded runs', async () => {
+  const startedAt = Date.now();
+  const { db, documents } = createFakeFirestore({
+    'supplier_review_queue/review-a': { id: 'review-a', ...buildSupplierQueueLifecycle(new Date(startedAt - 3).toISOString()) },
+    'supplier_review_queue/review-b': { id: 'review-b', ...buildSupplierQueueLifecycle(new Date(startedAt - 2).toISOString()) },
+    'supplier_review_queue/review-c': { id: 'review-c', ...buildSupplierQueueLifecycle(new Date(startedAt - 1).toISOString()) },
+  });
+
+  const processed: string[] = [];
+  for (let run = 0; run < 3; run += 1) {
+    const results = await processDueSupplierReviewQueueItems(db as never, `worker-fair-${run}`, startedAt + run, 1);
+    processed.push(...results.filter((result) => result.outcome === 'completed').map((result) => result.queueItemId));
+  }
+
+  assert.deepEqual(processed, ['review-a', 'review-b', 'review-c']);
+  assert.equal(documents.get('supplier_review_queue/review-a')?.queueState, 'review_pending');
+  assert.equal(documents.get('supplier_review_queue/review-b')?.queueState, 'review_pending');
+  assert.equal(documents.get('supplier_review_queue/review-c')?.queueState, 'review_pending');
+});
+
+test('identical queue timestamps use document ID as a deterministic final tie-breaker', async () => {
+  const startedAt = Date.now();
+  const timestamp = new Date(startedAt - 1).toISOString();
+  for (let repetition = 0; repetition < 3; repetition += 1) {
+    const { db } = createFakeFirestore({
+      'supplier_review_queue/review-c': { id: 'review-c', ...buildSupplierQueueLifecycle(timestamp), queueCreatedAt: timestamp },
+      'supplier_review_queue/review-a': { id: 'review-a', ...buildSupplierQueueLifecycle(timestamp), queueCreatedAt: timestamp },
+      'supplier_review_queue/review-b': { id: 'review-b', ...buildSupplierQueueLifecycle(timestamp), queueCreatedAt: timestamp },
+    });
+    const results = await processDueSupplierReviewQueueItems(db as never, `worker-tie-${repetition}`, startedAt, 4);
+    assert.deepEqual(results.map((result) => result.queueItemId), ['review-a', 'review-b']);
+  }
 });
 
 test('lease renewal uses the actual current time and prevents premature recovery', async () => {

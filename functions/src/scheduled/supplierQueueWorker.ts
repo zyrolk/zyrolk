@@ -3,9 +3,11 @@ import { logger } from "firebase-functions";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { adminDb } from "../api/firebase";
 import {
+  createSupplierQueueProcessingTelemetry,
   getSupplierReviewQueueMetrics,
   processDueSupplierReviewQueueItems,
   recoverExpiredSupplierReviewQueueLeases,
+  SupplierQueueProcessingTelemetry,
 } from "./supplierReviewQueue";
 import {
   recordSupplierOperationalAlertSafely,
@@ -17,6 +19,9 @@ const WORKER_LOCK_ID = "scheduled_supplier_queue_worker";
 const WORKER_LEASE_MS = 4 * 60 * 1000;
 const WORKER_HEARTBEAT_INTERVAL_MS = 60 * 1000;
 const DEFAULT_QUEUE_WORKER_SCHEDULE = "every 5 minutes";
+export const SUPPLIER_QUEUE_WORKER_PLATFORM_TIMEOUT_MS = 540 * 1000;
+export const SUPPLIER_QUEUE_WORKER_SHUTDOWN_MARGIN_MS = 90 * 1000;
+export const SUPPLIER_QUEUE_WORKER_ADMISSION_DEADLINE_MS = SUPPLIER_QUEUE_WORKER_PLATFORM_TIMEOUT_MS - SUPPLIER_QUEUE_WORKER_SHUTDOWN_MARGIN_MS;
 export const SUPPLIER_QUEUE_WORKER_SCHEDULE = String(process.env.SUPPLIER_QUEUE_WORKER_SCHEDULE || DEFAULT_QUEUE_WORKER_SCHEDULE).trim() || DEFAULT_QUEUE_WORKER_SCHEDULE;
 
 async function acquireQueueWorkerLock(workerId: string, now: number): Promise<boolean> {
@@ -88,13 +93,53 @@ export interface SupplierQueueWorkerResult {
   completed: number;
   retryableFailures: number;
   deadLetters: number;
+  runStartedAt: string;
+  runEndedAt: string;
+  runtimeMs: number;
+  candidatesFetched: number;
+  itemsLeased: number;
+  itemsStarted: number;
+  itemsCompleted: number;
+  itemsRetryableFailed: number;
+  itemsPermanentFailed: number;
+  itemsSkippedByRuntimeBudget: number;
+  deadlineReached: boolean;
+  lastSelectedQueueCreatedAt: string | null;
+  lastSelectedDocumentId: string | null;
 }
+
+const workerResultEvidence = (
+  workerId: string,
+  skipped: boolean,
+  recoveredLeases: number,
+  processed: number,
+  completed: number,
+  retryableFailures: number,
+  deadLetters: number,
+  runStartedAtMs: number,
+  runEndedAtMs: number,
+  telemetry: SupplierQueueProcessingTelemetry,
+): SupplierQueueWorkerResult => ({
+  workerId,
+  skipped,
+  recoveredLeases,
+  processed,
+  completed,
+  retryableFailures,
+  deadLetters,
+  runStartedAt: new Date(runStartedAtMs).toISOString(),
+  runEndedAt: new Date(runEndedAtMs).toISOString(),
+  runtimeMs: Math.max(0, runEndedAtMs - runStartedAtMs),
+  ...telemetry,
+});
 
 /** Queue-only worker. Supplier catalog sync deliberately does not call this path. */
 export async function runSupplierQueueWorker(now = Date.now(), limit = 100): Promise<SupplierQueueWorkerResult> {
   const workerId = `supplier-queue-${now}`;
+  const telemetry = createSupplierQueueProcessingTelemetry();
+  const runStartedAtMs = now;
   if (!await acquireQueueWorkerLock(workerId, now)) {
-    return { workerId, skipped: true, recoveredLeases: 0, processed: 0, completed: 0, retryableFailures: 0, deadLetters: 0 };
+    return workerResultEvidence(workerId, true, 0, 0, 0, 0, 0, runStartedAtMs, Date.now(), telemetry);
   }
   let workerHeartbeat: ReturnType<typeof setInterval> | null = null;
   let workerHeartbeatInFlight: Promise<void> = Promise.resolve();
@@ -120,11 +165,18 @@ export async function runSupplierQueueWorker(now = Date.now(), limit = 100): Pro
       if (workerOwnershipFailure) throw workerOwnershipFailure;
     };
     await verifyWorkerOwnership();
-    const recoveredLeases = await recoverExpiredSupplierReviewQueueLeases(adminDb, Date.now(), limit);
+    const runtimeDeadlineMs = runStartedAtMs + SUPPLIER_QUEUE_WORKER_ADMISSION_DEADLINE_MS;
+    const recoveredLeases = await recoverExpiredSupplierReviewQueueLeases(adminDb, Date.now(), limit, {
+      currentTime: Date.now,
+      runtimeDeadlineMs,
+      telemetry,
+    });
     await verifyWorkerOwnership();
     const results = await processDueSupplierReviewQueueItems(adminDb, workerId, Date.now(), limit, {
       currentTime: Date.now,
       verifyWorkerOwnership,
+      runtimeDeadlineMs,
+      telemetry,
     });
     await verifyWorkerOwnership();
     const completedAt = Date.now();
@@ -156,29 +208,42 @@ export async function runSupplierQueueWorker(now = Date.now(), limit = 100): Pro
       queueWorkerStatus: "idle",
       queueWorkerLastRunAt: new Date(completedAt).toISOString(),
       queueWorkerLastRun: {
+        runStartedAt: new Date(runStartedAtMs).toISOString(),
+        runEndedAt: new Date(completedAt).toISOString(),
+        runtimeMs: Math.max(0, completedAt - runStartedAtMs),
         recoveredLeases,
         processed: results.length,
         completed: results.filter((result) => result.outcome === "completed").length,
         retryableFailures: results.filter((result) => result.outcome === "retryable_failure").length,
         deadLetters: results.filter((result) => result.outcome === "dead_letter").length,
+        ...telemetry,
       },
       queueMetrics: { ...metrics, measuredAt: new Date(completedAt).toISOString() },
     }, { merge: true });
-    return {
+    const evidence = workerResultEvidence(
       workerId,
-      skipped: false,
+      false,
       recoveredLeases,
-      processed: results.length,
-      completed: results.filter((result) => result.outcome === "completed").length,
-      retryableFailures: results.filter((result) => result.outcome === "retryable_failure").length,
-      deadLetters: results.filter((result) => result.outcome === "dead_letter").length,
-    };
+      results.length,
+      results.filter((result) => result.outcome === "completed").length,
+      results.filter((result) => result.outcome === "retryable_failure").length,
+      results.filter((result) => result.outcome === "dead_letter").length,
+      runStartedAtMs,
+      completedAt,
+      telemetry,
+    );
+    logger.info("Supplier review queue worker run completed.", evidence);
+    return evidence;
   } catch (error) {
     logger.error("Supplier review queue worker failed.", { workerId, error });
     const failedAt = Date.now();
     await adminDb.collection("supplier_settings").doc("config").set({
       queueWorkerStatus: "failed",
       queueWorkerLastFailureAt: new Date(failedAt).toISOString(),
+      queueWorkerLastFailure: {
+        ...workerResultEvidence(workerId, false, 0, 0, 0, 0, 0, runStartedAtMs, failedAt, telemetry),
+        errorClass: error instanceof Error ? error.name : "UnknownError",
+      },
     }, { merge: true });
     await recordSupplierOperationalAlertSafely({
       category: "queue_worker_failure",

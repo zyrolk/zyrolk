@@ -71,6 +71,21 @@ export interface SupplierQueueProcessingControl {
   currentTime?: () => number;
   verifyWorkerOwnership?: () => void | Promise<void>;
   mediaDependencies?: Partial<SupplierMediaPipelineDependencies>;
+  runtimeDeadlineMs?: number;
+  telemetry?: SupplierQueueProcessingTelemetry;
+}
+
+export interface SupplierQueueProcessingTelemetry {
+  candidatesFetched: number;
+  itemsLeased: number;
+  itemsStarted: number;
+  itemsCompleted: number;
+  itemsRetryableFailed: number;
+  itemsPermanentFailed: number;
+  itemsSkippedByRuntimeBudget: number;
+  deadlineReached: boolean;
+  lastSelectedQueueCreatedAt: string | null;
+  lastSelectedDocumentId: string | null;
 }
 
 export interface SupplierReviewQueueMetrics {
@@ -106,6 +121,19 @@ export interface SupplierQueueRecord extends Record<string, unknown> {
 const DEFAULT_RETRY_LIMIT = SUPPLIER_QUEUE_DEFAULT_RETRY_LIMIT;
 const DEFAULT_LEASE_MS = 5 * 60 * 1000;
 const LEASE_HEARTBEAT_INTERVAL_MS = 60 * 1000;
+
+export const createSupplierQueueProcessingTelemetry = (): SupplierQueueProcessingTelemetry => ({
+  candidatesFetched: 0,
+  itemsLeased: 0,
+  itemsStarted: 0,
+  itemsCompleted: 0,
+  itemsRetryableFailed: 0,
+  itemsPermanentFailed: 0,
+  itemsSkippedByRuntimeBudget: 0,
+  deadlineReached: false,
+  lastSelectedQueueCreatedAt: null,
+  lastSelectedDocumentId: null,
+});
 
 const asRecord = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value)
   ? value as Record<string, unknown>
@@ -1280,20 +1308,40 @@ export async function processSupplierReviewQueueItem(
   }
 }
 
-export async function recoverExpiredSupplierReviewQueueLeases(db: Firestore, now = Date.now(), limit = 100): Promise<number> {
+export async function recoverExpiredSupplierReviewQueueLeases(
+  db: Firestore,
+  now = Date.now(),
+  limit = 100,
+  control: Pick<SupplierQueueProcessingControl, "currentTime" | "runtimeDeadlineMs" | "telemetry"> = {},
+): Promise<number> {
   const nowIso = new Date(now).toISOString();
   const snapshots = await Promise.all(["leased", "processing"].map((queueState) => db.collection("supplier_review_queue")
     .where("queueState", "==", queueState)
     .where("leaseExpiresAt", "<=", nowIso)
     .orderBy("leaseExpiresAt", "asc")
     .orderBy("queueCreatedAt", "asc")
+    .orderBy(FieldPath.documentId(), "asc")
     .limit(limit)
     .get()));
   const documents = [...new Map(snapshots.flatMap((snapshot) => snapshot.docs).map((document) => [document.id, document])).values()]
-    .sort((left, right) => String(left.data().leaseExpiresAt || "").localeCompare(String(right.data().leaseExpiresAt || "")))
+    .sort((left, right) => {
+      const leaseExpiryOrder = String(left.data().leaseExpiresAt || "").localeCompare(String(right.data().leaseExpiresAt || ""));
+      if (leaseExpiryOrder) return leaseExpiryOrder;
+      const queueCreatedOrder = String(left.data().queueCreatedAt || "").localeCompare(String(right.data().queueCreatedAt || ""));
+      return queueCreatedOrder || left.id.localeCompare(right.id);
+    })
     .slice(0, limit);
   let recovered = 0;
-  for (const document of documents) {
+  const currentTime = control.currentTime || Date.now;
+  for (let documentIndex = 0; documentIndex < documents.length; documentIndex += 1) {
+    if (control.runtimeDeadlineMs !== undefined && currentTime() >= control.runtimeDeadlineMs) {
+      if (control.telemetry) {
+        control.telemetry.deadlineReached = true;
+        control.telemetry.itemsSkippedByRuntimeBudget += documents.length - documentIndex;
+      }
+      break;
+    }
+    const document = documents[documentIndex];
     if (!isSupplierQueueLeaseExpired(document.data() as SupplierQueueRecord, now)) continue;
     const state = await recordSupplierQueueFailure(db, document.id, "recovery", new Error("Worker lease expired."), now, true);
     if (state === "retryable_failure" || state === "dead_letter") recovered += 1;
@@ -1327,24 +1375,44 @@ export async function processDueSupplierReviewQueueItems(
     .where("nextRetryAt", "<=", nowIso)
     .orderBy("nextRetryAt", "asc")
     .orderBy("queueCreatedAt", "asc")
+    .orderBy(FieldPath.documentId(), "asc")
     .limit(perStateLimit)
     .get()));
   const documents = [...new Map(snapshots.flatMap((snapshot) => snapshot.docs).map((document) => [document.id, document])).values()]
     .sort((left, right) => {
       const nextRetryOrder = String(left.data().nextRetryAt || "").localeCompare(String(right.data().nextRetryAt || ""));
-      return nextRetryOrder || String(left.data().queueCreatedAt || "").localeCompare(String(right.data().queueCreatedAt || ""));
+      if (nextRetryOrder) return nextRetryOrder;
+      const queueCreatedOrder = String(left.data().queueCreatedAt || "").localeCompare(String(right.data().queueCreatedAt || ""));
+      return queueCreatedOrder || left.id.localeCompare(right.id);
     })
     .slice(0, limit);
   const results: SupplierQueueProcessResult[] = [];
   const currentTime = control.currentTime || Date.now;
-  for (const document of documents) {
+  const telemetry = control.telemetry || createSupplierQueueProcessingTelemetry();
+  telemetry.candidatesFetched = documents.length;
+  for (let documentIndex = 0; documentIndex < documents.length; documentIndex += 1) {
+    const document = documents[documentIndex];
+    if (control.runtimeDeadlineMs !== undefined && currentTime() >= control.runtimeDeadlineMs) {
+      telemetry.deadlineReached = true;
+      telemetry.itemsSkippedByRuntimeBudget += documents.length - documentIndex;
+      break;
+    }
     await control.verifyWorkerOwnership?.();
     const itemStartedAt = currentTime();
+    telemetry.lastSelectedQueueCreatedAt = String(document.data().queueCreatedAt || "") || null;
+    telemetry.lastSelectedDocumentId = document.id;
     const result = await processSupplierReviewQueueItem(db, document.id, workerId, itemStartedAt, {
       ...control,
       currentTime,
     });
     results.push(result);
+    if (result.outcome !== "skipped") {
+      telemetry.itemsLeased += 1;
+      telemetry.itemsStarted += 1;
+      if (result.outcome === "completed") telemetry.itemsCompleted += 1;
+      if (result.outcome === "retryable_failure") telemetry.itemsRetryableFailed += 1;
+      if (result.outcome === "dead_letter") telemetry.itemsPermanentFailed += 1;
+    }
     if (result.outcome !== "skipped") {
       recordSupplierQueueProcessingDurationMetric({
         durationMs: Math.max(0, currentTime() - itemStartedAt),
