@@ -27,6 +27,7 @@ import {
   isSupplierSyncJobActive,
   isSupplierSyncJobTerminal,
   selectCurrentSupplierSyncJob,
+  selectLastCatalogSyncJob,
   selectLastTerminalSupplierSyncJob,
   selectSupplierSyncJobForDisplay,
   selectSupplierSyncJobViews,
@@ -259,4 +260,79 @@ test('POST-DEPLOY-13 terminal job helpers classify active vs terminal states', (
   assert.equal(isSupplierSyncJobTerminal(job({ state: 'failed' })), true);
   assert.equal(selectCurrentSupplierSyncJob([job({ state: 'completed' }), job({ state: 'running', id: 'active' })])?.id, 'active');
   assert.equal(selectLastTerminalSupplierSyncJob([job({ state: 'failed', id: 'old' }), job({ state: 'completed', id: 'new', createdAt: '2026-09-02T07:00:00.000Z' })])?.id, 'new');
+});
+
+test('POST-DEPLOY-14 scheduled no-op does not replace the latest catalog traversal', () => {
+  const verifiedTraversal = job({
+    id: 'verified-catalog',
+    trigger: 'manual',
+    state: 'completed',
+    createdAt: '2026-10-05T05:00:00.000Z',
+    finishedAt: '2026-10-05T05:02:00.000Z',
+    reconciliationStatus: 'VERIFIED',
+    cumulativeCounters: {
+      scanned: 10,
+      processed: 10,
+      queued: 10,
+      new: 10,
+      changeCandidates: 0,
+      unchanged: 0,
+      rejected: 0,
+      failed: 0,
+      warnings: 0,
+      pages: 1,
+    },
+    progress: { ...job({}).progress, pagesProcessed: 1, productsDiscovered: 10, productsObserved: 10, productsScanned: 10, productsQueued: 10, productsFailed: 0 },
+    finalCursor: { dropex: 'offset:6275' },
+  });
+  const scheduledNoOp = job({
+    id: 'scheduled-no-op',
+    trigger: 'scheduled',
+    state: 'completed_with_issues',
+    createdAt: '2026-10-05T11:22:00.000Z',
+    finishedAt: '2026-10-05T11:22:01.000Z',
+    evidenceStatus: 'legacy',
+    reconciliationStatus: 'LEGACY_UNVERIFIED',
+    progress: { ...job({}).progress, pagesProcessed: 0, productsDiscovered: 0, productsObserved: 0, productsScanned: 0, productsQueued: 0, productsFailed: 0 },
+  });
+
+  assert.equal(selectLastCatalogSyncJob([verifiedTraversal, scheduledNoOp])?.id, 'verified-catalog');
+  assert.equal(selectSupplierSyncJobViews([verifiedTraversal, scheduledNoOp]).last?.id, 'verified-catalog');
+});
+
+test('POST-DEPLOY-15 a legitimate zero-product manual catalog job remains selectable', () => {
+  const zeroProductManual = job({
+    id: 'manual-zero-product',
+    trigger: 'manual',
+    state: 'completed_with_issues',
+    createdAt: '2026-10-05T06:00:00.000Z',
+    finishedAt: '2026-10-05T06:00:01.000Z',
+    progress: { ...job({}).progress, pagesProcessed: 0, productsDiscovered: 0, productsObserved: 0, productsScanned: 0, productsQueued: 0, productsFailed: 0 },
+  });
+  const scheduledNoOp = job({
+    id: 'scheduled-no-op-newer',
+    trigger: 'scheduled',
+    state: 'completed_with_issues',
+    createdAt: '2026-10-05T07:00:00.000Z',
+    finishedAt: '2026-10-05T07:00:01.000Z',
+    evidenceStatus: 'legacy',
+    reconciliationStatus: 'LEGACY_UNVERIFIED',
+    progress: { ...job({}).progress, pagesProcessed: 0, productsDiscovered: 0, productsObserved: 0, productsScanned: 0, productsQueued: 0, productsFailed: 0 },
+  });
+
+  assert.equal(selectLastCatalogSyncJob([zeroProductManual, scheduledNoOp])?.id, 'manual-zero-product');
+});
+
+test('POST-DEPLOY-16 scheduled catalog traversal with evidence remains selectable', () => {
+  const scheduledTraversal = job({
+    id: 'scheduled-traversal',
+    trigger: 'scheduled',
+    state: 'completed_with_issues',
+    createdAt: '2026-10-05T08:00:00.000Z',
+    finishedAt: '2026-10-05T08:01:00.000Z',
+    progress: { ...job({}).progress, pagesProcessed: 1, productsDiscovered: 0, productsObserved: 0, productsScanned: 0, productsQueued: 0, productsFailed: 0 },
+    durableCursor: { dropex: 'offset:6275' },
+  });
+
+  assert.equal(selectLastCatalogSyncJob([scheduledTraversal])?.id, 'scheduled-traversal');
 });

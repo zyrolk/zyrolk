@@ -384,10 +384,10 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
   const currentSyncJobRef = useRef<SupplierSyncJobView | null>(null);
   const pendingSupplierSettingsRef = useRef<Record<string, unknown> | null>(null);
   const applySyncJobViews = useCallback((jobs: SupplierSyncJobView[]) => {
-    const { current, last } = selectSupplierSyncJobViews(jobs);
+    const { current, lastCatalogSync } = selectSupplierSyncJobViews(jobs);
     currentSyncJobRef.current = current;
     setCurrentSyncJob(current);
-    setLastSyncJob(last);
+    setLastSyncJob(lastCatalogSync);
     const active = isSupplierSyncJobActive(current);
     syncStartInFlightRef.current = active;
     setIsSyncing(active);
@@ -2287,7 +2287,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
         >
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0 space-y-1">
-              <p className="text-[9px] font-black uppercase tracking-wider text-slate-400">Last sync</p>
+              <p className="text-[9px] font-black uppercase tracking-wider text-slate-400">Last catalog sync</p>
               <div className="flex items-center gap-2">
                 <Activity className={`h-4 w-4 ${lastSyncJob.state === 'failed' ? 'text-rose-500' : 'text-emerald-500'}`} aria-hidden="true" />
                 <p className="text-xs font-extrabold text-slate-900 dark:text-white">

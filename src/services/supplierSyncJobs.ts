@@ -12,6 +12,7 @@ export type SupplierSyncJobState = typeof SUPPLIER_SYNC_JOB_STATES[number];
 
 export interface SupplierSyncJobView {
   id: string;
+  jobType?: 'supplier_sync' | 'pending_review_refresh' | null;
   state: SupplierSyncJobState;
   trigger: 'manual' | 'scheduled';
   sourceIds: string[];
@@ -107,6 +108,48 @@ const syncJobTime = (value: string | null | undefined, fallback: number): number
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
+const syncJobEvidenceTime = (job: SupplierSyncJobView): number => (
+  syncJobTime(job.finishedAt, syncJobTime(job.updatedAt, syncJobTime(job.createdAt, 0)))
+);
+
+const hasRecordedCursor = (cursor: Record<string, string | null> | null | undefined): boolean => (
+  Boolean(cursor && Object.values(cursor).some((value) => typeof value === 'string' && value.trim().length > 0))
+);
+
+const hasCatalogTraversalEvidence = (job: SupplierSyncJobView): boolean => {
+  const progress = job.progress;
+  const counters = job.cumulativeCounters;
+  return Boolean(
+    progress.pagesProcessed > 0
+    || progress.productsDiscovered > 0
+    || progress.productsObserved > 0
+    || progress.productsScanned > 0
+    || progress.productsQueued > 0
+    || progress.productsFailed > 0
+    || counters?.pages > 0
+    || counters?.scanned > 0
+    || counters?.processed > 0
+    || counters?.queued > 0
+    || hasRecordedCursor(job.initialCursor)
+    || hasRecordedCursor(job.durableCursor)
+    || hasRecordedCursor(job.finalCursor)
+    || job.reconciliationStatus === 'VERIFIED'
+  );
+};
+
+/**
+ * Catalog sync is a semantic operation, not merely the newest terminal job.
+ * Scheduled jobs with no traversal evidence are scheduler no-ops/heartbeats
+ * and must remain visible in Activity without replacing the last catalog run.
+ * Manual supplier_sync jobs remain catalog jobs even when they truthfully
+ * scanned zero products.
+ */
+export const isSupplierCatalogTraversalJob = (job: SupplierSyncJobView): boolean => {
+  if (job.jobType === 'pending_review_refresh') return false;
+  if (job.trigger === 'manual') return true;
+  return hasCatalogTraversalEvidence(job);
+};
+
 const sortActiveSupplierSyncJobs = (jobs: readonly SupplierSyncJobView[]): SupplierSyncJobView[] => (
   jobs
     .filter(isSupplierSyncJobActive)
@@ -134,14 +177,26 @@ export const selectLastTerminalSupplierSyncJob = (
   return terminals[0] ?? null;
 };
 
+/** Latest relevant catalog traversal, excluding scheduled no-op lifecycle jobs. */
+export const selectLastCatalogSyncJob = (
+  jobs: readonly SupplierSyncJobView[],
+): SupplierSyncJobView | null => {
+  const catalogJobs = jobs
+    .filter(isSupplierSyncJobTerminal)
+    .filter(isSupplierCatalogTraversalJob)
+    .sort((left, right) => syncJobEvidenceTime(right) - syncJobEvidenceTime(left));
+  return catalogJobs[0] ?? null;
+};
+
 export const selectSupplierSyncJobViews = (
   jobs: readonly SupplierSyncJobView[],
-): { current: SupplierSyncJobView | null; last: SupplierSyncJobView | null } => {
+): { current: SupplierSyncJobView | null; last: SupplierSyncJobView | null; lastCatalogSync: SupplierSyncJobView | null } => {
   const current = selectCurrentSupplierSyncJob(jobs);
-  const last = selectLastTerminalSupplierSyncJob(
+  const lastCatalogSync = selectLastCatalogSyncJob(
     jobs.filter((job) => !current || job.id !== current.id),
   );
-  return { current, last };
+  // `last` remains as a compatibility alias for existing Supplier Hub callers.
+  return { current, last: lastCatalogSync, lastCatalogSync };
 };
 
 /**
