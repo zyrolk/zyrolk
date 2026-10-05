@@ -85,7 +85,7 @@ export function supplierReviewMediaAgeLabel(evidence: SupplierReviewMediaEvidenc
 }
 
 export function supplierReviewMediaRetryLabel(evidence: SupplierReviewMediaEvidence): string | null {
-  if (!evidence.nextRetryAt) return null;
+  if (evidence.state !== 'RETRY_SCHEDULED' || !evidence.nextRetryAt) return null;
   const retryAt = Date.parse(evidence.nextRetryAt);
   if (!Number.isFinite(retryAt)) return null;
   const remainingMinutes = Math.max(0, Math.ceil((retryAt - Date.now()) / 60000));
