@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  buildSupplierMediaQueueProjection,
   classifySupplierMediaObservability,
+  supplierMediaQueueClassFor,
   supplierReviewMediaMatchesFilter,
 } from '../functions/src/api/suppliers/supplierMediaObservability';
 
@@ -158,4 +160,27 @@ test('media readiness remains separate from product publish validation', () => {
   }), now);
   assert.equal(ready.state, 'READY');
   assert.equal(ready.readiness, 'ready');
+});
+
+test('media queue projection mirrors observability without changing approval readiness', () => {
+  const ready = baseRecord({
+    productValidation: { readyToPublish: false, missingFields: ['category'] },
+  });
+  assert.equal(supplierMediaQueueClassFor(ready, now), 'ready');
+  assert.deepEqual(buildSupplierMediaQueueProjection(ready, {}, now), {
+    mediaQueueClass: 'ready',
+    mediaQueueClassVersion: 1,
+  });
+  assert.equal(supplierMediaQueueClassFor({
+    ...ready,
+    queueState: 'processing',
+    mediaStatus: 'downloading',
+  }, now), 'processing');
+  assert.equal(supplierMediaQueueClassFor({
+    ...ready,
+    queueState: 'dead_letter',
+    mediaStatus: 'failed',
+    mediaFailures: [{ retryable: false }],
+  }, now), 'issues');
+  assert.equal(supplierMediaQueueClassFor({ queueState: 'processing' }, now), 'unknown');
 });

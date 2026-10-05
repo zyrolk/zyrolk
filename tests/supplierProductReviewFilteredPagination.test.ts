@@ -226,15 +226,16 @@ test('recently updated cursor pagination is stable across equal timestamps witho
   assert.equal(second.nextCursor, null);
 });
 
-test('Product Review sends the selected filter and polling reloads every already-loaded page', () => {
+test('Product Review sends the selected filter and polling reloads the current bounded page', () => {
   const component = readFileSync('src/components/SupplierHubFiveStars.tsx', 'utf8');
   const routes = readFileSync('functions/src/api/routes/supplier.ts', 'utf8');
 
-  assert.match(component, /new URLSearchParams\(\{ view: 'review', limit: '50', filter: reviewFilter \}\)/);
+  assert.match(component, /new URLSearchParams\(\{ view: 'review', limit: '50' \}\)/);
+  assert.match(component, /if \(queryFilter\) parameters\.set\('filter', queryFilter\)/);
   assert.match(component, /parameters\.set\('sort', 'updated'\)/);
   assert.match(component, /Recently updated/);
-  assert.match(component, /supplierReviewLoadedPagesRef\.current \+ pagesLoaded/);
-  assert.match(component, /loadSupplierQueueView\(\{ pageCount: supplierReviewLoadedPagesRef\.current \}\)/);
+  assert.doesNotMatch(component, /supplierReviewLoadedPagesRef\.current \+ pagesLoaded/);
+  assert.match(component, /loadSupplierQueueView\(\{ page: supplierReviewPage \}\)/);
   assert.match(routes, /readSupplierReviewBusinessFilter\(req\.query\.filter\)/);
   assert.match(routes, /readSupplierReviewQueueSort\(req\.query\.sort\)/);
   assert.match(routes, /\.\.\.\(businessFilter \? \{ businessFilter \} : \{\}\)/);

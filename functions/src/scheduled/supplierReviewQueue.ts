@@ -27,9 +27,13 @@ import {
 } from "../api/suppliers/supplierOperationalAlerts";
 import { classifySupplierMediaReadiness } from "../api/suppliers/supplierMediaReadiness";
 import {
+  buildSupplierMediaQueueProjection,
   classifySupplierMediaObservability,
+  SUPPLIER_MEDIA_QUEUE_CLASS_FIELD,
+  SupplierMediaQueueClass,
   supplierReviewMediaMatchesFilter,
 } from "../api/suppliers/supplierMediaObservability";
+import { isSupplierMediaQueueProjectionActive } from "../api/suppliers/supplierMediaQueueProjection";
 import { recordSupplierQueueProcessingDurationMetric } from "../api/suppliers/supplierCloudMonitoring";
 import { appLogger } from "../api/logging";
 import {
@@ -115,6 +119,8 @@ export interface SupplierQueueRecord extends Record<string, unknown> {
   supplierSnapshot?: unknown;
   managedMedia?: unknown;
   mediaFailures?: unknown;
+  mediaQueueClass?: SupplierMediaQueueClass;
+  mediaQueueClassVersion?: number;
   mediaSourceImageUrls?: unknown;
 }
 
@@ -418,7 +424,7 @@ export async function ensureSupplierReviewQueueManagedMedia(
     if (error instanceof SupplierMediaRetryableError) {
       const validation = asRecord(queueItem.productValidation);
       const existingErrors = Array.isArray(validation.errors) ? validation.errors : [];
-      await reference.set({
+      const retryPatch: Record<string, unknown> = {
         managedMedia: existingAssets,
         mediaFailures: error.failures,
         mediaSourceImageUrls: sourceUrlsForReadiness,
@@ -446,6 +452,10 @@ export async function ensureSupplierReviewQueueManagedMedia(
           managedMedia: existingAssets,
           mediaFailures: error.failures,
         },
+      };
+      await reference.set({
+        ...retryPatch,
+        ...buildSupplierMediaQueueProjection(queueItem, retryPatch),
       }, { merge: true });
     }
     throw error;
@@ -535,7 +545,10 @@ export async function ensureSupplierReviewQueueManagedMedia(
       },
     } : {}),
   };
-  await reference.set(patch, { merge: true });
+  await reference.set({
+    ...patch,
+    ...buildSupplierMediaQueueProjection(queueItem, patch),
+  }, { merge: true });
   // Queue workers resolve only after completion changes the queue back to
   // review_pending. The resolver intentionally fences processing records.
   if (mediaReadiness.publicationSafe && String(queueItem.queueState || "").toLowerCase() !== "processing") {
@@ -982,7 +995,10 @@ export async function leaseSupplierReviewQueueItem(
     const currentState = stateFor(record);
     if ((currentState === "leased" || currentState === "processing") && isSupplierQueueLeaseExpired(record, now)) {
       const failure = buildSupplierQueueFailureUpdate(record, new Error("Worker lease expired."), now, { recoveredLease: true });
-      transaction.set(reference, failure.data, { merge: true });
+      transaction.set(reference, {
+        ...failure.data,
+        ...buildSupplierMediaQueueProjection(record, failure.data, now),
+      }, { merge: true });
       createSupplierAuditEvent(db, transaction, {
         queueItemId,
         queueItem: { ...record, ...failure.data },
@@ -997,7 +1013,7 @@ export async function leaseSupplierReviewQueueItem(
     }
     if (!canLeaseSupplierQueueItem(record, now)) return null;
     const leaseId = `${workerId}:${Number(record.leaseCount || 0) + 1}:${now}`;
-    transaction.set(reference, {
+    const leasePatch = {
       queueState: "leased" satisfies SupplierQueueState,
       leaseOwner: workerId,
       leaseId,
@@ -1005,6 +1021,10 @@ export async function leaseSupplierReviewQueueItem(
       leaseExpiresAt: new Date(now + leaseMs).toISOString(),
       lastLeasedAt: new Date(now).toISOString(),
       leaseCount: Number(record.leaseCount || 0) + 1,
+    };
+    transaction.set(reference, {
+      ...leasePatch,
+      ...buildSupplierMediaQueueProjection(record, leasePatch, now),
     }, { merge: true });
     createSupplierAuditEvent(db, transaction, {
       queueItemId,
@@ -1060,11 +1080,15 @@ async function markSupplierQueueProcessing(db: Firestore, queueItemId: string, w
     if (stateFor(record) !== "leased" || asString(record.leaseOwner) !== workerId || isSupplierQueueLeaseExpired(record, now)) {
       throw new Error("Supplier queue lease is no longer owned by this worker.");
     }
-    transaction.set(reference, {
+    const processingPatch = {
       queueState: "processing" satisfies SupplierQueueState,
       processingStartedAt: new Date(now).toISOString(),
       leaseExpiresAt: new Date(now + DEFAULT_LEASE_MS).toISOString(),
       leaseHeartbeatAt: new Date(now).toISOString(),
+    };
+    transaction.set(reference, {
+      ...processingPatch,
+      ...buildSupplierMediaQueueProjection(record, processingPatch, now),
     }, { merge: true });
     createSupplierAuditEvent(db, transaction, {
       queueItemId,
@@ -1097,7 +1121,7 @@ async function completeSupplierQueueItem(db: Firestore, queueItemId: string, wor
     if (Object.keys(importPayload).length > 0) transaction.set(importReference, importPayload, { merge: true });
     const pendingChangePayload = asRecord(record.pendingChangePayload);
     if (Object.keys(pendingChangePayload).length > 0) transaction.set(pendingReference, pendingChangePayload, { merge: true });
-    transaction.set(reviewReference, {
+    const completionPatch = {
       queueState: "review_pending" satisfies SupplierQueueState,
       status: "Pending",
       completedAt: new Date(now).toISOString(),
@@ -1107,6 +1131,10 @@ async function completeSupplierQueueItem(db: Firestore, queueItemId: string, wor
       leaseExpiresAt: FieldValue.delete(),
       importPayload: FieldValue.delete(),
       pendingChangePayload: FieldValue.delete(),
+    };
+    transaction.set(reviewReference, {
+      ...completionPatch,
+      ...buildSupplierMediaQueueProjection(record, { queueState: completionPatch.queueState }, now),
     }, { merge: true });
     createSupplierAuditEvent(db, transaction, {
       queueItemId,
@@ -1168,9 +1196,13 @@ async function recordSupplierQueueFailure(
         ],
       }
       : null;
-    transaction.set(reference, {
+    const failurePatch = {
       ...failure.data,
       ...(nextValidation ? { productValidation: nextValidation } : {}),
+    };
+    transaction.set(reference, {
+      ...failurePatch,
+      ...buildSupplierMediaQueueProjection(record, failurePatch, now),
     }, { merge: true });
     createSupplierAuditEvent(db, transaction, {
       queueItemId,
@@ -2068,15 +2100,31 @@ const reviewPageQuery = (
   db: Firestore,
   query: SupplierReviewQueryModel,
   queryRevision: string,
+  useIndexedMediaProjection = false,
 ): FirebaseFirestore.Query => {
   const collection = db.collection("supplier_review_queue");
   const statuses = reviewStatusValues(query.state);
   let result: FirebaseFirestore.Query = statuses.length === 1
     ? collection.where("status", "==", statuses[0])
     : collection.where("status", "in", statuses);
+  if (useIndexedMediaProjection && query.mediaFilter !== "all") {
+    const mediaQueueClass = query.mediaFilter === "ready"
+      ? "ready"
+      : query.mediaFilter === "processing" ? "processing" : "issues";
+    result = result.where(SUPPLIER_MEDIA_QUEUE_CLASS_FIELD, "==", mediaQueueClass);
+  }
   result = result.where(reviewSortField(query.sort), "<=", queryRevision);
   return result;
 };
+
+const reviewPageReadQuery = (
+  db: Firestore,
+  query: SupplierReviewQueryModel,
+  queryRevision: string,
+  useIndexedMediaProjection: boolean,
+): FirebaseFirestore.Query => reviewPageQuery(db, query, queryRevision, useIndexedMediaProjection)
+  .orderBy(reviewSortField(query.sort), "desc")
+  .orderBy(FieldPath.documentId(), "desc");
 
 const compareReviewDocuments = (
   left: FirebaseFirestore.QueryDocumentSnapshot,
@@ -2139,8 +2187,9 @@ const countSupplierReviewQuery = async (
   db: Firestore,
   query: SupplierReviewQueryModel,
   queryRevision: string,
+  useIndexedMediaProjection = false,
 ): Promise<{ totalCount: number | null; countStatus: "exact" | "unavailable"; countReason?: string }> => {
-  if (query.businessFilter || (query.mediaFilter !== "all" && !query.search)) {
+  if (query.businessFilter || (query.mediaFilter !== "all" && !query.search && !useIndexedMediaProjection)) {
     return {
       totalCount: null,
       countStatus: "unavailable",
@@ -2153,7 +2202,7 @@ const countSupplierReviewQuery = async (
     const documents = await readExactSupplierReviewDocuments(db, query, queryRevision);
     return { totalCount: documents.length, countStatus: "exact" };
   }
-  const aggregate = await reviewPageQuery(db, query, queryRevision).count().get();
+  const aggregate = await reviewPageQuery(db, query, queryRevision, useIndexedMediaProjection).count().get();
   return { totalCount: aggregate.data().count, countStatus: "exact" };
 };
 
@@ -2262,7 +2311,12 @@ export async function listSupplierReviewReadModelPage(
     throw new Error("The requested page jump is too large for the available cursor anchor.");
   }
 
-  const count = await countSupplierReviewQuery(db, query, queryRevision);
+  const useIndexedMediaProjection = !query.businessFilter
+    && !query.search
+    && query.mediaFilter !== "all"
+    && query.state !== "history"
+    && await isSupplierMediaQueueProjectionActive(db);
+  const count = await countSupplierReviewQuery(db, query, queryRevision, useIndexedMediaProjection);
   const generatedAt = new Date().toISOString();
   let currentToken = decodedCursor || decodeSupplierReviewCursorToken(createSupplierReviewPageToken({
     page: 1,
@@ -2283,6 +2337,32 @@ export async function listSupplierReviewReadModelPage(
       totalCount = result.totalCount;
       resultNextAnchorId = result.documents.length === query.pageSize
         ? result.documents.at(-1)?.id || null
+        : null;
+      if (page < targetPage) {
+        if (!resultNextAnchorId) throw new Error("The requested page does not exist.");
+        const nextDocument = await db.collection("supplier_review_queue").doc(resultNextAnchorId).get();
+        if (!nextDocument.exists) throw new Error("Supplier review cursor is stale.");
+        currentToken = decodeSupplierReviewCursorToken(createSupplierReviewPageToken({
+          page: page + 1,
+          anchorId: resultNextAnchorId,
+          previousToken: boundedPreviousSupplierReviewToken(currentToken),
+          fingerprint,
+          queryRevision,
+          sort: query.sort,
+          sortValue: reviewCursorValue(nextDocument.data()?.[reviewSortField(query.sort)]),
+        }));
+      }
+    } else if (useIndexedMediaProjection) {
+      let indexedQuery = reviewPageReadQuery(db, query, queryRevision, true);
+      if (currentToken.anchorId) {
+        const anchor = await db.collection("supplier_review_queue").doc(currentToken.anchorId).get();
+        if (!anchor.exists) throw new Error("Supplier review cursor is stale.");
+        indexedQuery = indexedQuery.startAfter(anchor);
+      }
+      const snapshot = await indexedQuery.limit(query.pageSize).get();
+      resultDocuments = snapshot.docs;
+      resultNextAnchorId = snapshot.size === query.pageSize
+        ? snapshot.docs.at(-1)?.id || null
         : null;
       if (page < targetPage) {
         if (!resultNextAnchorId) throw new Error("The requested page does not exist.");

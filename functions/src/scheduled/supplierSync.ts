@@ -104,6 +104,7 @@ import {
   SupplierSourceSyncSettings,
 } from "./supplierSyncSettings";
 import { buildSupplierOfferRemovalReviewId } from "../api/suppliers/supplierQueueLifecycle";
+import { buildSupplierMediaQueueProjection } from "../api/suppliers/supplierMediaObservability";
 import {
   buildSupplierQueueLifecycle,
   classifySupplierQueueFailure,
@@ -2426,6 +2427,7 @@ export async function refreshActiveSupplierReviewItem(
     supplierOfferPendingRevision: stagedOffer.revision,
   }, selectedComparison);
   queueData.pendingChangePayload = pendingChange || FieldValue.delete();
+  Object.assign(queueData, buildSupplierMediaQueueProjection(queueData));
 
   const queuedWrites: SupplierSyncWrite[] = [
     {
@@ -4397,6 +4399,7 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
                 ],
               },
             } : baseQueueData;
+            Object.assign(queueData, buildSupplierMediaQueueProjection(queueData));
             queuedWrites.push({
               collection: "supplier_review_queue",
               id: queueItemId,

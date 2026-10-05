@@ -121,6 +121,7 @@ type PendingReviewBatchSize = typeof PENDING_REVIEW_BATCH_SIZES[number];
 const PRODUCT_REVIEW_PAGE_SIZES = [25, 50, 100] as const;
 type ProductReviewPageSize = typeof PRODUCT_REVIEW_PAGE_SIZES[number];
 type SupplierReviewQueueView = 'ready' | 'new' | 'updates' | 'issues' | 'waiting' | 'history';
+type SupplierReviewQueueMode = 'ready' | 'waiting' | 'advanced';
 
 const PRODUCT_REVIEW_URL_VIEWS: Record<ProductReviewFilter, string> = {
   new_products: 'new',
@@ -144,6 +145,15 @@ const reviewQueueViewFromState = (
   return 'new';
 };
 
+const reviewQueueModeFromState = (
+  filter: ProductReviewFilter,
+  media: 'all' | 'ready' | 'processing' | 'issues',
+): SupplierReviewQueueMode => {
+  if (filter === 'new_products' && media === 'ready') return 'ready';
+  if (filter === 'new_products' && media === 'processing') return 'waiting';
+  return 'advanced';
+};
+
 const readProductReviewUrlState = (): {
   filter: ProductReviewFilter;
   media: 'all' | 'ready' | 'processing' | 'issues';
@@ -151,6 +161,7 @@ const readProductReviewUrlState = (): {
   search: string;
   page: number;
   pageSize: ProductReviewPageSize;
+  queueMode: SupplierReviewQueueMode;
 } => {
   const defaults = {
     filter: 'new_products' as ProductReviewFilter,
@@ -161,6 +172,7 @@ const readProductReviewUrlState = (): {
     search: '',
     page: 1,
     pageSize: 50 as ProductReviewPageSize,
+    queueMode: 'ready' as SupplierReviewQueueMode,
   };
   if (typeof window === 'undefined') return defaults;
   const parameters = new URLSearchParams(window.location.search);
@@ -168,18 +180,27 @@ const readProductReviewUrlState = (): {
   const filter = (Object.entries(PRODUCT_REVIEW_URL_VIEWS).find(([, value]) => value === view)?.[0] || view) as ProductReviewFilter;
   const pageSizeValue = Number(parameters.get('pageSize'));
   const pageValue = Number(parameters.get('page'));
+  const resolvedFilter = PRODUCT_REVIEW_FILTERS.some((item) => item.id === filter) ? filter : defaults.filter;
+  const resolvedMedia = ['all', 'ready', 'processing', 'issues'].includes(parameters.get('media') || '')
+    ? parameters.get('media') as 'all' | 'ready' | 'processing' | 'issues'
+    : defaults.media;
+  const queueMode = parameters.get('queue') === 'ready' || parameters.get('queue') === 'waiting'
+    || parameters.get('queue') === 'advanced'
+    ? parameters.get('queue') as SupplierReviewQueueMode
+    : reviewQueueModeFromState(resolvedFilter, resolvedMedia);
   return {
-    filter: PRODUCT_REVIEW_FILTERS.some((item) => item.id === filter) ? filter : defaults.filter,
-    media: ['all', 'ready', 'processing', 'issues'].includes(parameters.get('media') || '') ? parameters.get('media') as 'all' | 'ready' | 'processing' | 'issues' : defaults.media,
+    filter: resolvedFilter,
+    media: resolvedMedia,
     sort: parameters.get('sort') === 'updated' ? 'updated' : defaults.sort,
     search: (parameters.get('q') || '').trim(),
     page: Number.isInteger(pageValue) && pageValue > 0 ? Math.min(pageValue, 10_000) : defaults.page,
     pageSize: PRODUCT_REVIEW_PAGE_SIZES.includes(pageSizeValue as ProductReviewPageSize) ? pageSizeValue as ProductReviewPageSize : defaults.pageSize,
+    queueMode,
   };
 };
 
 const writeProductReviewUrlState = (
-  state: { filter: ProductReviewFilter; media: 'all' | 'ready' | 'processing' | 'issues'; sort: 'created' | 'updated'; search: string; page: number; pageSize: ProductReviewPageSize },
+  state: { filter: ProductReviewFilter; media: 'all' | 'ready' | 'processing' | 'issues'; sort: 'created' | 'updated'; search: string; page: number; pageSize: ProductReviewPageSize; queueMode: SupplierReviewQueueMode },
   mode: 'push' | 'replace' = 'push',
 ): void => {
   if (typeof window === 'undefined') return;
@@ -190,6 +211,7 @@ const writeProductReviewUrlState = (
   if (state.sort === 'updated') url.searchParams.set('sort', 'updated'); else url.searchParams.delete('sort');
   if (state.search.trim()) url.searchParams.set('q', state.search.trim()); else url.searchParams.delete('q');
   if (state.media !== 'all') url.searchParams.set('media', state.media); else url.searchParams.delete('media');
+  url.searchParams.set('queue', state.queueMode);
   window.history[`${mode}State`]({}, '', `${url.pathname}${url.search}${url.hash}`);
 };
 
@@ -452,6 +474,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
   const [canAccessAdvanced, setCanAccessAdvanced] = useState(false);
   const [reviewFilter, setReviewFilter] = useState<ProductReviewFilter>(initialProductReviewUrlState.filter);
   const [reviewMediaFilter, setReviewMediaFilter] = useState<'all' | 'ready' | 'processing' | 'issues'>(initialProductReviewUrlState.media);
+  const [reviewQueueMode, setReviewQueueMode] = useState<SupplierReviewQueueMode>(initialProductReviewUrlState.queueMode);
   const [reviewSort, setReviewSort] = useState<'created' | 'updated'>(initialProductReviewUrlState.sort);
   const [pendingReviewBatchSize, setPendingReviewBatchSize] = useState<PendingReviewBatchSize>(25);
   const [pendingReviewBatchRefreshing, setPendingReviewBatchRefreshing] = useState(false);
@@ -905,10 +928,15 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
     } = {},
   ): Promise<boolean> => {
     const targetPage = Math.max(1, Math.min(10_000, options.page || supplierReviewPage));
+    const dedicatedMediaQueue = reviewQueueMode === 'ready' || reviewQueueMode === 'waiting';
+    const queryFilter = dedicatedMediaQueue ? '' : reviewFilter;
+    const queryMedia = dedicatedMediaQueue
+      ? reviewQueueMode === 'ready' ? 'ready' as const : 'processing' as const
+      : reviewMediaFilter;
     const queryKey = buildSupplierReviewQueryKey({
       view: 'review',
-      filter: reviewFilter,
-      media: reviewMediaFilter,
+      filter: queryFilter,
+      media: queryMedia,
       search: reviewSearch,
       sort: reviewSort,
       pageSize: supplierReviewPageSize,
@@ -936,13 +964,14 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
       let items: ReviewQueueItem[] = [];
       let finalResult: SupplierQueuePageResponse | null = null;
       while (scanPage <= targetPage) {
-        const parameters = new URLSearchParams({ view: 'review', limit: '50', filter: reviewFilter });
+        const parameters = new URLSearchParams({ view: 'review', limit: '50' });
         parameters.set('page', String(scanPage));
         parameters.set('limit', String(supplierReviewPageSize));
         parameters.set('pageSize', String(supplierReviewPageSize));
-        parameters.set('state', options.reviewState || supplierReviewApiState(reviewFilter));
+        parameters.set('state', options.reviewState || supplierReviewApiState(queryFilter as ProductReviewFilter));
         if (reviewSort === 'updated') parameters.set('sort', 'updated');
-        if (reviewMediaFilter !== 'all') parameters.set('media', reviewMediaFilter);
+        if (queryFilter) parameters.set('filter', queryFilter);
+        if (queryMedia !== 'all') parameters.set('media', queryMedia);
         if (reviewSearch.trim()) {
           parameters.set('search', reviewSearch.trim());
           parameters.set('searchMode', 'exact');
@@ -971,10 +1000,8 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
         scanPage += 1;
       }
       if (!finalResult) throw new Error('Product Review page could not be loaded.');
-      // The legacy accumulator `supplierReviewLoadedPagesRef.current + pagesLoaded`
-      // is intentionally not used: PR-3 replaces the visible Load More model with
-      // one bounded server page at a time.
-      // Legacy polling shape retained only as documentation: loadSupplierQueueView({ pageCount: supplierReviewLoadedPagesRef.current });
+      // PR-3 replaces the visible Load More model with one bounded server page at
+      // a time. Polling reloads only the current page and preserves its anchors.
       setReviewQueue(items);
       setSupplierReviewCursor(nextCursor);
       setSupplierReviewTotalCount(finalResult.totalCount ?? null);
@@ -1020,15 +1047,16 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
       cancelled = true;
       if (refreshTimer !== null) window.clearTimeout(refreshTimer);
     };
-  }, [activeSubTab, reviewFilter, reviewMediaFilter, reviewSort, reviewSearch, supplierReviewPage, supplierReviewPageSize]);
+  }, [activeSubTab, reviewFilter, reviewMediaFilter, reviewQueueMode, reviewSort, reviewSearch, supplierReviewPage, supplierReviewPageSize]);
 
   const updateProductReviewUrl = (
-    patch: Partial<{ filter: ProductReviewFilter; media: 'all' | 'ready' | 'processing' | 'issues'; sort: 'created' | 'updated'; search: string; page: number; pageSize: ProductReviewPageSize }>,
+    patch: Partial<{ filter: ProductReviewFilter; media: 'all' | 'ready' | 'processing' | 'issues'; queueMode: SupplierReviewQueueMode; sort: 'created' | 'updated'; search: string; page: number; pageSize: ProductReviewPageSize }>,
     mode: 'push' | 'replace' = 'push',
   ): void => {
     writeProductReviewUrlState({
       filter: reviewFilter,
       media: reviewMediaFilter,
+      queueMode: reviewQueueMode,
       sort: reviewSort,
       search: reviewSearch,
       page: supplierReviewPage,
@@ -1039,29 +1067,37 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
 
   const handleReviewFilterChange = (filter: ProductReviewFilter): void => {
     setReviewFilter(filter);
+    setReviewQueueMode('advanced');
     setSupplierReviewPage(1);
-    updateProductReviewUrl({ filter, page: 1 });
+    updateProductReviewUrl({ filter, queueMode: 'advanced', page: 1 });
   };
 
   const handleReviewMediaFilterChange = (media: 'all' | 'ready' | 'processing' | 'issues'): void => {
     setReviewMediaFilter(media);
+    setReviewQueueMode('advanced');
     setSupplierReviewPage(1);
-    updateProductReviewUrl({ media, page: 1 });
+    updateProductReviewUrl({ media, queueMode: 'advanced', page: 1 });
   };
 
   const handleReviewQueueViewChange = (view: SupplierReviewQueueView): void => {
     const applyQueueQuery = (filter: ProductReviewFilter, media: 'all' | 'ready' | 'processing' | 'issues'): void => {
       setReviewFilter(filter);
       setReviewMediaFilter(media);
+      setReviewQueueMode(view === 'ready' ? 'ready' : view === 'waiting' ? 'waiting' : 'advanced');
       setSupplierReviewPage(1);
-      updateProductReviewUrl({ filter, media, page: 1 });
+      updateProductReviewUrl({
+        filter,
+        media,
+        queueMode: view === 'ready' ? 'ready' : view === 'waiting' ? 'waiting' : 'advanced',
+        page: 1,
+      });
     };
     if (view === 'ready') {
-      applyQueueQuery(reviewFilter, 'ready');
+      applyQueueQuery('new_products', 'ready');
       return;
     }
     if (view === 'waiting') {
-      applyQueueQuery(reviewFilter, 'processing');
+      applyQueueQuery('new_products', 'processing');
       return;
     }
     if (view === 'issues') {
@@ -2328,7 +2364,11 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
   // scheduled inventory refresh ran successfully. Keep the latter unknown
   // until the read model exposes a run-level refresh signal.
   const inventoryHealth = null;
-  const reviewQueueView = reviewQueueViewFromState(reviewFilter, reviewMediaFilter);
+  const reviewQueueView = reviewQueueMode === 'ready'
+    ? 'ready'
+    : reviewQueueMode === 'waiting'
+      ? 'waiting'
+      : reviewQueueViewFromState(reviewFilter, reviewMediaFilter);
 
   useEffect(() => {
     const technicalError = errorMsg || syncErrorMsg || supplierQueueError || modalTestError || supplierOfferError;

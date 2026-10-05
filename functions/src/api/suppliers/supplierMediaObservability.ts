@@ -36,6 +36,15 @@ export type SupplierMediaSafeFailureClass =
   | "NONE"
   | "UNKNOWN";
 
+/**
+ * Stable, queryable media classification for the Supplier Hub read model.
+ * This is deliberately separate from publication validation and Product Review
+ * approval state.
+ */
+export const SUPPLIER_MEDIA_QUEUE_CLASS_FIELD = "mediaQueueClass" as const;
+export const SUPPLIER_MEDIA_QUEUE_CLASS_VERSION = 1 as const;
+export type SupplierMediaQueueClass = "ready" | "processing" | "issues" | "unknown";
+
 export interface SupplierMediaObservability {
   state: SupplierMediaUserState;
   rawState: SupplierMediaOperationalState;
@@ -55,6 +64,17 @@ export interface SupplierMediaObservability {
   safeFailureClass: SupplierMediaSafeFailureClass;
   legacy: boolean;
 }
+
+const supplierMediaQueueClassFromObservation = (
+  observation: SupplierMediaObservability,
+): SupplierMediaQueueClass => {
+  if (observation.state === "READY") return "ready";
+  if (observation.state === "PROCESSING" || observation.state === "RETRY_SCHEDULED") return "processing";
+  if (observation.state === "NEEDS_ATTENTION"
+    || observation.state === "SUPPLIER_IMAGE_UNAVAILABLE"
+    || observation.state === "PERMANENT_MEDIA_CONSTRAINT") return "issues";
+  return "unknown";
+};
 
 const asRecord = (value: unknown): Record<string, unknown> => (
   value && typeof value === "object" && !Array.isArray(value)
@@ -296,6 +316,35 @@ export function classifySupplierMediaObservability(
     safeFailureClass,
     legacy,
   };
+}
+
+/**
+ * Derives the only persisted media queue projection used for indexed Admin
+ * reads. Every writer should call this helper after applying its state/media
+ * patch so the queryable value cannot drift from the existing observability
+ * semantics.
+ */
+export function supplierMediaQueueClassFor(
+  record: Record<string, unknown>,
+  now = Date.now(),
+): SupplierMediaQueueClass {
+  return supplierMediaQueueClassFromObservation(classifySupplierMediaObservability(record, now));
+}
+
+export function buildSupplierMediaQueueProjection(
+  record: Record<string, unknown>,
+  patch: Record<string, unknown> = {},
+  now = Date.now(),
+): Record<string, unknown> {
+  return {
+    [SUPPLIER_MEDIA_QUEUE_CLASS_FIELD]: supplierMediaQueueClassFor({ ...record, ...patch }, now),
+    mediaQueueClassVersion: SUPPLIER_MEDIA_QUEUE_CLASS_VERSION,
+  };
+}
+
+export function hasSupplierMediaQueueProjection(record: Record<string, unknown>): boolean {
+  const value = record[SUPPLIER_MEDIA_QUEUE_CLASS_FIELD];
+  return value === "ready" || value === "processing" || value === "issues" || value === "unknown";
 }
 
 export function supplierReviewMediaMatchesFilter(

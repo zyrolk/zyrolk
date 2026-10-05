@@ -13,7 +13,7 @@ type StoredDocument = Record<string, unknown>;
 type StoredRecord = { id: string; data: StoredDocument };
 type FakeSnapshot = { exists: boolean; id: string; data: () => StoredDocument | undefined };
 
-const makeFakeDb = (records: StoredRecord[]) => {
+const makeFakeDb = (records: StoredRecord[], options: { mediaProjectionActive?: boolean } = {}) => {
   const snapshotFor = (id: string): FakeSnapshot => {
     const record = records.find((entry) => entry.id === id);
     return { exists: Boolean(record), id, data: () => record?.data };
@@ -72,10 +72,18 @@ const makeFakeDb = (records: StoredRecord[]) => {
     return query;
   };
   return {
-    collection: () => ({
+    collection: (collectionName = '') => ({
       where: (field: string, operator: string, value: unknown) => makeQuery().where(field, operator, value),
       orderBy: (field: string, direction: string) => makeQuery().orderBy(field, direction),
-      doc: (id: string) => ({ get: async () => snapshotFor(id) }),
+      doc: (id: string) => ({ get: async () => collectionName === 'supplier_read_model_meta'
+        ? {
+          exists: options.mediaProjectionActive === true,
+          id,
+          data: () => options.mediaProjectionActive === true
+            ? { status: 'active', version: 1 }
+            : undefined,
+        }
+        : snapshotFor(id) }),
       get: async () => ({ docs: [], size: 0, empty: true }),
     }),
   };
@@ -233,4 +241,55 @@ test('PR-2 media evidence is projected and media filters preserve business pagin
   assert.deepEqual(processing.items.map((item) => item.id), ['media-processing']);
   assert.equal(processing.countStatus, 'unavailable');
   assert.equal(processing.queryFingerprint, buildSupplierReviewQueryFingerprint(query({ mediaFilter: 'processing', businessFilter: 'new_products', pageSize: 25 })));
+});
+
+test('indexed media projection provides bounded Ready pages and exact counts', async () => {
+  const readyRecords: StoredRecord[] = Array.from({ length: 75 }, (_, index) => ({
+    id: `ready-${String(index).padStart(3, '0')}`,
+    data: {
+      status: 'Pending',
+      queueState: 'review_pending',
+      mediaQueueClass: 'ready',
+      mediaQueueClassVersion: 1,
+      mediaStatus: 'ready',
+      mediaReadiness: 'publication_safe',
+      mediaSourceImageUrls: ['https://supplier.example/ready.jpg'],
+      managedMedia: [{ firebaseStorageUrl: 'https://firebasestorage.googleapis.com/v0/b/demo/o/ready.jpg', originalSupplierUrl: 'https://supplier.example/ready.jpg', imageStatus: 'ready', isPrimary: true }],
+      mediaFailures: [],
+      createdAt: new Date(Date.UTC(2026, 0, 1, 0, 0, 0, 75 - index)).toISOString(),
+      updatedAt: new Date(Date.UTC(2026, 0, 1, 0, 0, 0, 75 - index)).toISOString(),
+    },
+  }));
+  const processingRecord: StoredRecord = {
+    id: 'processing-001',
+    data: {
+      status: 'Pending', queueState: 'processing', mediaQueueClass: 'processing', mediaQueueClassVersion: 1,
+      mediaStatus: 'downloading', mediaSourceImageUrls: ['https://supplier.example/processing.jpg'], managedMedia: [], mediaFailures: [],
+      createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+    },
+  };
+  const db = makeFakeDb([...readyRecords, processingRecord], { mediaProjectionActive: true }) as never;
+  const first = await listSupplierReviewReadModelPage(db, { query: query({ mediaFilter: 'ready', pageSize: 50 }), page: 1 });
+  assert.equal(first.countStatus, 'exact');
+  assert.equal(first.totalCount, 75);
+  assert.equal(first.totalPages, 2);
+  assert.equal(first.items.length, 50);
+  const second = await listSupplierReviewReadModelPage(db, {
+    query: query({ mediaFilter: 'ready', pageSize: 50 }),
+    page: 2,
+    cursor: first.nextCursor || undefined,
+    queryRevision: first.queryRevision,
+  });
+  assert.equal(second.items.length, 25);
+  assert.equal(new Set([...first.items, ...second.items].map((item) => item.id)).size, 75);
+  assert.equal(second.nextCursor, null);
+});
+
+test('indexed media projection stays behind the migration gate until active', async () => {
+  const db = makeFakeDb(records(3)) as never;
+  const result = await listSupplierReviewReadModelPage(db, {
+    query: query({ mediaFilter: 'ready', pageSize: 25 }), page: 1,
+  });
+  assert.equal(result.countStatus, 'unavailable');
+  assert.match(result.countReason || '', /media filter is derived/u);
 });
