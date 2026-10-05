@@ -3,6 +3,7 @@ export const SUPPLIER_SYNC_JOB_STATES = [
   'running',
   'waiting',
   'completed',
+  'completed_with_issues',
   'failed',
   'cancelled',
 ] as const;
@@ -22,6 +23,36 @@ export interface SupplierSyncJobView {
   retryCount: number;
   retryLimit: number;
   resumeCount: number;
+  attemptCount?: number;
+  requestedTotalProductLimit?: number | null;
+  effectiveTotalProductLimit?: number | null;
+  requestedPageSize?: number | null;
+  effectivePageSize?: Record<string, number> | null;
+  initialCursor?: Record<string, string | null> | null;
+  durableCursor?: Record<string, string | null> | null;
+  finalCursor?: Record<string, string | null> | null;
+  lastAttemptStartedAt?: string | null;
+  lastAttemptCompletedAt?: string | null;
+  cumulativeCounters?: {
+    scanned: number;
+    processed: number;
+    queued: number;
+    new: number;
+    changeCandidates: number;
+    unchanged: number;
+    rejected: number | null;
+    failed: number;
+    warnings: number;
+    pages: number;
+  } | null;
+  evidenceStatus?: 'current' | 'legacy' | null;
+  evidenceVersion?: number | null;
+  reconciliationStatus?: 'VERIFIED' | 'ISSUES' | 'LEGACY_UNVERIFIED' | null;
+  reconciliationIssues?: Array<Record<string, unknown>>;
+  reconciliationAttemptCount?: number | null;
+  reconciliationPageCommitCount?: number | null;
+  reconciledAt?: string | null;
+  stopReason?: string | null;
   cancellationRequestedAt?: string | null;
   lastFailureReason?: string | null;
   waitingReason?: string | null;
@@ -55,7 +86,7 @@ export const isSupplierSyncJobActive = (job: SupplierSyncJobView | null | undefi
 );
 
 export const isSupplierSyncJobTerminal = (job: SupplierSyncJobView | null | undefined): boolean => (
-  job?.state === 'completed' || job?.state === 'failed' || job?.state === 'cancelled'
+  job?.state === 'completed' || job?.state === 'completed_with_issues' || job?.state === 'failed' || job?.state === 'cancelled'
 );
 
 export const isPendingReviewBatchJobActive = (job: { state?: unknown } | null | undefined): boolean => (
@@ -129,6 +160,7 @@ export const supplierSyncJobStateLabel = (state: SupplierSyncJobState): string =
   running: 'Running',
   waiting: 'Waiting',
   completed: 'Completed',
+  completed_with_issues: 'Completed with issues',
   failed: 'Failed',
   cancelled: 'Cancelled',
 })[state];

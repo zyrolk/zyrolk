@@ -38,6 +38,7 @@ import {
   requeueSupplierSyncJob,
   SupplierSyncJobRecord,
 } from "../suppliers/supplierSyncJobs";
+import { loadSupplierSyncEvidence } from "../suppliers/supplierSyncEvidence";
 import {
   parseSupplierSyncRequest,
   resolveEnabledSupplierSyncSourceIds,
@@ -1003,10 +1004,15 @@ export function registerSupplierRoutes(app: express.Express): void {
         });
         return;
       }
-      res.status(200).json({
+      const job = { id: snapshot.id, ...snapshot.data() } as SupplierSyncJobRecord;
+      const response: Record<string, unknown> = {
         success: true,
-        job: projectSupplierSyncJobForAdmin({ id: snapshot.id, ...snapshot.data() } as SupplierSyncJobRecord),
-      });
+        job: projectSupplierSyncJobForAdmin(job),
+      };
+      if (String(req.query.evidence || '').trim().toLowerCase() === 'true') {
+        response.evidence = await loadSupplierSyncEvidence(adminDb, job);
+      }
+      res.status(200).json(response);
     } catch (error: unknown) {
       sendSupplierFailure(res, error, {
         logMessage: "Supplier sync job lookup failed.",

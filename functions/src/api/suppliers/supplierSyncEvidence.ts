@@ -57,6 +57,46 @@ export interface SupplierSyncReconciliationResult {
   reconciledAt: string;
 }
 
+export interface SupplierSyncAttemptEvidenceSummary {
+  attemptId: string;
+  jobId: string;
+  attemptNumber: number;
+  kind: SupplierSyncJobAttemptRecord["kind"];
+  status: SupplierSyncJobAttemptRecord["status"];
+  startedAt: string;
+  completedAt: string | null;
+  cursorBefore: Record<string, string | null>;
+  cursorAfter: Record<string, string | null>;
+  requestedTotalProductLimit: number | null;
+  effectiveTotalProductLimit: number | null;
+  requestedPageSize: number | null;
+  effectivePageSize: Record<string, number>;
+  remainingLimitAtStart: Record<string, number | null>;
+  counters: SupplierSyncAttemptCounters;
+  stopReason: string | null;
+  errorClass: string | null;
+  errorCode: string | null;
+  errorMessageSafe: string | null;
+  retryable: boolean | null;
+}
+
+export type SupplierSyncEvidenceIssueGroupKey = "supplierData" | "adminReview" | "media" | "system";
+
+export interface SupplierSyncEvidenceIssueGroup {
+  key: SupplierSyncEvidenceIssueGroupKey;
+  label: string;
+  available: boolean;
+  issues: SupplierSyncReconciliationIssue[];
+}
+
+export interface SupplierSyncEvidenceReadModel {
+  evidenceVersion: number | null;
+  legacy: boolean;
+  attempts: SupplierSyncAttemptEvidenceSummary[];
+  reconciliation: SupplierSyncReconciliationResult;
+  issueGroups: SupplierSyncEvidenceIssueGroup[];
+}
+
 export class SupplierSyncCheckpointConflictError extends Error {
   readonly code = "CHECKPOINT_ERROR";
   readonly category: SupplierSyncIssueCategory = "CHECKPOINT_ERROR";
@@ -119,6 +159,82 @@ const cumulativeFrom = (value: unknown): SupplierSyncCumulativeCounters | null =
     ...countersFrom(raw),
     rejected: safeOptionalCount(raw.rejected),
   };
+};
+
+const safeCursorMap = (value: unknown): Record<string, string | null> => Object.fromEntries(
+  Object.entries(asRecord(value))
+    .filter(([sourceId]) => sourceId && sourceId.length <= 160 && !sourceId.includes("/"))
+    .map(([sourceId, cursor]) => [sourceId, normalizedCursor(cursor)]),
+);
+
+const safeNumberMap = (value: unknown, allowNull: boolean): Record<string, number | null> => Object.fromEntries(
+  Object.entries(asRecord(value))
+    .filter(([sourceId]) => sourceId && sourceId.length <= 160 && !sourceId.includes("/"))
+    .map(([sourceId, numberValue]) => [sourceId, allowNull ? safeOptionalCount(numberValue) : safeCount(numberValue)]),
+);
+
+const projectAttemptEvidence = (attempt: SupplierSyncJobAttemptRecord): SupplierSyncAttemptEvidenceSummary => ({
+  attemptId: String(attempt.attemptId || ""),
+  jobId: String(attempt.jobId || ""),
+  attemptNumber: safeCount(attempt.attemptNumber),
+  kind: attempt.kind,
+  status: attempt.status,
+  startedAt: String(attempt.startedAt || ""),
+  completedAt: typeof attempt.completedAt === "string" ? attempt.completedAt : null,
+  cursorBefore: safeCursorMap(attempt.cursorBefore),
+  cursorAfter: safeCursorMap(attempt.cursorAfter),
+  requestedTotalProductLimit: safeOptionalCount(attempt.requestedTotalProductLimit),
+  effectiveTotalProductLimit: safeOptionalCount(attempt.effectiveTotalProductLimit),
+  requestedPageSize: safeOptionalCount(attempt.requestedPageSize),
+  effectivePageSize: safeNumberMap(attempt.effectivePageSize, false) as Record<string, number>,
+  remainingLimitAtStart: safeNumberMap(attempt.remainingLimitAtStart, true),
+  counters: countersFrom(attempt.counters),
+  stopReason: typeof attempt.stopReason === "string" ? attempt.stopReason : null,
+  errorClass: typeof attempt.errorClass === "string" ? attempt.errorClass : null,
+  errorCode: typeof attempt.errorCode === "string" ? attempt.errorCode : null,
+  errorMessageSafe: typeof attempt.errorMessageSafe === "string" ? attempt.errorMessageSafe.slice(0, 500) : null,
+  retryable: typeof attempt.retryable === "boolean" ? attempt.retryable : null,
+});
+
+const issueGroupForCategory = (category: SupplierSyncIssueCategory): SupplierSyncEvidenceIssueGroupKey => {
+  if (["SUPPLIER_DATA_GAP", "VALIDATION_REJECTION", "DUPLICATE_SUPPLIER_PRODUCT"].includes(category)) return "supplierData";
+  if (category === "ADMIN_REVIEW_REQUIRED") return "adminReview";
+  if (["MEDIA_RETRYABLE", "MEDIA_PERMANENT"].includes(category)) return "media";
+  return "system";
+};
+
+const safeIssueCategory = (value: unknown): SupplierSyncIssueCategory => {
+  const normalized = String(value || "").toUpperCase() as SupplierSyncIssueCategory;
+  return SUPPLIER_SYNC_ISSUE_CATEGORIES.includes(normalized) ? normalized : "SYSTEM_ERROR";
+};
+
+const buildEvidenceIssueGroups = (
+  reconciliationIssues: readonly SupplierSyncReconciliationIssue[],
+  attempts: readonly SupplierSyncJobAttemptRecord[],
+  available: boolean,
+): SupplierSyncEvidenceIssueGroup[] => {
+  const groups: Record<SupplierSyncEvidenceIssueGroupKey, SupplierSyncEvidenceIssueGroup> = {
+    supplierData: { key: "supplierData", label: "Supplier data", available, issues: [] },
+    adminReview: { key: "adminReview", label: "Admin review", available, issues: [] },
+    media: { key: "media", label: "Media", available, issues: [] },
+    system: { key: "system", label: "System / checkpoint / reconciliation", available, issues: [] },
+  };
+  const append = (issue: SupplierSyncReconciliationIssue): void => {
+    groups[issueGroupForCategory(issue.category)].issues.push(issue);
+  };
+  reconciliationIssues.forEach(append);
+  attempts.forEach((attempt) => {
+    if (!attempt.errorClass && !attempt.errorCode && !attempt.errorMessageSafe) return;
+    const category = safeIssueCategory(attempt.errorClass) === "SYSTEM_ERROR"
+      ? classifySupplierSyncIssue({ code: attempt.errorCode, message: attempt.errorMessageSafe })
+      : safeIssueCategory(attempt.errorClass);
+    append({
+      category,
+      message: attempt.errorMessageSafe || attempt.errorCode || attempt.errorClass || "Attempt reported an error.",
+      attemptId: attempt.attemptId,
+    });
+  });
+  return Object.values(groups);
 };
 
 const sameNullableCursor = (left: unknown, right: unknown): boolean => normalizedCursor(left) === normalizedCursor(right);
@@ -468,6 +584,34 @@ export async function reconcileSupplierSyncJob(
   const attempts = attemptSnapshot.docs.map((doc) => ({ attemptId: doc.id, jobId, ...doc.data() } as SupplierSyncJobAttemptRecord));
   const pages = pageSnapshot.docs.map((doc) => ({ pageCommitId: doc.id, jobId, ...doc.data() } as SupplierSyncPageCommitRecord));
   return reconcileSupplierSyncEvidence(job, attempts, pages, now);
+}
+
+/**
+ * Read-only admin evidence projection. The raw page records remain server-side;
+ * the UI receives only safe attempt summaries and the pure reconciliation result.
+ */
+export async function loadSupplierSyncEvidence(
+  db: Firestore,
+  job: SupplierSyncJobRecord,
+  now = Date.now(),
+): Promise<SupplierSyncEvidenceReadModel> {
+  const jobReference = db.collection("supplier_sync_jobs").doc(job.id);
+  const [attemptSnapshot, pageSnapshot] = await Promise.all([
+    jobReference.collection("attempts").get(),
+    jobReference.collection("pages").get(),
+  ]);
+  const attempts = attemptSnapshot.docs
+    .map((doc) => ({ attemptId: doc.id, jobId: job.id, ...doc.data() } as SupplierSyncJobAttemptRecord))
+    .sort((left, right) => safeCount(left.attemptNumber) - safeCount(right.attemptNumber));
+  const pages = pageSnapshot.docs.map((doc) => ({ pageCommitId: doc.id, jobId: job.id, ...doc.data() } as SupplierSyncPageCommitRecord));
+  const reconciliation = reconcileSupplierSyncEvidence(job, attempts, pages, now);
+  return {
+    evidenceVersion: Number.isSafeInteger(Number(job.evidenceVersion)) ? Number(job.evidenceVersion) : null,
+    legacy: reconciliation.status === "LEGACY_UNVERIFIED",
+    attempts: attempts.map(projectAttemptEvidence),
+    reconciliation,
+    issueGroups: buildEvidenceIssueGroups(reconciliation.issues, attempts, reconciliation.status !== "LEGACY_UNVERIFIED"),
+  };
 }
 
 export async function recordSupplierSyncReconciliation(

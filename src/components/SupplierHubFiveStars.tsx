@@ -2179,6 +2179,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
             refreshKey={operationsRefreshKey}
             mode="activity"
             supplierSources={supplierSources}
+            onOpenProductReview={() => selectSubTab('review')}
           />
         )}
 

@@ -21,6 +21,7 @@ import { formatSupplierTimestamp, supplierBusinessErrorMessage } from '../../ser
 import { reportClientIssue } from '../../services/observability/clientDiagnostics';
 import { postSupplierApi } from '../../services/supplierHubApi';
 import SupplierConnectionBadge from '../supplier-ui/SupplierConnectionBadge';
+import SupplierSyncJobEvidencePanel from './SupplierSyncJobEvidencePanel';
 
 type SupplierApiRequest = (path: string, method: 'GET' | 'POST', body?: Record<string, unknown>) => Promise<Response>;
 
@@ -30,6 +31,7 @@ interface SupplierOperationsDashboardProps {
   refreshKey: number;
   mode: 'activity' | 'advanced';
   supplierSources?: Array<Record<string, any>>;
+  onOpenProductReview?: (jobId: string) => void;
 }
 
 interface OperationsSummary {
@@ -231,6 +233,7 @@ function SupplierOperationsDashboard({
   refreshKey,
   mode,
   supplierSources = [],
+  onOpenProductReview,
 }: SupplierOperationsDashboardProps) {
   const [snapshot, setSnapshot] = useState<OperationsSnapshot | null>(null);
   const [queueItems, setQueueItems] = useState<QueueItem[]>([]);
@@ -261,6 +264,8 @@ function SupplierOperationsDashboard({
   const [p1MediaRecoveryConfirmed, setP1MediaRecoveryConfirmed] = useState(false);
   const [p1MediaRecoveryBusy, setP1MediaRecoveryBusy] = useState(false);
   const [p1MediaRecoveryResult, setP1MediaRecoveryResult] = useState<{ kind: 'success' | 'error'; message: string } | null>(null);
+  const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
+  const [jobIdInput, setJobIdInput] = useState('');
   const snapshotRequestIdRef = useRef(0);
   const queueRequestIdRef = useRef(0);
   const operationalAlertRequestIdRef = useRef(0);
@@ -530,6 +535,11 @@ function SupplierOperationsDashboard({
   ] as const;
   const cards = mode === 'activity' ? activityCards : advancedCards;
 
+  const openJobEvidence = (): void => {
+    const nextJobId = jobIdInput.trim();
+    if (nextJobId) setSelectedJobId(nextJobId);
+  };
+
   useEffect(() => {
     if (error) reportClientIssue('supplier-operations', new Error(error));
   }, [error]);
@@ -635,12 +645,27 @@ function SupplierOperationsDashboard({
       </section>
       </details>}
 
-      {mode === 'activity' && <div className="grid gap-6 xl:grid-cols-2">
+      {mode === 'activity' && <>
+        <section aria-labelledby="supplier-job-evidence-lookup-title" className="mb-6 rounded-3xl border border-slate-200/70 bg-white p-5 dark:border-slate-800 dark:bg-slate-950">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <h4 id="supplier-job-evidence-lookup-title" className="font-black text-slate-900 dark:text-white">Job evidence</h4>
+              <p className="mt-1 text-xs text-slate-500">Inspect durable limits, cursors, attempts, outcomes, and reconciliation without starting or changing a sync.</p>
+            </div>
+            <div className="flex w-full gap-2 lg:max-w-md">
+              <label className="min-w-0 flex-1"><span className="sr-only">Supplier sync job ID</span><input value={jobIdInput} onChange={(event) => setJobIdInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') openJobEvidence(); }} className="min-h-10 w-full rounded-xl border border-slate-200 bg-transparent px-3 text-xs font-mono dark:border-slate-700" placeholder="Enter job ID" /></label>
+              <button type="button" onClick={openJobEvidence} disabled={!jobIdInput.trim()} className="min-h-10 rounded-xl bg-blue-600 px-4 text-[10px] font-black text-white disabled:cursor-not-allowed disabled:opacity-50">Open evidence</button>
+            </div>
+          </div>
+          {selectedJobId && <div className="mt-4"><SupplierSyncJobEvidencePanel requestApi={requestApi} jobId={selectedJobId} onClose={() => setSelectedJobId(null)} onOpenProductReview={onOpenProductReview} /></div>}
+        </section>
+
+        <div className="grid gap-6 xl:grid-cols-2">
         <section aria-labelledby="sync-history-title" className="rounded-3xl border border-slate-200/70 bg-white p-5 dark:border-slate-800 dark:bg-slate-950">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><div className="flex items-center gap-2"><History className="h-5 w-5 text-violet-500" /><h4 id="sync-history-title" className="font-black text-slate-900 dark:text-white">Sync History</h4></div><div className="flex flex-wrap gap-1.5" role="group" aria-label="Filter synchronization history">{(['all', 'success', 'failed', 'skipped', 'running'] as const).map((filter) => <button key={filter} type="button" aria-pressed={activityFilter === filter} onClick={() => setActivityFilter(filter)} className={`min-h-9 rounded-full px-3 text-[9px] font-black capitalize ${activityFilter === filter ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'}`}>{filter}</button>)}</div></div>
           <div className="space-y-3">
             {activeSyncJob && ['pending', 'running', 'waiting'].includes(activeSyncJob.state) && ['all', 'running'].includes(activityFilter) && <div className="rounded-2xl border border-blue-500/20 bg-blue-500/5 p-3 text-xs"><div className="flex flex-wrap justify-between gap-3"><strong>Current synchronization</strong><span className="rounded-full bg-blue-500/10 px-2 py-0.5 text-[9px] font-black text-blue-600 dark:text-blue-400">Running</span></div><p className="mt-1 text-slate-500">Updated {dateTime(activeSyncJob.updatedAt)}</p></div>}
-            {filteredHistoryItems.map((item) => { const presentation = historyStatusPresentation(item.status || item.state); return <div key={item.id} className="rounded-2xl border border-slate-100 p-3 text-xs dark:border-slate-800"><div className="flex flex-wrap justify-between gap-3"><strong>{item.supplier || 'Supplier sync'}</strong><span className={`rounded-full px-2 py-0.5 text-[9px] font-black ${presentation.className}`}>{presentation.label}</span></div><p className="mt-1 text-slate-500">{dateTime(item.createdAt)} / {duration(item.durationMs)} / imported {Number(item.productsImported || 0)} / updated {Number(item.productsUpdated || 0)} / deleted {Number(item.productsDeleted || 0)} / failed {Number(item.productsFailed || 0)}</p></div>; })}
+            {filteredHistoryItems.map((item) => { const presentation = historyStatusPresentation(item.status || item.state); const historyJobId = String(item.jobId || item.batchId || '').trim(); return <div key={item.id} className="rounded-2xl border border-slate-100 p-3 text-xs dark:border-slate-800"><div className="flex flex-wrap justify-between gap-3"><strong>{item.supplier || 'Supplier sync'}</strong><span className={`rounded-full px-2 py-0.5 text-[9px] font-black ${presentation.className}`}>{presentation.label}</span></div><p className="mt-1 text-slate-500">{dateTime(item.createdAt)} / {duration(item.durationMs)} / imported {Number(item.productsImported || 0)} / updated {Number(item.productsUpdated || 0)} / deleted {Number(item.productsDeleted || 0)} / failed {Number(item.productsFailed || 0)}</p>{historyJobId && <button type="button" onClick={() => { setJobIdInput(historyJobId); setSelectedJobId(historyJobId); }} className="mt-3 min-h-9 rounded-lg bg-slate-100 px-3 text-[10px] font-black text-slate-700 dark:bg-slate-800 dark:text-slate-200">View evidence</button>}</div>; })}
           </div>
           {!filteredHistoryItems.length && !(activeSyncJob && ['pending', 'running', 'waiting'].includes(activeSyncJob.state) && ['all', 'running'].includes(activityFilter)) && <p className="rounded-2xl border border-dashed border-slate-200 py-8 text-center text-sm text-slate-500 dark:border-slate-800">No {activityFilter === 'all' ? '' : `${activityFilter} `}supplier activity found.</p>}
           {historyCursor && <button type="button" onClick={async () => { const result = await readJson<PageResponse>(await requestApi(`/api/supplier-operations/sync-history?limit=40&after=${encodeURIComponent(historyCursor)}`, 'GET')); setHistoryItems((current) => [...current, ...result.items]); setHistoryCursor(result.nextCursor); }} className="mt-4 min-h-10 rounded-xl bg-slate-100 px-4 text-xs font-black dark:bg-slate-800">Load more</button>}
@@ -650,7 +675,8 @@ function SupplierOperationsDashboard({
           <div className="mb-4 flex items-center gap-2"><ShieldAlert className="h-5 w-5 text-red-500" /><h4 id="error-center-title" className="font-black text-slate-900 dark:text-white">Retry</h4></div>
           {failedItems.length ? <div className="space-y-3">{failedItems.map((item) => <div key={item.id} className="rounded-2xl border border-red-100 bg-red-50/40 p-3 text-xs dark:border-red-950 dark:bg-red-950/10"><div className="flex justify-between gap-3"><strong>{item.supplierName} / Failed sync</strong><span>{dateTime(item.updatedAt)}</span></div><p className="mt-1 text-red-700 dark:text-red-300">{item.failureReason || 'Retry is available.'}</p>{['retryable_failure', 'dead_letter'].includes(item.state) && <button type="button" onClick={() => void retryError(item.id)} className="mt-3 min-h-9 rounded-lg bg-red-600 px-3 text-[10px] font-black text-white">Retry</button>}</div>)}</div> : <p className="text-sm text-slate-500">No failed syncs need a retry.</p>}
         </section>
-      </div>}
+      </div>
+      </>}
 
       {mode === 'advanced' && <><details className="rounded-3xl border border-slate-200/70 bg-white p-5 dark:border-slate-800 dark:bg-slate-950"><summary className="cursor-pointer text-sm font-black text-slate-700 dark:text-slate-200">Advanced Media Diagnostics</summary><section aria-labelledby="media-monitor-title" className="mt-5"><div className="mb-4 flex items-center gap-2"><Image className="h-5 w-5 text-cyan-500" /><h4 id="media-monitor-title" className="font-black text-slate-900 dark:text-white">Media processing</h4></div><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">{[['Downloaded', media.downloaded], ['Failed', media.failedDownloads], ['Duplicate reuse', media.duplicateReuse], ['Storage', bytes(media.storageBytes)], ['Broken', media.brokenImages], ['Missing', media.missingImages]].map(([label, value]) => <div key={String(label)} className="rounded-2xl bg-slate-50 p-3 dark:bg-slate-900"><p className="text-[9px] font-black uppercase tracking-widest text-slate-400">{label}</p><p className="mt-2 text-lg font-black">{String(value ?? 0)}</p></div>)}</div></section></details>
 
