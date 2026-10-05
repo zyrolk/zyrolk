@@ -1,3 +1,4 @@
+import { createHash } from "crypto";
 import { FieldPath, FieldValue, Firestore } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
 import { ApiError } from "../api/errors";
@@ -1260,6 +1261,49 @@ export type SupplierReviewBusinessFilter =
   | "low_stock_hold"
   | "approved_history";
 
+export type SupplierReviewMediaFilter = "all" | "ready" | "processing" | "issues";
+export type SupplierReviewSearchMode = "exact";
+
+export interface SupplierReviewQueryModel {
+  view: "review";
+  state: SupplierReviewQueuePageState;
+  businessFilter?: SupplierReviewBusinessFilter;
+  mediaFilter: SupplierReviewMediaFilter;
+  search: string;
+  searchMode: SupplierReviewSearchMode;
+  sort: SupplierReviewQueueSort;
+  pageSize: 25 | 50 | 100;
+}
+
+export interface SupplierReviewCursorToken {
+  version: 1;
+  page: number;
+  anchorId: string | null;
+  previousToken: string | null;
+  fingerprint: string;
+  queryRevision: string;
+  sort: SupplierReviewQueueSort;
+  sortValue: string | null;
+}
+
+export interface SupplierReviewReadModelPage extends SupplierQueuePageResult {
+  page: number;
+  pageSize: number;
+  totalCount: number | null;
+  totalPages: number | null;
+  countStatus: "exact" | "unavailable";
+  countReason?: string;
+  nextCursor: string | null;
+  previousCursor: string | null;
+  queryFingerprint: string;
+  queryRevision: string;
+  generatedAt: string;
+  searchCapabilities: {
+    exactSupplierIdentity: boolean;
+    productNamePrefix: false;
+  };
+}
+
 export interface SupplierQueuePageResult {
   view: SupplierQueuePageView;
   state: string;
@@ -1588,6 +1632,7 @@ export async function listSupplierQueuePage(
     businessFilter?: SupplierReviewBusinessFilter;
     after?: string;
     limit?: number;
+    snapshotBoundary?: string;
   },
 ): Promise<SupplierQueuePageResult> {
   const pageLimit = Number.isInteger(options.limit) ? Math.max(1, Math.min(100, Number(options.limit))) : 50;
@@ -1604,6 +1649,9 @@ export async function listSupplierQueuePage(
     query = statuses.length === 1
       ? query.where("status", "==", statuses[0])
       : query.where("status", "in", statuses);
+  }
+  if (options.snapshotBoundary) {
+    query = query.where(sort === "updated" ? "updatedAt" : "createdAt", "<=", options.snapshotBoundary);
   }
   query = query
     .orderBy(sort === "updated" ? "updatedAt" : "createdAt", "desc")
@@ -1696,6 +1744,343 @@ export async function listSupplierQueuePage(
     state,
     items: await decorateSupplierReviewQueueAdminMedia(rawDocuments),
     nextCursor: cursorDocument?.id || null,
+  };
+}
+
+const SUPPLIER_REVIEW_PAGE_REPLAY_LIMIT = 10;
+const SUPPLIER_REVIEW_EXACT_SEARCH_MATCH_LIMIT = 100;
+const SUPPLIER_REVIEW_EXACT_SEARCH_FIELDS = [
+  "supplierProductId",
+  "supplierItemCode",
+  "supplierCode",
+  "sku",
+  "supplierOfferId",
+  "supplierSkuClaimId",
+  "productPayload.supplierProductId",
+  "productPayload.supplierItemCode",
+  "productPayload.sku",
+  "supplierSnapshot.supplierProductId",
+  "supplierSnapshot.supplierItemCode",
+  "supplierSnapshot.sku",
+] as const;
+
+const reviewSortField = (sort: SupplierReviewQueueSort): "createdAt" | "updatedAt" => (
+  sort === "updated" ? "updatedAt" : "createdAt"
+);
+
+const reviewCursorValue = (value: unknown): string | null => {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "object" && value && "toMillis" in value && typeof value.toMillis === "function") {
+    return `timestamp:${String(value.toMillis())}`;
+  }
+  if (value instanceof Date) return `date:${value.toISOString()}`;
+  return String(value);
+};
+
+export const buildSupplierReviewQueryFingerprint = (query: SupplierReviewQueryModel): string => {
+  const normalized = {
+    view: query.view,
+    state: query.state,
+    businessFilter: query.businessFilter || null,
+    mediaFilter: query.mediaFilter,
+    search: query.search.trim(),
+    searchMode: query.searchMode,
+    sort: query.sort,
+    pageSize: query.pageSize,
+  };
+  return createHash("sha256").update(JSON.stringify(normalized)).digest("hex").slice(0, 32);
+};
+
+export const encodeSupplierReviewCursorToken = (token: SupplierReviewCursorToken): string => (
+  Buffer.from(JSON.stringify(token), "utf8").toString("base64url")
+);
+
+export const decodeSupplierReviewCursorToken = (encoded: string): SupplierReviewCursorToken => {
+  if (!encoded || encoded.length > 4096) throw new Error("Supplier review cursor is invalid.");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"));
+  } catch {
+    throw new Error("Supplier review cursor is invalid.");
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("Supplier review cursor is invalid.");
+  }
+  const token = parsed as Partial<SupplierReviewCursorToken>;
+  if (token.version !== 1
+    || !Number.isInteger(token.page) || Number(token.page) < 1
+    || (token.anchorId !== null && typeof token.anchorId !== "string")
+    || (token.previousToken !== null && typeof token.previousToken !== "string")
+    || typeof token.fingerprint !== "string"
+    || typeof token.queryRevision !== "string"
+    || (token.sort !== "created" && token.sort !== "updated")
+    || (token.sortValue !== null && typeof token.sortValue !== "string")) {
+    throw new Error("Supplier review cursor is invalid.");
+  }
+  return token as SupplierReviewCursorToken;
+};
+
+const createSupplierReviewPageToken = (input: {
+  page: number;
+  anchorId: string | null;
+  previousToken: string | null;
+  fingerprint: string;
+  queryRevision: string;
+  sort: SupplierReviewQueueSort;
+  sortValue: string | null;
+}): string => encodeSupplierReviewCursorToken({ version: 1, ...input });
+
+const boundedPreviousSupplierReviewToken = (token: SupplierReviewCursorToken): string | null => {
+  const encoded = encodeSupplierReviewCursorToken(token);
+  return encoded.length <= 1800 ? encoded : null;
+};
+
+const reviewPageQuery = (
+  db: Firestore,
+  query: SupplierReviewQueryModel,
+  queryRevision: string,
+): FirebaseFirestore.Query => {
+  const collection = db.collection("supplier_review_queue");
+  const statuses = reviewStatusValues(query.state);
+  let result: FirebaseFirestore.Query = statuses.length === 1
+    ? collection.where("status", "==", statuses[0])
+    : collection.where("status", "in", statuses);
+  result = result.where(reviewSortField(query.sort), "<=", queryRevision);
+  return result;
+};
+
+const compareReviewDocuments = (
+  left: FirebaseFirestore.QueryDocumentSnapshot,
+  right: FirebaseFirestore.QueryDocumentSnapshot,
+  sort: SupplierReviewQueueSort,
+): number => {
+  const field = reviewSortField(sort);
+  const leftValue = reviewCursorValue(left.data()[field]);
+  const rightValue = reviewCursorValue(right.data()[field]);
+  const primary = String(rightValue || "").localeCompare(String(leftValue || ""));
+  return primary || right.id.localeCompare(left.id);
+};
+
+const readExactSupplierReviewDocuments = async (
+  db: Firestore,
+  query: SupplierReviewQueryModel,
+  queryRevision: string,
+): Promise<FirebaseFirestore.QueryDocumentSnapshot[]> => {
+  if (!query.search) return [];
+  const collection = db.collection("supplier_review_queue");
+  const documents = new Map<string, FirebaseFirestore.QueryDocumentSnapshot>();
+  for (const field of SUPPLIER_REVIEW_EXACT_SEARCH_FIELDS) {
+    const snapshot = await collection.where(field, "==", query.search).limit(SUPPLIER_REVIEW_EXACT_SEARCH_MATCH_LIMIT + 1).get();
+    if (snapshot.size > SUPPLIER_REVIEW_EXACT_SEARCH_MATCH_LIMIT) {
+      throw new Error("This exact search is too broad. Use a supplier SKU or product ID.");
+    }
+    snapshot.docs.forEach((document) => documents.set(document.id, document));
+  }
+  const categoryRequirements = query.businessFilter
+    ? await loadSupplierReviewCategoryRequirements(db)
+    : undefined;
+  return Array.from(documents.values())
+    .filter((document) => {
+      const record = document.data() as SupplierQueueRecord;
+      const sortValue = reviewCursorValue(record[reviewSortField(query.sort)]);
+      return Boolean(sortValue && sortValue <= queryRevision)
+        && reviewRecordMatchesState(record, query.state)
+        && (!query.businessFilter || reviewRecordMatchesBusinessFilter(record, query.businessFilter, categoryRequirements));
+    })
+    .sort((left, right) => compareReviewDocuments(left, right, query.sort));
+};
+
+const readExactSearchPage = async (
+  db: Firestore,
+  query: SupplierReviewQueryModel,
+  queryRevision: string,
+  anchorId: string | null,
+): Promise<{ documents: FirebaseFirestore.QueryDocumentSnapshot[]; totalCount: number }> => {
+  const documents = await readExactSupplierReviewDocuments(db, query, queryRevision);
+  const anchorIndex = anchorId ? documents.findIndex((document) => document.id === anchorId) : -1;
+  if (anchorId && anchorIndex < 0) throw new Error("Supplier review cursor is stale.");
+  return {
+    documents: documents.slice(anchorIndex + 1, anchorIndex + 1 + query.pageSize),
+    totalCount: documents.length,
+  };
+};
+
+const countSupplierReviewQuery = async (
+  db: Firestore,
+  query: SupplierReviewQueryModel,
+  queryRevision: string,
+): Promise<{ totalCount: number | null; countStatus: "exact" | "unavailable"; countReason?: string }> => {
+  if (query.businessFilter) {
+    return {
+      totalCount: null,
+      countStatus: "unavailable",
+      countReason: "This business filter includes derived review rules that are not represented by one countable Firestore predicate yet.",
+    };
+  }
+  if (query.search) {
+    const documents = await readExactSupplierReviewDocuments(db, query, queryRevision);
+    return { totalCount: documents.length, countStatus: "exact" };
+  }
+  const aggregate = await reviewPageQuery(db, query, queryRevision).count().get();
+  return { totalCount: aggregate.data().count, countStatus: "exact" };
+};
+
+const projectReadModelDocuments = async (
+  db: Firestore,
+  documents: FirebaseFirestore.QueryDocumentSnapshot[],
+  query: SupplierReviewQueryModel,
+): Promise<Array<Record<string, unknown> & { id: string }>> => {
+  let categoryRequirements: Map<string, boolean> | undefined;
+  if (query.businessFilter && documents.length > 0) {
+    categoryRequirements = await loadSupplierReviewCategoryRequirements(db);
+  }
+  const rawDocuments = documents.map((document) => projectSupplierReviewLowStockHold(
+    { id: document.id, ...document.data() },
+    categoryRequirements?.get(supplierReviewCategoryId(document.data() as SupplierQueueRecord)) === true,
+  ));
+  return decorateSupplierReviewQueueAdminMedia(rawDocuments);
+};
+
+export async function listSupplierReviewReadModelPage(
+  db: Firestore,
+  options: {
+    query: SupplierReviewQueryModel;
+    page?: number;
+    cursor?: string;
+    queryRevision?: string;
+  },
+): Promise<SupplierReviewReadModelPage> {
+  const query = options.query;
+  if (query.mediaFilter !== "all") {
+    throw new Error("Media filters are not available until the media read model is added.");
+  }
+  const fingerprint = buildSupplierReviewQueryFingerprint(query);
+  const decodedCursor = options.cursor ? decodeSupplierReviewCursorToken(options.cursor) : null;
+  if (decodedCursor && decodedCursor.fingerprint !== fingerprint) throw new Error("Supplier review cursor does not match this query.");
+  if (decodedCursor && decodedCursor.sort !== query.sort) throw new Error("Supplier review cursor does not match this sort.");
+  if (decodedCursor && decodedCursor.queryRevision !== (options.queryRevision || decodedCursor.queryRevision)) {
+    throw new Error("Supplier review cursor does not match this query revision.");
+  }
+  const targetPage = options.page || decodedCursor?.page || 1;
+  if (!Number.isInteger(targetPage) || targetPage < 1 || targetPage > 10_000) throw new Error("Supplier review page is invalid.");
+  if (!decodedCursor && targetPage > 1) throw new Error("A valid page anchor is required for this page.");
+  const queryRevision = options.queryRevision || decodedCursor?.queryRevision || new Date().toISOString();
+  if (decodedCursor?.anchorId) {
+    const anchor = await db.collection("supplier_review_queue").doc(decodedCursor.anchorId).get();
+    if (!anchor.exists || reviewCursorValue(anchor.data()?.[reviewSortField(query.sort)]) !== decodedCursor.sortValue) {
+      throw new Error("Supplier review cursor is stale.");
+    }
+  }
+  const replayStartPage = decodedCursor?.page || 1;
+  if (targetPage < replayStartPage) throw new Error("The requested page precedes the supplied cursor.");
+  if (targetPage - replayStartPage > SUPPLIER_REVIEW_PAGE_REPLAY_LIMIT) {
+    throw new Error("The requested page jump is too large for the available cursor anchor.");
+  }
+
+  const count = await countSupplierReviewQuery(db, query, queryRevision);
+  const generatedAt = new Date().toISOString();
+  let currentToken = decodedCursor || decodeSupplierReviewCursorToken(createSupplierReviewPageToken({
+    page: 1,
+    anchorId: null,
+    previousToken: null,
+    fingerprint,
+    queryRevision,
+    sort: query.sort,
+    sortValue: null,
+  }));
+  let resultDocuments: FirebaseFirestore.QueryDocumentSnapshot[] = [];
+  let resultNextAnchorId: string | null = null;
+  let totalCount = count.totalCount;
+  for (let page = replayStartPage; page <= targetPage; page += 1) {
+    if (query.search) {
+      const result = await readExactSearchPage(db, query, queryRevision, currentToken.anchorId);
+      resultDocuments = result.documents;
+      totalCount = result.totalCount;
+      resultNextAnchorId = result.documents.length === query.pageSize
+        ? result.documents.at(-1)?.id || null
+        : null;
+      if (page < targetPage) {
+        if (!resultNextAnchorId) throw new Error("The requested page does not exist.");
+        const nextDocument = await db.collection("supplier_review_queue").doc(resultNextAnchorId).get();
+        if (!nextDocument.exists) throw new Error("Supplier review cursor is stale.");
+        currentToken = decodeSupplierReviewCursorToken(createSupplierReviewPageToken({
+          page: page + 1,
+          anchorId: resultNextAnchorId,
+          previousToken: boundedPreviousSupplierReviewToken(currentToken),
+          fingerprint,
+          queryRevision,
+          sort: query.sort,
+          sortValue: reviewCursorValue(nextDocument.data()?.[reviewSortField(query.sort)]),
+        }));
+      }
+    } else {
+      const legacyPage = await listSupplierQueuePage(db, {
+        view: "review",
+        state: query.state,
+        sort: query.sort,
+        businessFilter: query.businessFilter,
+        after: currentToken.anchorId || undefined,
+        limit: query.pageSize,
+        snapshotBoundary: queryRevision,
+      });
+      const documentIds = legacyPage.items.map((item) => item.id);
+      const documents = await Promise.all(documentIds.map(async (id) => db.collection("supplier_review_queue").doc(id).get()));
+      resultDocuments = documents.filter((document): document is FirebaseFirestore.QueryDocumentSnapshot => document.exists);
+      resultNextAnchorId = legacyPage.nextCursor;
+      if (page < targetPage) {
+        const nextId = legacyPage.nextCursor;
+        if (!nextId) throw new Error("The requested page does not exist.");
+        const nextDocument = await db.collection("supplier_review_queue").doc(nextId).get();
+        if (!nextDocument.exists) throw new Error("Supplier review cursor is stale.");
+        currentToken = decodeSupplierReviewCursorToken(createSupplierReviewPageToken({
+          page: page + 1,
+          anchorId: nextId,
+          previousToken: boundedPreviousSupplierReviewToken(currentToken),
+          fingerprint,
+          queryRevision,
+          sort: query.sort,
+          sortValue: reviewCursorValue(nextDocument.data()?.[reviewSortField(query.sort)]),
+        }));
+      }
+    }
+  }
+
+  const items = query.search
+    ? await projectReadModelDocuments(db, resultDocuments, query)
+    : await projectReadModelDocuments(db, resultDocuments, query);
+  const nextAnchorDocument = resultNextAnchorId
+    ? await db.collection("supplier_review_queue").doc(resultNextAnchorId).get()
+    : null;
+  const hasNext = totalCount === null
+    ? Boolean(resultNextAnchorId)
+    : targetPage * query.pageSize < totalCount;
+  const nextToken = hasNext && nextAnchorDocument?.exists
+    ? createSupplierReviewPageToken({
+      page: targetPage + 1,
+      anchorId: nextAnchorDocument.id,
+      previousToken: boundedPreviousSupplierReviewToken(currentToken),
+      fingerprint,
+      queryRevision,
+      sort: query.sort,
+      sortValue: reviewCursorValue(nextAnchorDocument.data()?.[reviewSortField(query.sort)]),
+    })
+    : null;
+  return {
+    view: query.view,
+    state: query.state,
+    items,
+    page: targetPage,
+    pageSize: query.pageSize,
+    totalCount,
+    totalPages: totalCount === null ? null : Math.max(1, Math.ceil(totalCount / query.pageSize)),
+    countStatus: count.countStatus,
+    ...(count.countReason ? { countReason: count.countReason } : {}),
+    nextCursor: nextToken,
+    previousCursor: currentToken.page > 1 ? currentToken.previousToken : null,
+    queryFingerprint: fingerprint,
+    queryRevision,
+    generatedAt,
+    searchCapabilities: { exactSupplierIdentity: true, productNamePrefix: false },
   };
 }
 

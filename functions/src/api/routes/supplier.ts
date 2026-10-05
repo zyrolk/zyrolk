@@ -47,6 +47,10 @@ import {
 } from "../suppliers/supplierSyncRequest";
 import {
   listSupplierQueuePage,
+  listSupplierReviewReadModelPage,
+  SupplierReviewMediaFilter,
+  SupplierReviewQueryModel,
+  SupplierReviewSearchMode,
   SupplierReviewBusinessFilter,
   SupplierReviewQueueSort,
   processDueSupplierReviewQueueItems,
@@ -195,6 +199,63 @@ const readSupplierReviewQueueSort = (value: unknown): SupplierReviewQueueSort =>
     throw new ApiError("Supplier review queue sort is invalid.", 400);
   }
   return sort as SupplierReviewQueueSort;
+};
+
+const readSupplierReviewPageSize = (value: unknown): 25 | 50 | 100 => {
+  if (value === undefined || value === "") return 50;
+  const parsed = Number(value);
+  if (parsed !== 25 && parsed !== 50 && parsed !== 100) {
+    throw new ApiError("pageSize must be 25, 50, or 100.", 400);
+  }
+  return parsed;
+};
+
+const readSupplierReviewPageNumber = (value: unknown): number | undefined => {
+  if (value === undefined || value === "") return undefined;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 10_000) {
+    throw new ApiError("page must be a whole number between 1 and 10000.", 400);
+  }
+  return parsed;
+};
+
+const readSupplierReviewCursor = (value: unknown): string | undefined => {
+  if (value === undefined || value === "") return undefined;
+  if (typeof value !== "string" || value.length > 4096 || /[\s/]/u.test(value)) {
+    throw new ApiError("Supplier review cursor is invalid.", 400);
+  }
+  return value;
+};
+
+const readSupplierReviewQueryRevision = (value: unknown): string | undefined => {
+  if (value === undefined || value === "") return undefined;
+  if (typeof value !== "string" || value.length > 80 || Number.isNaN(Date.parse(value))) {
+    throw new ApiError("Supplier review query revision is invalid.", 400);
+  }
+  return value;
+};
+
+const readSupplierReviewMediaFilter = (value: unknown): SupplierReviewMediaFilter => {
+  if (value === undefined || value === "") return "all";
+  const filter = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (!(filter === "all" || filter === "ready" || filter === "processing" || filter === "issues")) {
+    throw new ApiError("Supplier review media filter is invalid.", 400);
+  }
+  return filter as SupplierReviewMediaFilter;
+};
+
+const readSupplierReviewSearchMode = (value: unknown): SupplierReviewSearchMode => {
+  if (value === undefined || value === "") return "exact";
+  if (value !== "exact") throw new ApiError("Only exact supplier identity search is supported in this release.", 422);
+  return "exact";
+};
+
+const readSupplierReviewSearch = (value: unknown): string => {
+  if (value === undefined || value === "") return "";
+  if (typeof value !== "string" || value.trim().length > 160) {
+    throw new ApiError("Supplier review search is invalid.", 400);
+  }
+  return value.trim();
 };
 
 const startLocalSupplierSyncJob = (jobId: string): void => {
@@ -649,8 +710,42 @@ export function registerSupplierRoutes(app: express.Express): void {
       const state = readSupplierReviewQueueState(req.query.state);
       const sort = readSupplierReviewQueueSort(req.query.sort);
       const businessFilter = view === "review" ? readSupplierReviewBusinessFilter(req.query.filter) : undefined;
+      const readPageNumber = readSupplierReviewPageNumber(req.query.page);
+      const pageSize = readSupplierReviewPageSize(req.query.pageSize);
+      const cursor = readSupplierReviewCursor(req.query.cursor);
+      const queryRevision = readSupplierReviewQueryRevision(req.query.revision);
+      const search = readSupplierReviewSearch(req.query.search);
+      const searchMode = readSupplierReviewSearchMode(req.query.searchMode);
+      const mediaFilter = readSupplierReviewMediaFilter(req.query.media);
+      const useReadModel = view === "review"
+        && (readPageNumber !== undefined
+          || cursor !== undefined
+          || req.query.pageSize !== undefined
+          || req.query.search !== undefined
+          || req.query.media !== undefined
+          || req.query.searchMode !== undefined);
+      if (useReadModel) {
+        const readModelQuery: SupplierReviewQueryModel = {
+          view: "review",
+          state,
+          ...(businessFilter ? { businessFilter } : {}),
+          mediaFilter,
+          search,
+          searchMode,
+          sort,
+          pageSize,
+        };
+        const readModelPage = await listSupplierReviewReadModelPage(adminDb, {
+          query: readModelQuery,
+          ...(readPageNumber !== undefined ? { page: readPageNumber } : {}),
+          ...(cursor ? { cursor } : {}),
+          ...(queryRevision ? { queryRevision } : {}),
+        });
+        res.status(200).json({ success: true, ...readModelPage });
+        return;
+      }
       const after = req.query.after === undefined ? undefined : readQueueItemId(req.query.after);
-      const page = await listSupplierQueuePage(adminDb, {
+      const legacyPage = await listSupplierQueuePage(adminDb, {
         view,
         ...(view === "review" ? { state } : {}),
         ...(view === "review" ? { sort } : {}),
@@ -658,7 +753,7 @@ export function registerSupplierRoutes(app: express.Express): void {
         ...(after ? { after } : {}),
         limit: readBoundedLimit(req.query.limit, 50, 100),
       });
-      res.status(200).json({ success: true, ...page });
+      res.status(200).json({ success: true, ...legacyPage });
     } catch (error: unknown) {
       sendSupplierFailure(res, error, {
         logMessage: "Supplier queue page lookup failed.",

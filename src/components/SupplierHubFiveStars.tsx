@@ -23,6 +23,7 @@ import { auth, db, handleFirestoreError, OperationType } from '../firebase';
 import { Product } from '../types';
 import { getSupplierApi, patchSupplierApi, postSupplierApi, requestSupplierApi } from '../services/supplierHubApi';
 import { matchesSupplierSearch } from '../services/supplierSearch';
+import { buildSupplierReviewQueryKey, SupplierReviewAnchorCache } from '../services/supplierReviewPagination';
 import {
   normalizeSupplierSourceForUi,
   supplierSourceAutoSyncSchedule,
@@ -207,6 +208,17 @@ export interface ReviewQueueItem {
 interface SupplierQueuePageResponse {
   success?: boolean;
   items?: Array<Record<string, unknown> & { id: string }>;
+  page?: number;
+  pageSize?: number;
+  totalCount?: number | null;
+  totalPages?: number | null;
+  countStatus?: 'exact' | 'unavailable';
+  countReason?: string;
+  previousCursor?: string | null;
+  queryFingerprint?: string;
+  queryRevision?: string;
+  generatedAt?: string;
+  searchCapabilities?: { exactSupplierIdentity?: boolean; productNamePrefix?: boolean };
   nextCursor?: string | null;
   error?: string;
 }
@@ -267,6 +279,9 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
   const [supplierReviewLowStockHoldCount, setSupplierReviewLowStockHoldCount] = useState<number | null>(null);
   const [supplierQueueError, setSupplierQueueError] = useState<string | null>(null);
   const supplierQueueRequestIdRef = useRef(0);
+  const supplierReviewAnchorCacheRef = useRef(new SupplierReviewAnchorCache());
+  const supplierReviewQueryRevisionRef = useRef<string | null>(null);
+  const supplierReviewQueryKeyRef = useRef<string | null>(null);
   const supplierAuditRequestIdRef = useRef(0);
   const supplierReviewCountRequestIdRef = useRef(0);
   const supplierReviewLoadedPagesRef = useRef(1);
@@ -737,6 +752,19 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
     const append = options.append === true;
     const after = options.after === undefined ? (append ? supplierReviewCursor : null) : options.after;
     if (append && !after) return true;
+    const queryKey = buildSupplierReviewQueryKey({
+      view: 'review',
+      filter: reviewFilter,
+      media: 'all',
+      search: reviewSearch,
+      sort: reviewSort,
+      pageSize: 50,
+    });
+    if (supplierReviewQueryKeyRef.current !== queryKey) {
+      supplierReviewAnchorCacheRef.current.clear();
+      supplierReviewQueryRevisionRef.current = null;
+      supplierReviewQueryKeyRef.current = queryKey;
+    }
     const requestedPageCount = append ? 1 : Math.max(1, options.pageCount || 1);
     const requestId = ++supplierQueueRequestIdRef.current;
     setSupplierReviewLoading(true);
@@ -747,9 +775,19 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
       let items: ReviewQueueItem[] = [];
       for (let page = 0; page < requestedPageCount; page += 1) {
         const parameters = new URLSearchParams({ view: 'review', limit: '50', filter: reviewFilter });
+        const targetPage = append
+          ? supplierReviewLoadedPagesRef.current + page + 1
+          : page + 1;
+        parameters.set('page', String(targetPage));
+        parameters.set('pageSize', '50');
         parameters.set('state', options.reviewState || supplierReviewApiState(reviewFilter));
         if (reviewSort === 'updated') parameters.set('sort', 'updated');
-        if (scanCursor) parameters.set('after', scanCursor);
+        if (reviewSearch.trim()) {
+          parameters.set('search', reviewSearch.trim());
+          parameters.set('searchMode', 'exact');
+        }
+        if (supplierReviewQueryRevisionRef.current) parameters.set('revision', supplierReviewQueryRevisionRef.current);
+        if (scanCursor) parameters.set('cursor', scanCursor);
         const response = await getSupplierApi(`/api/supplier-review-queue?${parameters.toString()}`);
         const result = await response.json().catch(() => ({})) as SupplierQueuePageResponse;
         if (!response.ok || result.success !== true || !Array.isArray(result.items)) {
@@ -759,6 +797,10 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
         items = mergeSupplierQueuePage(items, result.items as unknown as ReviewQueueItem[]);
         pagesLoaded += 1;
         nextCursor = result.nextCursor || null;
+        if (result.queryRevision) supplierReviewQueryRevisionRef.current = result.queryRevision;
+        const responseQueryKey = result.queryFingerprint || queryKey;
+        supplierReviewAnchorCacheRef.current.set(responseQueryKey, targetPage, scanCursor || null);
+        if (nextCursor) supplierReviewAnchorCacheRef.current.set(responseQueryKey, targetPage + 1, nextCursor);
         if (!nextCursor) break;
         scanCursor = nextCursor;
       }
@@ -802,7 +844,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
       cancelled = true;
       if (refreshTimer !== null) window.clearTimeout(refreshTimer);
     };
-  }, [activeSubTab, reviewFilter, reviewSort]);
+  }, [activeSubTab, reviewFilter, reviewSort, reviewSearch]);
 
   useEffect(() => {
     if (activeSubTab !== 'review' || !auth.currentUser) return;
@@ -2197,8 +2239,8 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                     type="search"
                     value={reviewSearch}
                     onChange={(event) => setReviewSearch(event.target.value)}
-                    placeholder="Search loaded products or supplier codes..."
-                    aria-label="Search currently loaded Product Review records"
+                    placeholder="Search exact supplier ID, SKU, or item code..."
+                    aria-label="Search all Product Review records by exact supplier identity"
                     className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-9 pr-3 text-xs focus:outline-none dark:border-slate-800 dark:bg-slate-900/50"
                   />
                 </div>
@@ -2249,7 +2291,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                   </p>
                 )}
               </div>
-              <p className="mt-2 text-[10px] text-slate-400">Search is intentionally limited to the products loaded on this page. Use Load more products to extend the bounded search.</p>
+              <p className="mt-2 text-[10px] text-slate-400">Search loaded products or supplier codes across the selected Product Review dataset. Exact supplier ID, SKU, and item-code search is server-backed; product-name prefix search is not enabled yet. Use Load more products to extend the bounded search view.</p>
               <div className="mt-4 flex flex-wrap gap-2 pb-1" role="tablist" aria-label="Product review filters">
                 {PRODUCT_REVIEW_FILTERS.map((filter) => (
                   <button
