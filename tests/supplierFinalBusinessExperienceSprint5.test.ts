@@ -13,11 +13,11 @@ const projectFile = (path: string): string => readFileSync(new URL(`../${path}`,
 test('Sprint 5.1 exposes Settings in business navigation and protects its Advanced section', () => {
   const hub = projectFile('src/components/SupplierHubFiveStars.tsx');
   const navigation = hub.slice(
-    hub.indexOf('{/* Business navigation */}'),
+    hub.indexOf('{/* Primary V2 navigation.'),
     hub.indexOf('{/* SUB-TAB CONTENTS */}'),
   );
 
-  for (const label of ['Suppliers', 'Product Review', 'Activity', 'Settings']) {
+  for (const label of ['Overview', 'Review Queue', 'Suppliers', 'Operations', 'Settings']) {
     assert.match(navigation, new RegExp(`label: '${label}'`));
   }
   assert.doesNotMatch(navigation, /label: 'Advanced'/);
@@ -87,7 +87,7 @@ test('Product Review is the only normal approval workspace and uses business lan
     'Profit',
     'Margin',
     'Stock',
-    'Zyro category',
+    'Zyro taxonomy',
     'Zyro brand',
     'Storefront',
     'Supplier/source',

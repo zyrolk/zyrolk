@@ -355,7 +355,7 @@ test("B2 UI: Low Stock Hold is a Product Review filter with a server-provided co
   assert.equal(supplierReviewLowStockHoldQueueCount({ lowStockHold: -1 }), null);
 
   const hub = readFileSync("src/components/SupplierHubFiveStars.tsx", "utf8");
-  assert.match(hub, /useState<ProductReviewFilter>\('new_products'\)/u);
+  assert.match(hub, /filter: 'new_products' as ProductReviewFilter/u);
   assert.match(hub, /new URLSearchParams\(\{ view: 'review', limit: '50', filter: reviewFilter \}\)/u);
   assert.match(hub, /setSupplierReviewLowStockHoldCount\(supplierReviewLowStockHoldQueueCount\(result\.queues\)\)/u);
   assert.match(hub, /filter\.id === 'low_stock_hold' && supplierReviewLowStockHoldCount !== null/u);

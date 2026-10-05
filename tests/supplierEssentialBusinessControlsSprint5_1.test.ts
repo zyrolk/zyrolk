@@ -7,8 +7,8 @@ const projectFile = (path: string): string => readFileSync(new URL(`../${path}`,
 
 test('Sprint 5.1 navigation restores Settings without exposing Advanced as a primary page', () => {
   const hub = projectFile('src/components/SupplierHubFiveStars.tsx');
-  const navigation = hub.slice(hub.indexOf('{/* Business navigation */}'), hub.indexOf('{/* SUB-TAB CONTENTS */}'));
-  for (const label of ['Suppliers', 'Product Review', 'Activity', 'Settings']) {
+  const navigation = hub.slice(hub.indexOf('{/* Primary V2 navigation.'), hub.indexOf('{/* SUB-TAB CONTENTS */}'));
+  for (const label of ['Overview', 'Review Queue', 'Suppliers', 'Operations', 'Settings']) {
     assert.match(navigation, new RegExp(`label: '${label}'`));
   }
   assert.doesNotMatch(navigation, /label: 'Advanced'/);

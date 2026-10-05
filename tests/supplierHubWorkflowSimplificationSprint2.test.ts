@@ -14,19 +14,21 @@ import {
 
 const projectFile = (path: string): string => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
-test('Supplier Hub exposes only the four business navigation sections', () => {
+test('Supplier Hub exposes the five simple primary sections', () => {
   const component = projectFile('src/components/SupplierHubFiveStars.tsx');
   const navigation = component.slice(
-    component.indexOf('{/* Business navigation */}'),
+    component.indexOf('{/* Primary V2 navigation.'),
     component.indexOf('{/* SUB-TAB CONTENTS */}'),
   );
 
-  for (const label of ['Suppliers', 'Product Review', 'Activity', 'Settings']) {
+  for (const label of ['Overview', 'Review Queue', 'Suppliers', 'Operations', 'Settings']) {
     assert.match(navigation, new RegExp(`label: '${label}'`));
   }
-  for (const internalLabel of ['Review Queue', 'Import Queue', 'Pending Changes', 'Operations']) {
+  for (const internalLabel of ['Import Queue', 'Pending Changes']) {
     assert.doesNotMatch(navigation, new RegExp(`label: '${internalLabel}'`));
   }
+  assert.match(component, /id="supplier-hub-section-mobile"/);
+  assert.match(component, /section/);
 });
 
 test('Product Review presents the required business filters and maps them to existing data', () => {

@@ -217,7 +217,7 @@ test('Initial Sync opens the controlled dialog and never auto-starts an unbounde
   assert.match(presentation, /supplierReviewRawMetadata/);
   assert.match(card, /Media is processing/);
   assert.match(card, /Review Product/);
-  assert.match(card, /Supplier raw metadata/);
+  assert.match(card, /Supplier evidence/);
   assert.match(sync, /!Number\(syncRequest\.totalProductLimit\)/);
   assert.equal(buildSupplierManualSyncRequest({
     sourceId: 'a2z-production',

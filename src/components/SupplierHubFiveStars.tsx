@@ -120,6 +120,7 @@ const PENDING_REVIEW_BATCH_SIZES = [25, 50, 100] as const;
 type PendingReviewBatchSize = typeof PENDING_REVIEW_BATCH_SIZES[number];
 const PRODUCT_REVIEW_PAGE_SIZES = [25, 50, 100] as const;
 type ProductReviewPageSize = typeof PRODUCT_REVIEW_PAGE_SIZES[number];
+type SupplierReviewQueueView = 'ready' | 'new' | 'updates' | 'issues' | 'waiting' | 'history';
 
 const PRODUCT_REVIEW_URL_VIEWS: Record<ProductReviewFilter, string> = {
   new_products: 'new',
@@ -129,6 +130,18 @@ const PRODUCT_REVIEW_URL_VIEWS: Record<ProductReviewFilter, string> = {
   needs_attention: 'attention',
   low_stock_hold: 'low_stock',
   approved_history: 'history',
+};
+
+const reviewQueueViewFromState = (
+  filter: ProductReviewFilter,
+  media: 'all' | 'ready' | 'processing' | 'issues',
+): SupplierReviewQueueView => {
+  if (filter === 'approved_history') return 'history';
+  if (media === 'processing') return 'waiting';
+  if (media === 'issues' || filter === 'needs_attention') return 'issues';
+  if (media === 'ready') return 'ready';
+  if (filter === 'product_updates') return 'updates';
+  return 'new';
 };
 
 const readProductReviewUrlState = (): {
@@ -141,7 +154,9 @@ const readProductReviewUrlState = (): {
 } => {
   const defaults = {
     filter: 'new_products' as ProductReviewFilter,
-    media: 'all' as const,
+    // The first screen should prioritize actionable items. The all-media view
+    // remains available through the queue/media controls.
+    media: 'ready' as const,
     sort: 'created' as const,
     search: '',
     page: 1,
@@ -176,6 +191,29 @@ const writeProductReviewUrlState = (
   if (state.search.trim()) url.searchParams.set('q', state.search.trim()); else url.searchParams.delete('q');
   if (state.media !== 'all') url.searchParams.set('media', state.media); else url.searchParams.delete('media');
   window.history[`${mode}State`]({}, '', `${url.pathname}${url.search}${url.hash}`);
+};
+
+const SUPPLIER_HUB_SECTIONS = ['overview', 'review', 'suppliers', 'operations', 'settings'] as const;
+type SupplierHubPrimarySection = typeof SUPPLIER_HUB_SECTIONS[number];
+
+const readSupplierHubSection = (fallback: SupplierHubSection): SupplierHubPrimarySection => {
+  if (typeof window !== 'undefined') {
+    const section = new URLSearchParams(window.location.search).get('section');
+    if (SUPPLIER_HUB_SECTIONS.includes(section as SupplierHubPrimarySection)) {
+      return section as SupplierHubPrimarySection;
+    }
+  }
+  if (fallback === 'activity') return 'operations';
+  // Supplier Hub is the legacy entry point; the V2 landing destination is the
+  // calm operational overview. Deep links to Product Review remain intact.
+  return fallback === 'suppliers' ? 'overview' : fallback as SupplierHubPrimarySection;
+};
+
+const writeSupplierHubSectionUrl = (section: SupplierHubPrimarySection): void => {
+  if (typeof window === 'undefined') return;
+  const url = new URL(window.location.href);
+  url.searchParams.set('section', section);
+  window.history.pushState({}, '', `${url.pathname}${url.search}${url.hash}`);
 };
 
 export interface ComparisonResult {
@@ -409,7 +447,8 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
   }, []);
 
   // Supplier Hub navigation and interaction state
-  const [activeSubTab, setActiveSubTab] = useState<SupplierHubSection>(initialSubTab);
+  const [activeSubTab, setActiveSubTab] = useState<SupplierHubPrimarySection>(() => readSupplierHubSection(initialSubTab));
+  const [showOperationsDiagnostics, setShowOperationsDiagnostics] = useState(false);
   const [canAccessAdvanced, setCanAccessAdvanced] = useState(false);
   const [reviewFilter, setReviewFilter] = useState<ProductReviewFilter>(initialProductReviewUrlState.filter);
   const [reviewMediaFilter, setReviewMediaFilter] = useState<'all' | 'ready' | 'processing' | 'issues'>(initialProductReviewUrlState.media);
@@ -651,7 +690,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
   }, []);
 
   useEffect(() => {
-    if (!['review', 'suppliers', 'settings'].includes(activeSubTab)) return;
+    if (!['review', 'suppliers', 'settings', 'overview'].includes(activeSubTab)) return;
     void loadReviewCatalog();
   }, [activeSubTab, loadReviewCatalog]);
 
@@ -784,8 +823,10 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
   const [savingSettingsSourceId, setSavingSettingsSourceId] = useState<string | null>(null);
 
   const selectSubTab = useCallback((tab: SupplierHubSection) => {
-    setActiveSubTab(tab);
-    onSubTabChange?.(tab);
+    const nextSection: SupplierHubPrimarySection = tab === 'activity' ? 'operations' : tab as SupplierHubPrimarySection;
+    setActiveSubTab(nextSection);
+    writeSupplierHubSectionUrl(nextSection);
+    onSubTabChange?.(nextSection);
   }, [onSubTabChange]);
 
   useEffect(() => {
@@ -965,7 +1006,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
   };
 
   useEffect(() => {
-    if (activeSubTab !== 'review' || !auth.currentUser) return;
+    if (!['review', 'overview'].includes(activeSubTab) || !auth.currentUser) return;
     let cancelled = false;
     let refreshTimer: number | null = null;
     const poll = async () => {
@@ -1006,6 +1047,36 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
     setReviewMediaFilter(media);
     setSupplierReviewPage(1);
     updateProductReviewUrl({ media, page: 1 });
+  };
+
+  const handleReviewQueueViewChange = (view: SupplierReviewQueueView): void => {
+    const applyQueueQuery = (filter: ProductReviewFilter, media: 'all' | 'ready' | 'processing' | 'issues'): void => {
+      setReviewFilter(filter);
+      setReviewMediaFilter(media);
+      setSupplierReviewPage(1);
+      updateProductReviewUrl({ filter, media, page: 1 });
+    };
+    if (view === 'ready') {
+      applyQueueQuery(reviewFilter, 'ready');
+      return;
+    }
+    if (view === 'waiting') {
+      applyQueueQuery(reviewFilter, 'processing');
+      return;
+    }
+    if (view === 'issues') {
+      applyQueueQuery('needs_attention', 'all');
+      return;
+    }
+    if (view === 'history') {
+      applyQueueQuery('approved_history', 'all');
+      return;
+    }
+    if (view === 'updates') {
+      applyQueueQuery('product_updates', 'all');
+      return;
+    }
+    applyQueueQuery('new_products', 'all');
   };
 
   const handleReviewSortChange = (sort: 'created' | 'updated'): void => {
@@ -1051,6 +1122,9 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
   useEffect(() => {
     const handleProductReviewPopState = (): void => {
       const next = readProductReviewUrlState();
+      const nextSection = readSupplierHubSection(activeSubTab);
+      setActiveSubTab(nextSection);
+      onSubTabChange?.(nextSection);
       setReviewFilter(next.filter);
       setReviewMediaFilter(next.media);
       setReviewSort(next.sort);
@@ -1060,10 +1134,10 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
     };
     window.addEventListener('popstate', handleProductReviewPopState);
     return () => window.removeEventListener('popstate', handleProductReviewPopState);
-  }, []);
+  }, [activeSubTab, onSubTabChange]);
 
   useEffect(() => {
-    if (activeSubTab !== 'review' || !auth.currentUser) return;
+    if (!['review', 'overview'].includes(activeSubTab) || !auth.currentUser) return;
     let cancelled = false;
     let timer: number | null = null;
     let lastObserved: PendingReviewBatchJobView | null = null;
@@ -2234,6 +2308,27 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
   const visibleErrorMsg = errorMsg || syncErrorMsg
     ? supplierBusinessErrorMessage(errorMsg || syncErrorMsg)
     : null;
+  const overviewMediaCounts = supplierReviewMediaSummary?.counts;
+  const overviewWaitingCount = overviewMediaCounts
+    ? [overviewMediaCounts.processing, overviewMediaCounts.retryScheduled]
+      .filter((value): value is number => typeof value === 'number' && Number.isFinite(value))
+      .reduce((total, value) => total + value, 0)
+    : null;
+  const overviewHealth = lastSyncJob?.state === 'completed' && lastSyncJob.reconciliationStatus === 'VERIFIED'
+    ? 'Healthy'
+    : lastSyncJob
+      ? 'Attention'
+      : null;
+  const mediaHealth = overviewMediaCounts
+    ? (overviewMediaCounts.processing || overviewMediaCounts.retryScheduled
+      ? 'Delayed'
+      : supplierReviewMediaSummary?.countStatus === 'partial' ? null : 'Healthy')
+    : null;
+  // Supplier source health is connection evidence, not proof that the
+  // scheduled inventory refresh ran successfully. Keep the latter unknown
+  // until the read model exposes a run-level refresh signal.
+  const inventoryHealth = null;
+  const reviewQueueView = reviewQueueViewFromState(reviewFilter, reviewMediaFilter);
 
   useEffect(() => {
     const technicalError = errorMsg || syncErrorMsg || supplierQueueError || modalTestError || supplierOfferError;
@@ -2262,7 +2357,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
       </div>
 
       {/* Notifications and messages */}
-      {currentSyncJob && isSupplierSyncJobActive(currentSyncJob) && (
+      {(['overview', 'operations'].includes(activeSubTab)) && currentSyncJob && isSupplierSyncJobActive(currentSyncJob) && (
         <section
           aria-label="Current supplier catalog update"
           className="rounded-2xl border border-slate-200/70 bg-white/80 p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900/60"
@@ -2327,7 +2422,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
         </section>
       )}
 
-      {lastSyncJob && isSupplierSyncJobTerminal(lastSyncJob) && (!currentSyncJob || lastSyncJob.id !== currentSyncJob.id) && (
+      {(['overview', 'suppliers', 'operations'].includes(activeSubTab)) && lastSyncJob && isSupplierSyncJobTerminal(lastSyncJob) && (!currentSyncJob || lastSyncJob.id !== currentSyncJob.id) && (
         <section
           aria-label="Last supplier catalog update"
           className="rounded-2xl border border-slate-200/70 bg-white/80 p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900/60"
@@ -2387,42 +2482,108 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
         </motion.div>
       )}
 
-      {/* Business navigation */}
-      <div className="flex w-full flex-wrap items-center gap-1.5 border-b border-slate-100 pb-1.5 dark:border-slate-800">
-        {[
-          { id: 'suppliers', label: 'Suppliers', badge: supplierSources.length, icon: Globe },
-          { id: 'review', label: 'Product Review', badge: supplierReviewActionableCount, icon: UserCheck, badgeColor: 'bg-blue-500 text-white' },
-          { id: 'activity', label: 'Activity', badge: null, icon: Activity },
-          { id: 'settings', label: 'Settings', badge: null, icon: Settings },
-        ].map((tab) => {
-          const TabIcon = tab.icon;
-          const isSubActive = activeSubTab === tab.id;
-          return (
-            <button
-              key={tab.id}
-              onClick={() => selectSubTab(tab.id as SupplierHubSection)}
-              className={`px-4 py-2.5 rounded-xl font-bold text-xs transition-all flex items-center space-x-2 border cursor-pointer whitespace-nowrap ${
-                isSubActive 
-                  ? 'bg-blue-600 text-white border-blue-600 shadow-md shadow-blue-500/10' 
-                  : 'bg-slate-50 dark:bg-slate-900/40 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200/50 dark:border-slate-800/60'
-              }`}
-            >
-              <TabIcon className="h-4 w-4" />
-              <span>{tab.label}</span>
-              {tab.badge !== null && tab.badge > 0 && (
-                <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-mono font-black ${tab.badgeColor || 'bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300'}`}>
-                  {tab.badge}
+      {/* Primary V2 navigation. The select keeps the same destinations usable at
+          360–430px without an overflowing tab strip. */}
+      <nav aria-label="Supplier Hub sections" className="rounded-2xl border border-slate-200/70 bg-white/80 p-2 shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
+        <label className="sr-only" htmlFor="supplier-hub-section-mobile">Supplier Hub section</label>
+        <select
+          id="supplier-hub-section-mobile"
+          value={activeSubTab}
+          onChange={(event) => selectSubTab(event.target.value as SupplierHubPrimarySection)}
+          className="min-h-11 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm font-bold text-slate-800 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 md:hidden"
+          aria-label="Supplier Hub section"
+        >
+          <option value="overview">Overview</option>
+          <option value="review">Review Queue</option>
+          <option value="suppliers">Suppliers</option>
+          <option value="operations">Operations</option>
+          <option value="settings">Settings</option>
+        </select>
+        <div className="hidden flex-wrap items-center gap-1.5 md:flex">
+          {[
+            { id: 'overview', label: 'Overview', badge: null, icon: Activity },
+            { id: 'review', label: 'Review Queue', badge: supplierReviewActionableCount, icon: UserCheck, badgeColor: 'bg-blue-500 text-white' },
+            { id: 'suppliers', label: 'Suppliers', badge: supplierSources.length, icon: Globe },
+            { id: 'operations', label: 'Operations', badge: null, icon: Activity },
+            { id: 'settings', label: 'Settings', badge: null, icon: Settings },
+          ].map((tab) => {
+            const TabIcon = tab.icon;
+            const isSubActive = activeSubTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                aria-current={isSubActive ? 'page' : undefined}
+                onClick={() => selectSubTab(tab.id as SupplierHubPrimarySection)}
+                className={`min-h-10 rounded-xl border px-3 py-2 font-bold text-xs transition-all ${
+                  isSubActive
+                    ? 'border-blue-600 bg-blue-600 text-white shadow-md shadow-blue-500/10'
+                    : 'border-slate-200/50 bg-slate-50 text-slate-500 hover:bg-slate-100 dark:border-slate-800/60 dark:bg-slate-900/40 dark:text-slate-400 dark:hover:bg-slate-800'
+                }`}
+              >
+                <span className="inline-flex items-center gap-2"><TabIcon className="h-4 w-4" aria-hidden="true" /><span>{tab.label}</span>
+                  {tab.badge !== null && tab.badge > 0 && <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-mono font-black ${tab.badgeColor || 'bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300'}`}>{tab.badge}</span>}
                 </span>
-              )}
-            </button>
-          );
-        })}
-      </div>
+              </button>
+            );
+          })}
+        </div>
+      </nav>
 
       {/* SUB-TAB CONTENTS */}
       <div className="min-h-[400px]">
 
-        {activeSubTab === 'activity' && supplierSourcesLoaded && supplierSources.length === 0 && (
+        {activeSubTab === 'overview' && (
+          <section aria-labelledby="supplier-hub-overview-title" className="space-y-5">
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-[0.18em] text-blue-600 dark:text-blue-400">Supplier Hub</p>
+              <h3 id="supplier-hub-overview-title" className="mt-1 text-xl font-black tracking-tight text-slate-900 dark:text-white">What needs attention?</h3>
+              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Review actionable products and check supplier health at a glance.</p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" aria-label="Supplier Hub actionable summary">
+              {[
+                { label: 'Ready to review', value: overviewMediaCounts?.ready, tone: 'emerald' },
+                { label: 'Waiting for media', value: overviewWaitingCount, tone: 'blue' },
+                { label: 'Needs attention', value: overviewMediaCounts?.needsAttention, tone: 'amber' },
+                { label: 'Approved / published', value: null, tone: 'slate' },
+              ].map((metric) => (
+                <div key={metric.label} className="rounded-2xl border border-slate-200/70 bg-white p-3 shadow-sm dark:border-slate-800 dark:bg-slate-950">
+                  <p className="text-[9px] font-black uppercase tracking-wider text-slate-400">{metric.label}</p>
+                  <p className="mt-2 text-xl font-black text-slate-900 dark:text-white">{metric.value === null || metric.value === undefined ? '—' : metric.value.toLocaleString()}</p>
+                </div>
+              ))}
+            </div>
+
+            <div className="grid gap-3 lg:grid-cols-3" aria-label="Supplier system health">
+              {[
+                { label: 'Catalog Sync', supplier: 'Dropex', status: overviewHealth, detail: lastSyncJob ? `${lastSyncJob.progress.productsScanned} scanned · ${lastSyncJob.reconciliationStatus === 'VERIFIED' ? 'Verified' : 'Evidence needs attention'}` : 'Not recorded' },
+                { label: 'Inventory Refresh', supplier: 'Dropex · scheduled', status: inventoryHealth, detail: inventoryHealth ? 'Current supplier stock refresh' : 'Not recorded' },
+                { label: 'Media Processing', supplier: 'Review queue', status: mediaHealth, detail: overviewMediaCounts ? `${overviewWaitingCount ?? 0} waiting for media` : 'Not recorded' },
+              ].map((health) => (
+                <div key={health.label} className="rounded-2xl border border-slate-200/70 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-black text-slate-900 dark:text-white">{health.label}</p>
+                      <p className="mt-1 text-[10px] font-semibold text-slate-400">{health.supplier}</p>
+                    </div>
+                    <span className="rounded-full border border-slate-200 px-2 py-1 text-[10px] font-black text-slate-600 dark:border-slate-700 dark:text-slate-300">{health.status || 'Not recorded'}</span>
+                  </div>
+                  <p className="mt-4 text-xs text-slate-500 dark:text-slate-400">{health.detail}</p>
+                </div>
+              ))}
+            </div>
+
+            <div className="flex flex-wrap gap-2" aria-label="Supplier Hub quick actions">
+              <button type="button" onClick={() => selectSubTab('review')} className="min-h-11 rounded-xl bg-blue-600 px-4 text-xs font-black text-white hover:bg-blue-700">Review ready products</button>
+              <button type="button" onClick={() => selectSubTab('review')} className="min-h-11 rounded-xl border border-slate-200 bg-white px-4 text-xs font-black text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200">View issues</button>
+              <button type="button" onClick={() => selectSubTab('suppliers')} className="min-h-11 rounded-xl border border-slate-200 bg-white px-4 text-xs font-black text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200">Suppliers</button>
+              <button type="button" onClick={() => selectSubTab('operations')} className="min-h-11 rounded-xl border border-slate-200 bg-white px-4 text-xs font-black text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200">Operations</button>
+            </div>
+          </section>
+        )}
+
+        {activeSubTab === 'operations' && supplierSourcesLoaded && supplierSources.length === 0 && (
           <div className="w-full rounded-3xl border border-dashed border-slate-200 bg-slate-50/50 p-8 text-center dark:border-slate-800 dark:bg-slate-900/10 sm:p-12">
             <span className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-blue-500/10 text-blue-500"><Activity className="h-8 w-8" aria-hidden="true" /></span>
             <h3 className="mt-3 text-sm font-bold text-slate-900 dark:text-white">No supplier activity yet.</h3>
@@ -2430,15 +2591,53 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
           </div>
         )}
 
-        {activeSubTab === 'activity' && (!supplierSourcesLoaded || supplierSources.length > 0) && (
-          <SupplierOperationsDashboard
-            requestApi={requestSupplierApi}
-            activeSyncJob={currentSyncJob}
-            refreshKey={operationsRefreshKey}
-            mode="activity"
-            supplierSources={supplierSources}
-            onOpenProductReview={() => selectSubTab('review')}
-          />
+        {activeSubTab === 'operations' && (!supplierSourcesLoaded || supplierSources.length > 0) && (
+          <div className="space-y-5">
+            <details className="rounded-2xl border border-slate-200/70 bg-white/80 px-4 py-3 shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
+              <summary className="cursor-pointer list-none text-sm font-black text-slate-900 outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-white">Review maintenance</summary>
+              <div className="mt-3 flex flex-col gap-3 rounded-xl bg-slate-50 p-3 dark:bg-slate-950/60 sm:flex-row sm:items-center sm:justify-between" aria-label="Refresh pending reviews">
+                <div>
+                  <p className="text-xs font-black text-slate-800 dark:text-slate-100">Refresh pending reviews</p>
+                  <p className="mt-1 text-[10px] text-slate-500 dark:text-slate-400">Refreshes existing pending items only. Review and approve them separately.</p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <label className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                    <span className="sr-only">Pending review refresh batch size</span>
+                    <select value={pendingReviewBatchSize} onChange={(event) => setPendingReviewBatchSize(Number(event.target.value) as PendingReviewBatchSize)} aria-label="Pending review refresh batch size" disabled={pendingReviewBatchRefreshing || isPendingReviewBatchJobActive(pendingReviewBatchJob)} className="min-h-10 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold normal-case tracking-normal text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
+                      {PENDING_REVIEW_BATCH_SIZES.map((size) => <option key={size} value={size}>{size} items</option>)}
+                    </select>
+                  </label>
+                  <button type="button" onClick={() => void handleRefreshPendingReviewBatch()} disabled={pendingReviewBatchRefreshing || isPendingReviewBatchJobActive(pendingReviewBatchJob)} className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-blue-200 bg-blue-600 px-3 text-[11px] font-black text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">
+                    <RefreshCw className={`h-3.5 w-3.5 ${pendingReviewBatchRefreshing ? 'animate-spin' : ''}`} aria-hidden="true" />
+                    {pendingReviewBatchRefreshing || isPendingReviewBatchJobActive(pendingReviewBatchJob) ? 'Refresh in progress…' : 'Refresh pending reviews'}
+                  </button>
+                </div>
+                {pendingReviewBatchResult && <p role="status" className="basis-full text-[10px] font-semibold text-slate-600 dark:text-slate-300">{pendingReviewBatchResult.state} · selected {pendingReviewBatchResult.selected ?? 0}; completed {pendingReviewBatchResult.completed ?? 0}; ready {pendingReviewBatchResult.nowReadyToPublish ?? 0}; blocked {pendingReviewBatchResult.stillBlocked ?? 0}.</p>}
+              </div>
+            </details>
+            <SupplierOperationsDashboard
+              requestApi={requestSupplierApi}
+              activeSyncJob={currentSyncJob}
+              refreshKey={operationsRefreshKey}
+              mode="activity"
+              supplierSources={supplierSources}
+              onOpenProductReview={() => selectSubTab('review')}
+            />
+            {canAccessAdvanced && (
+              <section className="rounded-2xl border border-slate-200/70 bg-white/80 p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900/50" aria-labelledby="supplier-technical-operations-title">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h3 id="supplier-technical-operations-title" className="text-sm font-black text-slate-900 dark:text-white">Technical operations</h3>
+                    <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">Queue health, media diagnostics, retries and forensic evidence.</p>
+                  </div>
+                  <button type="button" onClick={() => setShowOperationsDiagnostics((current) => !current)} aria-expanded={showOperationsDiagnostics} className="min-h-10 rounded-xl border border-slate-200 px-3 text-[10px] font-black text-slate-600 hover:bg-slate-50 focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">
+                    {showOperationsDiagnostics ? 'Hide details' : 'View details'}
+                  </button>
+                </div>
+                {showOperationsDiagnostics && <div className="mt-4"><SupplierOperationsDashboard requestApi={requestSupplierApi} activeSyncJob={currentSyncJob} refreshKey={operationsRefreshKey} mode="advanced" supplierSources={supplierSources} onOpenProductReview={() => selectSubTab('review')} /></div>}
+              </section>
+            )}
+          </div>
         )}
 
         {activeSubTab === 'review' && (
@@ -2447,10 +2646,10 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
               <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
-                    <h3 id="product-review-filters-title" className="text-lg font-black tracking-tight text-slate-900 dark:text-white">Product Review</h3>
-                    <span className="rounded-full bg-blue-500/10 px-2 py-1 text-[9px] font-black uppercase tracking-wider text-blue-700 dark:text-blue-300">Admin workspace</span>
+                    <h3 id="product-review-filters-title" className="text-lg font-black tracking-tight text-slate-900 dark:text-white">Review Queue</h3>
+                    <span className="rounded-full bg-blue-500/10 px-2 py-1 text-[9px] font-black uppercase tracking-wider text-blue-700 dark:text-blue-300">Product Review</span>
                   </div>
-                  <p className="mt-1 max-w-xl text-xs text-slate-500 dark:text-slate-400">Review supplier products and changes before they appear in your store.</p>
+                  <p className="mt-1 max-w-xl text-xs text-slate-500 dark:text-slate-400">Review actionable supplier products before they appear in your store.</p>
                 </div>
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:min-w-[25rem]">
                   {supplierReviewActionableCount !== null && <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-800 dark:bg-slate-900/60"><p className="text-[9px] font-black uppercase tracking-wider text-slate-400">Pending</p><p className="mt-1 text-lg font-black text-slate-900 dark:text-white">{supplierReviewActionableCount.toLocaleString()}</p></div>}
@@ -2494,88 +2693,38 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                   </select>
                 </label>
               </div>
-              <p className="mt-2 text-[10px] text-slate-400">Search is server-backed for exact supplier SKU, product ID and item code. Product-name substring search is not enabled.</p>
-              <div className="mt-4 flex flex-col gap-3 rounded-2xl border border-blue-100 bg-blue-50/60 p-3 dark:border-blue-900/40 dark:bg-blue-950/20 sm:flex-row sm:items-center sm:justify-between" aria-label="Refresh pending reviews">
-                <div>
-                  <p className="text-xs font-black text-slate-800 dark:text-slate-100">Refresh pending reviews</p>
-                  <p className="mt-1 text-[10px] text-slate-500 dark:text-slate-400">Refreshes existing pending items only. Review and approve them separately.</p>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <label className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                    <span className="sr-only">Pending review refresh batch size</span>
-                    <select
-                      value={pendingReviewBatchSize}
-                      onChange={(event) => setPendingReviewBatchSize(Number(event.target.value) as PendingReviewBatchSize)}
-                      aria-label="Pending review refresh batch size"
-                      disabled={pendingReviewBatchRefreshing || isPendingReviewBatchJobActive(pendingReviewBatchJob)}
-                      className="min-h-10 rounded-xl border border-blue-200 bg-white px-3 text-xs font-semibold normal-case tracking-normal text-slate-700 dark:border-blue-800 dark:bg-slate-900 dark:text-slate-200"
-                    >
-                      {PENDING_REVIEW_BATCH_SIZES.map((size) => <option key={size} value={size}>{size} items</option>)}
-                    </select>
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => void handleRefreshPendingReviewBatch()}
-                    disabled={pendingReviewBatchRefreshing || isPendingReviewBatchJobActive(pendingReviewBatchJob)}
-                    className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-blue-600 px-3 text-[11px] font-black text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <RefreshCw className={`h-3.5 w-3.5 ${pendingReviewBatchRefreshing ? 'animate-spin' : ''}`} aria-hidden="true" />
-                    {pendingReviewBatchRefreshing || isPendingReviewBatchJobActive(pendingReviewBatchJob) ? 'Refresh in progress…' : 'Refresh pending reviews'}
-                  </button>
-                </div>
-                {pendingReviewBatchResult && (
-                  <p role="status" className="basis-full text-[10px] font-semibold text-slate-600 dark:text-slate-300">
-                    {pendingReviewBatchResult.state} · selected {pendingReviewBatchResult.selected ?? 0}; attempted {pendingReviewBatchResult.attempted ?? 0}; completed {pendingReviewBatchResult.completed ?? 0}; refreshed {pendingReviewBatchResult.refreshedSuccessfully ?? 0}; ready {pendingReviewBatchResult.nowReadyToPublish ?? 0}; blocked {pendingReviewBatchResult.stillBlocked ?? 0}; removed/not found {pendingReviewBatchResult.supplierRemovedOrNotFound ?? 0}; failed {pendingReviewBatchResult.failed ?? 0}; unchanged {pendingReviewBatchResult.unchanged ?? 0}.
-                  </p>
-                )}
-              </div>
-              <p className="mt-2 text-[10px] text-slate-400">Search the selected Product Review dataset by exact supplier SKU, product ID or item code. Product-name substring search is not enabled.</p>
-              <div className="mt-4 flex min-w-0 items-center gap-2 overflow-x-auto pb-1" role="tablist" aria-label="Product review media filters">
-                <span className="mr-1 text-[10px] font-black uppercase tracking-wider text-slate-400">Media</span>
+              <p className="mt-2 text-[10px] text-slate-400">Search by exact supplier SKU, product ID or item code. Product-name search is not enabled.</p>
+              <div className="mt-4 flex min-w-0 flex-wrap gap-1.5" role="tablist" aria-label="Product review queue views">
                 {([
-                  ['all', 'All'],
-                  ['ready', 'Ready for review'],
-                  ['processing', 'Processing / retry'],
-                  ['issues', 'Media issues'],
+                  ['ready', 'Ready'],
+                  ['new', 'New'],
+                  ['updates', 'Updates'],
+                  ['issues', 'Issues'],
+                  ['waiting', 'Waiting'],
+                  ['history', 'History'],
                 ] as const).map(([value, label]) => (
-                  <button
-                    key={value}
-                    type="button"
-                    role="tab"
-                    aria-selected={reviewMediaFilter === value}
-                    onClick={() => handleReviewMediaFilterChange(value)}
-                    className={`min-h-9 rounded-lg px-2.5 text-[10px] font-black transition-colors ${reviewMediaFilter === value ? 'bg-slate-800 text-white dark:bg-white dark:text-slate-900' : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800'}`}
-                  >
+                  <button key={value} type="button" role="tab" aria-selected={reviewQueueView === value} onClick={() => handleReviewQueueViewChange(value)} className={`min-h-10 rounded-xl px-3 text-[11px] font-black transition-colors ${reviewQueueView === value ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800'}`}>
                     {label}
                   </button>
                 ))}
               </div>
-              {supplierReviewMediaSummary && (
-                <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[10px] font-semibold text-slate-500 dark:text-slate-400" aria-label="Media processing summary">
-                  {supplierReviewMediaSummary.counts?.processing !== null && supplierReviewMediaSummary.counts?.processing !== undefined && <span>Processing {supplierReviewMediaSummary.counts.processing}</span>}
-                  {supplierReviewMediaSummary.counts?.retryScheduled !== null && supplierReviewMediaSummary.counts?.retryScheduled !== undefined && <span>Retry scheduled {supplierReviewMediaSummary.counts.retryScheduled}</span>}
-                  {supplierReviewMediaSummary.countStatus === 'partial' && <span className="text-slate-400">Other media states require item-level evidence.</span>}
+              <details className="mt-3 rounded-xl border border-slate-200/70 px-3 py-2 dark:border-slate-800">
+                <summary className="cursor-pointer list-none text-[10px] font-black text-slate-500 outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-slate-300">More filters</summary>
+                <div className="mt-3 flex min-w-0 flex-wrap gap-1.5" role="tablist" aria-label="Product review filters">
+                  {PRODUCT_REVIEW_FILTERS.map((filter) => (
+                    <button key={filter.id} type="button" role="tab" aria-selected={reviewFilter === filter.id} onClick={() => handleReviewFilterChange(filter.id)} className={`min-h-9 rounded-lg px-2.5 text-[10px] font-black transition-colors ${reviewFilter === filter.id ? 'bg-slate-800 text-white dark:bg-white dark:text-slate-900' : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800'}`}>
+                      {filter.label}
+                      {filter.id === 'low_stock_hold' && supplierReviewLowStockHoldCount !== null && <span className="ml-1.5" aria-label={`${supplierReviewLowStockHoldCount} products on low stock hold`}>{supplierReviewLowStockHoldCount}</span>}
+                    </button>
+                  ))}
                 </div>
-              )}
-              <div className="mt-4 flex min-w-0 items-center gap-2 overflow-x-auto pb-1" role="tablist" aria-label="Product review filters">
-                {PRODUCT_REVIEW_FILTERS.map((filter) => (
-                  <button
-                    key={filter.id}
-                    type="button"
-                    role="tab"
-                    aria-selected={reviewFilter === filter.id}
-                    onClick={() => handleReviewFilterChange(filter.id)}
-                    className={`min-h-10 shrink-0 rounded-xl px-3 text-[11px] font-black transition-colors ${reviewFilter === filter.id ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800'}`}
-                  >
-                    {filter.label}
-                    {filter.id === 'low_stock_hold' && supplierReviewLowStockHoldCount !== null && (
-                      <span className="ml-1.5" aria-label={`${supplierReviewLowStockHoldCount} products on low stock hold`}>
-                        {supplierReviewLowStockHoldCount}
-                      </span>
-                    )}
-                  </button>
-                ))}
-              </div>
+                <div className="mt-3 flex flex-wrap gap-1.5" role="tablist" aria-label="Product review media filters">
+                  <span className="mr-1 self-center text-[10px] font-black uppercase tracking-wider text-slate-400">Media</span>
+                  {([['all', 'All'], ['ready', 'Ready'], ['processing', 'Processing'], ['issues', 'Issues']] as const).map(([value, label]) => (
+                    <button key={value} type="button" role="tab" aria-selected={reviewMediaFilter === value} onClick={() => handleReviewMediaFilterChange(value)} className={`min-h-9 rounded-lg px-2.5 text-[10px] font-black transition-colors ${reviewMediaFilter === value ? 'bg-slate-800 text-white dark:bg-white dark:text-slate-900' : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800'}`}>{label}</button>
+                  ))}
+                </div>
+              </details>
             </section>
             <div className={`rounded-3xl border p-4 sm:p-6 ${
               isDarkMode ? 'bg-[#0d1424] border-slate-800/80' : 'bg-white border-slate-200/60 shadow-xs'
@@ -2585,7 +2734,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                   <div className="flex flex-wrap items-center gap-2">
                     <h3 className="flex items-center gap-1.5 text-sm font-extrabold uppercase tracking-wider text-slate-900 dark:text-white">
                       <UserCheck className="h-4 w-4 text-blue-500" aria-hidden="true" />
-                      <span>{PRODUCT_REVIEW_FILTERS.find((filter) => filter.id === reviewFilter)?.label}</span>
+                      <span>{({ ready: 'Ready', new: 'New', updates: 'Updates', issues: 'Issues', waiting: 'Waiting', history: 'History' } as Record<SupplierReviewQueueView, string>)[reviewQueueView]}</span>
                     </h3>
                     <span className="rounded-full bg-slate-100 px-2 py-1 text-[9px] font-black text-slate-500 dark:bg-slate-900 dark:text-slate-300">{reviewMediaFilter === 'all' ? 'All media' : reviewMediaFilter === 'ready' ? 'Ready media' : reviewMediaFilter === 'processing' ? 'Processing media' : 'Media issues'}</span>
                   </div>
@@ -2627,7 +2776,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                   </div>
                 </div>
               ) : (
-                <div className="space-y-3" aria-label="Products awaiting review" aria-busy={supplierReviewLoading}>
+                <div className="supplier-review-results space-y-2" aria-label="Products awaiting review" aria-busy={supplierReviewLoading}>
                   {/* Product Review page: one bounded server-backed page, never an accumulating Load More list. */}
                   {/* Launch-ready quick review list: one bounded page, no bulk actions. */}
                   {visibleReviewItems.map((item) => {
@@ -2677,6 +2826,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                         supplierAttribution={compactSupplierAttribution(item)}
                         blockingProblems={blockingProblems}
                         media={mediaEvidence}
+                        compact
                         mediaForensics={mediaForensicItemId === item.id ? mediaForensicEvidence : null}
                         mediaForensicsLoading={mediaForensicItemId === item.id && mediaForensicLoading}
                         mediaForensicsError={mediaForensicItemId === item.id ? mediaForensicError : null}

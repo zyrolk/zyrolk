@@ -37,7 +37,7 @@ test('empty Supplier Hub views use business empty states while real App Check fa
   for (const copy of [
     'No connected sources yet',
     'Connect an external supplier integration when you are ready to sync an API or catalog feed.',
-    'No products pending review',
+    'No products in this filter',
     'Supplier product submissions and synced catalogue changes will appear here.',
     'No supplier activity yet.',
     'Supplier account, product review, and synchronization activity will appear here.',
@@ -55,7 +55,8 @@ test('empty Supplier Hub views use business empty states while real App Check fa
 });
 
 test('mobile Supplier Hub navigation and review filters wrap without horizontal tab scrolling', () => {
-  assert.match(supplierHubSource, /flex w-full flex-wrap items-center gap-1\.5/);
-  assert.match(supplierHubSource, /className="mt-4 flex flex-wrap gap-2 pb-1" role="tablist"/);
-  assert.match(supplierHubSource, /className="flex w-full flex-wrap items-center gap-2 sm:ml-auto sm:w-auto"/);
+  assert.match(supplierHubSource, /id="supplier-hub-section-mobile"/);
+  assert.match(supplierHubSource, /hidden flex-wrap items-center gap-1\.5 md:flex/);
+  assert.match(supplierHubSource, /role="tablist" aria-label="Product review queue views"/);
+  assert.match(supplierHubSource, /<summary[^>]*>More filters<\/summary>/);
 });

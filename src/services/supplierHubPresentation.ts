@@ -1,7 +1,11 @@
 import { isValidSupplierImageUrl } from './connectors/a2z-website/productImages';
 import { countStructuredSupplierSpecifications } from './supplierReviewEditor';
 
-export type SupplierHubSection = 'suppliers' | 'review' | 'activity' | 'settings';
+/**
+ * Primary Supplier Hub destinations. `activity` remains a compatibility alias
+ * for older callers; the operator-facing name is now Operations.
+ */
+export type SupplierHubSection = 'overview' | 'review' | 'suppliers' | 'operations' | 'settings' | 'activity';
 
 export const SUPPLIER_REVIEW_STALE_REFRESH_MESSAGE =
   'This product changed while it was open. Product Review has been refreshed.';

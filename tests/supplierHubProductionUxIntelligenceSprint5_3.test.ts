@@ -66,7 +66,8 @@ test('suggestions, validation checklist, and gallery controls reuse existing dra
 
 test('individual review cards, explicit detail editing, and Activity filters are present', () => {
   assert.doesNotMatch(hub, /Approving products\.\.\.|Bulk review request in progress/);
-  assert.match(hub, /grid gap-4 lg:grid-cols-2/);
+  assert.match(hub, /supplier-review-results/);
+  assert.match(quickCard, /supplier-review-compact-card/);
   assert.match(hub, /supplierReviewCanQuickApprove/);
   assert.match(quickCard, /Review Product/);
   assert.match(editor, /Edit product data/);

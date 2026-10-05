@@ -118,8 +118,8 @@ test('Product Review exposes only server-authoritative decisions and bounded tru
   const rules = projectFile('firestore.rules');
   const indexes = JSON.parse(projectFile('firestore.indexes.json')) as { indexes: Array<{ collectionGroup: string; fields: Array<{ fieldPath: string; order: string }> }> };
 
-  assert.match(hub, /Search loaded products or supplier codes/);
-  assert.match(hub, /Use Load more products to extend the bounded search/);
+  assert.match(hub, /Search SKU, supplier ID or item code/);
+  assert.doesNotMatch(hub, /Use Load more products to extend the bounded search/);
   assert.match(hub, /decideSupplierReviewQueueItem\(item\.id, 'delete'/);
   assert.match(hub, /Remove this item from Product Review\?/);
   assert.match(hub, /does not delete the supplier product or a published Zyro product/);

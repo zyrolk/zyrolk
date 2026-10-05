@@ -52,6 +52,8 @@ export interface SupplierReviewQuickCardProps {
   processing: boolean;
   canRetryMedia?: boolean;
   retryingMedia?: boolean;
+  /** Compact V2 queue presentation; the editor remains the full-detail surface. */
+  compact?: boolean;
   mediaForensics?: SupplierMediaForensicEvidence | null;
   mediaForensicsLoading?: boolean;
   mediaForensicsError?: string | null;
@@ -129,6 +131,7 @@ export function SupplierReviewQuickCard({
   processing,
   canRetryMedia = false,
   retryingMedia = false,
+  compact = false,
   mediaForensics = null,
   mediaForensicsLoading = false,
   mediaForensicsError = null,
@@ -157,6 +160,57 @@ export function SupplierReviewQuickCard({
     : mediaState === 'LEGACY_UNKNOWN'
       ? 'bg-slate-500/10 text-slate-600 dark:text-slate-300'
       : 'bg-amber-500/10 text-amber-700 dark:text-amber-300';
+
+  const highLevelStatus = terminalState
+    ? terminalState
+    : isPreparing || mediaState === 'PROCESSING' || mediaState === 'RETRY_SCHEDULED'
+      ? 'Waiting'
+      : blockingProblems.length > 0 || ['NEEDS_ATTENTION', 'SUPPLIER_IMAGE_UNAVAILABLE', 'PERMANENT_MEDIA_CONSTRAINT', 'LEGACY_UNKNOWN'].includes(mediaState)
+        ? 'Issue'
+        : 'Ready';
+
+  if (compact) {
+    return (
+      <article className="supplier-review-compact-card group rounded-2xl border border-slate-200 bg-white shadow-sm transition-shadow hover:shadow-md dark:border-slate-800 dark:bg-slate-950">
+        <div className="grid min-w-0 gap-3 p-3 sm:grid-cols-[auto_minmax(0,1fr)_repeat(4,minmax(4.5rem,auto))_auto] sm:items-center">
+          <ManagedSupplierImage src={managedImageUrl} alt={`Managed product image for ${productName}`} />
+          <div className="min-w-0">
+            <div className="flex min-w-0 items-start gap-2">
+              <div className="min-w-0 flex-1">
+                <h4 className="line-clamp-2 break-words text-sm font-black text-slate-900 dark:text-white">{productName}</h4>
+                <p className="mt-1 truncate text-[9px] font-bold uppercase tracking-wide text-slate-400">SKU <span className="font-mono normal-case">{supplierItemCode || 'Not supplied'}</span></p>
+              </div>
+              <span className={`shrink-0 rounded-full px-2 py-1 text-[9px] font-black ${highLevelStatus === 'Ready' ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : highLevelStatus === 'Waiting' ? 'bg-blue-500/10 text-blue-700 dark:text-blue-300' : 'bg-amber-500/10 text-amber-700 dark:text-amber-300'}`} aria-label={`Review status: ${highLevelStatus}`}>{highLevelStatus}</span>
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+              <span className={`rounded-full px-2 py-0.5 text-[9px] font-black ${mediaTone}`} aria-label={`Media status: ${mediaLabel}`}>{mediaLabel}</span>
+              {mediaAgeLabel && <span className="text-[9px] font-semibold text-slate-400">{mediaAgeLabel}</span>}
+              {blockingProblems.slice(0, 2).map((problem) => <span key={problem} className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[9px] font-black text-amber-700 dark:text-amber-300">{problem}</span>)}
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-2 border-t border-slate-100 pt-2 text-[10px] dark:border-slate-800 sm:contents sm:border-0 sm:pt-0">
+            <div><span className="block text-slate-400">Selling</span><strong className="font-black text-blue-600">LKR {sellingPrice.toLocaleString()}</strong></div>
+            <div><span className="block text-slate-400">Stock</span><strong className="font-black">{formatSupplierStockLabel(stock, supplierStockAvailable)}</strong></div>
+            <div><span className="block text-slate-400">Margin</span><strong className="font-black">{formatSupplierMarginLabel(marginPercent, profitAvailable)}</strong></div>
+            <div><span className="block text-slate-400">Zyro</span><strong className="line-clamp-2 font-black">{categoryLabel}{subcategoryLabel ? ` / ${subcategoryLabel}` : ''}</strong></div>
+          </div>
+          <div className="flex items-center gap-2 sm:justify-end">
+            <button type="button" onClick={onViewDetails} disabled={processing} aria-label={`Review product ${productName}`} className="min-h-11 flex-1 rounded-xl bg-blue-600 px-4 text-[10px] font-black text-white hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-50 sm:flex-none">Review</button>
+            <details className="relative" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
+              <summary className="flex min-h-11 min-w-11 cursor-pointer list-none items-center justify-center rounded-xl border border-slate-200 px-3 text-[10px] font-black text-slate-500 outline-none hover:bg-slate-50 focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-slate-800 dark:text-slate-300 dark:hover:bg-slate-900" aria-label={`More actions for ${productName}`}><MoreHorizontal className="h-4 w-4" aria-hidden="true" /><span className="sr-only">More actions</span></summary>
+              <div className="absolute bottom-full right-0 z-10 mb-2 grid min-w-44 gap-1 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl dark:border-slate-700 dark:bg-slate-900">
+                {canReject && <button type="button" onClick={onReject} disabled={processing} className="min-h-10 rounded-lg px-3 text-left text-[10px] font-black text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800">Reject</button>}
+                {canQuickApprove && <button type="button" onClick={onApprove} disabled={processing} className="min-h-10 rounded-lg px-3 text-left text-[10px] font-black text-blue-700 hover:bg-blue-50 disabled:opacity-50 dark:text-blue-300 dark:hover:bg-blue-950/30">{processing ? 'Approving…' : 'Approve'}</button>}
+                {canRemove && onRemove && <button type="button" onClick={onRemove} disabled={processing} className="min-h-10 rounded-lg px-3 text-left text-[10px] font-black text-amber-700 hover:bg-amber-50 disabled:opacity-50 dark:text-amber-300 dark:hover:bg-amber-950/30">Remove from Review</button>}
+                {onLoadMediaForensics && <button type="button" onClick={onLoadMediaForensics} disabled={mediaForensicsLoading} className="min-h-10 rounded-lg px-3 text-left text-[10px] font-black text-slate-600 hover:bg-slate-50 disabled:opacity-50 dark:text-slate-300 dark:hover:bg-slate-800">{mediaForensicsLoading ? 'Loading diagnostics…' : 'View diagnostics'}</button>}
+                <button type="button" onClick={onViewHistory} className="min-h-10 rounded-lg px-3 text-left text-[10px] font-black text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800">View history</button>
+              </div>
+            </details>
+          </div>
+        </div>
+      </article>
+    );
+  }
 
   return (
     <article

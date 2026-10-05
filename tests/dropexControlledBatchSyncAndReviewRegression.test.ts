@@ -608,7 +608,7 @@ test('reject approval gate is fail-closed but reject path is not blocked by prep
   const card = readFileSync('src/components/SupplierReviewQuickCard.tsx', 'utf8');
   assert.match(approval, /if \(\s*action === "approved"[\s\S]*not ready for an admin decision/);
   assert.match(card, /canReject/);
-  assert.match(card, /Approval unavailable while media is processing/);
+  assert.match(card, /approval unavailable while processing/);
 });
 
 test('decideSupplierQueueItem export remains stable for emulator-critical consumers', () => {
