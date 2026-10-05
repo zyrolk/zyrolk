@@ -26,6 +26,10 @@ import {
   resolveSupplierMediaOperationalAlertsSafely,
 } from "../api/suppliers/supplierOperationalAlerts";
 import { classifySupplierMediaReadiness } from "../api/suppliers/supplierMediaReadiness";
+import {
+  classifySupplierMediaObservability,
+  supplierReviewMediaMatchesFilter,
+} from "../api/suppliers/supplierMediaObservability";
 import { recordSupplierQueueProcessingDurationMetric } from "../api/suppliers/supplierCloudMonitoring";
 import { appLogger } from "../api/logging";
 import {
@@ -1302,6 +1306,23 @@ export interface SupplierReviewReadModelPage extends SupplierQueuePageResult {
     exactSupplierIdentity: boolean;
     productNamePrefix: false;
   };
+  mediaSummary: SupplierReviewMediaSummary;
+}
+
+export interface SupplierReviewMediaSummary {
+  countStatus: "partial" | "unavailable";
+  counts: {
+    ready: number | null;
+    processing: number | null;
+    retryScheduled: number | null;
+    needsAttention: number | null;
+    supplierImageUnavailable: number | null;
+    permanentMediaIssue: number | null;
+    legacyUnknown: number | null;
+  };
+  oldestProcessingAgeSeconds: number | null;
+  possiblyStuckCount: number | null;
+  unavailableReasons?: string[];
 }
 
 export interface SupplierQueuePageResult {
@@ -1633,6 +1654,7 @@ export async function listSupplierQueuePage(
     after?: string;
     limit?: number;
     snapshotBoundary?: string;
+    mediaFilter?: SupplierReviewMediaFilter;
   },
 ): Promise<SupplierQueuePageResult> {
   const pageLimit = Number.isInteger(options.limit) ? Math.max(1, Math.min(100, Number(options.limit))) : 50;
@@ -1668,7 +1690,7 @@ export async function listSupplierQueuePage(
     categoryRequirements = await loadSupplierReviewCategoryRequirements(db);
   };
 
-  if (options.view === "review" && options.businessFilter) {
+  if (options.view === "review" && (options.businessFilter || (options.mediaFilter && options.mediaFilter !== "all"))) {
     const documents: FirebaseFirestore.QueryDocumentSnapshot[] = [];
     const batchLimit = Math.min(100, Math.max(50, pageLimit));
     let nextQuery = query;
@@ -1689,7 +1711,8 @@ export async function listSupplierQueuePage(
         const document = snapshot.docs[index];
         const record = document.data() as SupplierQueueRecord;
         if (reviewRecordMatchesState(record, state as SupplierReviewQueuePageState)
-          && reviewRecordMatchesBusinessFilter(record, options.businessFilter, categoryRequirements || undefined)) {
+          && (!options.businessFilter || reviewRecordMatchesBusinessFilter(record, options.businessFilter, categoryRequirements || undefined))
+          && (!options.mediaFilter || options.mediaFilter === "all" || supplierReviewMediaMatchesFilter(record, options.mediaFilter))) {
           documents.push(document);
           if (documents.length === pageLimit) {
             pageFilledAt = index;
@@ -1730,7 +1753,8 @@ export async function listSupplierQueuePage(
   const snapshot = await query.limit(scanLimit).get();
   await ensureCategoryRequirements(snapshot.docs.map((document) => document.data() as SupplierQueueRecord));
   const matched = snapshot.docs.filter((document) => options.view !== "review"
-    || reviewRecordMatchesState(document.data() as SupplierQueueRecord, state as SupplierReviewQueuePageState));
+    || (reviewRecordMatchesState(document.data() as SupplierQueueRecord, state as SupplierReviewQueuePageState)
+      && (!options.mediaFilter || options.mediaFilter === "all" || supplierReviewMediaMatchesFilter(document.data() as SupplierQueueRecord, options.mediaFilter))));
   const pageDocuments = matched.slice(0, pageLimit);
   const cursorDocument = pageDocuments.length === pageLimit
     ? pageDocuments.at(-1)
@@ -1885,7 +1909,8 @@ const readExactSupplierReviewDocuments = async (
       const sortValue = reviewCursorValue(record[reviewSortField(query.sort)]);
       return Boolean(sortValue && sortValue <= queryRevision)
         && reviewRecordMatchesState(record, query.state)
-        && (!query.businessFilter || reviewRecordMatchesBusinessFilter(record, query.businessFilter, categoryRequirements));
+        && (!query.businessFilter || reviewRecordMatchesBusinessFilter(record, query.businessFilter, categoryRequirements))
+        && supplierReviewMediaMatchesFilter(record, query.mediaFilter);
     })
     .sort((left, right) => compareReviewDocuments(left, right, query.sort));
 };
@@ -1910,11 +1935,13 @@ const countSupplierReviewQuery = async (
   query: SupplierReviewQueryModel,
   queryRevision: string,
 ): Promise<{ totalCount: number | null; countStatus: "exact" | "unavailable"; countReason?: string }> => {
-  if (query.businessFilter) {
+  if (query.businessFilter || (query.mediaFilter !== "all" && !query.search)) {
     return {
       totalCount: null,
       countStatus: "unavailable",
-      countReason: "This business filter includes derived review rules that are not represented by one countable Firestore predicate yet.",
+      countReason: query.businessFilter
+        ? "This business filter includes derived review rules that are not represented by one countable Firestore predicate yet."
+        : "This media filter is derived from per-item readiness evidence and has no single countable Firestore predicate yet.",
     };
   }
   if (query.search) {
@@ -1938,7 +1965,63 @@ const projectReadModelDocuments = async (
     { id: document.id, ...document.data() },
     categoryRequirements?.get(supplierReviewCategoryId(document.data() as SupplierQueueRecord)) === true,
   ));
-  return decorateSupplierReviewQueueAdminMedia(rawDocuments);
+  const decorated = await decorateSupplierReviewQueueAdminMedia(rawDocuments);
+  return decorated.map((item, index) => ({
+    ...item,
+    media: classifySupplierMediaObservability(documents[index]?.data() || {}),
+  }));
+};
+
+const emptySupplierReviewMediaSummary = (reason: string): SupplierReviewMediaSummary => ({
+  countStatus: "unavailable",
+  counts: {
+    ready: null,
+    processing: null,
+    retryScheduled: null,
+    needsAttention: null,
+    supplierImageUnavailable: null,
+    permanentMediaIssue: null,
+    legacyUnknown: null,
+  },
+  oldestProcessingAgeSeconds: null,
+  possiblyStuckCount: null,
+  unavailableReasons: [reason],
+});
+
+const countQueueState = async (db: Firestore, queueState: string): Promise<number> => (
+  (await db.collection("supplier_review_queue").where("queueState", "==", queueState).count().get()).data().count
+);
+
+const loadSupplierReviewMediaSummary = async (
+  db: Firestore,
+  query: SupplierReviewQueryModel,
+): Promise<SupplierReviewMediaSummary> => {
+  if (query.businessFilter || query.search || query.mediaFilter !== "all" || query.state !== "active") {
+    return emptySupplierReviewMediaSummary("Media summary is only aggregated for the unfiltered active review population.");
+  }
+  const [queued, leased, processing, retryScheduled] = await Promise.all([
+    countQueueState(db, "queued"),
+    countQueueState(db, "leased"),
+    countQueueState(db, "processing"),
+    countQueueState(db, "retryable_failure"),
+  ]);
+  return {
+    countStatus: "partial",
+    counts: {
+      ready: null,
+      processing: queued + leased + processing,
+      retryScheduled,
+      needsAttention: null,
+      supplierImageUnavailable: null,
+      permanentMediaIssue: null,
+      legacyUnknown: null,
+    },
+    oldestProcessingAgeSeconds: null,
+    possiblyStuckCount: null,
+    unavailableReasons: [
+      "Ready, issue, legacy, and stuck counts require per-item media evidence and are not estimated from queue-state counts.",
+    ],
+  };
 };
 
 export async function listSupplierReviewReadModelPage(
@@ -1951,9 +2034,6 @@ export async function listSupplierReviewReadModelPage(
   },
 ): Promise<SupplierReviewReadModelPage> {
   const query = options.query;
-  if (query.mediaFilter !== "all") {
-    throw new Error("Media filters are not available until the media read model is added.");
-  }
   const fingerprint = buildSupplierReviewQueryFingerprint(query);
   const decodedCursor = options.cursor ? decodeSupplierReviewCursorToken(options.cursor) : null;
   if (decodedCursor && decodedCursor.fingerprint !== fingerprint) throw new Error("Supplier review cursor does not match this query.");
@@ -2019,6 +2099,7 @@ export async function listSupplierReviewReadModelPage(
         state: query.state,
         sort: query.sort,
         businessFilter: query.businessFilter,
+        mediaFilter: query.mediaFilter,
         after: currentToken.anchorId || undefined,
         limit: query.pageSize,
         snapshotBoundary: queryRevision,
@@ -2048,6 +2129,7 @@ export async function listSupplierReviewReadModelPage(
   const items = query.search
     ? await projectReadModelDocuments(db, resultDocuments, query)
     : await projectReadModelDocuments(db, resultDocuments, query);
+  const mediaSummary = await loadSupplierReviewMediaSummary(db, query);
   const nextAnchorDocument = resultNextAnchorId
     ? await db.collection("supplier_review_queue").doc(resultNextAnchorId).get()
     : null;
@@ -2081,6 +2163,7 @@ export async function listSupplierReviewReadModelPage(
     queryRevision,
     generatedAt,
     searchCapabilities: { exactSupplierIdentity: true, productNamePrefix: false },
+    mediaSummary,
   };
 }
 

@@ -7,6 +7,12 @@ import {
   formatSupplierStockLabel,
 } from '../services/supplierCommerceSemantics';
 import { reportSupplierImageFailure } from '../services/supplierImageDiagnostics';
+import {
+  SupplierReviewMediaEvidence,
+  supplierReviewMediaAgeLabel,
+  supplierReviewMediaLabel,
+  supplierReviewMediaRetryLabel,
+} from '../services/supplierMediaObservability';
 
 export interface SupplierReviewQuickCardProps {
   productName: string;
@@ -34,6 +40,7 @@ export interface SupplierReviewQuickCardProps {
   storefrontStatusLabel: string;
   supplierAttribution: string;
   blockingProblems: string[];
+  media?: SupplierReviewMediaEvidence;
   isPreparing: boolean;
   decisionReady: boolean;
   canQuickApprove: boolean;
@@ -106,6 +113,7 @@ export function SupplierReviewQuickCard({
   storefrontStatusLabel,
   supplierAttribution,
   blockingProblems,
+  media,
   isPreparing,
   decisionReady,
   canQuickApprove,
@@ -127,6 +135,22 @@ export function SupplierReviewQuickCard({
     if (!decisionReady || terminalState || processing) return;
     onViewDetails();
   };
+  const mediaState = media?.state || 'LEGACY_UNKNOWN';
+  const mediaLabel = supplierReviewMediaLabel(mediaState);
+  const mediaAgeLabel = media ? supplierReviewMediaAgeLabel(media) : null;
+  const mediaRetryLabel = media ? supplierReviewMediaRetryLabel(media) : null;
+  const mediaTone = mediaState === 'READY'
+    ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+    : mediaState === 'PROCESSING' || mediaState === 'RETRY_SCHEDULED'
+      ? 'bg-blue-500/10 text-blue-700 dark:text-blue-300'
+      : mediaState === 'LEGACY_UNKNOWN'
+        ? 'bg-slate-500/10 text-slate-600 dark:text-slate-300'
+        : 'bg-amber-500/10 text-amber-700 dark:text-amber-300';
+  const mediaNoticeTone = mediaState === 'PROCESSING' || mediaState === 'RETRY_SCHEDULED'
+    ? 'bg-blue-500/10 text-blue-700 dark:text-blue-300'
+    : mediaState === 'LEGACY_UNKNOWN'
+      ? 'bg-slate-500/10 text-slate-600 dark:text-slate-300'
+      : 'bg-amber-500/10 text-amber-700 dark:text-amber-300';
 
   return (
     <article
@@ -155,6 +179,7 @@ export function SupplierReviewQuickCard({
             </div>
             <div className="mt-3 flex flex-wrap gap-2">
               <span className="rounded-full bg-blue-500/10 px-2 py-0.5 text-[9px] font-black text-blue-600">{terminalState === 'Dismissed by admin' ? 'Removed from Review' : changeLabel}</span>
+              <span className={`rounded-full px-2 py-0.5 text-[9px] font-black ${mediaTone}`} aria-label={`Media status: ${mediaLabel}`}>{mediaLabel}</span>
               {(!terminalState || terminalState === 'Approved') && (
                 <span className={`rounded-full px-2 py-0.5 text-[9px] font-black ${storefrontVisible ? 'bg-emerald-500/10 text-emerald-600' : 'bg-slate-500/10 text-slate-600 dark:text-slate-300'}`}>{storefrontVisible ? 'Visible after approval' : 'Approved but hidden'}</span>
               )}
@@ -190,12 +215,41 @@ export function SupplierReviewQuickCard({
           <p className="mt-1 font-semibold text-slate-700 dark:text-slate-200">{supplierAttribution}</p>
         </div>
 
-        {isPreparing && !terminalState && (
-          <div className="mx-4 mt-3 rounded-xl bg-blue-500/10 p-3 text-[10px] font-bold text-blue-700 dark:text-blue-300" role="status">
-            <p className="font-black">Media is processing</p>
+        {media && (
+          <details
+            className="mx-4 mt-3 rounded-xl border border-slate-200/70 bg-slate-50/70 px-3 py-2 text-[10px] dark:border-slate-800 dark:bg-slate-900/40"
+            onClick={(event) => event.stopPropagation()}
+            onKeyDown={(event) => event.stopPropagation()}
+          >
+            <summary className="cursor-pointer list-none font-black text-slate-600 outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-slate-300">
+              Media diagnostics
+            </summary>
+            <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-2 text-slate-500 dark:text-slate-400 sm:grid-cols-3">
+              <div><dt>Source images</dt><dd className="font-bold text-slate-700 dark:text-slate-200">{media.sourceImageCount ?? 'Not recorded'}</dd></div>
+              <div><dt>Managed images</dt><dd className="font-bold text-slate-700 dark:text-slate-200">{media.managedImageCount ?? 'Not recorded'}</dd></div>
+              <div><dt>Retry count</dt><dd className="font-bold text-slate-700 dark:text-slate-200">{media.retryCount ?? 'Not recorded'}</dd></div>
+              <div><dt>Activity</dt><dd className="font-bold text-slate-700 dark:text-slate-200">{mediaAgeLabel || 'Not recorded'}</dd></div>
+              <div><dt>Retry</dt><dd className="font-bold text-slate-700 dark:text-slate-200">{mediaRetryLabel || 'Not scheduled'}</dd></div>
+              <div><dt>Blocking issues</dt><dd className="font-bold text-slate-700 dark:text-slate-200">{media.blockingIssueCount ?? 'Not recorded'}</dd></div>
+            </dl>
+            {media.possiblyStuck && <p className="mt-2 font-black text-amber-700 dark:text-amber-300" role="status">Possibly stuck: no recent media activity or active lease.</p>}
+          </details>
+        )}
+
+        {mediaState !== 'READY' && !terminalState && (
+          <div className={`mx-4 mt-3 rounded-xl p-3 text-[10px] font-bold ${mediaNoticeTone}`} role="status">
+            <p className="font-black">{mediaLabel}</p>
             <p className="mt-1 font-semibold leading-relaxed">
-              Approval stays disabled until managed images finish and this item reaches Ready for Review. This list refreshes automatically.
+              {mediaState === 'PROCESSING'
+                ? 'Media is processing. Approval stays disabled until managed images finish and this item reaches Ready for Review.'
+                : mediaState === 'RETRY_SCHEDULED'
+                  ? 'A media retry is scheduled. Approval stays disabled until managed images finish and this item reaches Ready for Review.'
+                : mediaState === 'LEGACY_UNKNOWN'
+                  ? 'Media status is unavailable for this legacy record. Approval remains governed by the existing validation gates.'
+                  : 'Review the media diagnostics before making an approval decision.'}
             </p>
+            {mediaAgeLabel && <p className="mt-1 font-semibold">{mediaAgeLabel}</p>}
+            {mediaRetryLabel && <p className="mt-1 font-semibold">{mediaRetryLabel}</p>}
           </div>
         )}
 

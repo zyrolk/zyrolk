@@ -76,6 +76,7 @@ const makeFakeDb = (records: StoredRecord[]) => {
       where: (field: string, operator: string, value: unknown) => makeQuery().where(field, operator, value),
       orderBy: (field: string, direction: string) => makeQuery().orderBy(field, direction),
       doc: (id: string) => ({ get: async () => snapshotFor(id) }),
+      get: async () => ({ docs: [], size: 0, empty: true }),
     }),
   };
 };
@@ -190,4 +191,46 @@ test('PR-1 preserves Admin authorization and does not introduce offset paginatio
   assert.doesNotMatch(queue, /\.offset\(/u);
   assert.match(routes, /listSupplierReviewReadModelPage/u);
   assert.match(queue, /\.count\(\)\.get\(\)/u);
+});
+
+test('PR-2 media evidence is projected and media filters preserve business pagination boundaries', async () => {
+  const db = makeFakeDb([
+    {
+      id: 'media-ready',
+      data: {
+        status: 'Pending', queueState: 'review_pending', createdAt: '2026-01-01T00:00:03.000Z', updatedAt: '2026-01-01T00:00:03.000Z',
+        comparison: { comparisonStatus: 'NEW_PRODUCT' },
+        mediaStatus: 'ready', mediaReadiness: 'publication_safe', mediaSourceImageUrls: ['https://supplier.example/ready.jpg'],
+        managedMedia: [{ firebaseStorageUrl: 'https://firebasestorage.googleapis.com/v0/b/demo/o/ready.jpg', originalSupplierUrl: 'https://supplier.example/ready.jpg', imageStatus: 'ready', isPrimary: true }], mediaFailures: [],
+      },
+    },
+    {
+      id: 'media-processing',
+      data: {
+        status: 'Pending', queueState: 'processing', createdAt: '2026-01-01T00:00:02.000Z', updatedAt: '2026-01-01T00:00:02.000Z',
+        comparison: { comparisonStatus: 'NEW_PRODUCT' },
+        mediaStatus: 'downloading', mediaSourceImageUrls: ['https://supplier.example/processing.jpg'], managedMedia: [], mediaFailures: [],
+      },
+    },
+    {
+      id: 'media-issue',
+      data: {
+        status: 'Pending', queueState: 'dead_letter', createdAt: '2026-01-01T00:00:01.000Z', updatedAt: '2026-01-01T00:00:01.000Z',
+        comparison: { comparisonStatus: 'NEW_PRODUCT' },
+        mediaStatus: 'failed', mediaReadiness: 'blocked', mediaSourceImageUrls: ['https://supplier.example/issue.jpg'], managedMedia: [], mediaFailures: [{ retryable: false }],
+      },
+    },
+  ]) as never;
+  const all = await listSupplierReviewReadModelPage(db, { query: query({ pageSize: 25 }), page: 1 });
+  const mediaStates = all.items.map((item) => (item.media as { state?: string } | undefined)?.state);
+  assert.equal(mediaStates[0], 'READY');
+  assert.equal(mediaStates[1], 'PROCESSING');
+  assert.equal(mediaStates[2], 'NEEDS_ATTENTION');
+  const processing = await listSupplierReviewReadModelPage(db, {
+    query: query({ mediaFilter: 'processing', businessFilter: 'new_products', pageSize: 25 }),
+    page: 1,
+  });
+  assert.deepEqual(processing.items.map((item) => item.id), ['media-processing']);
+  assert.equal(processing.countStatus, 'unavailable');
+  assert.equal(processing.queryFingerprint, buildSupplierReviewQueryFingerprint(query({ mediaFilter: 'processing', businessFilter: 'new_products', pageSize: 25 })));
 });

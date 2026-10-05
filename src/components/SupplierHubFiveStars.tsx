@@ -25,6 +25,10 @@ import { getSupplierApi, patchSupplierApi, postSupplierApi, requestSupplierApi }
 import { matchesSupplierSearch } from '../services/supplierSearch';
 import { buildSupplierReviewQueryKey, SupplierReviewAnchorCache } from '../services/supplierReviewPagination';
 import {
+  SupplierReviewMediaEvidence,
+  supplierReviewMediaEvidence,
+} from '../services/supplierMediaObservability';
+import {
   normalizeSupplierSourceForUi,
   supplierSourceAutoSyncSchedule,
 } from '../services/supplierSourceUtils';
@@ -165,6 +169,7 @@ export interface ReviewQueueItem {
   managedMedia?: Array<Record<string, unknown>>;
   mediaFailures?: Array<{ originalSupplierUrl?: string; reason?: string; retryable?: boolean; failedAt?: string }>;
   mediaStatus?: string;
+  media?: SupplierReviewMediaEvidence;
   categoryMapping?: {
     supplierCategory?: string;
     supplierSubcategory?: string;
@@ -219,6 +224,21 @@ interface SupplierQueuePageResponse {
   queryRevision?: string;
   generatedAt?: string;
   searchCapabilities?: { exactSupplierIdentity?: boolean; productNamePrefix?: boolean };
+  mediaSummary?: {
+    countStatus?: 'partial' | 'unavailable';
+    counts?: {
+      ready?: number | null;
+      processing?: number | null;
+      retryScheduled?: number | null;
+      needsAttention?: number | null;
+      supplierImageUnavailable?: number | null;
+      permanentMediaIssue?: number | null;
+      legacyUnknown?: number | null;
+    };
+    oldestProcessingAgeSeconds?: number | null;
+    possiblyStuckCount?: number | null;
+    unavailableReasons?: string[];
+  };
   nextCursor?: string | null;
   error?: string;
 }
@@ -277,6 +297,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
   const [supplierReviewLoading, setSupplierReviewLoading] = useState(false);
   const [supplierReviewActionableCount, setSupplierReviewActionableCount] = useState<number | null>(null);
   const [supplierReviewLowStockHoldCount, setSupplierReviewLowStockHoldCount] = useState<number | null>(null);
+  const [supplierReviewMediaSummary, setSupplierReviewMediaSummary] = useState<SupplierQueuePageResponse['mediaSummary'] | null>(null);
   const [supplierQueueError, setSupplierQueueError] = useState<string | null>(null);
   const supplierQueueRequestIdRef = useRef(0);
   const supplierReviewAnchorCacheRef = useRef(new SupplierReviewAnchorCache());
@@ -318,6 +339,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
   const [activeSubTab, setActiveSubTab] = useState<SupplierHubSection>(initialSubTab);
   const [canAccessAdvanced, setCanAccessAdvanced] = useState(false);
   const [reviewFilter, setReviewFilter] = useState<ProductReviewFilter>('new_products');
+  const [reviewMediaFilter, setReviewMediaFilter] = useState<'all' | 'ready' | 'processing' | 'issues'>('all');
   const [reviewSort, setReviewSort] = useState<'created' | 'updated'>('created');
   const [pendingReviewBatchSize, setPendingReviewBatchSize] = useState<PendingReviewBatchSize>(25);
   const [pendingReviewBatchRefreshing, setPendingReviewBatchRefreshing] = useState(false);
@@ -755,7 +777,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
     const queryKey = buildSupplierReviewQueryKey({
       view: 'review',
       filter: reviewFilter,
-      media: 'all',
+      media: reviewMediaFilter,
       search: reviewSearch,
       sort: reviewSort,
       pageSize: 50,
@@ -764,6 +786,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
       supplierReviewAnchorCacheRef.current.clear();
       supplierReviewQueryRevisionRef.current = null;
       supplierReviewQueryKeyRef.current = queryKey;
+      setSupplierReviewMediaSummary(null);
     }
     const requestedPageCount = append ? 1 : Math.max(1, options.pageCount || 1);
     const requestId = ++supplierQueueRequestIdRef.current;
@@ -782,6 +805,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
         parameters.set('pageSize', '50');
         parameters.set('state', options.reviewState || supplierReviewApiState(reviewFilter));
         if (reviewSort === 'updated') parameters.set('sort', 'updated');
+        if (reviewMediaFilter !== 'all') parameters.set('media', reviewMediaFilter);
         if (reviewSearch.trim()) {
           parameters.set('search', reviewSearch.trim());
           parameters.set('searchMode', 'exact');
@@ -798,6 +822,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
         pagesLoaded += 1;
         nextCursor = result.nextCursor || null;
         if (result.queryRevision) supplierReviewQueryRevisionRef.current = result.queryRevision;
+        if (result.mediaSummary) setSupplierReviewMediaSummary(result.mediaSummary);
         const responseQueryKey = result.queryFingerprint || queryKey;
         supplierReviewAnchorCacheRef.current.set(responseQueryKey, targetPage, scanCursor || null);
         if (nextCursor) supplierReviewAnchorCacheRef.current.set(responseQueryKey, targetPage + 1, nextCursor);
@@ -844,7 +869,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
       cancelled = true;
       if (refreshTimer !== null) window.clearTimeout(refreshTimer);
     };
-  }, [activeSubTab, reviewFilter, reviewSort, reviewSearch]);
+  }, [activeSubTab, reviewFilter, reviewMediaFilter, reviewSort, reviewSearch]);
 
   useEffect(() => {
     if (activeSubTab !== 'review' || !auth.currentUser) return;
@@ -2292,6 +2317,33 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                 )}
               </div>
               <p className="mt-2 text-[10px] text-slate-400">Search loaded products or supplier codes across the selected Product Review dataset. Exact supplier ID, SKU, and item-code search is server-backed; product-name prefix search is not enabled yet. Use Load more products to extend the bounded search view.</p>
+              <div className="mt-3 flex flex-wrap items-center gap-2" role="tablist" aria-label="Product review media filters">
+                <span className="mr-1 text-[10px] font-black uppercase tracking-wider text-slate-400">Media</span>
+                {([
+                  ['all', 'All'],
+                  ['ready', 'Ready for review'],
+                  ['processing', 'Processing / retry'],
+                  ['issues', 'Media issues'],
+                ] as const).map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    role="tab"
+                    aria-selected={reviewMediaFilter === value}
+                    onClick={() => setReviewMediaFilter(value)}
+                    className={`min-h-9 rounded-lg px-2.5 text-[10px] font-black transition-colors ${reviewMediaFilter === value ? 'bg-slate-800 text-white dark:bg-white dark:text-slate-900' : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800'}`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {supplierReviewMediaSummary && (
+                <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[10px] font-semibold text-slate-500 dark:text-slate-400" aria-label="Media processing summary">
+                  {supplierReviewMediaSummary.counts?.processing !== null && supplierReviewMediaSummary.counts?.processing !== undefined && <span>Processing {supplierReviewMediaSummary.counts.processing}</span>}
+                  {supplierReviewMediaSummary.counts?.retryScheduled !== null && supplierReviewMediaSummary.counts?.retryScheduled !== undefined && <span>Retry scheduled {supplierReviewMediaSummary.counts.retryScheduled}</span>}
+                  {supplierReviewMediaSummary.countStatus === 'partial' && <span className="text-slate-400">Other media states require item-level evidence.</span>}
+                </div>
+              )}
               <div className="mt-4 flex flex-wrap gap-2 pb-1" role="tablist" aria-label="Product review filters">
                 {PRODUCT_REVIEW_FILTERS.map((filter) => (
                   <button
@@ -2364,6 +2416,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                     const statusLabel = supplierReviewStatusLabel(item);
                     const terminalState = supplierReviewTerminalLabel(item);
                     const blockingProblems = supplierReviewOperatorProblems(item);
+                    const mediaEvidence = supplierReviewMediaEvidence(item);
                     return (
                       <SupplierReviewQuickCard
                         key={item.id}
@@ -2390,6 +2443,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                         storefrontStatusLabel={supplierReviewStorefrontLabel(item, draft.isActive)}
                         supplierAttribution={compactSupplierAttribution(item)}
                         blockingProblems={blockingProblems}
+                        media={mediaEvidence}
                         isPreparing={isPreparing}
                         decisionReady={supplierReviewDecisionReady(item)}
                         canQuickApprove={canQuickApprove}
