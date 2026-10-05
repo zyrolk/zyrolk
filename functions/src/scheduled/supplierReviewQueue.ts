@@ -81,7 +81,7 @@ export interface SupplierReviewQueueMetrics {
   averageProcessingLatencyMs: number | null;
 }
 
-interface SupplierQueueRecord extends Record<string, unknown> {
+export interface SupplierQueueRecord extends Record<string, unknown> {
   queueState?: unknown;
   status?: unknown;
   reviewStatus?: unknown;
@@ -769,6 +769,143 @@ export function canLeaseSupplierQueueItem(record: SupplierQueueRecord, now = Dat
   if (state === "queued") return toMillis(record.nextRetryAt) <= now;
   if (state === "retryable_failure") return toMillis(record.nextRetryAt) <= now;
   return (state === "leased" || state === "processing") && isSupplierQueueLeaseExpired(record, now);
+}
+
+export type SupplierQueueEligibilityReason =
+  | "ELIGIBLE_NOW"
+  | "EXPIRED_LEASE"
+  | "QUEUE_STATE_NOT_ELIGIBLE"
+  | "ACTIVE_LEASE"
+  | "LEASE_NOT_EXPIRED"
+  | "RETRY_NOT_DUE"
+  | "RETRY_EXHAUSTED"
+  | "PERMANENT_FAILURE"
+  | "NO_SOURCE_MEDIA"
+  | "ALREADY_READY"
+  | "UNKNOWN_STATE";
+
+export interface SupplierQueueEligibilityDiagnosis {
+  eligibleNow: boolean | null;
+  reasons: SupplierQueueEligibilityReason[];
+  blockingPredicate: string | null;
+  nextExpectedTransition: string | null;
+}
+
+const hasOwnQueueField = (record: SupplierQueueRecord, field: string): boolean => (
+  Object.prototype.hasOwnProperty.call(record, field)
+);
+
+const hasPermanentQueueFailure = (record: SupplierQueueRecord): boolean => (
+  ["permanent", "validation", "security"].includes(asString(record.failureClassification).toLowerCase())
+);
+
+/**
+ * Explains the same lifecycle gates used by the scheduled worker. This is a
+ * read-only interpretation helper; it does not lease, recover, or otherwise
+ * change a queue item.
+ */
+export function explainSupplierQueueEligibility(
+  record: SupplierQueueRecord,
+  now = Date.now(),
+): SupplierQueueEligibilityDiagnosis {
+  const state = asString(record.queueState).toLowerCase();
+  const sourceUrls = sourceImageUrls(record);
+  const sourceReason = sourceUrls.length === 0 ? ["NO_SOURCE_MEDIA" as const] : [];
+
+  if (!state) {
+    return {
+      eligibleNow: null,
+      reasons: ["UNKNOWN_STATE"],
+      blockingPredicate: "queueState is not recorded; the worker's state-specific query cannot select this record.",
+      nextExpectedTransition: "Record a durable queueState and due-time field before worker selection can be evaluated.",
+    };
+  }
+
+  if (state === "review_pending") {
+    const mediaReady = supplierReviewQueueMediaIsHealthy(record);
+    return {
+      eligibleNow: false,
+      reasons: mediaReady ? ["ALREADY_READY"] : ["QUEUE_STATE_NOT_ELIGIBLE"],
+      blockingPredicate: "queueState is review_pending; the worker only recovers leased/processing items and selects queued/retryable_failure items.",
+      nextExpectedTransition: mediaReady ? "No worker transition is expected; this item is already ready for review." : "An explicit review-queue lifecycle transition is required.",
+    };
+  }
+
+  if (state === "queued" || state === "retryable_failure") {
+    if (!hasOwnQueueField(record, "nextRetryAt") || toMillis(record.nextRetryAt) <= 0) {
+      return {
+        eligibleNow: null,
+        reasons: ["UNKNOWN_STATE"],
+        blockingPredicate: "nextRetryAt is not recorded; the scheduled worker query requires a comparable due timestamp.",
+        nextExpectedTransition: "Persist a due timestamp through the normal queue lifecycle.",
+      };
+    }
+    if (toMillis(record.nextRetryAt) > now) {
+      return {
+        eligibleNow: false,
+        reasons: ["RETRY_NOT_DUE"],
+        blockingPredicate: "nextRetryAt is later than the diagnostic time.",
+        nextExpectedTransition: new Date(toMillis(record.nextRetryAt)).toISOString(),
+      };
+    }
+    return {
+      eligibleNow: true,
+      reasons: ["ELIGIBLE_NOW", ...sourceReason],
+      blockingPredicate: null,
+      nextExpectedTransition: sourceUrls.length === 0
+        ? "The worker may select this item; it will remain a supplier-image data gap unless source media appears."
+        : "The next worker run may acquire the queue lease.",
+    };
+  }
+
+  if (state === "leased" || state === "processing") {
+    const leaseExpiry = toMillis(record.leaseExpiresAt);
+    if (leaseExpiry <= 0) {
+      return {
+        eligibleNow: null,
+        reasons: ["UNKNOWN_STATE"],
+        blockingPredicate: "leaseExpiresAt is not recorded; expired-lease recovery cannot safely select this record.",
+        nextExpectedTransition: "A durable lease expiry is required before recovery eligibility can be evaluated.",
+      };
+    }
+    if (leaseExpiry > now) {
+      return {
+        eligibleNow: false,
+        reasons: ["ACTIVE_LEASE", "LEASE_NOT_EXPIRED"],
+        blockingPredicate: "The queue item has an active lease that has not expired.",
+        nextExpectedTransition: new Date(leaseExpiry).toISOString(),
+      };
+    }
+    return {
+      eligibleNow: true,
+      reasons: ["ELIGIBLE_NOW", "EXPIRED_LEASE", ...sourceReason],
+      blockingPredicate: null,
+      nextExpectedTransition: "The next worker recovery pass may record a retryable failure or dead-letter outcome.",
+    };
+  }
+
+  if (state === "dead_letter") {
+    const retryCount = retryCountFor(record);
+    const retryLimit = retryLimitFor(record);
+    const exhausted = retryCount >= retryLimit;
+    return {
+      eligibleNow: false,
+      reasons: [
+        ...(hasPermanentQueueFailure(record) ? ["PERMANENT_FAILURE" as const] : []),
+        ...(exhausted ? ["RETRY_EXHAUSTED" as const] : []),
+        ...(!hasPermanentQueueFailure(record) && !exhausted ? ["QUEUE_STATE_NOT_ELIGIBLE" as const] : []),
+      ],
+      blockingPredicate: "queueState is dead_letter; scheduled processing excludes terminal failures.",
+      nextExpectedTransition: "Only the existing explicit administrative retry workflow can requeue this item.",
+    };
+  }
+
+  return {
+    eligibleNow: false,
+    reasons: ["QUEUE_STATE_NOT_ELIGIBLE"],
+    blockingPredicate: `queueState ${state} is not selected by the scheduled worker.`,
+    nextExpectedTransition: "No scheduled media transition is expected for this terminal or suppressed state.",
+  };
 }
 
 export function buildSupplierQueueFailureUpdate(

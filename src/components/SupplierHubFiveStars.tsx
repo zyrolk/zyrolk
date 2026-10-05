@@ -28,6 +28,10 @@ import {
   supplierReviewMediaEvidence,
 } from '../services/supplierMediaObservability';
 import {
+  fetchSupplierMediaForensics,
+  SupplierMediaForensicEvidence,
+} from '../services/supplierMediaForensics';
+import {
   normalizeSupplierSourceForUi,
   supplierSourceAutoSyncSchedule,
 } from '../services/supplierSourceUtils';
@@ -364,6 +368,10 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
   const [supplierReviewActionableCount, setSupplierReviewActionableCount] = useState<number | null>(null);
   const [supplierReviewLowStockHoldCount, setSupplierReviewLowStockHoldCount] = useState<number | null>(null);
   const [supplierReviewMediaSummary, setSupplierReviewMediaSummary] = useState<SupplierQueuePageResponse['mediaSummary'] | null>(null);
+  const [mediaForensicItemId, setMediaForensicItemId] = useState<string | null>(null);
+  const [mediaForensicEvidence, setMediaForensicEvidence] = useState<SupplierMediaForensicEvidence | null>(null);
+  const [mediaForensicLoading, setMediaForensicLoading] = useState(false);
+  const [mediaForensicError, setMediaForensicError] = useState<string | null>(null);
   const [supplierQueueError, setSupplierQueueError] = useState<string | null>(null);
   const supplierQueueRequestIdRef = useRef(0);
   const supplierReviewAnchorCacheRef = useRef(new SupplierReviewAnchorCache());
@@ -1023,6 +1031,21 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
     if (supplierReviewTotalPages !== null && page > supplierReviewTotalPages) return;
     setSupplierReviewPage(page);
     updateProductReviewUrl({ page });
+  };
+
+  const loadMediaForensics = async (item: ReviewQueueItem): Promise<void> => {
+    setMediaForensicItemId(item.id);
+    setMediaForensicLoading(true);
+    setMediaForensicError(null);
+    try {
+      const evidence = await fetchSupplierMediaForensics({ queueItemId: item.id });
+      setMediaForensicEvidence(evidence);
+    } catch (error) {
+      setMediaForensicEvidence(null);
+      setMediaForensicError(error instanceof Error ? error.message : 'Supplier media diagnostics could not be loaded.');
+    } finally {
+      setMediaForensicLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -2654,6 +2677,10 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                         supplierAttribution={compactSupplierAttribution(item)}
                         blockingProblems={blockingProblems}
                         media={mediaEvidence}
+                        mediaForensics={mediaForensicItemId === item.id ? mediaForensicEvidence : null}
+                        mediaForensicsLoading={mediaForensicItemId === item.id && mediaForensicLoading}
+                        mediaForensicsError={mediaForensicItemId === item.id ? mediaForensicError : null}
+                        onLoadMediaForensics={() => void loadMediaForensics(item)}
                         isPreparing={isPreparing}
                         decisionReady={supplierReviewDecisionReady(item)}
                         canQuickApprove={canQuickApprove}

@@ -14,6 +14,7 @@ import {
   supplierReviewMediaLabel,
   supplierReviewMediaRetryLabel,
 } from '../services/supplierMediaObservability';
+import { SupplierMediaForensicEvidence } from '../services/supplierMediaForensics';
 
 export interface SupplierReviewQuickCardProps {
   productName: string;
@@ -51,6 +52,10 @@ export interface SupplierReviewQuickCardProps {
   processing: boolean;
   canRetryMedia?: boolean;
   retryingMedia?: boolean;
+  mediaForensics?: SupplierMediaForensicEvidence | null;
+  mediaForensicsLoading?: boolean;
+  mediaForensicsError?: string | null;
+  onLoadMediaForensics?: () => void;
   terminalState?: 'Approved' | 'Rejected' | 'Dismissed by admin' | 'Suppressed';
   onApprove: () => void;
   onReject: () => void;
@@ -124,6 +129,10 @@ export function SupplierReviewQuickCard({
   processing,
   canRetryMedia = false,
   retryingMedia = false,
+  mediaForensics = null,
+  mediaForensicsLoading = false,
+  mediaForensicsError = null,
+  onLoadMediaForensics,
   terminalState,
   onApprove,
   onReject,
@@ -222,6 +231,34 @@ export function SupplierReviewQuickCard({
               <div><dt>Blocking issues</dt><dd className="font-bold text-slate-700 dark:text-slate-200">{media.blockingIssueCount ?? 'Not recorded'}</dd></div>
             </dl>
             {media.possiblyStuck && <p className="mt-2 font-black text-amber-700 dark:text-amber-300" role="status">Possibly stuck: no recent media activity or active lease.</p>}
+            {onLoadMediaForensics && (
+              <div className="mt-3 border-t border-slate-200/70 pt-3 dark:border-slate-700/70">
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onLoadMediaForensics();
+                  }}
+                  disabled={mediaForensicsLoading}
+                  className="min-h-9 rounded-lg border border-slate-300 bg-white px-3 text-[10px] font-black text-slate-700 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:cursor-wait disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                >
+                  {mediaForensicsLoading ? 'Loading queue evidence…' : mediaForensics ? 'Refresh queue evidence' : 'Inspect queue evidence'}
+                </button>
+                {mediaForensicsError && <p className="mt-2 font-semibold text-red-600 dark:text-red-300" role="alert">{mediaForensicsError}</p>}
+                {mediaForensics && (
+                  <dl className="mt-3 grid gap-2 text-slate-500 dark:text-slate-400 sm:grid-cols-2">
+                    <div><dt>Queue</dt><dd className="font-bold text-slate-700 dark:text-slate-200">{mediaForensics.queue.state || 'Not recorded'}</dd></div>
+                    <div><dt>Eligible now</dt><dd className="font-bold text-slate-700 dark:text-slate-200">{mediaForensics.queue.eligibleNow === null ? 'Unknown' : mediaForensics.queue.eligibleNow ? 'Yes' : 'No'}</dd></div>
+                    <div><dt>Blocking predicate</dt><dd className="font-semibold text-slate-700 dark:text-slate-200">{mediaForensics.diagnosis.blockingPredicate || 'None recorded'}</dd></div>
+                    <div><dt>Lease</dt><dd className="font-bold text-slate-700 dark:text-slate-200">{mediaForensics.lease.active === null ? 'Unknown' : mediaForensics.lease.active ? 'Active' : mediaForensics.lease.expired ? 'Expired' : 'Not active'}</dd></div>
+                    <div><dt>Retry</dt><dd className="font-bold text-slate-700 dark:text-slate-200">{mediaForensics.retry.retryCount === null ? 'Not recorded' : `${mediaForensics.retry.retryCount}${mediaForensics.retry.nextRetryAt ? ` · ${new Date(mediaForensics.retry.nextRetryAt).toLocaleString()}` : ''}`}</dd></div>
+                    <div><dt>Last worker attempt</dt><dd className="font-bold text-slate-700 dark:text-slate-200">{mediaForensics.worker.lastAttemptAt ? new Date(mediaForensics.worker.lastAttemptAt).toLocaleString() : 'Not recorded'}</dd></div>
+                    <div><dt>Finalization</dt><dd className="font-bold text-slate-700 dark:text-slate-200">{mediaForensics.finalization.assetPersisted === null ? 'Not recorded' : mediaForensics.finalization.assetPersisted ? 'Managed asset persisted' : 'No managed asset'}</dd></div>
+                    <div><dt>Readiness projection</dt><dd className="font-bold text-slate-700 dark:text-slate-200">{mediaForensics.finalization.readinessProjected === null ? 'Not recorded' : mediaForensics.finalization.readinessProjected ? 'Recorded' : 'Not recorded'}</dd></div>
+                  </dl>
+                )}
+              </div>
+            )}
           </details>
         )}
 

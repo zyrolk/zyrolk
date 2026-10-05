@@ -91,6 +91,11 @@ import {
   promoteSupplierAccount,
   setSupplierAccountStatus,
 } from "../suppliers/supplierAccountAdministration";
+import {
+  findSupplierReviewQueueItemBySku,
+  projectSupplierMediaForensicEvidence,
+} from "../suppliers/supplierMediaForensics";
+import type { SupplierQueueRecord } from "../../scheduled/supplierReviewQueue";
 
 const readSourceIds = (value: unknown): string[] => {
   if (value === undefined) return [];
@@ -126,6 +131,13 @@ const readQueueItemId = (value: unknown): string => {
   const id = value.trim();
   if (!id || id.length > 160 || id.includes("/")) throw new ApiError("The supplier review queue item ID is invalid.", 400);
   return id;
+};
+
+const readSupplierSku = (value: unknown): string => {
+  if (typeof value !== "string") throw new ApiError("A supplier SKU is required.", 400);
+  const sku = value.trim();
+  if (!sku || sku.length > 160 || sku.includes("/")) throw new ApiError("The supplier SKU is invalid.", 400);
+  return sku;
 };
 
 const readSyncJobId = (value: unknown): string => {
@@ -758,6 +770,48 @@ export function registerSupplierRoutes(app: express.Express): void {
       sendSupplierFailure(res, error, {
         logMessage: "Supplier queue page lookup failed.",
         fallbackMessage: "Supplier queue items could not be loaded.",
+        context: { route: req.path },
+      });
+    }
+  });
+
+  // Read-only, bounded evidence bridge for diagnosing one media queue item.
+  // It deliberately sits beside the review read model and never exposes a
+  // queue mutation or raw supplier/media payload.
+  app.get("/api/supplier-review-queue/diagnostics", requireSupplierHubAdmin, async (req, res) => {
+    try {
+      const requestedQueueItemId = req.query.queueItemId === undefined
+        ? null
+        : readQueueItemId(req.query.queueItemId);
+      const requestedSupplierSku = req.query.supplierSku === undefined
+        ? null
+        : readSupplierSku(req.query.supplierSku);
+      if (!requestedQueueItemId && !requestedSupplierSku) {
+        throw new ApiError("A queue item ID or exact supplier SKU is required.", 400);
+      }
+      if (requestedQueueItemId && requestedSupplierSku) {
+        throw new ApiError("Provide either a queue item ID or a supplier SKU, not both.", 400);
+      }
+      let queueItemId = requestedQueueItemId;
+      let record;
+      if (requestedSupplierSku) {
+        const match = await findSupplierReviewQueueItemBySku(adminDb, requestedSupplierSku);
+        if (!match) throw new ApiError("A unique supplier review item was not found for that SKU.", 404);
+        queueItemId = match.id;
+        record = match.record;
+      } else {
+        const snapshot = await adminDb.collection("supplier_review_queue").doc(queueItemId as string).get();
+        if (!snapshot.exists) throw new ApiError("Supplier review queue item was not found.", 404);
+        record = snapshot.data();
+      }
+      res.status(200).json({
+        success: true,
+        diagnostic: await projectSupplierMediaForensicEvidence(adminDb, queueItemId as string, record as SupplierQueueRecord),
+      });
+    } catch (error: unknown) {
+      sendSupplierFailure(res, error, {
+        logMessage: "Supplier media forensic lookup failed.",
+        fallbackMessage: "Supplier media diagnostics could not be loaded.",
         context: { route: req.path },
       });
     }
