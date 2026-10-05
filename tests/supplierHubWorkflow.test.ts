@@ -171,6 +171,14 @@ test("Supplier Hub loads bounded sync history through the protected API and retr
   assert.match(supplierApi, /if \(response\.status === 401\) response = await request\(true\)/);
 });
 
+test("Supplier Hub resolves catalog evidence beyond the bounded activity window", () => {
+  const supplierHub = readFileSync("src/components/SupplierHubFiveStars.tsx", "utf8");
+  assert.match(supplierHub, /supplier-sync\/jobs\?limit=100/);
+  assert.match(supplierHub, /source\.catalogSync\?\.syncJobId/);
+  assert.match(supplierHub, /supplier-sync\/jobs\/\$\{encodeURIComponent\(jobId\)\}/);
+  assert.match(supplierHub, /applySyncJobViews\(\[\s*\.\.\.jobsResult\.jobs/);
+});
+
 test("Supplier Hub production settings and catalog limits are enforced by the Functions sync path", () => {
   const supplierHub = readFileSync("src/components/SupplierHubFiveStars.tsx", "utf8");
   const scheduledSync = readFileSync("functions/src/scheduled/supplierSync.ts", "utf8");

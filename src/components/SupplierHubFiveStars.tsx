@@ -515,7 +515,11 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
   const loadSources = useCallback(async () => {
     const [response, jobsResponse, accountsResponse] = await Promise.all([
       getSupplierApi('/api/supplier-sources'),
-      getSupplierApi('/api/supplier-sync/jobs?limit=20'),
+      // Scheduled no-op lifecycle jobs are intentionally retained in the
+      // activity feed. Keep a bounded window for activity, then resolve the
+      // authoritative catalog checkpoint job below so heartbeats cannot hide
+      // the last real catalog traversal.
+      getSupplierApi('/api/supplier-sync/jobs?limit=100'),
       getSupplierApi('/api/supplier-accounts'),
     ]);
     const result = await response.json().catch(() => ({})) as { success?: boolean; sources?: any[]; error?: string };
@@ -536,7 +540,27 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
     setErrorMsg(null);
     if (jobsResponse.ok && jobsResult.success === true && Array.isArray(jobsResult.jobs)) {
       setSyncErrorMsg(null);
-      applySyncJobViews(jobsResult.jobs);
+      const referencedCatalogJobIds = [...new Set(result.sources
+        .map((source: Record<string, any>) => source.catalogSync?.syncJobId)
+        .filter((jobId: unknown): jobId is string => typeof jobId === 'string' && jobId.trim().length > 0)
+        .map((jobId: string) => jobId.trim()))];
+      const knownJobIds = new Set(jobsResult.jobs.map((job) => job.id));
+      const referencedJobs = await Promise.all(referencedCatalogJobIds
+        .filter((jobId) => !knownJobIds.has(jobId))
+        .slice(0, 10)
+        .map(async (jobId) => {
+          try {
+            const response = await getSupplierApi(`/api/supplier-sync/jobs/${encodeURIComponent(jobId)}`);
+            const payload = await response.json().catch(() => ({})) as { success?: boolean; job?: SupplierSyncJobView };
+            return response.ok && payload.success === true && payload.job ? payload.job : null;
+          } catch {
+            return null;
+          }
+        }));
+      applySyncJobViews([
+        ...jobsResult.jobs,
+        ...referencedJobs.filter((job): job is SupplierSyncJobView => Boolean(job)),
+      ]);
     }
     void refreshSupplierReviewActionableCount();
   }, [applySyncJobViews, refreshSupplierReviewActionableCount]);
