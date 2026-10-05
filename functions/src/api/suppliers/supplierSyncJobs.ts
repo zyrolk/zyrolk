@@ -275,7 +275,10 @@ const attemptCounters = (value: Partial<SupplierSyncAttemptCounters> = {}): Supp
   new: cleanCount(value.new),
   changeCandidates: cleanCount(value.changeCandidates),
   unchanged: cleanCount(value.unchanged),
-  rejected: value.rejected === null || value.rejected === undefined ? null : cleanCount(value.rejected),
+  // A missing value on a new attempt means that no rejected outcome has been
+  // recorded yet, which is a known zero. Preserve an explicit null so legacy
+  // evidence remains distinguishable from a verified zero.
+  rejected: value.rejected === null ? null : cleanCount(value.rejected),
   failed: cleanCount(value.failed),
   warnings: cleanCount(value.warnings),
   pages: cleanCount(value.pages),
