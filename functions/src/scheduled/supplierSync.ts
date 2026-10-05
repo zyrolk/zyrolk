@@ -401,6 +401,12 @@ export interface SupplierSyncRunOptions {
   syncRequest?: SupplierSyncRequest;
   control?: {
     reportProgress(progress: SupplierSyncJobProgressInput): Promise<void>;
+    reportAttemptContext?(context: {
+      sourceId: string;
+      cursorBefore: string | null;
+      effectivePageSize: number;
+      remainingLimitAtStart: number | null;
+    }): Promise<void>;
     shouldCancel(): boolean;
   };
 }
@@ -1610,6 +1616,10 @@ async function writeHistory(
   details: string,
   syncRequest: SupplierSyncRequest = { mode: "full" },
 ): Promise<void> {
+  // Compatibility view only. The authoritative cumulative job lives at
+  // supplier_sync_jobs/{jobId}; immutable execution evidence lives under its
+  // attempts subcollection. This legacy document intentionally remains
+  // readable by existing Supplier Hub consumers and is not attempt history.
   await adminDb.collection("supplier_sync_history").doc(batchId).set({
     id: batchId,
     batchId,
@@ -3505,6 +3515,20 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
           catalogContinuation,
           initial: source.catalogSync,
           shouldPause: () => Date.now() >= syncDeadlineMs || options.control?.shouldCancel() === true,
+          onStart: async (checkpoint) => {
+            const batchBaseline = Number.isFinite(Number(checkpoint.productsObservedAtBatchStart))
+              ? Math.max(0, Number(checkpoint.productsObservedAtBatchStart))
+              : 0;
+            const remainingLimit = checkpoint.totalProductLimit === null
+              ? null
+              : Math.max(0, checkpoint.totalProductLimit - Math.max(0, checkpoint.productsObserved - batchBaseline));
+            await options.control?.reportAttemptContext?.({
+              sourceId: source.id,
+              cursorBefore: checkpoint.cursor,
+              effectivePageSize: normalizeSupplierCatalogPageSize(sourcePageSize),
+              remainingLimitAtStart: remainingLimit,
+            });
+          },
           persistCheckpoint: async (checkpoint) => {
             if (!dryRunMode) await adminDb.collection("supplierSources").doc(source.id).set({
               catalogCursor: checkpoint.cursor,

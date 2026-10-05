@@ -44,6 +44,64 @@ export interface SupplierSyncJobProgress {
   updatedAt: string;
 }
 
+export interface SupplierSyncCumulativeCounters {
+  scanned: number;
+  processed: number;
+  queued: number;
+  new: number;
+  changeCandidates: number;
+  unchanged: number;
+  rejected: number | null;
+  failed: number;
+  warnings: number;
+  pages: number;
+}
+
+export interface SupplierSyncAttemptCounters {
+  scanned: number;
+  processed: number;
+  queued: number;
+  new: number;
+  changeCandidates: number;
+  unchanged: number;
+  rejected: number | null;
+  failed: number;
+  warnings: number;
+  pages: number;
+}
+
+export type SupplierSyncAttemptStatus = "running" | "waiting" | "completed" | "failed" | "cancelled";
+
+export interface SupplierSyncJobAttemptRecord extends Record<string, unknown> {
+  attemptId: string;
+  jobId: string;
+  attemptNumber: number;
+  kind: "initial" | "resume" | "retry" | "review_refresh";
+  status: SupplierSyncAttemptStatus;
+  startedAt: string;
+  completedAt: string | null;
+  cursorBefore: Record<string, string | null>;
+  cursorAfter: Record<string, string | null>;
+  requestedTotalProductLimit: number | null;
+  effectiveTotalProductLimit: number | null;
+  requestedPageSize: number | null;
+  effectivePageSize: Record<string, number>;
+  remainingLimitAtStart: Record<string, number | null>;
+  counters: SupplierSyncAttemptCounters;
+  stopReason: string | null;
+  errorClass: string | null;
+  errorCode: string | null;
+  errorMessageSafe: string | null;
+  retryable: boolean | null;
+}
+
+export interface SupplierSyncAttemptContext {
+  sourceId: string;
+  cursorBefore: string | null;
+  effectivePageSize: number;
+  remainingLimitAtStart: number | null;
+}
+
 export interface SupplierSyncJobRecord extends Record<string, unknown> {
   id: string;
   state: SupplierSyncJobState;
@@ -57,6 +115,18 @@ export interface SupplierSyncJobRecord extends Record<string, unknown> {
   retryCount: number;
   retryLimit: number;
   resumeCount: number;
+  attemptCount?: number;
+  requestedTotalProductLimit?: number | null;
+  effectiveTotalProductLimit?: number | null;
+  requestedPageSize?: number | null;
+  effectivePageSize?: Record<string, number> | null;
+  initialCursor?: Record<string, string | null> | null;
+  durableCursor?: Record<string, string | null> | null;
+  finalCursor?: Record<string, string | null> | null;
+  lastAttemptStartedAt?: string | null;
+  lastAttemptCompletedAt?: string | null;
+  stopReason?: string | null;
+  cumulativeCounters?: SupplierSyncCumulativeCounters;
   requestedBy: { uid: string; email: string };
   syncRequest?: SupplierSyncRequest;
   progress: SupplierSyncJobProgress;
@@ -143,6 +213,65 @@ const cleanOptionalCount = (value: unknown): number | null => {
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
 };
+
+const emptyCumulativeCounters = (): SupplierSyncCumulativeCounters => ({
+  scanned: 0,
+  processed: 0,
+  queued: 0,
+  new: 0,
+  changeCandidates: 0,
+  unchanged: 0,
+  rejected: null,
+  failed: 0,
+  warnings: 0,
+  pages: 0,
+});
+
+const normalizeCumulativeCounters = (value: unknown): SupplierSyncCumulativeCounters => {
+  const raw = value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+  const base = emptyCumulativeCounters();
+  return {
+    scanned: cleanCount(raw.scanned ?? base.scanned),
+    processed: cleanCount(raw.processed ?? base.processed),
+    queued: cleanCount(raw.queued ?? base.queued),
+    new: cleanCount(raw.new ?? base.new),
+    changeCandidates: cleanCount(raw.changeCandidates ?? base.changeCandidates),
+    unchanged: cleanCount(raw.unchanged ?? base.unchanged),
+    rejected: raw.rejected === null || raw.rejected === undefined ? null : cleanCount(raw.rejected),
+    failed: cleanCount(raw.failed ?? base.failed),
+    warnings: cleanCount(raw.warnings ?? base.warnings),
+    pages: cleanCount(raw.pages ?? base.pages),
+  };
+};
+
+const cleanCursorMap = (value: unknown): Record<string, string | null> => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+    .filter(([sourceId]) => sourceId && !sourceId.includes("/") && sourceId.length <= 160)
+    .map(([sourceId, cursor]) => [sourceId, typeof cursor === "string" && cursor ? cursor : null]));
+};
+
+const cleanPageSizeMap = (value: unknown): Record<string, number> => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+    .map(([sourceId, pageSize]) => [sourceId, cleanCount(pageSize)])
+    .filter(([sourceId, pageSize]) => sourceId && Number(pageSize) > 0));
+};
+
+const attemptCounters = (value: Partial<SupplierSyncAttemptCounters> = {}): SupplierSyncAttemptCounters => ({
+  scanned: cleanCount(value.scanned),
+  processed: cleanCount(value.processed),
+  queued: cleanCount(value.queued),
+  new: cleanCount(value.new),
+  changeCandidates: cleanCount(value.changeCandidates),
+  unchanged: cleanCount(value.unchanged),
+  rejected: value.rejected === null || value.rejected === undefined ? null : cleanCount(value.rejected),
+  failed: cleanCount(value.failed),
+  warnings: cleanCount(value.warnings),
+  pages: cleanCount(value.pages),
+});
 
 const progressTotalReliability = (value: unknown): SupplierSyncProgressTotalReliability => (
   value === "exact" || value === "reported" ? value : "unknown"
@@ -433,6 +562,8 @@ export async function createSupplierSyncJob(
   const createdAt = new Date(now).toISOString();
   const sourceIds = cleanSourceIds(input.sourceIds);
   const jobType = input.jobType || "supplier_sync";
+  const requestedTotalProductLimit = input.syncRequest?.totalProductLimit ?? null;
+  const requestedPageSize = input.syncRequest?.pageSize ?? null;
   const record: SupplierSyncJobRecord = {
     id: reference.id,
     schemaVersion: 1,
@@ -450,6 +581,18 @@ export async function createSupplierSyncJob(
     retryCount: 0,
     retryLimit: DEFAULT_RETRY_LIMIT,
     resumeCount: 0,
+    attemptCount: 0,
+    requestedTotalProductLimit,
+    effectiveTotalProductLimit: requestedTotalProductLimit,
+    requestedPageSize,
+    effectivePageSize: null,
+    initialCursor: null,
+    durableCursor: null,
+    finalCursor: null,
+    lastAttemptStartedAt: null,
+    lastAttemptCompletedAt: null,
+    stopReason: null,
+    cumulativeCounters: emptyCumulativeCounters(),
     progress: initialProgress(now),
     ...(input.syncRequest ? { syncRequest: input.syncRequest } : {}),
     ...(input.immediateAutoEnable ? { immediateAutoEnable: true } : {}),
@@ -585,6 +728,218 @@ export async function createSupplierSyncJob(
     });
   }
   return result;
+}
+
+const safeAttemptId = (value: string): string => {
+  const normalized = value.replace(/[^A-Za-z0-9_-]/gu, "-").slice(0, 140);
+  return normalized || `attempt-${randomUUID()}`;
+};
+
+const isSupplierSyncJobLeaseOwned = (
+  data: Record<string, unknown>,
+  workerId: string,
+  leaseId: string,
+): boolean => (
+  stateFor(data.state) === "running"
+  && data.leaseOwner === workerId
+  && data.leaseId === leaseId
+);
+
+export async function beginSupplierSyncAttempt(
+  db: Firestore,
+  jobId: string,
+  workerId: string,
+  leaseId: string,
+  input: {
+    attemptId: string;
+    kind: SupplierSyncJobAttemptRecord["kind"];
+    startedAt?: string;
+  },
+  now = Date.now(),
+): Promise<SupplierSyncJobAttemptRecord> {
+  const jobReference = db.collection("supplier_sync_jobs").doc(jobId);
+  const attemptId = safeAttemptId(input.attemptId);
+  const attemptReference = jobReference.collection("attempts").doc(attemptId);
+  const startedAt = input.startedAt || new Date(now).toISOString();
+  return db.runTransaction(async (transaction) => {
+    const [jobSnapshot, attemptSnapshot] = await Promise.all([
+      transaction.get(jobReference),
+      transaction.get(attemptReference),
+    ]);
+    const data = jobSnapshot.data() || {};
+    if (!jobSnapshot.exists || !isSupplierSyncJobLeaseOwned(data, workerId, leaseId)) {
+      throw new Error("Supplier sync job lease is not owned by this worker.");
+    }
+    if (attemptSnapshot.exists) {
+      return { attemptId, jobId, ...attemptSnapshot.data() } as SupplierSyncJobAttemptRecord;
+    }
+    const syncRequest = data.syncRequest && typeof data.syncRequest === "object"
+      ? data.syncRequest as Record<string, unknown>
+      : {};
+    const attemptNumber = Math.max(1, cleanCount(data.attemptCount));
+    const record: SupplierSyncJobAttemptRecord = {
+      attemptId,
+      jobId,
+      attemptNumber,
+      kind: input.kind,
+      status: "running",
+      startedAt,
+      completedAt: null,
+      cursorBefore: {},
+      cursorAfter: {},
+      requestedTotalProductLimit: cleanOptionalCount(data.requestedTotalProductLimit ?? syncRequest.totalProductLimit),
+      effectiveTotalProductLimit: cleanOptionalCount(data.effectiveTotalProductLimit ?? syncRequest.totalProductLimit),
+      requestedPageSize: cleanOptionalCount(data.requestedPageSize ?? syncRequest.pageSize),
+      effectivePageSize: {},
+      remainingLimitAtStart: {},
+      counters: attemptCounters(),
+      stopReason: null,
+      errorClass: null,
+      errorCode: null,
+      errorMessageSafe: null,
+      retryable: null,
+    };
+    transaction.create(attemptReference, record);
+    transaction.set(jobReference, {
+      lastAttemptStartedAt: startedAt,
+      updatedAt: new Date(now).toISOString(),
+      ...(data.requestedTotalProductLimit === undefined
+        ? { requestedTotalProductLimit: record.requestedTotalProductLimit }
+        : {}),
+      ...(data.effectiveTotalProductLimit === undefined
+        ? { effectiveTotalProductLimit: record.effectiveTotalProductLimit }
+        : {}),
+      ...(data.requestedPageSize === undefined
+        ? { requestedPageSize: record.requestedPageSize }
+        : {}),
+      ...(data.cumulativeCounters === undefined ? { cumulativeCounters: emptyCumulativeCounters() } : {}),
+    }, { merge: true });
+    return record;
+  });
+}
+
+export async function recordSupplierSyncAttemptContext(
+  db: Firestore,
+  jobId: string,
+  workerId: string,
+  leaseId: string,
+  attemptId: string,
+  context: SupplierSyncAttemptContext,
+  now = Date.now(),
+): Promise<void> {
+  const jobReference = db.collection("supplier_sync_jobs").doc(jobId);
+  const attemptReference = jobReference.collection("attempts").doc(safeAttemptId(attemptId));
+  await db.runTransaction(async (transaction) => {
+    const [jobSnapshot, attemptSnapshot] = await Promise.all([
+      transaction.get(jobReference),
+      transaction.get(attemptReference),
+    ]);
+    const job = jobSnapshot.data() || {};
+    if (!jobSnapshot.exists || !isSupplierSyncJobLeaseOwned(job, workerId, leaseId)) {
+      throw new Error("Supplier sync job lease is not owned by this worker.");
+    }
+    if (!attemptSnapshot.exists) throw new Error("Supplier sync attempt record is missing.");
+    const attempt = attemptSnapshot.data() || {};
+    if (attempt.status !== "running") return;
+    const cursorBefore = { ...cleanCursorMap(attempt.cursorBefore), [context.sourceId]: context.cursorBefore };
+    const effectivePageSize = { ...cleanPageSizeMap(attempt.effectivePageSize), [context.sourceId]: context.effectivePageSize };
+    const remainingLimitAtStart = {
+      ...(attempt.remainingLimitAtStart && typeof attempt.remainingLimitAtStart === "object"
+        ? attempt.remainingLimitAtStart as Record<string, number | null>
+        : {}),
+      [context.sourceId]: context.remainingLimitAtStart,
+    };
+    const currentInitialCursor = cleanCursorMap(job.initialCursor);
+    const currentEffectivePageSize = cleanPageSizeMap(job.effectivePageSize);
+    transaction.set(attemptReference, {
+      cursorBefore,
+      effectivePageSize,
+      remainingLimitAtStart,
+      updatedAt: new Date(now).toISOString(),
+    }, { merge: true });
+    transaction.set(jobReference, {
+      initialCursor: Object.keys(currentInitialCursor).length > 0
+        ? { ...currentInitialCursor, [context.sourceId]: currentInitialCursor[context.sourceId] ?? context.cursorBefore }
+        : cursorBefore,
+      durableCursor: { ...cleanCursorMap(job.durableCursor), [context.sourceId]: context.cursorBefore },
+      effectivePageSize: { ...currentEffectivePageSize, [context.sourceId]: context.effectivePageSize },
+      updatedAt: new Date(now).toISOString(),
+    }, { merge: true });
+  });
+}
+
+export async function finalizeSupplierSyncAttempt(
+  db: Firestore,
+  jobId: string,
+  workerId: string,
+  leaseId: string,
+  attemptId: string,
+  input: {
+    status: Exclude<SupplierSyncAttemptStatus, "running">;
+    completedAt?: string;
+    cursorAfter?: Record<string, string | null>;
+    counters?: Partial<SupplierSyncAttemptCounters>;
+    stopReason?: string | null;
+    errorClass?: string | null;
+    errorCode?: string | null;
+    errorMessageSafe?: string | null;
+    retryable?: boolean | null;
+  },
+  now = Date.now(),
+): Promise<SupplierSyncJobAttemptRecord | null> {
+  const jobReference = db.collection("supplier_sync_jobs").doc(jobId);
+  const attemptReference = jobReference.collection("attempts").doc(safeAttemptId(attemptId));
+  const completedAt = input.completedAt || new Date(now).toISOString();
+  return db.runTransaction(async (transaction) => {
+    const [jobSnapshot, attemptSnapshot] = await Promise.all([
+      transaction.get(jobReference),
+      transaction.get(attemptReference),
+    ]);
+    const job = jobSnapshot.data() || {};
+    if (!jobSnapshot.exists || !isSupplierSyncJobLeaseOwned(job, workerId, leaseId)) {
+      throw new Error("Supplier sync job lease is not owned by this worker.");
+    }
+    if (!attemptSnapshot.exists) throw new Error("Supplier sync attempt record is missing.");
+    const previous = { attemptId, jobId, ...attemptSnapshot.data() } as SupplierSyncJobAttemptRecord;
+    if (previous.status !== "running") return previous;
+    const counters = attemptCounters(input.counters);
+    const current = normalizeCumulativeCounters(job.cumulativeCounters);
+    const next: SupplierSyncCumulativeCounters = {
+      scanned: current.scanned + counters.scanned,
+      processed: current.processed + counters.processed,
+      queued: current.queued + counters.queued,
+      new: current.new + counters.new,
+      changeCandidates: current.changeCandidates + counters.changeCandidates,
+      unchanged: current.unchanged + counters.unchanged,
+      rejected: current.rejected === null || counters.rejected === null ? null : current.rejected + counters.rejected,
+      failed: current.failed + counters.failed,
+      warnings: current.warnings + counters.warnings,
+      pages: current.pages + counters.pages,
+    };
+    const cursorAfter = cleanCursorMap(input.cursorAfter);
+    const nextAttempt: SupplierSyncJobAttemptRecord = {
+      ...previous,
+      status: input.status,
+      completedAt,
+      cursorAfter,
+      counters,
+      stopReason: input.stopReason ?? null,
+      errorClass: input.errorClass ?? null,
+      errorCode: input.errorCode ?? null,
+      errorMessageSafe: input.errorMessageSafe ?? null,
+      retryable: input.retryable ?? null,
+    };
+    transaction.set(attemptReference, nextAttempt, { merge: true });
+    transaction.set(jobReference, {
+      cumulativeCounters: next,
+      durableCursor: Object.keys(cursorAfter).length > 0 ? cursorAfter : job.durableCursor || null,
+      ...(input.status === "completed" ? { finalCursor: Object.keys(cursorAfter).length > 0 ? cursorAfter : job.finalCursor || null } : {}),
+      lastAttemptCompletedAt: completedAt,
+      stopReason: input.stopReason ?? null,
+      updatedAt: new Date(now).toISOString(),
+    }, { merge: true });
+    return nextAttempt;
+  });
 }
 
 export async function leaseSupplierSyncJob(
@@ -980,6 +1335,19 @@ export function projectSupplierSyncJobForAdmin(job: SupplierSyncJobRecord): Reco
     retryCount: cleanCount(job.retryCount),
     retryLimit: cleanCount(job.retryLimit),
     resumeCount: cleanCount(job.resumeCount),
+    attemptCount: cleanCount(job.attemptCount),
+    requestedTotalProductLimit: job.requestedTotalProductLimit ?? job.syncRequest?.totalProductLimit ?? null,
+    effectiveTotalProductLimit: job.effectiveTotalProductLimit ?? job.syncRequest?.totalProductLimit ?? null,
+    requestedPageSize: job.requestedPageSize ?? job.syncRequest?.pageSize ?? null,
+    effectivePageSize: job.effectivePageSize || null,
+    initialCursor: job.initialCursor || null,
+    durableCursor: job.durableCursor || null,
+    finalCursor: job.finalCursor || null,
+    lastAttemptStartedAt: job.lastAttemptStartedAt || null,
+    lastAttemptCompletedAt: job.lastAttemptCompletedAt || null,
+    cumulativeCounters: job.cumulativeCounters || null,
+    evidenceStatus: job.cumulativeCounters ? "current" : "legacy",
+    stopReason: job.stopReason || null,
     cancellationRequestedAt: job.cancellationRequestedAt || null,
     progress: normalizeSupplierSyncJobProgress(job),
     result: job.result || null,

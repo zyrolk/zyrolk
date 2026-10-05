@@ -4,14 +4,17 @@ import { onSchedule } from "firebase-functions/v2/scheduler";
 import { adminDb } from "../api/firebase";
 import {
   accumulateSupplierSyncAttemptProgress,
+  beginSupplierSyncAttempt,
   calculateSupplierSyncJobProgress,
   cancelRunningSupplierSyncJob,
   completeSupplierSyncJob,
   failSupplierSyncJob,
+  finalizeSupplierSyncAttempt,
   heartbeatSupplierSyncJob,
   leaseSupplierSyncJob,
   listDueSupplierSyncJobIds,
   normalizeSupplierSyncJobProgress,
+  recordSupplierSyncAttemptContext,
   recoverExpiredSupplierSyncJobs,
   SupplierSyncJobProgressInput,
   waitSupplierSyncJob,
@@ -69,6 +72,15 @@ export async function processSupplierSyncJob(jobId: string, now = Date.now()): P
   });
 
   const storedProgress = normalizeSupplierSyncJobProgress(lease.job, now);
+  const attemptId = `lease-${lease.leaseId.replace(/[^A-Za-z0-9_-]/gu, "-")}`;
+  const lastRequestedAction = String((lease.job as Record<string, unknown>).lastRequestedAction || "");
+  const attemptKind = lease.job.jobType === PENDING_REVIEW_BATCH_JOB_TYPE
+    ? "review_refresh"
+    : lastRequestedAction === "retry"
+      ? "retry"
+      : lastRequestedAction === "resume" || Boolean(lease.job.attemptCount)
+        ? "resume"
+        : "initial";
   const startedAtMs = Date.parse(String(lease.job.startedAt || lease.job.createdAt || "")) || now;
   const attemptStartedAtMs = now;
   const activeElapsedBeforeAttemptMs = storedProgress.activeElapsedMs;
@@ -90,6 +102,27 @@ export async function processSupplierSyncJob(jobId: string, now = Date.now()): P
   }, now);
   let heartbeatQueue: Promise<void> = Promise.resolve();
   let timerHeartbeatInFlight: Promise<void> | null = null;
+  let attemptStarted = false;
+  let attemptFinalized = false;
+
+  const localCountersFromProgress = (): Record<string, number | null> => ({
+    scanned: Math.max(0, progress.productsScanned - attemptCounterBase.productsScanned),
+    processed: Math.max(0, progress.productsScanned - attemptCounterBase.productsScanned),
+    queued: Math.max(0, progress.productsQueued - attemptCounterBase.productsQueued),
+    new: 0,
+    changeCandidates: 0,
+    unchanged: 0,
+    rejected: null,
+    failed: Math.max(0, progress.productsFailed - attemptCounterBase.productsFailed),
+    warnings: 0,
+    pages: Math.max(0, progress.pagesProcessed - attemptCounterBase.pagesProcessed),
+  });
+
+  const finalizeAttempt = async (input: Parameters<typeof finalizeSupplierSyncAttempt>[5]): Promise<void> => {
+    if (!attemptStarted || attemptFinalized) return;
+    await finalizeSupplierSyncAttempt(adminDb, jobId, workerId, lease.leaseId, attemptId, input);
+    attemptFinalized = true;
+  };
 
   const persistHeartbeat = async (input: SupplierSyncJobProgressInput = {}): Promise<void> => {
     const heartbeatAt = Date.now();
@@ -131,8 +164,19 @@ export async function processSupplierSyncJob(jobId: string, now = Date.now()): P
   }, JOB_HEARTBEAT_INTERVAL_MS);
 
   try {
+    await beginSupplierSyncAttempt(adminDb, jobId, workerId, lease.leaseId, {
+      attemptId,
+      kind: attemptKind as "initial" | "resume" | "retry" | "review_refresh",
+      startedAt: new Date(attemptStartedAtMs).toISOString(),
+    }, attemptStartedAtMs);
+    attemptStarted = true;
     await heartbeat();
     if (cancellationRequested) {
+      await finalizeAttempt({
+        status: "cancelled",
+        counters: localCountersFromProgress(),
+        stopReason: "cancellation_requested",
+      });
       await cancelRunningSupplierSyncJob(adminDb, jobId, workerId, lease.leaseId, progress);
       return { jobId, outcome: "cancelled" };
     }
@@ -144,10 +188,12 @@ export async function processSupplierSyncJob(jobId: string, now = Date.now()): P
         shouldCancel: () => cancellationRequested || leaseLost,
       });
       if (batchResult.status === "cancelled") {
+        await finalizeAttempt({ status: "cancelled", stopReason: "cancellation_requested" });
         await cancelRunningSupplierSyncJob(adminDb, jobId, workerId, lease.leaseId, batchResult.progress);
         return { jobId, outcome: "cancelled" };
       }
       if (batchResult.status === "waiting") {
+        await finalizeAttempt({ status: "waiting", stopReason: "review_batch_waiting" });
         await waitSupplierSyncJob(
           adminDb,
           jobId,
@@ -158,6 +204,7 @@ export async function processSupplierSyncJob(jobId: string, now = Date.now()): P
         );
         return { jobId, outcome: "waiting" };
       }
+      await finalizeAttempt({ status: "completed", stopReason: "review_batch_completed" });
       await completeSupplierSyncJob(
         adminDb,
         jobId,
@@ -176,6 +223,16 @@ export async function processSupplierSyncJob(jobId: string, now = Date.now()): P
       syncRequest: lease.job.syncRequest,
       control: {
         reportProgress: reportAttemptProgress,
+        reportAttemptContext: async (context) => {
+          await recordSupplierSyncAttemptContext(
+            adminDb,
+            jobId,
+            workerId,
+            lease.leaseId,
+            attemptId,
+            context,
+          );
+        },
         shouldCancel: () => cancellationRequested || leaseLost,
       },
     });
@@ -191,10 +248,46 @@ export async function processSupplierSyncJob(jobId: string, now = Date.now()): P
     });
 
     if (cancellationRequested) {
+      await finalizeAttempt({
+        status: "cancelled",
+        cursorAfter: result.sourceCursors,
+        counters: {
+          scanned: result.productsScanned,
+          processed: result.productsScanned,
+          queued: result.productsQueued,
+          new: result.productsImported,
+          changeCandidates: result.productsUpdated,
+          unchanged: result.productsSkipped,
+          rejected: null,
+          failed: result.productsFailed,
+          warnings: 0,
+          pages: result.pagesProcessed,
+        },
+        stopReason: "cancellation_requested",
+      });
       await cancelRunningSupplierSyncJob(adminDb, jobId, workerId, lease.leaseId, progress);
       return { jobId, outcome: "cancelled" };
     }
     if (result.waitingRecommended === true) {
+      await finalizeAttempt({
+        status: "waiting",
+        cursorAfter: result.sourceCursors,
+        counters: {
+          scanned: result.productsScanned,
+          processed: result.productsScanned,
+          queued: result.productsQueued,
+          new: result.productsImported,
+          changeCandidates: result.productsUpdated,
+          unchanged: result.productsSkipped,
+          rejected: null,
+          failed: result.productsFailed,
+          warnings: 0,
+          pages: result.pagesProcessed,
+        },
+        stopReason: Object.values(result.sourceTerminationReasons).join(", ") || "waiting",
+        errorMessageSafe: result.errors.join("; ").slice(0, 1_000) || null,
+        retryable: true,
+      });
       await waitSupplierSyncJob(
         adminDb,
         jobId,
@@ -209,6 +302,26 @@ export async function processSupplierSyncJob(jobId: string, now = Date.now()): P
     }
     if (result.status === "Failed" || result.status === "Partial") {
       const failure = new Error(result.errors.join("; ") || "Supplier synchronization failed.");
+      await finalizeAttempt({
+        status: "failed",
+        cursorAfter: result.sourceCursors,
+        counters: {
+          scanned: result.productsScanned,
+          processed: result.productsScanned,
+          queued: result.productsQueued,
+          new: result.productsImported,
+          changeCandidates: result.productsUpdated,
+          unchanged: result.productsSkipped,
+          rejected: null,
+          failed: result.productsFailed,
+          warnings: 0,
+          pages: result.pagesProcessed,
+        },
+        stopReason: Object.values(result.sourceTerminationReasons).join(", ") || "failed",
+        errorClass: "supplier_sync_result",
+        errorMessageSafe: failure.message.slice(0, 1_000),
+        retryable: false,
+      });
       await failSupplierSyncJob(adminDb, jobId, workerId, lease.leaseId, progress, failure);
       await reportSyncJobFailure(jobId, lease.job.sourceIds, failure);
       recordSupplierSyncOutcomeMetric({
@@ -221,6 +334,25 @@ export async function processSupplierSyncJob(jobId: string, now = Date.now()): P
       });
       return { jobId, outcome: "failed" };
     }
+    await finalizeAttempt({
+      status: "completed",
+      cursorAfter: result.sourceCursors,
+      counters: {
+        scanned: result.productsScanned,
+        processed: result.productsScanned,
+        queued: result.productsQueued,
+        new: result.productsImported,
+        changeCandidates: result.productsUpdated,
+        unchanged: result.productsSkipped,
+        rejected: null,
+        failed: result.productsFailed,
+        warnings: 0,
+        pages: result.pagesProcessed,
+      },
+      stopReason: Object.values(result.sourceTerminationReasons).join(", ") || "completed",
+      errorMessageSafe: result.errors.join("; ").slice(0, 1_000) || null,
+      retryable: false,
+    });
     await completeSupplierSyncJob(adminDb, jobId, workerId, lease.leaseId, result as unknown as Record<string, unknown>, progress);
     if (result.status === "Success") {
       recordSupplierSyncOutcomeMetric({
@@ -235,9 +367,22 @@ export async function processSupplierSyncJob(jobId: string, now = Date.now()): P
     return { jobId, outcome: "completed" };
   } catch (error) {
     if (cancellationRequested) {
+      await finalizeAttempt({
+        status: "cancelled",
+        counters: localCountersFromProgress(),
+        stopReason: "cancellation_requested",
+      });
       await cancelRunningSupplierSyncJob(adminDb, jobId, workerId, lease.leaseId, progress);
       return { jobId, outcome: "cancelled" };
     }
+    await finalizeAttempt({
+      status: "failed",
+      counters: localCountersFromProgress(),
+      stopReason: "worker_exception",
+      errorClass: error instanceof Error ? error.name : "unknown_error",
+      errorMessageSafe: (error instanceof Error ? error.message : String(error || "Supplier synchronization failed.")).slice(0, 1_000),
+      retryable: true,
+    });
     await failSupplierSyncJob(adminDb, jobId, workerId, lease.leaseId, progress, error);
     await reportSyncJobFailure(jobId, lease.job.sourceIds, error);
     recordSupplierSyncOutcomeMetric({

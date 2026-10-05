@@ -75,6 +75,7 @@ export interface SupplierCatalogTraversalOptions {
   persistCheckpoint(checkpoint: SupplierCatalogTraversalCheckpoint): Promise<void>;
   reconcileDeletedProducts(checkpoint: SupplierCatalogTraversalCheckpoint): Promise<void>;
   shouldPause?: () => boolean;
+  onStart?: (checkpoint: SupplierCatalogTraversalCheckpoint) => Promise<void> | void;
   now?: () => number;
   traversalId?: string;
   catalogContinuation?: "continue" | "restart";
@@ -317,6 +318,8 @@ export async function runSupplierCatalogTraversal(options: SupplierCatalogTraver
   if (checkpoint.syncMode === "incremental" && options.connector.syncCapabilities?.incremental.supported !== true) {
     throw new Error("This supplier connector does not support true incremental synchronization.");
   }
+
+  await options.onStart?.(checkpoint);
 
   if (checkpoint.status === "reconciling") {
     if (checkpoint.deletionReconciliationEligible) {
