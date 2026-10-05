@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { MoreHorizontal } from 'lucide-react';
 import { isValidSupplierImageUrl } from '../services/connectors/a2z-website/productImages';
 import {
   formatSupplierCostLabel,
@@ -68,7 +69,7 @@ function ManagedSupplierImage({ src, alt }: { src?: string; alt: string }) {
 
   if (!isValidSupplierImageUrl(src) || failed) {
     return (
-      <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-100 text-center text-[8px] font-bold uppercase leading-tight text-slate-400 dark:bg-slate-800">
+        <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-center text-[8px] font-bold uppercase leading-tight text-slate-400 dark:bg-slate-800 sm:h-16 sm:w-16">
         No image
       </div>
     );
@@ -78,7 +79,7 @@ function ManagedSupplierImage({ src, alt }: { src?: string; alt: string }) {
     <img
       src={src}
       alt={alt}
-      className="h-10 w-10 rounded-lg border border-slate-200 object-cover dark:border-slate-800"
+      className="h-14 w-14 shrink-0 rounded-xl border border-slate-200 object-cover dark:border-slate-800 sm:h-16 sm:w-16"
       referrerPolicy="no-referrer"
       loading="lazy"
       onError={(event) => {
@@ -131,10 +132,6 @@ export function SupplierReviewQuickCard({
   onViewHistory,
   onRetryMedia,
 }: SupplierReviewQuickCardProps) {
-  const openEditor = () => {
-    if (!decisionReady || terminalState || processing) return;
-    onViewDetails();
-  };
   const mediaState = media?.state || 'LEGACY_UNKNOWN';
   const mediaLabel = supplierReviewMediaLabel(mediaState);
   const mediaAgeLabel = media ? supplierReviewMediaAgeLabel(media) : null;
@@ -154,28 +151,18 @@ export function SupplierReviewQuickCard({
 
   return (
     <article
-      className={`flex overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950 ${decisionReady && !terminalState ? 'cursor-pointer focus-within:ring-2 focus-within:ring-emerald-500/40' : ''}`}
-      onClick={openEditor}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter' || event.key === ' ') {
-          event.preventDefault();
-          openEditor();
-        }
-      }}
-      role={decisionReady && !terminalState ? 'button' : undefined}
-      tabIndex={decisionReady && !terminalState ? 0 : undefined}
-      aria-label={decisionReady && !terminalState ? `Review product ${productName}` : undefined}
+      className="group overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition-shadow hover:shadow-md dark:border-slate-800 dark:bg-slate-950"
     >
       <div className="flex min-w-0 flex-1 flex-col">
-        <div className="flex items-start gap-3 p-4">
+        <div className="flex items-start gap-3 p-3 sm:p-4">
           <ManagedSupplierImage src={managedImageUrl} alt={`Managed product image for ${productName}`} />
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-start justify-between gap-2">
               <div className="min-w-0">
-                <h4 className="break-words text-sm font-black text-slate-900 dark:text-white">{productName}</h4>
+                <h4 className="line-clamp-2 break-words text-sm font-black text-slate-900 dark:text-white">{productName}</h4>
                 <p className="mt-1 text-[9px] font-bold uppercase tracking-wide text-slate-400">Supplier SKU <span className="font-mono normal-case">{supplierItemCode || 'Not supplied'}</span></p>
               </div>
-              <span className="rounded-lg bg-slate-100 px-2 py-1 text-[9px] font-black text-slate-600 dark:bg-slate-800 dark:text-slate-300">{terminalState || statusLabel}</span>
+              <span className="rounded-full bg-slate-100 px-2 py-1 text-[9px] font-black text-slate-600 dark:bg-slate-800 dark:text-slate-300">{terminalState || statusLabel}</span>
             </div>
             <div className="mt-3 flex flex-wrap gap-2">
               <span className="rounded-full bg-blue-500/10 px-2 py-0.5 text-[9px] font-black text-blue-600">{terminalState === 'Dismissed by admin' ? 'Removed from Review' : changeLabel}</span>
@@ -187,33 +174,35 @@ export function SupplierReviewQuickCard({
           </div>
         </div>
 
-        <dl className="grid grid-cols-2 gap-x-4 gap-y-3 border-y border-slate-100 bg-slate-50/70 p-4 text-[10px] dark:border-slate-800 dark:bg-slate-900/40 sm:grid-cols-3">
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-2 border-y border-slate-100 bg-slate-50/70 p-3 text-[10px] dark:border-slate-800 dark:bg-slate-900/40 sm:grid-cols-4 sm:p-4">
           <div><dt className="text-slate-400">Selling price</dt><dd className="font-black text-blue-600">LKR {sellingPrice.toLocaleString()}</dd></div>
           <div><dt className="text-slate-400">Supplier cost</dt><dd className="font-black">{formatSupplierCostLabel(supplierCost, supplierCostAvailable)}</dd></div>
-          <div><dt className="text-slate-400">Profit</dt><dd className={`font-black ${profitAvailable && profit !== null && profit < 0 ? 'text-red-600' : profitAvailable ? 'text-emerald-600' : 'text-slate-500'}`}>{formatSupplierProfitLabel(profit, profitAvailable)}</dd></div>
           <div><dt className="text-slate-400">Margin</dt><dd className={`font-black ${profitAvailable && marginPercent !== null && marginPercent < 0 ? 'text-red-600' : profitAvailable ? 'text-slate-800 dark:text-slate-100' : 'text-slate-500'}`}>{formatSupplierMarginLabel(marginPercent, profitAvailable)}</dd></div>
           <div><dt className="text-slate-400">Stock</dt><dd className="font-black">{formatSupplierStockLabel(stock, supplierStockAvailable)}</dd></div>
-          <div><dt className="text-slate-400">Zyro brand</dt><dd className="font-bold">{brandLabel}</dd></div>
-          <div><dt className="text-slate-400">Zyro category</dt><dd className="font-bold">{categoryLabel}</dd></div>
-          {subcategoryLabel && <div><dt className="text-slate-400">Zyro subcategory</dt><dd className="font-bold">{subcategoryLabel}</dd></div>}
-          <div><dt className="text-slate-400">Storefront</dt><dd className="font-bold">{storefrontStatusLabel}</dd></div>
+          <div className="col-span-2 border-t border-slate-200/70 pt-2 dark:border-slate-700/70 sm:col-span-4"><dt className="text-slate-400">Profit</dt><dd className={`font-black ${profitAvailable && profit !== null && profit < 0 ? 'text-red-600' : profitAvailable ? 'text-emerald-600' : 'text-slate-500'}`}>{formatSupplierProfitLabel(profit, profitAvailable)}</dd></div>
         </dl>
 
-        {(rawSupplierBrand || rawSupplierCategory || rawSupplierSubcategory) && (
-          <div className="border-b border-slate-100 px-4 py-3 text-[10px] dark:border-slate-800">
-            <span className="font-black uppercase tracking-wide text-slate-400">Supplier raw metadata</span>
-            <dl className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
-              <div><dt className="text-slate-400">Supplier brand</dt><dd className="font-semibold text-slate-700 dark:text-slate-200">{rawSupplierBrand || 'Not supplied'}</dd></div>
-              <div><dt className="text-slate-400">Supplier category</dt><dd className="font-semibold text-slate-700 dark:text-slate-200">{rawSupplierCategory || 'Not supplied'}</dd></div>
-              <div><dt className="text-slate-400">Supplier subcategory</dt><dd className="font-semibold text-slate-700 dark:text-slate-200">{rawSupplierSubcategory || 'Not supplied'}</dd></div>
-            </dl>
+        <div className="grid gap-2 border-b border-slate-100 px-3 py-3 text-[10px] dark:border-slate-800 sm:grid-cols-3 sm:px-4">
+          <div><span className="font-black uppercase tracking-wide text-slate-400">Zyro taxonomy</span><p className="mt-1 font-semibold text-slate-700 dark:text-slate-200">{categoryLabel}</p>{subcategoryLabel && <p className="mt-0.5 text-[9px] font-semibold text-slate-500 dark:text-slate-400">{subcategoryLabel}</p>}</div>
+          <div><span className="font-black uppercase tracking-wide text-slate-400">Zyro brand</span><p className="mt-1 font-semibold text-slate-700 dark:text-slate-200">{brandLabel}</p></div>
+          <div><span className="font-black uppercase tracking-wide text-slate-400">Storefront</span><p className="mt-1 font-semibold text-slate-700 dark:text-slate-200">{storefrontStatusLabel}</p></div>
+        </div>
+
+        {blockingProblems.length > 0 && !terminalState && (
+          <div className="flex flex-wrap gap-1.5 px-3 pt-3 sm:px-4" aria-label="Review issues">
+            {blockingProblems.slice(0, 3).map((problem) => <span key={problem} className="rounded-full bg-amber-500/10 px-2 py-1 text-[9px] font-black text-amber-700 dark:text-amber-300">{problem}</span>)}
           </div>
         )}
 
-        <div className="px-4 pt-3 text-[10px] text-slate-500 dark:text-slate-400">
-          <span className="font-black uppercase tracking-wide text-slate-400">Supplier/source</span>
-          <p className="mt-1 font-semibold text-slate-700 dark:text-slate-200">{supplierAttribution}</p>
-        </div>
+        <details className="mx-3 mt-3 rounded-xl border border-slate-200/70 bg-slate-50/70 px-3 py-2 text-[10px] dark:border-slate-800 dark:bg-slate-900/40" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
+          <summary className="cursor-pointer list-none font-black text-slate-600 outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-slate-300">Supplier evidence</summary>
+          <dl className="mt-2 grid gap-2 text-slate-500 dark:text-slate-400 sm:grid-cols-2">
+            <div><dt>Supplier brand</dt><dd className="font-semibold text-slate-700 dark:text-slate-200">{rawSupplierBrand || 'Not supplied'}</dd></div>
+            <div><dt>Supplier category</dt><dd className="font-semibold text-slate-700 dark:text-slate-200">{rawSupplierCategory || 'Not supplied'}</dd></div>
+            <div><dt>Supplier subcategory</dt><dd className="font-semibold text-slate-700 dark:text-slate-200">{rawSupplierSubcategory || 'Not supplied'}</dd></div>
+            <div><dt>Supplier/source</dt><dd className="font-semibold text-slate-700 dark:text-slate-200">{supplierAttribution}</dd></div>
+          </dl>
+        </details>
 
         {media && (
           <details
@@ -273,40 +262,37 @@ export function SupplierReviewQuickCard({
           </div>
         )}
 
-        {decisionReady && !terminalState && (
+        {decisionReady && !terminalState && !isPreparing && (
           <div
-            className="mt-auto grid grid-cols-2 gap-2 border-t border-slate-100 bg-white/95 p-3 dark:border-slate-800 dark:bg-slate-950/95 sm:grid-cols-4"
+            className="mt-auto flex flex-wrap items-center gap-2 border-t border-slate-100 bg-white/95 p-3 dark:border-slate-800 dark:bg-slate-950/95"
             onClick={(event) => event.stopPropagation()}
           >
-            {canQuickApprove && (
-              <button type="button" onClick={onApprove} disabled={processing} aria-label={`Approve ${productName}`} className="min-h-11 rounded-xl bg-blue-600 px-3 text-[10px] font-black text-white hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50">
-                {processing ? 'Approving…' : 'Approve'}
-              </button>
-            )}
+            <button type="button" onClick={onViewDetails} disabled={processing} aria-label={`Review product ${productName}`} className={`min-h-11 flex-1 rounded-xl px-4 text-[10px] font-black focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50 ${needsResolution ? 'border border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>Review Product</button>
             {canReject && (
-              <button type="button" onClick={onReject} disabled={processing} aria-label={`Reject ${productName}`} className="min-h-11 rounded-xl bg-red-600 px-3 text-[10px] font-black text-white hover:bg-red-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 disabled:cursor-not-allowed disabled:opacity-50">Reject</button>
+              <button type="button" onClick={onReject} disabled={processing} aria-label={`Reject ${productName}`} className="min-h-11 rounded-xl border border-slate-300 bg-white px-3 text-[10px] font-black text-slate-700 hover:border-red-300 hover:bg-red-50 hover:text-red-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">Reject</button>
             )}
-            {canRemove && onRemove && (
-              <button type="button" onClick={onRemove} disabled={processing} aria-label={`Remove ${productName} from Product Review`} className="min-h-11 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 text-[10px] font-black text-amber-700 hover:bg-amber-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 disabled:cursor-not-allowed disabled:opacity-50">Remove from Review</button>
-            )}
-            <button type="button" onClick={onViewDetails} disabled={processing} aria-label={`Review product ${productName}`} className={`min-h-11 rounded-xl px-3 text-[10px] font-black focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 disabled:cursor-not-allowed disabled:opacity-50 ${needsResolution ? 'col-span-2 border border-amber-500/30 bg-amber-500/10 text-amber-700 sm:col-span-1 dark:text-amber-300' : 'border border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'}`}>Review Product</button>
+            <details className="relative" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
+              <summary className="flex min-h-11 cursor-pointer list-none items-center justify-center rounded-xl border border-slate-200 px-3 text-[10px] font-black text-slate-500 outline-none hover:bg-slate-50 focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-slate-800 dark:text-slate-300 dark:hover:bg-slate-900" aria-label={`More actions for ${productName}`}>
+                <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
+                <span className="sr-only">More actions</span>
+              </summary>
+              <div className="absolute bottom-full right-0 z-10 mb-2 grid min-w-40 gap-1 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl dark:border-slate-700 dark:bg-slate-900">
+                {canQuickApprove && <button type="button" onClick={onApprove} disabled={processing} aria-label={`Approve ${productName}`} className="min-h-10 rounded-lg px-3 text-left text-[10px] font-black text-blue-700 hover:bg-blue-50 disabled:opacity-50 dark:text-blue-300 dark:hover:bg-blue-950/30">{processing ? 'Approving…' : 'Approve'}</button>}
+                {canRemove && onRemove && <button type="button" onClick={onRemove} disabled={processing} aria-label={`Remove ${productName} from Product Review`} className="min-h-10 rounded-lg px-3 text-left text-[10px] font-black text-amber-700 hover:bg-amber-50 disabled:opacity-50 dark:text-amber-300 dark:hover:bg-amber-950/30">Remove from Review</button>}
+                <button type="button" onClick={onViewHistory} className="min-h-10 rounded-lg px-3 text-left text-[10px] font-black text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800">View history</button>
+              </div>
+            </details>
           </div>
         )}
 
         {isPreparing && !terminalState && (
           <div className="mt-auto border-t border-slate-100 p-3 dark:border-slate-800" onClick={(event) => event.stopPropagation()}>
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <button type="button" onClick={onViewDetails} disabled={processing} aria-label={`Review product ${productName}`} className="min-h-11 flex-1 rounded-xl bg-blue-600 px-4 text-[10px] font-black text-white hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-50">Review Product</button>
               {canReject && (
-                <button type="button" onClick={onReject} disabled={processing} aria-label={`Reject ${productName}`} className="min-h-11 rounded-xl bg-red-600 px-3 text-[10px] font-black text-white hover:bg-red-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 disabled:cursor-not-allowed disabled:opacity-50">
-                  Reject
-                </button>
+                <button type="button" onClick={onReject} disabled={processing} aria-label={`Reject ${productName}`} className="min-h-11 rounded-xl border border-slate-300 bg-white px-3 text-[10px] font-black text-slate-700 hover:border-red-300 hover:bg-red-50 hover:text-red-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">Reject</button>
               )}
-              {canRemove && onRemove && (
-                <button type="button" onClick={onRemove} disabled={processing} aria-label={`Remove ${productName} from Product Review`} className="min-h-11 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 text-[10px] font-black text-amber-700 hover:bg-amber-500/20 disabled:cursor-not-allowed disabled:opacity-50">Remove from Review</button>
-              )}
-              <button type="button" disabled className={`min-h-11 rounded-xl border border-slate-200 bg-slate-50 px-4 text-[10px] font-black text-slate-400 dark:border-slate-800 dark:bg-slate-900/40 ${canReject ? '' : 'w-full'}`} aria-disabled="true">
-                Approval unavailable while media is processing
-              </button>
+              <span className="w-full rounded-xl border border-blue-100 bg-blue-50/60 px-3 py-2 text-[10px] font-black text-blue-700 dark:border-blue-900/40 dark:bg-blue-950/20 dark:text-blue-300" role="status">Waiting for media · approval unavailable while processing</span>
             </div>
           </div>
         )}

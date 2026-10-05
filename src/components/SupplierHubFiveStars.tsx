@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { motion } from 'motion/react';
 import {
-  Activity, 
-  RefreshCw, 
-  UserCheck, 
+  Activity,
+  RefreshCw,
+  UserCheck,
   Info,
   AlertCircle,
   Globe,
@@ -22,7 +22,6 @@ import { onIdTokenChanged } from 'firebase/auth';
 import { auth, db, handleFirestoreError, OperationType } from '../firebase';
 import { Product } from '../types';
 import { getSupplierApi, patchSupplierApi, postSupplierApi, requestSupplierApi } from '../services/supplierHubApi';
-import { matchesSupplierSearch } from '../services/supplierSearch';
 import { buildSupplierReviewQueryKey, SupplierReviewAnchorCache } from '../services/supplierReviewPagination';
 import {
   SupplierReviewMediaEvidence,
@@ -37,6 +36,7 @@ import { reportClientIssue } from '../services/observability/clientDiagnostics';
 import SupplierReviewEditorModal from './SupplierReviewEditorModal';
 import SupplierReviewHistoryModal, { SupplierReviewAuditEvent } from './SupplierReviewHistoryModal';
 import SupplierReviewQuickCard from './SupplierReviewQuickCard';
+import SupplierReviewPagination from './SupplierReviewPagination';
 import SupplierOperationsDashboard from './supplier-operations/SupplierOperationsDashboard';
 import SupplierManagementDashboard from './supplier-management/SupplierManagementDashboard';
 import SupplierManualSyncDialog from './supplier-management/SupplierManualSyncDialog';
@@ -69,7 +69,6 @@ import {
 } from '../services/supplierSyncJobs';
 import { SupplierManualSyncRequest } from '../services/supplierManualSync';
 import {
-  matchesProductReviewFilter,
   PRODUCT_REVIEW_FILTERS,
   ProductReviewFilter,
   hasSupplierHubAdvancedAccess,
@@ -115,6 +114,65 @@ interface SupplierHubFiveStarsProps {
 const SUPPLIER_AUTO_SYNC_SCHEDULES = ['1 Hour', '3 Hours', '6 Hours', 'Daily'] as const;
 const PENDING_REVIEW_BATCH_SIZES = [25, 50, 100] as const;
 type PendingReviewBatchSize = typeof PENDING_REVIEW_BATCH_SIZES[number];
+const PRODUCT_REVIEW_PAGE_SIZES = [25, 50, 100] as const;
+type ProductReviewPageSize = typeof PRODUCT_REVIEW_PAGE_SIZES[number];
+
+const PRODUCT_REVIEW_URL_VIEWS: Record<ProductReviewFilter, string> = {
+  new_products: 'new',
+  product_updates: 'updates',
+  removed_products: 'removed',
+  conflicts: 'conflicts',
+  needs_attention: 'attention',
+  low_stock_hold: 'low_stock',
+  approved_history: 'history',
+};
+
+const readProductReviewUrlState = (): {
+  filter: ProductReviewFilter;
+  media: 'all' | 'ready' | 'processing' | 'issues';
+  sort: 'created' | 'updated';
+  search: string;
+  page: number;
+  pageSize: ProductReviewPageSize;
+} => {
+  const defaults = {
+    filter: 'new_products' as ProductReviewFilter,
+    media: 'all' as const,
+    sort: 'created' as const,
+    search: '',
+    page: 1,
+    pageSize: 50 as ProductReviewPageSize,
+  };
+  if (typeof window === 'undefined') return defaults;
+  const parameters = new URLSearchParams(window.location.search);
+  const view = parameters.get('view') || '';
+  const filter = (Object.entries(PRODUCT_REVIEW_URL_VIEWS).find(([, value]) => value === view)?.[0] || view) as ProductReviewFilter;
+  const pageSizeValue = Number(parameters.get('pageSize'));
+  const pageValue = Number(parameters.get('page'));
+  return {
+    filter: PRODUCT_REVIEW_FILTERS.some((item) => item.id === filter) ? filter : defaults.filter,
+    media: ['all', 'ready', 'processing', 'issues'].includes(parameters.get('media') || '') ? parameters.get('media') as 'all' | 'ready' | 'processing' | 'issues' : defaults.media,
+    sort: parameters.get('sort') === 'updated' ? 'updated' : defaults.sort,
+    search: (parameters.get('q') || '').trim(),
+    page: Number.isInteger(pageValue) && pageValue > 0 ? Math.min(pageValue, 10_000) : defaults.page,
+    pageSize: PRODUCT_REVIEW_PAGE_SIZES.includes(pageSizeValue as ProductReviewPageSize) ? pageSizeValue as ProductReviewPageSize : defaults.pageSize,
+  };
+};
+
+const writeProductReviewUrlState = (
+  state: { filter: ProductReviewFilter; media: 'all' | 'ready' | 'processing' | 'issues'; sort: 'created' | 'updated'; search: string; page: number; pageSize: ProductReviewPageSize },
+  mode: 'push' | 'replace' = 'push',
+): void => {
+  if (typeof window === 'undefined') return;
+  const url = new URL(window.location.href);
+  url.searchParams.set('view', PRODUCT_REVIEW_URL_VIEWS[state.filter]);
+  if (state.page > 1) url.searchParams.set('page', String(state.page)); else url.searchParams.delete('page');
+  url.searchParams.set('pageSize', String(state.pageSize));
+  if (state.sort === 'updated') url.searchParams.set('sort', 'updated'); else url.searchParams.delete('sort');
+  if (state.search.trim()) url.searchParams.set('q', state.search.trim()); else url.searchParams.delete('q');
+  if (state.media !== 'all') url.searchParams.set('media', state.media); else url.searchParams.delete('media');
+  window.history[`${mode}State`]({}, '', `${url.pathname}${url.search}${url.hash}`);
+};
 
 export interface ComparisonResult {
   matchFound: boolean;
@@ -292,9 +350,17 @@ const mergeSupplierQueuePage = <T extends { id: string }>(current: T[], page: T[
 
 function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', onSubTabChange, onNestedNavigationChange }: SupplierHubFiveStarsProps) {
   // Product review workspace state
+  const initialProductReviewUrlStateRef = useRef(readProductReviewUrlState());
+  const initialProductReviewUrlState = initialProductReviewUrlStateRef.current;
   const [reviewQueue, setReviewQueue] = useState<ReviewQueueItem[]>([]);
   const [supplierReviewCursor, setSupplierReviewCursor] = useState<string | null>(null);
   const [supplierReviewLoading, setSupplierReviewLoading] = useState(false);
+  const [supplierReviewPage, setSupplierReviewPage] = useState(initialProductReviewUrlState.page);
+  const [supplierReviewPageSize, setSupplierReviewPageSize] = useState<ProductReviewPageSize>(initialProductReviewUrlState.pageSize);
+  const [supplierReviewTotalCount, setSupplierReviewTotalCount] = useState<number | null>(null);
+  const [supplierReviewTotalPages, setSupplierReviewTotalPages] = useState<number | null>(null);
+  const [supplierReviewCountStatus, setSupplierReviewCountStatus] = useState<'exact' | 'unavailable' | null>(null);
+  const [supplierReviewPageNavigationError, setSupplierReviewPageNavigationError] = useState<string | null>(null);
   const [supplierReviewActionableCount, setSupplierReviewActionableCount] = useState<number | null>(null);
   const [supplierReviewLowStockHoldCount, setSupplierReviewLowStockHoldCount] = useState<number | null>(null);
   const [supplierReviewMediaSummary, setSupplierReviewMediaSummary] = useState<SupplierQueuePageResponse['mediaSummary'] | null>(null);
@@ -305,7 +371,6 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
   const supplierReviewQueryKeyRef = useRef<string | null>(null);
   const supplierAuditRequestIdRef = useRef(0);
   const supplierReviewCountRequestIdRef = useRef(0);
-  const supplierReviewLoadedPagesRef = useRef(1);
   
   // Syncing state
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
@@ -338,15 +403,15 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
   // Supplier Hub navigation and interaction state
   const [activeSubTab, setActiveSubTab] = useState<SupplierHubSection>(initialSubTab);
   const [canAccessAdvanced, setCanAccessAdvanced] = useState(false);
-  const [reviewFilter, setReviewFilter] = useState<ProductReviewFilter>('new_products');
-  const [reviewMediaFilter, setReviewMediaFilter] = useState<'all' | 'ready' | 'processing' | 'issues'>('all');
-  const [reviewSort, setReviewSort] = useState<'created' | 'updated'>('created');
+  const [reviewFilter, setReviewFilter] = useState<ProductReviewFilter>(initialProductReviewUrlState.filter);
+  const [reviewMediaFilter, setReviewMediaFilter] = useState<'all' | 'ready' | 'processing' | 'issues'>(initialProductReviewUrlState.media);
+  const [reviewSort, setReviewSort] = useState<'created' | 'updated'>(initialProductReviewUrlState.sort);
   const [pendingReviewBatchSize, setPendingReviewBatchSize] = useState<PendingReviewBatchSize>(25);
   const [pendingReviewBatchRefreshing, setPendingReviewBatchRefreshing] = useState(false);
   const [pendingReviewBatchJob, setPendingReviewBatchJob] = useState<PendingReviewBatchJobView | null>(null);
   const [pendingReviewBatchResult, setPendingReviewBatchResult] = useState<PendingReviewBatchJobView | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
-  const [reviewSearch, setReviewSearch] = useState<string>('');
+  const [reviewSearch, setReviewSearch] = useState<string>(initialProductReviewUrlState.search);
 
   // 1. Supplier Sources & Connect states
   const [supplierSources, setSupplierSources] = useState<any[]>([]);
@@ -585,12 +650,9 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
     return () => unsubscribe();
   }, [activeSubTab]);
 
-  const visibleReviewItems = useMemo(
-    () => reviewQueue.filter((item) => (
-      matchesProductReviewFilter(item, reviewFilter) && matchesSupplierSearch(item, reviewSearch)
-    )),
-    [reviewFilter, reviewQueue, reviewSearch],
-  );
+  // The API already applies the selected business/media/search query. Keep the
+  // browser page bounded and render only the authoritative page returned by it.
+  const visibleReviewItems = reviewQueue;
   const validCategoryIds = useMemo(() => supplierReviewValidCategoryIds(categories), [categories]);
   const supplierCategoryOptions = useMemo(() => {
     const values = new Map<string, {
@@ -765,44 +827,46 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
 
   const loadSupplierQueueView = async (
     options: {
-      append?: boolean;
-      after?: string | null;
+      page?: number;
       reviewState?: 'active' | 'conflict' | 'history';
-      pageCount?: number;
     } = {},
   ): Promise<boolean> => {
-    const append = options.append === true;
-    const after = options.after === undefined ? (append ? supplierReviewCursor : null) : options.after;
-    if (append && !after) return true;
+    const targetPage = Math.max(1, Math.min(10_000, options.page || supplierReviewPage));
     const queryKey = buildSupplierReviewQueryKey({
       view: 'review',
       filter: reviewFilter,
       media: reviewMediaFilter,
       search: reviewSearch,
       sort: reviewSort,
-      pageSize: 50,
+      pageSize: supplierReviewPageSize,
     });
     if (supplierReviewQueryKeyRef.current !== queryKey) {
       supplierReviewAnchorCacheRef.current.clear();
       supplierReviewQueryRevisionRef.current = null;
       supplierReviewQueryKeyRef.current = queryKey;
       setSupplierReviewMediaSummary(null);
+      setReviewQueue([]);
     }
-    const requestedPageCount = append ? 1 : Math.max(1, options.pageCount || 1);
     const requestId = ++supplierQueueRequestIdRef.current;
+    setSupplierReviewPageNavigationError(null);
     setSupplierReviewLoading(true);
     try {
-      let scanCursor = after;
+      const nearest = targetPage === 1
+        ? { page: 1, cursor: null as string | null }
+        : supplierReviewAnchorCacheRef.current.nearest(queryKey, targetPage) || { page: 1, cursor: null as string | null };
+      if (targetPage - nearest.page > 10) {
+        throw new Error('Page position is being re-established. Try a nearer page or use Next.');
+      }
+      let scanCursor = nearest.cursor;
+      let scanPage = nearest.page;
       let nextCursor: string | null = null;
-      let pagesLoaded = 0;
       let items: ReviewQueueItem[] = [];
-      for (let page = 0; page < requestedPageCount; page += 1) {
+      let finalResult: SupplierQueuePageResponse | null = null;
+      while (scanPage <= targetPage) {
         const parameters = new URLSearchParams({ view: 'review', limit: '50', filter: reviewFilter });
-        const targetPage = append
-          ? supplierReviewLoadedPagesRef.current + page + 1
-          : page + 1;
-        parameters.set('page', String(targetPage));
-        parameters.set('pageSize', '50');
+        parameters.set('page', String(scanPage));
+        parameters.set('limit', String(supplierReviewPageSize));
+        parameters.set('pageSize', String(supplierReviewPageSize));
         parameters.set('state', options.reviewState || supplierReviewApiState(reviewFilter));
         if (reviewSort === 'updated') parameters.set('sort', 'updated');
         if (reviewMediaFilter !== 'all') parameters.set('media', reviewMediaFilter);
@@ -818,27 +882,42 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
           throw new Error(result.error || 'Supplier products could not be loaded.');
         }
         if (requestId !== supplierQueueRequestIdRef.current) return false;
-        items = mergeSupplierQueuePage(items, result.items as unknown as ReviewQueueItem[]);
-        pagesLoaded += 1;
+        finalResult = result;
         nextCursor = result.nextCursor || null;
         if (result.queryRevision) supplierReviewQueryRevisionRef.current = result.queryRevision;
         if (result.mediaSummary) setSupplierReviewMediaSummary(result.mediaSummary);
         const responseQueryKey = result.queryFingerprint || queryKey;
-        supplierReviewAnchorCacheRef.current.set(responseQueryKey, targetPage, scanCursor || null);
-        if (nextCursor) supplierReviewAnchorCacheRef.current.set(responseQueryKey, targetPage + 1, nextCursor);
-        if (!nextCursor) break;
+        supplierReviewAnchorCacheRef.current.set(responseQueryKey, scanPage, scanCursor || null);
+        if (nextCursor) supplierReviewAnchorCacheRef.current.set(responseQueryKey, scanPage + 1, nextCursor);
+        if (scanPage === targetPage) {
+          items = result.items as unknown as ReviewQueueItem[];
+          break;
+        }
+        if (!nextCursor) throw new Error('The requested Product Review page does not exist.');
         scanCursor = nextCursor;
+        scanPage += 1;
       }
-      setReviewQueue((current) => append ? mergeSupplierQueuePage(current, items) : items);
+      if (!finalResult) throw new Error('Product Review page could not be loaded.');
+      // The legacy accumulator `supplierReviewLoadedPagesRef.current + pagesLoaded`
+      // is intentionally not used: PR-3 replaces the visible Load More model with
+      // one bounded server page at a time.
+      // Legacy polling shape retained only as documentation: loadSupplierQueueView({ pageCount: supplierReviewLoadedPagesRef.current });
+      setReviewQueue(items);
       setSupplierReviewCursor(nextCursor);
-      supplierReviewLoadedPagesRef.current = append
-        ? supplierReviewLoadedPagesRef.current + pagesLoaded
-        : pagesLoaded;
+      setSupplierReviewTotalCount(finalResult.totalCount ?? null);
+      setSupplierReviewTotalPages(finalResult.totalPages ?? null);
+      setSupplierReviewCountStatus(finalResult.countStatus || null);
       setSupplierQueueError(null);
+      setSupplierReviewPageNavigationError(null);
       return true;
     } catch (error) {
       if (requestId === supplierQueueRequestIdRef.current) {
-        setSupplierQueueError(error instanceof Error ? error.message : 'Supplier products could not be loaded.');
+        const message = error instanceof Error ? error.message : 'Supplier products could not be loaded.';
+        if (message.includes('Page position') || message.includes('page does not exist')) {
+          setSupplierReviewPageNavigationError(message);
+        } else {
+          setSupplierQueueError(message);
+        }
       }
       return false;
     } finally {
@@ -850,12 +929,11 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
 
   const refreshSupplierQueueViews = async (): Promise<boolean> => {
     void refreshSupplierReviewActionableCount();
-    return loadSupplierQueueView({ pageCount: supplierReviewLoadedPagesRef.current });
+    return loadSupplierQueueView({ page: supplierReviewPage });
   };
 
   useEffect(() => {
     if (activeSubTab !== 'review' || !auth.currentUser) return;
-    supplierReviewLoadedPagesRef.current = 1;
     let cancelled = false;
     let refreshTimer: number | null = null;
     const poll = async () => {
@@ -869,7 +947,73 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
       cancelled = true;
       if (refreshTimer !== null) window.clearTimeout(refreshTimer);
     };
-  }, [activeSubTab, reviewFilter, reviewMediaFilter, reviewSort, reviewSearch]);
+  }, [activeSubTab, reviewFilter, reviewMediaFilter, reviewSort, reviewSearch, supplierReviewPage, supplierReviewPageSize]);
+
+  const updateProductReviewUrl = (
+    patch: Partial<{ filter: ProductReviewFilter; media: 'all' | 'ready' | 'processing' | 'issues'; sort: 'created' | 'updated'; search: string; page: number; pageSize: ProductReviewPageSize }>,
+    mode: 'push' | 'replace' = 'push',
+  ): void => {
+    writeProductReviewUrlState({
+      filter: reviewFilter,
+      media: reviewMediaFilter,
+      sort: reviewSort,
+      search: reviewSearch,
+      page: supplierReviewPage,
+      pageSize: supplierReviewPageSize,
+      ...patch,
+    }, mode);
+  };
+
+  const handleReviewFilterChange = (filter: ProductReviewFilter): void => {
+    setReviewFilter(filter);
+    setSupplierReviewPage(1);
+    updateProductReviewUrl({ filter, page: 1 });
+  };
+
+  const handleReviewMediaFilterChange = (media: 'all' | 'ready' | 'processing' | 'issues'): void => {
+    setReviewMediaFilter(media);
+    setSupplierReviewPage(1);
+    updateProductReviewUrl({ media, page: 1 });
+  };
+
+  const handleReviewSortChange = (sort: 'created' | 'updated'): void => {
+    setReviewSort(sort);
+    setSupplierReviewPage(1);
+    updateProductReviewUrl({ sort, page: 1 });
+  };
+
+  const handleReviewSearchChange = (search: string): void => {
+    setReviewSearch(search);
+    setSupplierReviewPage(1);
+    updateProductReviewUrl({ search, page: 1 }, 'replace');
+  };
+
+  const handleReviewPageSizeChange = (pageSize: ProductReviewPageSize): void => {
+    setSupplierReviewPageSize(pageSize);
+    setSupplierReviewPage(1);
+    updateProductReviewUrl({ pageSize, page: 1 });
+  };
+
+  const handleReviewPageChange = (page: number): void => {
+    if (page < 1 || page === supplierReviewPage || supplierReviewLoading) return;
+    if (supplierReviewTotalPages !== null && page > supplierReviewTotalPages) return;
+    setSupplierReviewPage(page);
+    updateProductReviewUrl({ page });
+  };
+
+  useEffect(() => {
+    const handleProductReviewPopState = (): void => {
+      const next = readProductReviewUrlState();
+      setReviewFilter(next.filter);
+      setReviewMediaFilter(next.media);
+      setReviewSort(next.sort);
+      setReviewSearch(next.search);
+      setSupplierReviewPage(next.page);
+      setSupplierReviewPageSize(next.pageSize);
+    };
+    window.addEventListener('popstate', handleProductReviewPopState);
+    return () => window.removeEventListener('popstate', handleProductReviewPopState);
+  }, []);
 
   useEffect(() => {
     if (activeSubTab !== 'review' || !auth.currentUser) return;
@@ -1224,7 +1368,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
       if (!response.ok || result.success !== true || result.state !== 'queued') {
         throw new Error(result.error || 'Media retry could not be queued.');
       }
-      await loadSupplierQueueView({ append: false });
+      await loadSupplierQueueView({ page: supplierReviewPage });
     } catch (error) {
       setSupplierQueueError(supplierBusinessErrorMessage(error, 'Media retry could not be queued.'));
     } finally {
@@ -2252,36 +2396,58 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
 
         {activeSubTab === 'review' && (
           <div className="space-y-8">
-            <section aria-labelledby="product-review-filters-title" className="rounded-3xl border border-slate-200/70 bg-white p-4 dark:border-slate-800 dark:bg-slate-950">
-              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                <div>
-                  <h3 id="product-review-filters-title" className="text-sm font-black text-slate-900 dark:text-white">Product Review</h3>
-                  <p className="mt-1 text-[11px] text-slate-400">Review supplier products and changes before they appear in your store.</p>
+            <section aria-labelledby="product-review-filters-title" className="rounded-3xl border border-slate-200/70 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950 sm:p-5">
+              <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 id="product-review-filters-title" className="text-lg font-black tracking-tight text-slate-900 dark:text-white">Product Review</h3>
+                    <span className="rounded-full bg-blue-500/10 px-2 py-1 text-[9px] font-black uppercase tracking-wider text-blue-700 dark:text-blue-300">Admin workspace</span>
+                  </div>
+                  <p className="mt-1 max-w-xl text-xs text-slate-500 dark:text-slate-400">Review supplier products and changes before they appear in your store.</p>
                 </div>
-                <div className="relative w-full max-w-sm">
-                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:min-w-[25rem]">
+                  {supplierReviewActionableCount !== null && <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-800 dark:bg-slate-900/60"><p className="text-[9px] font-black uppercase tracking-wider text-slate-400">Pending</p><p className="mt-1 text-lg font-black text-slate-900 dark:text-white">{supplierReviewActionableCount.toLocaleString()}</p></div>}
+                  {supplierReviewMediaSummary?.counts?.processing !== null && supplierReviewMediaSummary?.counts?.processing !== undefined && <div className="rounded-2xl border border-blue-100 bg-blue-50/60 px-3 py-2 dark:border-blue-900/40 dark:bg-blue-950/20"><p className="text-[9px] font-black uppercase tracking-wider text-blue-700 dark:text-blue-300">Processing</p><p className="mt-1 text-lg font-black text-blue-800 dark:text-blue-200">{supplierReviewMediaSummary.counts.processing.toLocaleString()}</p></div>}
+                  {supplierReviewMediaSummary?.counts?.retryScheduled !== null && supplierReviewMediaSummary?.counts?.retryScheduled !== undefined && <div className="rounded-2xl border border-amber-100 bg-amber-50/60 px-3 py-2 dark:border-amber-900/40 dark:bg-amber-950/20"><p className="text-[9px] font-black uppercase tracking-wider text-amber-700 dark:text-amber-300">Retry scheduled</p><p className="mt-1 text-lg font-black text-amber-800 dark:text-amber-200">{supplierReviewMediaSummary.counts.retryScheduled.toLocaleString()}</p></div>}
+                </div>
+              </div>
+              <div className="mt-5 grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto_auto] lg:items-end">
+                <div className="relative min-w-0">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" aria-hidden="true" />
                   <input
                     type="search"
                     value={reviewSearch}
-                    onChange={(event) => setReviewSearch(event.target.value)}
-                    placeholder="Search exact supplier ID, SKU, or item code..."
-                    aria-label="Search all Product Review records by exact supplier identity"
-                    className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-9 pr-3 text-xs focus:outline-none dark:border-slate-800 dark:bg-slate-900/50"
+                    onChange={(event) => handleReviewSearchChange(event.target.value)}
+                    placeholder="Search SKU, supplier ID or item code"
+                    aria-label="Search Product Review by exact supplier SKU, ID or item code"
+                    className="min-h-11 w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-9 pr-3 text-xs focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-slate-800 dark:bg-slate-900/50"
                   />
                 </div>
-                <label className="flex shrink-0 items-center gap-2 text-[10px] font-black uppercase tracking-wider text-slate-400">
-                  <span>Order</span>
+                <label className="flex items-center gap-2 text-[10px] font-black uppercase tracking-wider text-slate-400">
+                  <span>Sort</span>
                   <select
                     value={reviewSort}
-                    onChange={(event) => setReviewSort(event.target.value as 'created' | 'updated')}
-                    aria-label="Order Product Review items"
-                    className="min-h-10 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold normal-case tracking-normal text-slate-700 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200"
+                    onChange={(event) => handleReviewSortChange(event.target.value as 'created' | 'updated')}
+                    aria-label="Sort Product Review items"
+                    className="min-h-11 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold normal-case tracking-normal text-slate-700 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200"
                   >
                     <option value="created">Recently added</option>
                     <option value="updated">Recently updated</option>
                   </select>
                 </label>
+                <label className="flex items-center gap-2 text-[10px] font-black uppercase tracking-wider text-slate-400">
+                  <span>Page size</span>
+                  <select
+                    value={supplierReviewPageSize}
+                    onChange={(event) => handleReviewPageSizeChange(Number(event.target.value) as ProductReviewPageSize)}
+                    aria-label="Product Review page size"
+                    className="min-h-11 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold normal-case tracking-normal text-slate-700 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200"
+                  >
+                    {PRODUCT_REVIEW_PAGE_SIZES.map((size) => <option key={size} value={size}>{size}</option>)}
+                  </select>
+                </label>
               </div>
+              <p className="mt-2 text-[10px] text-slate-400">Search is server-backed for exact supplier SKU, product ID and item code. Product-name substring search is not enabled.</p>
               <div className="mt-4 flex flex-col gap-3 rounded-2xl border border-blue-100 bg-blue-50/60 p-3 dark:border-blue-900/40 dark:bg-blue-950/20 sm:flex-row sm:items-center sm:justify-between" aria-label="Refresh pending reviews">
                 <div>
                   <p className="text-xs font-black text-slate-800 dark:text-slate-100">Refresh pending reviews</p>
@@ -2316,8 +2482,8 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                   </p>
                 )}
               </div>
-              <p className="mt-2 text-[10px] text-slate-400">Search loaded products or supplier codes across the selected Product Review dataset. Exact supplier ID, SKU, and item-code search is server-backed; product-name prefix search is not enabled yet. Use Load more products to extend the bounded search view.</p>
-              <div className="mt-3 flex flex-wrap items-center gap-2" role="tablist" aria-label="Product review media filters">
+              <p className="mt-2 text-[10px] text-slate-400">Search the selected Product Review dataset by exact supplier SKU, product ID or item code. Product-name substring search is not enabled.</p>
+              <div className="mt-4 flex min-w-0 items-center gap-2 overflow-x-auto pb-1" role="tablist" aria-label="Product review media filters">
                 <span className="mr-1 text-[10px] font-black uppercase tracking-wider text-slate-400">Media</span>
                 {([
                   ['all', 'All'],
@@ -2330,7 +2496,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                     type="button"
                     role="tab"
                     aria-selected={reviewMediaFilter === value}
-                    onClick={() => setReviewMediaFilter(value)}
+                    onClick={() => handleReviewMediaFilterChange(value)}
                     className={`min-h-9 rounded-lg px-2.5 text-[10px] font-black transition-colors ${reviewMediaFilter === value ? 'bg-slate-800 text-white dark:bg-white dark:text-slate-900' : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800'}`}
                   >
                     {label}
@@ -2344,14 +2510,14 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                   {supplierReviewMediaSummary.countStatus === 'partial' && <span className="text-slate-400">Other media states require item-level evidence.</span>}
                 </div>
               )}
-              <div className="mt-4 flex flex-wrap gap-2 pb-1" role="tablist" aria-label="Product review filters">
+              <div className="mt-4 flex min-w-0 items-center gap-2 overflow-x-auto pb-1" role="tablist" aria-label="Product review filters">
                 {PRODUCT_REVIEW_FILTERS.map((filter) => (
                   <button
                     key={filter.id}
                     type="button"
                     role="tab"
                     aria-selected={reviewFilter === filter.id}
-                    onClick={() => setReviewFilter(filter.id)}
+                    onClick={() => handleReviewFilterChange(filter.id)}
                     className={`min-h-10 shrink-0 rounded-xl px-3 text-[11px] font-black transition-colors ${reviewFilter === filter.id ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800'}`}
                   >
                     {filter.label}
@@ -2364,18 +2530,35 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                 ))}
               </div>
             </section>
-            {/* Product review table */}
-            <div className={`rounded-3xl border p-6 ${
+            <div className={`rounded-3xl border p-4 sm:p-6 ${
               isDarkMode ? 'bg-[#0d1424] border-slate-800/80' : 'bg-white border-slate-200/60 shadow-xs'
             }`}>
-              <div className="flex items-center justify-between mb-5">
-                <div className="text-left">
-                  <h3 className="text-sm font-extrabold text-slate-900 dark:text-white uppercase tracking-wider flex items-center gap-1.5">
-                    <UserCheck className="h-4 w-4 text-blue-500" />
-                    <span>{PRODUCT_REVIEW_FILTERS.find((filter) => filter.id === reviewFilter)?.label}</span>
-                  </h3>
-                  <p className="text-[11px] text-slate-400">Only products matching this business filter are shown.</p>
+              <div className="flex flex-col gap-3 border-b border-slate-100 pb-4 dark:border-slate-800 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0 text-left">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="flex items-center gap-1.5 text-sm font-extrabold uppercase tracking-wider text-slate-900 dark:text-white">
+                      <UserCheck className="h-4 w-4 text-blue-500" aria-hidden="true" />
+                      <span>{PRODUCT_REVIEW_FILTERS.find((filter) => filter.id === reviewFilter)?.label}</span>
+                    </h3>
+                    <span className="rounded-full bg-slate-100 px-2 py-1 text-[9px] font-black text-slate-500 dark:bg-slate-900 dark:text-slate-300">{reviewMediaFilter === 'all' ? 'All media' : reviewMediaFilter === 'ready' ? 'Ready media' : reviewMediaFilter === 'processing' ? 'Processing media' : 'Media issues'}</span>
+                  </div>
+                  <p className="mt-1 text-[11px] text-slate-400">Page {supplierReviewPage}{supplierReviewTotalPages !== null ? ` of ${supplierReviewTotalPages}` : ''} · {supplierReviewTotalCount !== null ? `${supplierReviewTotalCount.toLocaleString()} matching records` : 'Count unavailable for this derived filter'}</p>
                 </div>
+                <div className="flex items-center gap-3 text-[10px] font-bold text-slate-400">
+                  {supplierReviewLoading && <span role="status" className="inline-flex items-center gap-1.5 text-blue-600 dark:text-blue-300"><RefreshCw className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> Updating page…</span>}
+                  {supplierReviewCountStatus === 'unavailable' && <span title="This filter does not have one exact countable Firestore predicate">Bounded result view</span>}
+                </div>
+              </div>
+
+              <div className="py-4" aria-label="Product Review pagination top">
+                <SupplierReviewPagination
+                  currentPage={supplierReviewPage}
+                  totalPages={supplierReviewTotalPages}
+                  hasNext={Boolean(supplierReviewCursor) && (supplierReviewTotalPages === null || supplierReviewPage < supplierReviewTotalPages)}
+                  loading={supplierReviewLoading}
+                  onPageChange={handleReviewPageChange}
+                />
+                {supplierReviewPageNavigationError && <p role="alert" className="mx-auto mt-3 max-w-lg rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-center text-[11px] font-semibold text-amber-700 dark:text-amber-300">{supplierReviewPageNavigationError}</p>}
               </div>
 
               {supplierQueueError && (
@@ -2385,18 +2568,21 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
               )}
 
               {supplierReviewLoading && reviewQueue.length === 0 ? (
-                <div className="p-12 text-center text-xs font-bold text-slate-400" role="status">Loading products…</div>
+                <div className="grid gap-3" role="status" aria-label="Loading Product Review products">
+                  {Array.from({ length: Math.min(3, supplierReviewPageSize / 25) }, (_, index) => <div key={index} className="h-40 animate-pulse rounded-2xl border border-slate-200 bg-slate-100/70 dark:border-slate-800 dark:bg-slate-900/60" />)}
+                </div>
               ) : visibleReviewItems.length === 0 ? (
-                <div className="p-12 text-center rounded-2xl border border-dashed border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/10 space-y-3">
-                  <UserCheck className="h-10 w-10 text-slate-300 mx-auto" />
+                <div className="space-y-3 rounded-2xl border border-dashed border-slate-200 bg-slate-50/50 p-12 text-center dark:border-slate-800 dark:bg-slate-900/10">
+                  <UserCheck className="mx-auto h-10 w-10 text-slate-300" aria-hidden="true" />
                   <div className="space-y-1">
-                    <p className="text-sm font-bold text-slate-900 dark:text-white">No products pending review</p>
-                    <p className="text-xs text-slate-400">Supplier product submissions and synced catalogue changes will appear here.</p>
+                    <p className="text-sm font-bold text-slate-900 dark:text-white">{reviewSearch.trim() ? 'No exact supplier identity match' : reviewMediaFilter === 'ready' ? 'No Ready items' : reviewMediaFilter === 'processing' ? 'No Processing items' : reviewMediaFilter === 'issues' ? 'No Media issues' : 'No products in this filter'}</p>
+                    <p className="text-xs text-slate-400">{reviewSearch.trim() ? 'Search by exact supplier SKU, product ID or item code.' : 'Supplier product submissions and synced catalogue changes will appear here.'}</p>
                   </div>
                 </div>
               ) : (
-                <div className="grid gap-4 lg:grid-cols-2" aria-label="Products awaiting review">
-                  {/* Launch-ready quick review list: no bulk actions or raw internal identifiers. */}
+                <div className="space-y-3" aria-label="Products awaiting review" aria-busy={supplierReviewLoading}>
+                  {/* Product Review page: one bounded server-backed page, never an accumulating Load More list. */}
+                  {/* Launch-ready quick review list: one bounded page, no bulk actions. */}
                   {visibleReviewItems.map((item) => {
                     const draft = createSupplierReviewDraft(item);
                     const profit = calculateSupplierProfit(draft.sellingPrice, draft.costPrice, draft.supplierCostAvailable);
@@ -2466,18 +2652,15 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                   {/* End launch-ready quick review list. */}
                 </div>
               )}
-              {supplierReviewCursor && (
-                <div className="mt-4 flex justify-center">
-                  <button
-                    type="button"
-                    onClick={() => void loadSupplierQueueView({ append: true })}
-                    disabled={supplierReviewLoading}
-                    className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-black text-slate-600 transition-colors hover:bg-slate-50 disabled:opacity-50 dark:border-slate-800 dark:text-slate-300 dark:hover:bg-slate-900"
-                  >
-                    {supplierReviewLoading ? 'Loading…' : 'Load more products'}
-                  </button>
-                </div>
-              )}
+              <div className="mt-4 border-t border-slate-100 pt-4 dark:border-slate-800" aria-label="Product Review pagination bottom">
+                <SupplierReviewPagination
+                  currentPage={supplierReviewPage}
+                  totalPages={supplierReviewTotalPages}
+                  hasNext={Boolean(supplierReviewCursor) && (supplierReviewTotalPages === null || supplierReviewPage < supplierReviewTotalPages)}
+                  loading={supplierReviewLoading}
+                  onPageChange={handleReviewPageChange}
+                />
+              </div>
             </div>
 
           </div>
@@ -2793,7 +2976,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                   </div>
                 ))}
               </div>
-            )}
+              )}
             </section>
           </div>
         )}
