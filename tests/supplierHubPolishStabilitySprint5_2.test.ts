@@ -64,3 +64,8 @@ test('mobile Supplier Hub navigation and review filters wrap without horizontal 
 test('supplier card does not imply a successful sync is merely waiting to update', () => {
   assert.match(supplierHubSource, /Not available in supplier summary/u);
 });
+
+test('overview primary action names the actionable queue it opens', () => {
+  assert.match(supplierHubSource, />Review actionable products<\/button>/u);
+  assert.doesNotMatch(supplierHubSource, />Review media-ready products<\/button>/u);
+});

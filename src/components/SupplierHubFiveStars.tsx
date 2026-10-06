@@ -2648,7 +2648,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
             </div>
 
             <div className="flex flex-wrap gap-2" aria-label="Supplier Hub quick actions">
-              <button type="button" onClick={() => selectSubTab('review')} className="min-h-11 rounded-xl bg-blue-600 px-4 text-xs font-black text-white hover:bg-blue-700">Review media-ready products</button>
+              <button type="button" onClick={() => selectSubTab('review')} className="min-h-11 rounded-xl bg-blue-600 px-4 text-xs font-black text-white hover:bg-blue-700">Review actionable products</button>
               <button type="button" onClick={() => selectSubTab('review')} className="min-h-11 rounded-xl border border-slate-200 bg-white px-4 text-xs font-black text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200">View issues</button>
               <button type="button" onClick={() => selectSubTab('suppliers')} className="min-h-11 rounded-xl border border-slate-200 bg-white px-4 text-xs font-black text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200">Suppliers</button>
               <button type="button" onClick={() => selectSubTab('operations')} className="min-h-11 rounded-xl border border-slate-200 bg-white px-4 text-xs font-black text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200">Operations</button>
