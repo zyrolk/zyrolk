@@ -360,6 +360,8 @@ test("B2 UI: Low Stock Hold is a Product Review filter with a server-provided co
   assert.match(hub, /if \(queryFilter\) parameters\.set\('filter', queryFilter\)/u);
   assert.match(hub, /setSupplierReviewLowStockHoldCount\(supplierReviewLowStockHoldQueueCount\(result\.queues\)\)/u);
   assert.match(hub, /filter\.id === 'low_stock_hold' && supplierReviewLowStockHoldCount !== null/u);
+  assert.match(hub, /if \(filter === 'low_stock_hold'\) return 'low_stock';/u);
+  assert.match(hub, /low_stock: 'Low Stock Hold'/u);
   const routes = readFileSync("functions/src/api/routes/supplier.ts", "utf8");
   assert.match(routes, /"low_stock_hold",\s*"approved_history"/u);
 });

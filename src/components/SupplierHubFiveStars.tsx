@@ -120,7 +120,7 @@ const PENDING_REVIEW_BATCH_SIZES = [25, 50, 100] as const;
 type PendingReviewBatchSize = typeof PENDING_REVIEW_BATCH_SIZES[number];
 const PRODUCT_REVIEW_PAGE_SIZES = [25, 50, 100] as const;
 type ProductReviewPageSize = typeof PRODUCT_REVIEW_PAGE_SIZES[number];
-type SupplierReviewQueueView = 'actionable' | 'ready' | 'new' | 'updates' | 'issues' | 'waiting' | 'history';
+type SupplierReviewQueueView = 'actionable' | 'ready' | 'new' | 'updates' | 'issues' | 'waiting' | 'history' | 'low_stock';
 type SupplierReviewQueueMode = 'ready' | 'waiting' | 'advanced';
 
 const PRODUCT_REVIEW_URL_VIEWS: Record<ProductReviewFilter, string> = {
@@ -139,6 +139,7 @@ const reviewQueueViewFromState = (
   media: 'all' | 'ready' | 'processing' | 'issues',
 ): SupplierReviewQueueView => {
   if (filter === 'approved_history') return 'history';
+  if (filter === 'low_stock_hold') return 'low_stock';
   if (filter === 'actionable' && media === 'all') return 'actionable';
   if (media === 'processing') return 'waiting';
   if (media === 'issues' || filter === 'needs_attention') return 'issues';
@@ -2807,7 +2808,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                   <div className="flex flex-wrap items-center gap-2">
                     <h3 className="flex items-center gap-1.5 text-sm font-extrabold uppercase tracking-wider text-slate-900 dark:text-white">
                       <UserCheck className="h-4 w-4 text-blue-500" aria-hidden="true" />
-                      <span>{({ actionable: 'Actionable', ready: 'Media ready', new: 'New', updates: 'Updates', issues: 'Needs attention', waiting: 'Waiting', history: 'History' } as Record<SupplierReviewQueueView, string>)[reviewQueueView]}</span>
+                      <span>{({ actionable: 'Actionable', ready: 'Media ready', new: 'New', updates: 'Updates', issues: 'Needs attention', waiting: 'Waiting', history: 'History', low_stock: 'Low Stock Hold' } as Record<SupplierReviewQueueView, string>)[reviewQueueView]}</span>
                     </h3>
                     <span className="rounded-full bg-slate-100 px-2 py-1 text-[9px] font-black text-slate-500 dark:bg-slate-900 dark:text-slate-300">{reviewMediaFilter === 'all' ? 'All media' : reviewMediaFilter === 'ready' ? 'Media ready' : reviewMediaFilter === 'processing' ? 'Waiting for media' : 'Media issues'}</span>
                   </div>
