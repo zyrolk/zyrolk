@@ -72,6 +72,7 @@ test('Product Review is the only normal approval workspace and uses business lan
   const quickCard = projectFile('src/components/SupplierReviewQuickCard.tsx');
 
   assert.deepEqual(PRODUCT_REVIEW_FILTERS.map((item) => item.label), [
+    'Actionable',
     'New Products',
     'Product Updates',
     'Removed Products',

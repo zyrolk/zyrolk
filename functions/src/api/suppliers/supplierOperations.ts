@@ -3,10 +3,12 @@ import { ApiError } from "../errors";
 import {
   classifySupplierReviewRecordForCounts,
   SUPPLIER_REVIEW_CLASSIFICATION_FIELDS,
+  SUPPLIER_REVIEW_BUSINESS_QUEUE_CLASSES_FIELD,
 } from "../../scheduled/supplierReviewQueue";
 import { SUPPLIER_OPERATIONAL_ALERT_CATEGORIES } from "./supplierOperationalAlerts";
 import { classifySupplierMediaReadiness } from "./supplierMediaReadiness";
 import { SUPPLIER_MEDIA_QUEUE_CLASS_FIELD } from "./supplierMediaObservability";
+import { isSupplierReviewBusinessProjectionActive } from "./supplierReviewBusinessQueueProjection";
 
 export const OPERATIONS_PAGE_LIMIT = 50;
 export const OPERATIONS_MAX_PAGE_LIMIT = 100;
@@ -34,6 +36,8 @@ const REVIEW_MEDIA_QUEUE_CLASSES = ["ready", "processing", "issues"] as const;
 
 export interface SupplierReviewOverviewReadModel {
   actionableReviewCount: number | null;
+  needsAttentionReviewCount: number | null;
+  lowStockHoldReviewCount: number | null;
   mediaReadyCount: number | null;
   mediaProcessingCount: number | null;
   mediaIssueCount: number | null;
@@ -72,6 +76,35 @@ const loadSupplierReviewMediaProjectionCounts = async (db: Firestore): Promise<{
     // Overview must prefer an explicit unavailable value over a fabricated
     // zero if an index/read-model deployment is incomplete.
     return { ready: null, processing: null, issues: null };
+  }
+};
+
+const loadSupplierReviewBusinessProjectionCounts = async (db: Firestore): Promise<{
+  active: boolean;
+  actionable: number | null;
+  needsAttention: number | null;
+  lowStockHold: number | null;
+}> => {
+  if (!await isSupplierReviewBusinessProjectionActive(db)) {
+    return { active: false, actionable: null, needsAttention: null, lowStockHold: null };
+  }
+  try {
+    const classes = await Promise.all(["actionable", "needs_attention", "low_stock_hold"].map(async (queueClass) => {
+      const aggregate = await db.collection("supplier_review_queue")
+        .where(SUPPLIER_REVIEW_BUSINESS_QUEUE_CLASSES_FIELD, "array-contains", queueClass)
+        .count()
+        .get();
+      return [queueClass, aggregate.data().count] as const;
+    }));
+    const values = Object.fromEntries(classes) as Record<string, number>;
+    return {
+      active: true,
+      actionable: values.actionable ?? null,
+      needsAttention: values.needs_attention ?? null,
+      lowStockHold: values.low_stock_hold ?? null,
+    };
+  } catch {
+    return { active: true, actionable: null, needsAttention: null, lowStockHold: null };
   }
 };
 
@@ -379,13 +412,14 @@ export async function loadSupplierOperationsSummary(db: Firestore): Promise<Reco
   const today = new Date();
   today.setUTCHours(0, 0, 0, 0);
   const todayIso = today.toISOString();
+  const businessProjectionCounts = await loadSupplierReviewBusinessProjectionCounts(db);
   const supplierSnapshotPromise = db.collection("supplierSources").limit(1_000).get();
   const reviewMediaProjectionCountsPromise = loadSupplierReviewMediaProjectionCounts(db);
-  const actionableStatusSnapshotPromise = db.collection("supplier_review_queue")
+  const actionableStatusSnapshotPromise = businessProjectionCounts.active ? Promise.resolve(null) : db.collection("supplier_review_queue")
     .where("status", "in", ["Pending", "CONFLICT", "pending", "conflict", "Approved", "Rejected", "Suppressed", "Deleted", "Dismissed", "approved", "rejected", "suppressed", "deleted", "dismissed", "APPROVED", "REJECTED", "SUPPRESSED", "DELETED", "DISMISSED"])
     .select(...SUPPLIER_REVIEW_CLASSIFICATION_FIELDS)
     .get();
-  const actionableQueueStateSnapshotPromise = db.collection("supplier_review_queue")
+  const actionableQueueStateSnapshotPromise = businessProjectionCounts.active ? Promise.resolve(null) : db.collection("supplier_review_queue")
     .where("queueState", "in", ["queued", "leased", "processing", "review_pending", "conflict", "retryable_failure", "dead_letter"])
     .select(...SUPPLIER_REVIEW_CLASSIFICATION_FIELDS)
     .get();
@@ -454,13 +488,15 @@ export async function loadSupplierOperationsSummary(db: Firestore): Promise<Reco
   } as DocumentRecord));
   const queueCounts = Object.fromEntries(queueStates.map((state, index) => [state, stateCounts[index]]));
   const actionableQueueDocuments = new Map([
-    ...actionableStatusSnapshot.docs,
-    ...actionableQueueStateSnapshot.docs,
+    ...(actionableStatusSnapshot?.docs || []),
+    ...(actionableQueueStateSnapshot?.docs || []),
   ].map((document) => [document.id, document]));
   const reviewCountClasses = [...actionableQueueDocuments.values()]
     .map((document) => classifySupplierReviewRecordForCounts(document.data() as never));
-  const actionableReviewCount = reviewCountClasses.filter((kind) => kind === "actionable").length;
-  const lowStockHoldReviewCount = reviewCountClasses.filter((kind) => kind === "low_stock_hold").length;
+  const fallbackActionableReviewCount = reviewCountClasses.filter((kind) => kind === "actionable").length;
+  const fallbackLowStockHoldReviewCount = reviewCountClasses.filter((kind) => kind === "low_stock_hold").length;
+  const actionableReviewCount = businessProjectionCounts.actionable ?? fallbackActionableReviewCount;
+  const lowStockHoldReviewCount = businessProjectionCounts.lowStockHold ?? fallbackLowStockHoldReviewCount;
   const approvalEvents = approvalSnapshot.docs.map((document) => document.data());
   const histories = historySnapshot.docs.map((document) => document.data());
   const publishedToday = approvalEvents.filter((event) => event.action === "approve" || event.action === "approved").length;
@@ -542,6 +578,8 @@ export async function loadSupplierOperationsSummary(db: Firestore): Promise<Reco
     },
     reviewOverview: {
       actionableReviewCount,
+      needsAttentionReviewCount: businessProjectionCounts.needsAttention,
+      lowStockHoldReviewCount,
       mediaReadyCount: reviewMediaProjectionCounts.ready,
       mediaProcessingCount: reviewMediaProjectionCounts.processing,
       mediaIssueCount: reviewMediaProjectionCounts.issues,

@@ -34,6 +34,7 @@ import {
   supplierReviewMediaMatchesFilter,
 } from "../api/suppliers/supplierMediaObservability";
 import { isSupplierMediaQueueProjectionActive } from "../api/suppliers/supplierMediaQueueProjection";
+import { isSupplierReviewBusinessProjectionActive } from "../api/suppliers/supplierReviewBusinessQueueProjection";
 import { recordSupplierQueueProcessingDurationMetric } from "../api/suppliers/supplierCloudMonitoring";
 import { appLogger } from "../api/logging";
 import {
@@ -121,6 +122,8 @@ export interface SupplierQueueRecord extends Record<string, unknown> {
   mediaFailures?: unknown;
   mediaQueueClass?: SupplierMediaQueueClass;
   mediaQueueClassVersion?: number;
+  businessQueueClasses?: string[];
+  businessQueueClassesVersion?: number;
   mediaSourceImageUrls?: unknown;
 }
 
@@ -456,6 +459,7 @@ export async function ensureSupplierReviewQueueManagedMedia(
       await reference.set({
         ...retryPatch,
         ...buildSupplierMediaQueueProjection(queueItem, retryPatch),
+        ...buildSupplierReviewBusinessQueueProjection({ ...queueItem, ...retryPatch }),
       }, { merge: true });
     }
     throw error;
@@ -548,6 +552,7 @@ export async function ensureSupplierReviewQueueManagedMedia(
   await reference.set({
     ...patch,
     ...buildSupplierMediaQueueProjection(queueItem, patch),
+    ...buildSupplierReviewBusinessQueueProjection({ ...queueItem, ...patch }),
   }, { merge: true });
   // Queue workers resolve only after completion changes the queue back to
   // review_pending. The resolver intentionally fences processing records.
@@ -998,6 +1003,7 @@ export async function leaseSupplierReviewQueueItem(
       transaction.set(reference, {
         ...failure.data,
         ...buildSupplierMediaQueueProjection(record, failure.data, now),
+        ...buildSupplierReviewBusinessQueueProjection({ ...record, ...failure.data }),
       }, { merge: true });
       createSupplierAuditEvent(db, transaction, {
         queueItemId,
@@ -1025,6 +1031,7 @@ export async function leaseSupplierReviewQueueItem(
     transaction.set(reference, {
       ...leasePatch,
       ...buildSupplierMediaQueueProjection(record, leasePatch, now),
+      ...buildSupplierReviewBusinessQueueProjection({ ...record, ...leasePatch }),
     }, { merge: true });
     createSupplierAuditEvent(db, transaction, {
       queueItemId,
@@ -1089,6 +1096,7 @@ async function markSupplierQueueProcessing(db: Firestore, queueItemId: string, w
     transaction.set(reference, {
       ...processingPatch,
       ...buildSupplierMediaQueueProjection(record, processingPatch, now),
+      ...buildSupplierReviewBusinessQueueProjection({ ...record, ...processingPatch }),
     }, { merge: true });
     createSupplierAuditEvent(db, transaction, {
       queueItemId,
@@ -1135,6 +1143,7 @@ async function completeSupplierQueueItem(db: Firestore, queueItemId: string, wor
     transaction.set(reviewReference, {
       ...completionPatch,
       ...buildSupplierMediaQueueProjection(record, { queueState: completionPatch.queueState }, now),
+      ...buildSupplierReviewBusinessQueueProjection({ ...record, ...completionPatch }),
     }, { merge: true });
     createSupplierAuditEvent(db, transaction, {
       queueItemId,
@@ -1203,6 +1212,7 @@ async function recordSupplierQueueFailure(
     transaction.set(reference, {
       ...failurePatch,
       ...buildSupplierMediaQueueProjection(record, failurePatch, now),
+      ...buildSupplierReviewBusinessQueueProjection({ ...record, ...failurePatch }),
     }, { merge: true });
     createSupplierAuditEvent(db, transaction, {
       queueItemId,
@@ -1494,6 +1504,7 @@ export type SupplierQueuePageView = "review" | "import" | "changes";
 export type SupplierReviewQueuePageState = "active" | "review_pending" | "conflict" | "approved" | "rejected" | "history";
 export type SupplierReviewQueueSort = "created" | "updated";
 export type SupplierReviewBusinessFilter =
+  | "actionable"
   | "new_products"
   | "product_updates"
   | "removed_products"
@@ -1842,6 +1853,10 @@ export const reviewRecordMatchesBusinessFilter = (
   );
   if (filter === "approved_history") return reviewRecordIsTerminalDecision(projectedRecord);
   if (reviewRecordIsTerminalDecision(projectedRecord)) return false;
+  if (filter === "actionable") {
+    return reviewRecordIsActionable(projectedRecord)
+      && !supplierReviewRecordIsLowStockHold(projectedRecord);
+  }
   if (filter === "conflicts") return reviewRecordIsConflict(projectedRecord);
   if (reviewRecordIsConflict(projectedRecord)) return false;
   if (filter === "removed_products") return reviewComparisonIsRemoval(comparisonStatus);
@@ -1874,6 +1889,48 @@ export const classifySupplierReviewRecordForCounts = (
 ): "actionable" | "low_stock_hold" | null => {
   if (!reviewRecordIsActionable(record)) return null;
   return reviewRecordMatchesBusinessFilter(record, "low_stock_hold") ? "low_stock_hold" : "actionable";
+};
+
+export const SUPPLIER_REVIEW_BUSINESS_QUEUE_CLASSES_FIELD = "businessQueueClasses" as const;
+export const SUPPLIER_REVIEW_BUSINESS_QUEUE_CLASSES_VERSION = 1;
+
+export type SupplierReviewBusinessQueueClass =
+  | "actionable"
+  | "new_products"
+  | "product_updates"
+  | "removed_products"
+  | "conflicts"
+  | "needs_attention"
+  | "low_stock_hold"
+  | "approved_history";
+
+/**
+ * The persisted business queue projection is an indexed read model only. The
+ * existing per-record predicates remain the authority; this helper simply
+ * evaluates all of them once for a write or bounded migration pass.
+ */
+export const buildSupplierReviewBusinessQueueProjection = (
+  record: SupplierQueueRecord,
+  categoryRequiresSubcategory = false,
+): Record<string, unknown> => {
+  const projectedRecord = projectSupplierReviewLowStockHold(record, categoryRequiresSubcategory);
+  const classes = new Set<SupplierReviewBusinessQueueClass>();
+  if (classifySupplierReviewRecordForCounts(projectedRecord) === "actionable") classes.add("actionable");
+  ([
+    "new_products",
+    "product_updates",
+    "removed_products",
+    "conflicts",
+    "needs_attention",
+    "low_stock_hold",
+    "approved_history",
+  ] as const).forEach((filter) => {
+    if (reviewRecordMatchesBusinessFilter(projectedRecord, filter)) classes.add(filter);
+  });
+  return {
+    [SUPPLIER_REVIEW_BUSINESS_QUEUE_CLASSES_FIELD]: [...classes],
+    businessQueueClassesVersion: SUPPLIER_REVIEW_BUSINESS_QUEUE_CLASSES_VERSION,
+  };
 };
 
 /**
@@ -2100,6 +2157,7 @@ const reviewPageQuery = (
   db: Firestore,
   query: SupplierReviewQueryModel,
   queryRevision: string,
+  useIndexedBusinessProjection = false,
   useIndexedMediaProjection = false,
 ): FirebaseFirestore.Query => {
   const collection = db.collection("supplier_review_queue");
@@ -2107,6 +2165,9 @@ const reviewPageQuery = (
   let result: FirebaseFirestore.Query = statuses.length === 1
     ? collection.where("status", "==", statuses[0])
     : collection.where("status", "in", statuses);
+  if (useIndexedBusinessProjection && query.businessFilter) {
+    result = result.where(SUPPLIER_REVIEW_BUSINESS_QUEUE_CLASSES_FIELD, "array-contains", query.businessFilter);
+  }
   if (useIndexedMediaProjection && query.mediaFilter !== "all") {
     const mediaQueueClass = query.mediaFilter === "ready"
       ? "ready"
@@ -2121,8 +2182,9 @@ const reviewPageReadQuery = (
   db: Firestore,
   query: SupplierReviewQueryModel,
   queryRevision: string,
+  useIndexedBusinessProjection: boolean,
   useIndexedMediaProjection: boolean,
-): FirebaseFirestore.Query => reviewPageQuery(db, query, queryRevision, useIndexedMediaProjection)
+): FirebaseFirestore.Query => reviewPageQuery(db, query, queryRevision, useIndexedBusinessProjection, useIndexedMediaProjection)
   .orderBy(reviewSortField(query.sort), "desc")
   .orderBy(FieldPath.documentId(), "desc");
 
@@ -2187,13 +2249,15 @@ const countSupplierReviewQuery = async (
   db: Firestore,
   query: SupplierReviewQueryModel,
   queryRevision: string,
+  useIndexedBusinessProjection = false,
   useIndexedMediaProjection = false,
 ): Promise<{ totalCount: number | null; countStatus: "exact" | "unavailable"; countReason?: string }> => {
-  if (query.businessFilter || (query.mediaFilter !== "all" && !query.search && !useIndexedMediaProjection)) {
+  if ((query.businessFilter && !useIndexedBusinessProjection)
+    || (query.mediaFilter !== "all" && !query.search && !useIndexedMediaProjection)) {
     return {
       totalCount: null,
       countStatus: "unavailable",
-      countReason: query.businessFilter
+      countReason: query.businessFilter && !useIndexedBusinessProjection
         ? "This business filter includes derived review rules that are not represented by one countable Firestore predicate yet."
         : "This media filter is derived from per-item readiness evidence and has no single countable Firestore predicate yet.",
     };
@@ -2202,7 +2266,7 @@ const countSupplierReviewQuery = async (
     const documents = await readExactSupplierReviewDocuments(db, query, queryRevision);
     return { totalCount: documents.length, countStatus: "exact" };
   }
-  const aggregate = await reviewPageQuery(db, query, queryRevision, useIndexedMediaProjection).count().get();
+  const aggregate = await reviewPageQuery(db, query, queryRevision, useIndexedBusinessProjection, useIndexedMediaProjection).count().get();
   return { totalCount: aggregate.data().count, countStatus: "exact" };
 };
 
@@ -2311,12 +2375,24 @@ export async function listSupplierReviewReadModelPage(
     throw new Error("The requested page jump is too large for the available cursor anchor.");
   }
 
-  const useIndexedMediaProjection = !query.businessFilter
-    && !query.search
+  const useIndexedMediaProjection = !query.search
     && query.mediaFilter !== "all"
     && query.state !== "history"
     && await isSupplierMediaQueueProjectionActive(db);
-  const count = await countSupplierReviewQuery(db, query, queryRevision, useIndexedMediaProjection);
+  const useIndexedBusinessProjection = !query.search
+    && Boolean(query.businessFilter)
+    && await isSupplierReviewBusinessProjectionActive(db);
+  const useIndexedQueueProjection = !query.search
+    && (query.businessFilter ? useIndexedBusinessProjection : true)
+    && (query.mediaFilter === "all" ? true : useIndexedMediaProjection)
+    && Boolean(query.businessFilter || query.mediaFilter !== "all");
+  const count = await countSupplierReviewQuery(
+    db,
+    query,
+    queryRevision,
+    useIndexedBusinessProjection,
+    useIndexedMediaProjection,
+  );
   const generatedAt = new Date().toISOString();
   let currentToken = decodedCursor || decodeSupplierReviewCursorToken(createSupplierReviewPageToken({
     page: 1,
@@ -2352,8 +2428,14 @@ export async function listSupplierReviewReadModelPage(
           sortValue: reviewCursorValue(nextDocument.data()?.[reviewSortField(query.sort)]),
         }));
       }
-    } else if (useIndexedMediaProjection) {
-      let indexedQuery = reviewPageReadQuery(db, query, queryRevision, true);
+    } else if (useIndexedQueueProjection) {
+      let indexedQuery = reviewPageReadQuery(
+        db,
+        query,
+        queryRevision,
+        useIndexedBusinessProjection,
+        useIndexedMediaProjection,
+      );
       if (currentToken.anchorId) {
         const anchor = await db.collection("supplier_review_queue").doc(currentToken.anchorId).get();
         if (!anchor.exists) throw new Error("Supplier review cursor is stale.");
@@ -2483,6 +2565,14 @@ export async function retryDeadLetterSupplierReviewQueueItem(
       leaseOwner: FieldValue.delete(),
       leaseAcquiredAt: FieldValue.delete(),
       leaseExpiresAt: FieldValue.delete(),
+      ...buildSupplierReviewBusinessQueueProjection({
+        ...record,
+        ...queueIdentityProjection,
+        queueState: "queued",
+        status: "Pending",
+        retryCount: 0,
+        nextRetryAt: new Date(now).toISOString(),
+      }),
     }, { merge: true });
     createSupplierAuditEvent(db, transaction, {
       queueItemId,

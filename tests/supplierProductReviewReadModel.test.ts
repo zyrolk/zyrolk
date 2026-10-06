@@ -13,7 +13,7 @@ type StoredDocument = Record<string, unknown>;
 type StoredRecord = { id: string; data: StoredDocument };
 type FakeSnapshot = { exists: boolean; id: string; data: () => StoredDocument | undefined };
 
-const makeFakeDb = (records: StoredRecord[], options: { mediaProjectionActive?: boolean } = {}) => {
+const makeFakeDb = (records: StoredRecord[], options: { mediaProjectionActive?: boolean; businessProjectionActive?: boolean } = {}) => {
   const snapshotFor = (id: string): FakeSnapshot => {
     const record = records.find((entry) => entry.id === id);
     return { exists: Boolean(record), id, data: () => record?.data };
@@ -46,6 +46,7 @@ const makeFakeDb = (records: StoredRecord[], options: { mediaProjectionActive?: 
             current && typeof current === 'object' ? (current as Record<string, unknown>)[part] : undefined
           ), data);
           if (operator === 'in') return Array.isArray(value) && value.includes(actual);
+          if (operator === 'array-contains') return Array.isArray(actual) && actual.includes(value);
           if (operator === '<=') return String(actual || '') <= String(value);
           return actual === value;
         }));
@@ -77,9 +78,11 @@ const makeFakeDb = (records: StoredRecord[], options: { mediaProjectionActive?: 
       orderBy: (field: string, direction: string) => makeQuery().orderBy(field, direction),
       doc: (id: string) => ({ get: async () => collectionName === 'supplier_read_model_meta'
         ? {
-          exists: options.mediaProjectionActive === true,
+          exists: (id === 'supplier_review_queue_media_projection' && options.mediaProjectionActive === true)
+            || (id === 'supplier_review_queue_business_projection' && options.businessProjectionActive === true),
           id,
-          data: () => options.mediaProjectionActive === true
+          data: () => ((id === 'supplier_review_queue_media_projection' && options.mediaProjectionActive === true)
+            || (id === 'supplier_review_queue_business_projection' && options.businessProjectionActive === true))
             ? { status: 'active', version: 1 }
             : undefined,
         }
@@ -292,4 +295,36 @@ test('indexed media projection stays behind the migration gate until active', as
   });
   assert.equal(result.countStatus, 'unavailable');
   assert.match(result.countReason || '', /media filter is derived/u);
+});
+
+test('indexed business projection provides direct Actionable pages and exact counts', async () => {
+  const actionableRecords: StoredRecord[] = Array.from({ length: 75 }, (_, index) => ({
+    id: `actionable-${String(index).padStart(3, '0')}`,
+    data: {
+      status: 'Pending',
+      queueState: 'review_pending',
+      businessQueueClasses: ['actionable'],
+      businessQueueClassesVersion: 1,
+      comparison: { comparisonStatus: 'NEW_PRODUCT' },
+      productValidation: { readyToPublish: true, missingFields: [], errors: [] },
+      createdAt: new Date(Date.UTC(2026, 0, 1, 0, 0, 0, 75 - index)).toISOString(),
+      updatedAt: new Date(Date.UTC(2026, 0, 1, 0, 0, 0, 75 - index)).toISOString(),
+    },
+  }));
+  const db = makeFakeDb(actionableRecords, { businessProjectionActive: true }) as never;
+  const first = await listSupplierReviewReadModelPage(db, {
+    query: query({ businessFilter: 'actionable', pageSize: 50 }), page: 1,
+  });
+  assert.equal(first.countStatus, 'exact');
+  assert.equal(first.totalCount, 75);
+  assert.equal(first.totalPages, 2);
+  assert.equal(first.items.length, 50);
+  const second = await listSupplierReviewReadModelPage(db, {
+    query: query({ businessFilter: 'actionable', pageSize: 50 }),
+    page: 2,
+    cursor: first.nextCursor || undefined,
+    queryRevision: first.queryRevision,
+  });
+  assert.equal(second.items.length, 25);
+  assert.equal(new Set([...first.items, ...second.items].map((item) => item.id)).size, 75);
 });

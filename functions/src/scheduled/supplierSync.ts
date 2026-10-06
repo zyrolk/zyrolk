@@ -114,6 +114,7 @@ import {
   supplierReviewSourceImageUrls,
   supplierReviewQueueStateFor,
   supplierReviewStaleDecisionFieldDeletes,
+  buildSupplierReviewBusinessQueueProjection,
 } from "./supplierReviewQueue";
 import {
   normalizeSupplierCatalogPageSize,
@@ -1389,9 +1390,7 @@ export function buildSupplierDuplicateConflictReviewItem(input: {
     supplierSku: input.product.sku,
   };
 
-  return {
-    id: input.queueItemId,
-    data: {
+  const data: Record<string, unknown> = {
       ...(Object.keys(existingQueueItem).length === 0 ? buildSupplierQueueLifecycle(queueCreatedAt) : {}),
       ...existingQueueItem,
       id: input.queueItemId,
@@ -1451,8 +1450,9 @@ export function buildSupplierDuplicateConflictReviewItem(input: {
       correlationId: String(existingQueueItem.correlationId || input.queueItemId),
       createdAt: queueCreatedAt,
       updatedAt: input.detectedAt,
-    },
   };
+  Object.assign(data, buildSupplierReviewBusinessQueueProjection(data));
+  return { id: input.queueItemId, data };
 }
 
 async function acquireSyncLock(startedAt: Date, batchId: string, trigger: "scheduled" | "manual"): Promise<boolean> {
@@ -2428,6 +2428,7 @@ export async function refreshActiveSupplierReviewItem(
   }, selectedComparison);
   queueData.pendingChangePayload = pendingChange || FieldValue.delete();
   Object.assign(queueData, buildSupplierMediaQueueProjection(queueData));
+  Object.assign(queueData, buildSupplierReviewBusinessQueueProjection(queueData));
 
   const queuedWrites: SupplierSyncWrite[] = [
     {
@@ -2664,9 +2665,7 @@ export function buildPreApprovalSupplierRemovalQueueItem(input: {
     buildSupplierLifecycleFieldChange("availability", input.offer.availability, "unavailable"),
     buildSupplierLifecycleFieldChange("stock", input.offer.stock, 0),
   ];
-  return {
-    id: input.queueItemId,
-    data: {
+  const data: Record<string, unknown> = {
       ...current,
       id: input.queueItemId,
       status: "Pending",
@@ -2708,8 +2707,9 @@ export function buildPreApprovalSupplierRemovalQueueItem(input: {
       correlationId: String(current.correlationId || input.queueItemId),
       createdAt: queueCreatedAt,
       updatedAt: input.detectedAt,
-    },
   };
+  Object.assign(data, buildSupplierReviewBusinessQueueProjection(data));
+  return { id: input.queueItemId, data };
 }
 
 async function queueMissingSupplierOffersForReview(
@@ -2934,7 +2934,8 @@ async function queueMissingSupplierOffersForReview(
           createdAt,
           updatedAt: detectedAt,
         };
-        writes.push({ collection: "supplier_review_queue", id: queueItemId, data: queueData, atomicGroup: queueItemId });
+          Object.assign(queueData, buildSupplierReviewBusinessQueueProjection(queueData));
+          writes.push({ collection: "supplier_review_queue", id: queueItemId, data: queueData, atomicGroup: queueItemId });
         const auditReference = adminDb.collection("supplier_approval_audit").doc();
         writes.push({
           collection: "supplier_approval_audit",
@@ -3083,6 +3084,7 @@ async function queueMissingSupplierProductsForReview(
           createdAt,
           updatedAt: new Date().toISOString(),
         };
+        Object.assign(queueData, buildSupplierReviewBusinessQueueProjection(queueData));
         writes.push({ collection: "supplier_review_queue", id: queueItemId, data: queueData, atomicGroup: queueItemId });
         const auditReference = adminDb.collection("supplier_approval_audit").doc();
         writes.push({
@@ -4400,6 +4402,7 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
               },
             } : baseQueueData;
             Object.assign(queueData, buildSupplierMediaQueueProjection(queueData));
+            Object.assign(queueData, buildSupplierReviewBusinessQueueProjection(queueData));
             queuedWrites.push({
               collection: "supplier_review_queue",
               id: queueItemId,

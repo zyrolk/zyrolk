@@ -22,6 +22,7 @@ import {
   reviewRecordIsApproved,
   reviewRecordIsTerminalDecision,
   reviewRecordMatchesBusinessFilter,
+  buildSupplierReviewBusinessQueueProjection,
   SupplierReviewBusinessFilter,
 } from "../../scheduled/supplierReviewQueue";
 
@@ -31,6 +32,7 @@ export const SUPPLIER_REVIEW_CLEANUP_BATCH_LIMIT = 25;
 export const PRELAUNCH_ORPHANED_DEAD_LETTER_CLEANUP_REASON = "prelaunch_orphaned_dead_letter_cleanup";
 
 const ACTIVE_REVIEW_FILTERS: SupplierReviewBusinessFilter[] = [
+  "actionable",
   "new_products",
   "product_updates",
   "needs_attention",
@@ -433,6 +435,14 @@ export async function dismissOrphanedDeadLetterObservationForPrelaunchCleanup(
       leaseExpiresAt: FieldValue.delete(),
       leaseId: FieldValue.delete(),
       processingStartedAt: FieldValue.delete(),
+      ...buildSupplierReviewBusinessQueueProjection({
+        ...queueData,
+        ...queueIdentityProjection,
+        queueState: "suppressed",
+        status: "Rejected",
+        decisionAction: "deleted",
+        decisionPendingRevision: expectedPendingRevision,
+      }),
     }, { merge: true });
     if (pendingSnapshot.exists) transaction.delete(pendingReference);
     transaction.delete(importReference);

@@ -22,6 +22,8 @@
     "supplier:registry:sprint7:apply": "tsx scripts/migrateSupplierSourcesSprint7.ts --apply",
     "supplier:media-projection:dry-run": "tsx scripts/migrateSupplierMediaQueueProjection.ts",
     "supplier:media-projection:apply": "tsx scripts/migrateSupplierMediaQueueProjection.ts --apply",
+    "supplier:business-projection:dry-run": "tsx scripts/migrateSupplierReviewBusinessQueueProjection.ts",
+    "supplier:business-projection:apply": "tsx scripts/migrateSupplierReviewBusinessQueueProjection.ts --apply",
     "security:admin-claims:dry-run": "tsx scripts/grantAdminClaims.ts",
     "security:admin-claims:apply": "tsx scripts/grantAdminClaims.ts --apply",
     "release:config:check": "tsx scripts/validateProductionConfiguration.ts",

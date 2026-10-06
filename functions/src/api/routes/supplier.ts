@@ -190,6 +190,7 @@ const readSupplierReviewBusinessFilter = (value: unknown): SupplierReviewBusines
   if (value === undefined || value === "") return undefined;
   const filter = typeof value === "string" ? value.trim().toLowerCase() : "";
   const allowed: SupplierReviewBusinessFilter[] = [
+    "actionable",
     "new_products",
     "product_updates",
     "removed_products",

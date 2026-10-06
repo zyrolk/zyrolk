@@ -15,6 +15,7 @@ export const SUPPLIER_REVIEW_FRESHNESS_HOLD_MESSAGE =
   'Current supplier data could not be verified. This product cannot be approved yet.';
 
 export type ProductReviewFilter =
+  | 'actionable'
   | 'new_products'
   | 'product_updates'
   | 'removed_products'
@@ -24,6 +25,7 @@ export type ProductReviewFilter =
   | 'approved_history';
 
 export const PRODUCT_REVIEW_FILTERS: ReadonlyArray<{ id: ProductReviewFilter; label: string }> = [
+  { id: 'actionable', label: 'Actionable' },
   { id: 'new_products', label: 'New Products' },
   { id: 'product_updates', label: 'Product Updates' },
   { id: 'removed_products', label: 'Removed Products' },
@@ -737,6 +739,10 @@ export function matchesProductReviewFilter(item: ReviewPresentationItem, filter:
   const terminal = supplierReviewIsTerminalDecision(item);
   if (filter === 'approved_history') return terminal;
   if (terminal) return false;
+  if (filter === 'actionable') {
+    return ['queued', 'leased', 'processing', 'review_pending', 'conflict', 'retryable_failure', 'dead_letter'].includes(normalized(item.queueState))
+      && !supplierReviewIsLowStockHold(item);
+  }
   if (filter === 'conflicts') return isConflict(item);
   if (isConflict(item)) return false;
   if (filter === 'removed_products') return isRemovedChange(comparisonStatus);

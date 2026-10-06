@@ -33,7 +33,10 @@ import { buildSupplierLifecycleFieldChange, buildSupplierProductComparison } fro
 import { extractSupplierMediaFromRecord } from "../suppliers/supplierMediaPipeline";
 import { buildSupplierMediaQueueProjection } from "../suppliers/supplierMediaObservability";
 import { resolveSupplierPortalSkuClaim } from "../suppliers/supplierPortalSkuClaims";
-import { buildSupplierQueueLifecycle } from "../../scheduled/supplierReviewQueue";
+import {
+  buildSupplierQueueLifecycle,
+  buildSupplierReviewBusinessQueueProjection,
+} from "../../scheduled/supplierReviewQueue";
 import {
   assertNoUnresolvedSupplierStockProposal,
   calculateSupplierSummary,
@@ -1053,6 +1056,7 @@ export function registerSupplierPortalRoutes(app: express.Express, dependencies:
         updatedAt: now,
       };
       Object.assign(queueRecord, buildSupplierMediaQueueProjection(queueRecord));
+      Object.assign(queueRecord, buildSupplierReviewBusinessQueueProjection(queueRecord));
       transaction.set(dependencies.db.collection("supplier_review_queue").doc(queueId), queueRecord);
       createSupplierAuditEvent(dependencies.db, transaction, {
         queueItemId: queueId,
@@ -1218,6 +1222,7 @@ export function registerSupplierPortalRoutes(app: express.Express, dependencies:
         observedAt,
       }), { merge: true });
       Object.assign(queueRecord, buildSupplierMediaQueueProjection(queueRecord));
+      Object.assign(queueRecord, buildSupplierReviewBusinessQueueProjection(queueRecord));
       transaction.set(dependencies.db.collection("supplier_review_queue").doc(queueId), queueRecord);
       createSupplierAuditEvent(dependencies.db, transaction, {
         queueItemId: queueId, queueItem: queueRecord, action: "queued", previousState: null, newState: "queued",

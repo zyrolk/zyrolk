@@ -34,6 +34,7 @@ import {
 } from "./supplierApprovalConcurrency";
 import {
   ensureSupplierReviewQueueManagedMedia,
+  buildSupplierReviewBusinessQueueProjection,
   supplierReviewQueueSourceImageUrls,
 } from "../../scheduled/supplierReviewQueue";
 import type { SupplierManagedMediaAsset, SupplierMediaPipelineDependencies } from "./supplierMediaPipeline";
@@ -924,7 +925,10 @@ export async function decideSupplierQueueItem(
           approvalAttemptCount: FieldValue.increment(1),
           updatedAt: now,
         };
-        transaction.set(reviewReference, conflictUpdate, { merge: true });
+        transaction.set(reviewReference, {
+          ...conflictUpdate,
+          ...buildSupplierReviewBusinessQueueProjection({ ...queueItem, ...conflictUpdate }),
+        }, { merge: true });
         if (pendingSnapshot.exists) transaction.set(pendingReference, conflictUpdate, { merge: true });
         return { conflict };
       }
@@ -1388,6 +1392,11 @@ export async function decideSupplierQueueItem(
       leaseExpiresAt: FieldValue.delete(),
       leaseId: FieldValue.delete(),
       processingStartedAt: FieldValue.delete(),
+      ...buildSupplierReviewBusinessQueueProjection({
+        ...queueItem,
+        queueState: terminalState,
+        status: action === "approved" ? "Approved" : "Rejected",
+      }),
     }, { merge: true });
     transaction.delete(pendingReference);
     transaction.delete(importReference);

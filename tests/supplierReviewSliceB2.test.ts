@@ -348,14 +348,14 @@ test("B2-20 approval and publication safety are unchanged", () => {
 
 test("B2 UI: Low Stock Hold is a Product Review filter with a server-provided count", () => {
   assert.deepEqual(PRODUCT_REVIEW_FILTERS.find((filter) => filter.id === "low_stock_hold"), { id: "low_stock_hold", label: "Low Stock Hold" });
-  assert.equal(PRODUCT_REVIEW_FILTERS[0].id, "new_products", "default filter is unchanged");
+  assert.equal(PRODUCT_REVIEW_FILTERS[0].id, "actionable", "default filter prioritizes actionable work");
   assert.equal(supplierReviewApiState("low_stock_hold"), "active");
   assert.equal(supplierReviewLowStockHoldQueueCount({ actionable: 122, lowStockHold: 211 }), 211);
   assert.equal(supplierReviewLowStockHoldQueueCount({ actionable: 3 }), null);
   assert.equal(supplierReviewLowStockHoldQueueCount({ lowStockHold: -1 }), null);
 
   const hub = readFileSync("src/components/SupplierHubFiveStars.tsx", "utf8");
-  assert.match(hub, /filter: 'new_products' as ProductReviewFilter/u);
+  assert.match(hub, /filter: 'actionable' as ProductReviewFilter/u);
   assert.match(hub, /new URLSearchParams\(\{ view: 'review', limit: '50' \}\)/u);
   assert.match(hub, /if \(queryFilter\) parameters\.set\('filter', queryFilter\)/u);
   assert.match(hub, /setSupplierReviewLowStockHoldCount\(supplierReviewLowStockHoldQueueCount\(result\.queues\)\)/u);

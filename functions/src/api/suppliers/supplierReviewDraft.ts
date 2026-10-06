@@ -13,6 +13,7 @@ import {
 import { classifySupplierMediaReadiness } from "./supplierMediaReadiness";
 import { lowSupplierStockValidationError } from "./supplierLowStockPolicy";
 import {
+  buildSupplierReviewBusinessQueueProjection,
   decorateSupplierReviewQueueAdminMedia,
   supplierReviewRecordIsLowStockHold,
 } from "../../scheduled/supplierReviewQueue";
@@ -354,6 +355,12 @@ export async function saveSupplierReviewDraft(
       productPayload: nextPayload,
       productValidation,
       updatedAt: now,
+      ...buildSupplierReviewBusinessQueueProjection({
+        ...current,
+        productPayload: nextPayload,
+        productValidation,
+        updatedAt: now,
+      }),
     });
   });
 

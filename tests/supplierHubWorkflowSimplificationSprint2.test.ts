@@ -33,6 +33,7 @@ test('Supplier Hub exposes the five simple primary sections', () => {
 
 test('Product Review presents the required business filters and maps them to existing data', () => {
   assert.deepEqual(PRODUCT_REVIEW_FILTERS.map((filter) => filter.label), [
+    'Actionable',
     'New Products',
     'Product Updates',
     'Removed Products',

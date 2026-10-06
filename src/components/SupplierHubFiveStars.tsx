@@ -120,10 +120,11 @@ const PENDING_REVIEW_BATCH_SIZES = [25, 50, 100] as const;
 type PendingReviewBatchSize = typeof PENDING_REVIEW_BATCH_SIZES[number];
 const PRODUCT_REVIEW_PAGE_SIZES = [25, 50, 100] as const;
 type ProductReviewPageSize = typeof PRODUCT_REVIEW_PAGE_SIZES[number];
-type SupplierReviewQueueView = 'ready' | 'new' | 'updates' | 'issues' | 'waiting' | 'history';
+type SupplierReviewQueueView = 'actionable' | 'ready' | 'new' | 'updates' | 'issues' | 'waiting' | 'history';
 type SupplierReviewQueueMode = 'ready' | 'waiting' | 'advanced';
 
 const PRODUCT_REVIEW_URL_VIEWS: Record<ProductReviewFilter, string> = {
+  actionable: 'actionable',
   new_products: 'new',
   product_updates: 'updates',
   removed_products: 'removed',
@@ -138,6 +139,7 @@ const reviewQueueViewFromState = (
   media: 'all' | 'ready' | 'processing' | 'issues',
 ): SupplierReviewQueueView => {
   if (filter === 'approved_history') return 'history';
+  if (filter === 'actionable' && media === 'all') return 'actionable';
   if (media === 'processing') return 'waiting';
   if (media === 'issues' || filter === 'needs_attention') return 'issues';
   if (media === 'ready') return 'ready';
@@ -164,15 +166,13 @@ const readProductReviewUrlState = (): {
   queueMode: SupplierReviewQueueMode;
 } => {
   const defaults = {
-    filter: 'new_products' as ProductReviewFilter,
-    // The first screen should prioritize actionable items. The all-media view
-    // remains available through the queue/media controls.
-    media: 'ready' as const,
+    filter: 'actionable' as ProductReviewFilter,
+    media: 'all' as const,
     sort: 'created' as const,
     search: '',
     page: 1,
     pageSize: 50 as ProductReviewPageSize,
-    queueMode: 'ready' as SupplierReviewQueueMode,
+    queueMode: 'advanced' as SupplierReviewQueueMode,
   };
   if (typeof window === 'undefined') return defaults;
   const parameters = new URLSearchParams(window.location.search);
@@ -367,6 +367,8 @@ interface SupplierQueuePageResponse {
 
 interface SupplierReviewOverviewReadModel {
   actionableReviewCount: number | null;
+  needsAttentionReviewCount?: number | null;
+  lowStockHoldReviewCount?: number | null;
   mediaReadyCount: number | null;
   mediaProcessingCount: number | null;
   mediaIssueCount: number | null;
@@ -1115,6 +1117,10 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
     };
     if (view === 'ready') {
       applyQueueQuery('new_products', 'ready');
+      return;
+    }
+    if (view === 'actionable') {
+      applyQueueQuery('actionable', 'all');
       return;
     }
     if (view === 'waiting') {
@@ -2611,7 +2617,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                 { label: 'Actionable review', value: supplierReviewOverview?.actionableReviewCount ?? null, tone: 'emerald' },
                 { label: 'Media ready', value: overviewMediaCounts?.ready ?? null, tone: 'teal' },
                 { label: 'Waiting for media', value: overviewWaitingCount, tone: 'blue' },
-                { label: 'Needs attention', value: null, tone: 'amber' },
+                { label: 'Needs attention', value: supplierReviewOverview?.needsAttentionReviewCount ?? null, tone: 'amber' },
                 { label: 'Approved', value: supplierReviewOverview?.approvedCount ?? null, tone: 'slate' },
               ].map((metric) => (
                 <div key={metric.label} className="rounded-2xl border border-slate-200/70 bg-white p-3 shadow-sm dark:border-slate-800 dark:bg-slate-950">
@@ -2762,6 +2768,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
               <p className="mt-2 text-[10px] text-slate-400">Search by exact supplier SKU, product ID or item code. Product-name search is not enabled.</p>
               <div className="mt-4 flex min-w-0 flex-wrap gap-1.5" role="tablist" aria-label="Product review queue views">
                 {([
+                  ['actionable', 'Actionable'],
                   ['ready', 'Media ready'],
                   ['new', 'New'],
                   ['updates', 'Updates'],
@@ -2800,7 +2807,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                   <div className="flex flex-wrap items-center gap-2">
                     <h3 className="flex items-center gap-1.5 text-sm font-extrabold uppercase tracking-wider text-slate-900 dark:text-white">
                       <UserCheck className="h-4 w-4 text-blue-500" aria-hidden="true" />
-                      <span>{({ ready: 'Media ready', new: 'New', updates: 'Updates', issues: 'Needs attention', waiting: 'Waiting', history: 'History' } as Record<SupplierReviewQueueView, string>)[reviewQueueView]}</span>
+                      <span>{({ actionable: 'Actionable', ready: 'Media ready', new: 'New', updates: 'Updates', issues: 'Needs attention', waiting: 'Waiting', history: 'History' } as Record<SupplierReviewQueueView, string>)[reviewQueueView]}</span>
                     </h3>
                     <span className="rounded-full bg-slate-100 px-2 py-1 text-[9px] font-black text-slate-500 dark:bg-slate-900 dark:text-slate-300">{reviewMediaFilter === 'all' ? 'All media' : reviewMediaFilter === 'ready' ? 'Media ready' : reviewMediaFilter === 'processing' ? 'Waiting for media' : 'Media issues'}</span>
                   </div>
