@@ -166,8 +166,10 @@ export function SupplierReviewQuickCard({
     : isPreparing || mediaState === 'PROCESSING' || mediaState === 'RETRY_SCHEDULED'
       ? 'Waiting'
       : blockingProblems.length > 0 || ['NEEDS_ATTENTION', 'SUPPLIER_IMAGE_UNAVAILABLE', 'PERMANENT_MEDIA_CONSTRAINT', 'LEGACY_UNKNOWN'].includes(mediaState)
-        ? 'Issue'
-        : 'Ready';
+        ? 'Needs attention'
+        : decisionReady
+          ? 'Actionable'
+          : 'Review';
 
   if (compact) {
     return (
@@ -180,7 +182,7 @@ export function SupplierReviewQuickCard({
                 <h4 className="line-clamp-2 break-words text-sm font-black text-slate-900 dark:text-white">{productName}</h4>
                 <p className="mt-1 truncate text-[9px] font-bold uppercase tracking-wide text-slate-400">SKU <span className="font-mono normal-case">{supplierItemCode || 'Not supplied'}</span></p>
               </div>
-              <span className={`shrink-0 rounded-full px-2 py-1 text-[9px] font-black ${highLevelStatus === 'Ready' ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : highLevelStatus === 'Waiting' ? 'bg-blue-500/10 text-blue-700 dark:text-blue-300' : 'bg-amber-500/10 text-amber-700 dark:text-amber-300'}`} aria-label={`Review status: ${highLevelStatus}`}>{highLevelStatus}</span>
+              <span className={`shrink-0 rounded-full px-2 py-1 text-[9px] font-black ${highLevelStatus === 'Actionable' ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : highLevelStatus === 'Waiting' ? 'bg-blue-500/10 text-blue-700 dark:text-blue-300' : highLevelStatus === 'Review' ? 'bg-slate-500/10 text-slate-700 dark:text-slate-300' : 'bg-amber-500/10 text-amber-700 dark:text-amber-300'}`} aria-label={`Review status: ${highLevelStatus}`}>{highLevelStatus}</span>
             </div>
             <div className="mt-2 flex flex-wrap items-center gap-1.5">
               <span className={`rounded-full px-2 py-0.5 text-[9px] font-black ${mediaTone}`} aria-label={`Media status: ${mediaLabel}`}>{mediaLabel}</span>

@@ -521,7 +521,7 @@ const FIELD_REASON_MESSAGES: Record<string, string> = {
   images: 'Managed publishable image is not ready.',
   subcategory: 'Select an active product subcategory.',
   costprice: 'Supplier cost was not provided. Enter a valid supplier cost before approval.',
-  stock: 'Supplier inventory was not provided.',
+  stock: 'Supplier quantity not verified.',
 };
 
 /** Preserves raw supplier taxonomy/brand for operators without inventing Zyro mappings. */
@@ -594,6 +594,18 @@ export function supplierReviewOperatorProblems(item: SupplierReviewQuickApproval
     return fallback || FIELD_REASON_MESSAGES.images;
   };
 
+  const productPayload = (item.productPayload as Record<string, unknown> | null | undefined) || {};
+  const supplierMetadata = productPayload.supplierMetadata && typeof productPayload.supplierMetadata === 'object'
+    ? productPayload.supplierMetadata as Record<string, unknown>
+    : {};
+  const displayedStock = Number(productPayload.stock);
+  const lowStockHold = supplierReviewIsLowStockHold(item);
+  const stockProvenanceMessage = lowStockHold
+    ? 'Low Stock Hold · at least 4 supplier units are required before publication.'
+    : supplierMetadata.supplierStockAvailable === false && Number.isFinite(displayedStock)
+      ? 'Stock shown · supplier quantity not verified.'
+      : FIELD_REASON_MESSAGES.stock;
+
   for (const error of errors) {
     const record = error && typeof error === 'object' ? error as { field?: unknown; code?: unknown; message?: unknown } : {};
     const field = String(record.field || '').trim().toLowerCase();
@@ -604,15 +616,19 @@ export function supplierReviewOperatorProblems(item: SupplierReviewQuickApproval
       continue;
     }
     if (field && FIELD_REASON_MESSAGES[field]) {
-      remember(field, FIELD_REASON_MESSAGES[field]);
+      remember(field, field === 'stock'
+        ? (lowStockHold || supplierMetadata.supplierStockAvailable === false ? stockProvenanceMessage : message || 'Stock must be a non-negative whole number.')
+        : FIELD_REASON_MESSAGES[field]);
       continue;
     }
     if (message) remember(code || field || message.toLowerCase(), message);
   }
 
   for (const field of missingFields) {
-    remember(field, FIELD_REASON_MESSAGES[field] || `Complete required field: ${field}.`);
+    remember(field, field === 'stock' ? stockProvenanceMessage : FIELD_REASON_MESSAGES[field] || `Complete required field: ${field}.`);
   }
+
+  if (lowStockHold) remember('stock', stockProvenanceMessage);
 
   if (supplierReviewIsConflict(item)) remember('conflict', 'Conflict requires administrator resolution.');
   if (supplierReviewIsRemoval(item)) remember('removal', 'Supplier removal requires administrator resolution.');

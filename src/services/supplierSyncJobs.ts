@@ -116,6 +116,11 @@ const hasRecordedCursor = (cursor: Record<string, string | null> | null | undefi
   Boolean(cursor && Object.values(cursor).some((value) => typeof value === 'string' && value.trim().length > 0))
 );
 
+const hasCatalogIntent = (job: SupplierSyncJobView): boolean => (
+  job.jobType !== 'pending_review_refresh'
+  && job.sourceIds.length > 0
+);
+
 const hasCatalogTraversalEvidence = (job: SupplierSyncJobView): boolean => {
   const progress = job.progress;
   const counters = job.cumulativeCounters;
@@ -133,7 +138,6 @@ const hasCatalogTraversalEvidence = (job: SupplierSyncJobView): boolean => {
     || hasRecordedCursor(job.initialCursor)
     || hasRecordedCursor(job.durableCursor)
     || hasRecordedCursor(job.finalCursor)
-    || job.reconciliationStatus === 'VERIFIED'
   );
 };
 
@@ -147,7 +151,11 @@ const hasCatalogTraversalEvidence = (job: SupplierSyncJobView): boolean => {
 export const isSupplierCatalogTraversalJob = (job: SupplierSyncJobView): boolean => {
   if (job.jobType === 'pending_review_refresh') return false;
   if (job.trigger === 'manual') return true;
-  return hasCatalogTraversalEvidence(job);
+  // Scheduled lifecycle records can be marked VERIFIED by reconciliation even
+  // when they never owned a supplier traversal. Source identity is the
+  // persisted catalog-intent signal for scheduled work; counters/cursors then
+  // provide additional traversal evidence when available.
+  return hasCatalogIntent(job) && (hasCatalogTraversalEvidence(job) || job.evidenceStatus === 'current');
 };
 
 const sortActiveSupplierSyncJobs = (jobs: readonly SupplierSyncJobView[]): SupplierSyncJobView[] => (

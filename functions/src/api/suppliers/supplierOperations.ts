@@ -6,6 +6,7 @@ import {
 } from "../../scheduled/supplierReviewQueue";
 import { SUPPLIER_OPERATIONAL_ALERT_CATEGORIES } from "./supplierOperationalAlerts";
 import { classifySupplierMediaReadiness } from "./supplierMediaReadiness";
+import { SUPPLIER_MEDIA_QUEUE_CLASS_FIELD } from "./supplierMediaObservability";
 
 export const OPERATIONS_PAGE_LIMIT = 50;
 export const OPERATIONS_MAX_PAGE_LIMIT = 100;
@@ -28,11 +29,51 @@ export interface SupplierOperationsAlert {
 
 type DocumentRecord = Record<string, unknown> & { id: string };
 
+const ACTIVE_REVIEW_STATUSES = ["Pending", "CONFLICT", "pending", "conflict"] as const;
+const REVIEW_MEDIA_QUEUE_CLASSES = ["ready", "processing", "issues"] as const;
+
+export interface SupplierReviewOverviewReadModel {
+  actionableReviewCount: number | null;
+  mediaReadyCount: number | null;
+  mediaProcessingCount: number | null;
+  mediaIssueCount: number | null;
+  approvedCount: number | null;
+  publishedCount: number | null;
+  countStatus: "exact" | "partial" | "unavailable";
+  inventoryRefresh: {
+    schedule: string;
+    lastRunAt: string | null;
+    status: "unknown";
+  };
+}
+
 const OPERATIONAL_ALERT_STATUSES = ["open", "acknowledged", "resolved"] as const;
 const OPERATIONAL_ALERT_CATEGORIES = SUPPLIER_OPERATIONAL_ALERT_CATEGORIES;
 const OPERATIONAL_ALERT_SEVERITIES = ["critical", "high", "medium", "low"] as const;
 
 const number = (value: unknown): number => Number.isFinite(Number(value)) ? Math.max(0, Number(value)) : 0;
+
+const loadSupplierReviewMediaProjectionCounts = async (db: Firestore): Promise<{
+  ready: number | null;
+  processing: number | null;
+  issues: number | null;
+}> => {
+  try {
+    const counts = await Promise.all(REVIEW_MEDIA_QUEUE_CLASSES.map(async (mediaQueueClass) => {
+      const aggregate = await db.collection("supplier_review_queue")
+        .where("status", "in", ACTIVE_REVIEW_STATUSES)
+        .where(SUPPLIER_MEDIA_QUEUE_CLASS_FIELD, "==", mediaQueueClass)
+        .count()
+        .get();
+      return [mediaQueueClass, aggregate.data().count] as const;
+    }));
+    return Object.fromEntries(counts) as { ready: number; processing: number; issues: number };
+  } catch {
+    // Overview must prefer an explicit unavailable value over a fabricated
+    // zero if an index/read-model deployment is incomplete.
+    return { ready: null, processing: null, issues: null };
+  }
+};
 
 export function toOperationsIso(value: unknown): string | null {
   if (!value) return null;
@@ -339,6 +380,7 @@ export async function loadSupplierOperationsSummary(db: Firestore): Promise<Reco
   today.setUTCHours(0, 0, 0, 0);
   const todayIso = today.toISOString();
   const supplierSnapshotPromise = db.collection("supplierSources").limit(1_000).get();
+  const reviewMediaProjectionCountsPromise = loadSupplierReviewMediaProjectionCounts(db);
   const actionableStatusSnapshotPromise = db.collection("supplier_review_queue")
     .where("status", "in", ["Pending", "CONFLICT", "pending", "conflict", "Approved", "Rejected", "Suppressed", "Deleted", "Dismissed", "approved", "rejected", "suppressed", "deleted", "dismissed", "APPROVED", "REJECTED", "SUPPRESSED", "DELETED", "DISMISSED"])
     .select(...SUPPLIER_REVIEW_CLASSIFICATION_FIELDS)
@@ -370,6 +412,7 @@ export async function loadSupplierOperationsSummary(db: Firestore): Promise<Reco
     updatedReviewSnapshot,
     removedReviewSnapshot,
     operationalAlertSnapshot,
+    reviewMediaProjectionCounts,
     ...stateCounts
   ] = await Promise.all([
     supplierSnapshotPromise,
@@ -402,6 +445,7 @@ export async function loadSupplierOperationsSummary(db: Firestore): Promise<Reco
       .orderBy("lastOccurrence", "desc")
       .limit(100)
       .get(),
+    reviewMediaProjectionCountsPromise,
     ...queueStates.map((state) => countState(db, state)),
   ]);
   const suppliers: DocumentRecord[] = supplierSnapshot.docs.map((document) => ({
@@ -496,6 +540,23 @@ export async function loadSupplierOperationsSummary(db: Firestore): Promise<Reco
       failedImports: number(queueCounts.retryable_failure) + number(queueCounts.dead_letter),
       failedApprovals: number(queueCounts.conflict),
     },
+    reviewOverview: {
+      actionableReviewCount,
+      mediaReadyCount: reviewMediaProjectionCounts.ready,
+      mediaProcessingCount: reviewMediaProjectionCounts.processing,
+      mediaIssueCount: reviewMediaProjectionCounts.issues,
+      approvedCount: approvedOfferSnapshot.data().count,
+      // Published is a distinct canonical-product population and is not
+      // represented by the approved-offer count. Keep it unavailable until a
+      // supplier-scoped published aggregate exists.
+      publishedCount: null,
+      countStatus: reviewMediaProjectionCounts.ready === null ? "partial" : "exact",
+      inventoryRefresh: {
+        schedule: "every 15 minutes",
+        lastRunAt: null,
+        status: "unknown",
+      },
+    } satisfies SupplierReviewOverviewReadModel,
     suppliers: projectedSuppliers,
     queues: {
       ...queueCounts,

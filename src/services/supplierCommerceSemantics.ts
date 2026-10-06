@@ -76,8 +76,9 @@ export function formatSupplierStockLabel(
   stock: number | null | undefined,
   available: boolean,
 ): string {
-  if (!available) return "Not supplied";
-  if (!Number.isFinite(stock)) return "Not supplied";
+  if (!available && Number.isFinite(stock)) return `${Math.floor(Number(stock))} · quantity not verified`;
+  if (!available) return "Quantity not verified";
+  if (!Number.isFinite(stock)) return "Quantity not verified";
   if (stock <= 0) return "0 / Out of stock";
   return String(Math.floor(stock));
 }

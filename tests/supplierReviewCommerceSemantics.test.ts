@@ -49,7 +49,7 @@ test("missing A2Z cost is unavailable and not marked provided", () => {
 test("missing A2Z stock is unavailable while explicit zero stays known", () => {
   const missing = ProductParser.parseJsonPayload({ sku: "A2Z-NO-STOCK", title: "No stock product" });
   assert.equal(supplierStockWasProvided(missing), false);
-  assert.equal(formatSupplierStockLabel(missing.inventoryLevel, supplierStockWasProvided(missing)), "Not supplied");
+  assert.equal(formatSupplierStockLabel(missing.inventoryLevel, supplierStockWasProvided(missing)), "0 · quantity not verified");
 
   const explicitZero = ProductParser.parseJsonPayload({ sku: "A2Z-ZERO-STOCK", title: "Zero stock product", bal: 0 });
   assert.equal(explicitZero.inventoryLevel, 0);
@@ -244,7 +244,7 @@ test("missing stock is distinguishable from explicit zero", () => {
     },
   });
   assert.equal(supplierStockWasProvided(parsed), false);
-  assert.equal(formatSupplierStockLabel(0, false), "Not supplied");
+  assert.equal(formatSupplierStockLabel(0, false), "0 · quantity not verified");
 });
 
 test("market/reference price stays separate from supplier cost in pricing helper", () => {

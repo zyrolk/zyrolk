@@ -288,6 +288,7 @@ test('POST-DEPLOY-14 scheduled no-op does not replace the latest catalog travers
   const scheduledNoOp = job({
     id: 'scheduled-no-op',
     trigger: 'scheduled',
+    sourceIds: [],
     state: 'completed_with_issues',
     createdAt: '2026-10-05T11:22:00.000Z',
     finishedAt: '2026-10-05T11:22:01.000Z',
@@ -298,6 +299,29 @@ test('POST-DEPLOY-14 scheduled no-op does not replace the latest catalog travers
 
   assert.equal(selectLastCatalogSyncJob([verifiedTraversal, scheduledNoOp])?.id, 'verified-catalog');
   assert.equal(selectSupplierSyncJobViews([verifiedTraversal, scheduledNoOp]).last?.id, 'verified-catalog');
+});
+
+test('POST-DEPLOY-14b scheduled VERIFIED lifecycle record without source or traversal evidence is excluded', () => {
+  const verifiedTraversal = job({
+    id: 'verified-catalog-2',
+    trigger: 'manual',
+    state: 'completed',
+    createdAt: '2026-10-05T05:00:00.000Z',
+    finishedAt: '2026-10-05T05:02:00.000Z',
+    reconciliationStatus: 'VERIFIED',
+  });
+  const scheduledNoOp = job({
+    id: 'scheduled-verified-no-op',
+    trigger: 'scheduled',
+    sourceIds: [],
+    state: 'completed',
+    createdAt: '2026-10-05T11:22:00.000Z',
+    finishedAt: '2026-10-05T11:22:01.000Z',
+    reconciliationStatus: 'VERIFIED',
+    progress: { ...job({}).progress, pagesProcessed: 0, productsDiscovered: 0, productsObserved: 0, productsScanned: 0, productsQueued: 0, productsFailed: 0 },
+  });
+
+  assert.equal(selectLastCatalogSyncJob([verifiedTraversal, scheduledNoOp])?.id, 'verified-catalog-2');
 });
 
 test('POST-DEPLOY-15 a legitimate zero-product manual catalog job remains selectable', () => {
@@ -312,6 +336,7 @@ test('POST-DEPLOY-15 a legitimate zero-product manual catalog job remains select
   const scheduledNoOp = job({
     id: 'scheduled-no-op-newer',
     trigger: 'scheduled',
+    sourceIds: [],
     state: 'completed_with_issues',
     createdAt: '2026-10-05T07:00:00.000Z',
     finishedAt: '2026-10-05T07:00:01.000Z',

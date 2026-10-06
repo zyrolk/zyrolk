@@ -20,6 +20,11 @@ test('Overview keeps sync, inventory and media health as separate concepts', () 
   assert.match(hub, /label: 'Inventory Refresh'/u);
   assert.match(hub, /label: 'Media Processing'/u);
   assert.match(hub, /lastSyncJob\.reconciliationStatus === 'VERIFIED'/u);
+  assert.match(hub, /reviewOverview\?: SupplierReviewOverviewReadModel/u);
+  assert.match(hub, /mediaReadyCount/u);
+  assert.match(hub, /mediaProcessingCount/u);
+  assert.doesNotMatch(hub, /label: 'Approved \/ published'/u);
+  assert.doesNotMatch(hub, /refreshSupplierQueueViews\(\);[\s\S]{0,180}activeSubTab === 'overview'/u);
 });
 
 test('Review Queue uses simple views while retaining exact search and bounded pagination', () => {
@@ -30,6 +35,8 @@ test('Review Queue uses simple views while retaining exact search and bounded pa
   assert.match(hub, /supplierReviewPageSize/u);
   assert.doesNotMatch(hub, />Load more products</u);
   assert.doesNotMatch(hub, /\.offset\(/u);
+  assert.match(hub, /\['ready', 'Media ready'\]/u);
+  assert.match(hub, /\['issues', 'Needs attention'\]/u);
 });
 
 test('Compact review cards keep decisions safe and move diagnostics into secondary actions', () => {
@@ -39,6 +46,8 @@ test('Compact review cards keep decisions safe and move diagnostics into seconda
   assert.match(card, />Review</u);
   assert.match(card, /View diagnostics/u);
   assert.match(card, /Remove from Review/u);
+  assert.match(card, /Needs attention/u);
+  assert.match(card, /Actionable/u);
 });
 
 test('Operations retains pending-review maintenance and advanced diagnostics behind disclosure', () => {

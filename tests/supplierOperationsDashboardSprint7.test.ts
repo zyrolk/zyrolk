@@ -164,6 +164,18 @@ test("operations queue queries are stable, paginated, and index-backed", () => {
     && index.fields.some((field) => field.fieldPath === "queueCreatedAt" && field.order === "DESCENDING")));
 });
 
+test("operations summary exposes direct review overview aggregates without conflating populations", () => {
+  const service = projectFile("functions/src/api/suppliers/supplierOperations.ts");
+  assert.match(service, /reviewOverview:/u);
+  assert.match(service, /actionableReviewCount,/u);
+  assert.match(service, /mediaReadyCount: reviewMediaProjectionCounts\.ready/u);
+  assert.match(service, /mediaProcessingCount: reviewMediaProjectionCounts\.processing/u);
+  assert.match(service, /mediaIssueCount: reviewMediaProjectionCounts\.issues/u);
+  assert.match(service, /approvedCount: approvedOfferSnapshot\.data\(\)\.count/u);
+  assert.match(service, /publishedCount: null/u);
+  assert.match(service, /where\(SUPPLIER_MEDIA_QUEUE_CLASS_FIELD, "==", mediaQueueClass\)/u);
+});
+
 test("Sprint 1-6 Supplier Hub contracts remain wired", () => {
   const routes = projectFile("functions/src/api/routes/supplier.ts");
   const sync = projectFile("functions/src/scheduled/supplierSync.ts");
