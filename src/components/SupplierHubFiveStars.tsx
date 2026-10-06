@@ -3023,7 +3023,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                       </div>
                       <div className="space-y-0.5 border-t border-slate-100 pt-2 dark:border-slate-800/40">
                         <span className="text-slate-400 font-bold block text-[10px] uppercase">Last Successful Sync</span>
-                        <span className="text-slate-700 dark:text-slate-200 font-medium">{formatSupplierTimestamp(source.lastSuccessfulSyncAt || source.lastSuccessfulSync || source.lastSuccess, 'Not updated yet')}</span>
+                        <span className="text-slate-700 dark:text-slate-200 font-medium">{formatSupplierTimestamp(source.lastSuccessfulSyncAt || source.lastSuccessfulSync || source.lastSuccess, 'Not available in supplier summary')}</span>
                       </div>
                       <div className="space-y-0.5 border-t border-slate-100 pt-2 dark:border-slate-800/40">
                         <span className="block text-[10px] font-bold uppercase text-slate-400">Last Failed Sync</span>

@@ -1301,6 +1301,34 @@ test('duplicate active alerts update occurrence time without creating unlimited 
   assert.equal(collectionDocuments(documents, 'mail').length, 1);
 });
 
+test('individual media failures stay in Operations while storage and dead-letter incidents still notify', async () => {
+  const { db, documents } = createFakeFirestore();
+  const media = await recordSupplierOperationalAlert(db as never, {
+    category: 'media_processing_failure',
+    severity: 'critical',
+    supplierId: 'dropex',
+    queueItemId: 'queue-media',
+  }, { notificationEmail: 'admin@zyro.lk' });
+  const storage = await recordSupplierOperationalAlert(db as never, {
+    category: 'storage_failure',
+    severity: 'critical',
+    supplierId: 'dropex',
+    queueItemId: 'queue-storage',
+  }, { notificationEmail: 'admin@zyro.lk' });
+  const deadLetter = await recordSupplierOperationalAlert(db as never, {
+    category: 'dead_letter_created',
+    severity: 'critical',
+    supplierId: 'dropex',
+    queueItemId: 'queue-dead-letter',
+  }, { notificationEmail: 'admin@zyro.lk' });
+
+  assert.equal(documents.get(`supplier_operational_alerts/${media.alertId}`)?.severity, 'medium');
+  assert.equal(media.notified, false);
+  assert.equal(storage.notified, true);
+  assert.equal(deadLetter.notified, true);
+  assert.equal(collectionDocuments(documents, 'mail').length, 2);
+});
+
 test('acknowledgement and resolution preserve immutable lifecycle history and a later incident reopens safely', async () => {
   const now = Date.UTC(2026, 6, 29, 10, 0, 0);
   const { db, documents } = createFakeFirestore();
@@ -1774,16 +1802,16 @@ test('a failed alert transaction writes nothing and a retry of the same generati
   assert.equal(documents.has(`notification_outbox/${generationOneDeliveryId}`), false);
   assert.equal(collectionDocuments(documents, 'mail').filter((mail) => (mail.metadata as StoredDocument)?.alertId === failingAlertId).length, 1);
   assert.equal(collectionDocuments(documents, 'supplier_operational_alerts').length, 200);
-  assert.equal(collectionDocuments(documents, 'notification_outbox').length, 200);
-  assert.equal(collectionDocuments(documents, 'mail').length, 201);
+  assert.equal(collectionDocuments(documents, 'notification_outbox').length, 100);
+  assert.equal(collectionDocuments(documents, 'mail').length, 101);
 
   await assert.rejects(() => evaluateSupplierOperationalAlerts(
     createQueryableFirestore({ supplier_review_queue: monitorItemsForWorkBound() }) as never,
     QUEUE_AGE_NOW + FIVE_MINUTES,
     (report) => recordSupplierOperationalAlert(db as never, report, { notificationEmail: recipient }),
   ));
-  assert.equal(collectionDocuments(documents, 'notification_outbox').length, 200);
-  assert.equal(collectionDocuments(documents, 'mail').length, 201);
+  assert.equal(collectionDocuments(documents, 'notification_outbox').length, 100);
+  assert.equal(collectionDocuments(documents, 'mail').length, 101);
   const retried = collectionDocuments(documents, 'supplier_operational_alerts');
   assert.equal(retried.every((alert) => alert.incidentGeneration === 1 && alert.occurrenceCount === 2), true);
 });

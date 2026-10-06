@@ -60,3 +60,7 @@ test('mobile Supplier Hub navigation and review filters wrap without horizontal 
   assert.match(supplierHubSource, /role="tablist" aria-label="Product review queue views"/);
   assert.match(supplierHubSource, /<summary[^>]*>More filters<\/summary>/);
 });
+
+test('supplier card does not imply a successful sync is merely waiting to update', () => {
+  assert.match(supplierHubSource, /Not available in supplier summary/u);
+});

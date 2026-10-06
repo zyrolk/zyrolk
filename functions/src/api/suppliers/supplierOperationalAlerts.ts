@@ -158,7 +158,12 @@ export async function recordSupplierOperationalAlert(
   const occurredAt = new Date(now).toISOString();
   const alertId = supplierOperationalAlertId(input);
   const alertReference = db.collection(SUPPLIER_OPERATIONAL_ALERTS_COLLECTION).doc(alertId);
-  const severity = input.severity || "critical";
+  // A single product-image failure is an Operations item, not by itself a
+  // critical incident. Storage failures and dead letters keep their caller-
+  // supplied critical severity and continue to notify administrators.
+  const severity = input.category === "media_processing_failure" && input.queueItemId
+    ? "medium"
+    : input.severity || "critical";
   const presentation = CATEGORY_PRESENTATION[input.category];
   const message = cleanText(input.message, 500) || presentation.message;
   const supplierId = cleanId(input.supplierId) || null;
