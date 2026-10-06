@@ -53,6 +53,7 @@ test("business queue projection is a read model and does not replace approval or
   const migration = readFileSync("scripts/migrateSupplierReviewBusinessQueueProjection.ts", "utf8");
   assert.match(source, /SUPPLIER_REVIEW_BUSINESS_QUEUE_CLASSES_FIELD = "businessQueueClasses"/u);
   assert.match(source, /array-contains/u);
+  assert.match(source, /reviewPageReadQuery\([\s\S]*?\.count\(\)\.get\(\)/u);
   assert.match(migration, /projection-field-only/u);
   assert.match(migration, /no-product-business-data-rewrite/u);
   assert.match(migration, /MAX_BATCHES_PER_INVOCATION = 25/u);

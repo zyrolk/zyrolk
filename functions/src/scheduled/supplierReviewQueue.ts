@@ -2266,7 +2266,13 @@ const countSupplierReviewQuery = async (
     const documents = await readExactSupplierReviewDocuments(db, query, queryRevision);
     return { totalCount: documents.length, countStatus: "exact" };
   }
-  const aggregate = await reviewPageQuery(db, query, queryRevision, useIndexedBusinessProjection, useIndexedMediaProjection).count().get();
+  const aggregate = await reviewPageReadQuery(
+    db,
+    query,
+    queryRevision,
+    useIndexedBusinessProjection,
+    useIndexedMediaProjection,
+  ).count().get();
   return { totalCount: aggregate.data().count, countStatus: "exact" };
 };
 
