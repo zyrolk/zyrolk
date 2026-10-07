@@ -15,7 +15,7 @@ import { sanitizeSupplierDescriptionHtml, supplierDescriptionLooksLikeHtml } fro
 import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
 import {
   PRODUCT_IMAGE_FALLBACK, buildProductGallery, clampGalleryIndex, getDialogEscapeAction, getFocusWrapIndex,
-  groupProductSpecifications, nextGalleryIndexForKey, selectRelatedProducts,
+  groupProductSpecifications, nextGalleryIndexForKey, productImageVariantUrl, selectRelatedProducts,
 } from '../features/product-experience/productExperience';
 import ProductSpecificationsPanel from '../features/product-experience/ProductSpecificationsPanel';
 import RelatedProductsRail from '../features/product-experience/RelatedProductsRail';
@@ -78,6 +78,7 @@ export default function ProductDetailModal({
 
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [announcement, setAnnouncement] = useState('');
+  const [secondaryContentReady, setSecondaryContentReady] = useState(false);
   const prefersReducedMotion = useReducedMotion();
   const categoryDisplayName = useCategoryDisplayName();
   const productDescription = product ? product.description : '';
@@ -195,6 +196,7 @@ export default function ProductDetailModal({
       setQuantity(1);
       setAddedMessage(false);
       setShowStickyBar(false);
+      setSecondaryContentReady(false);
       
       setIsTransitioning(!prefersReducedMotion);
       const timer = window.setTimeout(() => setIsTransitioning(false), prefersReducedMotion ? 0 : 220);
@@ -214,12 +216,24 @@ export default function ProductDetailModal({
       (activeImageIndex + 1) % galleryImages.length,
       (activeImageIndex - 1 + galleryImages.length) % galleryImages.length,
     ];
-    adjacentIndexes.forEach((index) => {
-      const image = new Image();
-      image.referrerPolicy = 'no-referrer';
-      image.src = galleryImages[index];
-    });
+    const preloadTimer = window.setTimeout(() => {
+      adjacentIndexes.forEach((index) => {
+        const image = new Image();
+        image.referrerPolicy = 'no-referrer';
+        image.src = productImageVariantUrl(galleryImages[index], 'medium') || galleryImages[index];
+      });
+    }, 600);
+    return () => window.clearTimeout(preloadTimer);
   }, [activeImageIndex, galleryImages]);
+
+  useEffect(() => {
+    if (!isOpen || !product) {
+      setSecondaryContentReady(false);
+      return;
+    }
+    const secondaryContentTimer = window.setTimeout(() => setSecondaryContentReady(true), 250);
+    return () => window.clearTimeout(secondaryContentTimer);
+  }, [isOpen, product?.id]);
 
   useEffect(() => {
     if (!isOpen || !stickySentinelRef.current || !scrollContainerRef.current) return;
@@ -590,7 +604,7 @@ export default function ProductDetailModal({
                             aria-label={`Show product image ${idx + 1} of ${galleryImages.length}`}
                             aria-pressed={activeImageIndex === idx}
                           >
-                            <img src={url} alt={`${product.name} thumbnail ${idx + 1}`} loading="lazy" fetchPriority="low" decoding="async" width="160" height="160" onError={(event) => { event.currentTarget.onerror = null; event.currentTarget.src = PRODUCT_IMAGE_FALLBACK; }} className="w-full h-full object-contain rounded-xl" referrerPolicy="no-referrer" />
+                            <img src={productImageVariantUrl(url, 'thumbnail') || url} alt={`${product.name} thumbnail ${idx + 1}`} loading="lazy" fetchPriority="low" decoding="async" width="160" height="160" onError={(event) => { event.currentTarget.onerror = null; event.currentTarget.src = PRODUCT_IMAGE_FALLBACK; }} className="w-full h-full object-contain rounded-xl" referrerPolicy="no-referrer" />
                           </button>
                         ))}
                       </div>
@@ -876,7 +890,7 @@ export default function ProductDetailModal({
 
               </div>
 
-              {isReviewsEnabled && (
+              {secondaryContentReady && isReviewsEnabled && (
                 <ProductReviewsAndQuestions
                   productId={product.id}
                   productName={product.name}
@@ -885,16 +899,18 @@ export default function ProductDetailModal({
                 />
               )}
               {/* SECTION: CAROUSEL SLIDER OF RELATED PRODUCTS */}
-              <RelatedProductsRail
-                products={relatedItems}
-                scrollRef={relatedScrollRef}
-                onScroll={scrollRelated}
-                onSelect={(item) => {
-                  onSelectProduct(item);
-                  scrollContainerRef.current?.scrollTo({ top: 0, behavior: prefersReducedMotion ? 'auto' : 'smooth' });
-                }}
-                formatPrice={formatPrice}
-              />
+              {secondaryContentReady && (
+                <RelatedProductsRail
+                  products={relatedItems}
+                  scrollRef={relatedScrollRef}
+                  onScroll={scrollRelated}
+                  onSelect={(item) => {
+                    onSelectProduct(item);
+                    scrollContainerRef.current?.scrollTo({ top: 0, behavior: prefersReducedMotion ? 'auto' : 'smooth' });
+                  }}
+                  formatPrice={formatPrice}
+                />
+              )}
               {false && <div className="border-t border-slate-100 pt-14 text-left space-y-6">
                 <div className="flex justify-between items-center">
                   <div>

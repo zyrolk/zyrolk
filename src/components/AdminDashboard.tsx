@@ -437,6 +437,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
   const [categories, setCategories] = useState<Category[]>([]);
   const [brands, setBrands] = useState<Brand[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
+  const [pendingOrderNotifications, setPendingOrderNotifications] = useState<Order[]>([]);
   const [customers, setCustomers] = useState<any[]>([]);
   const [users, setUsers] = useState<any[]>([]);
   const [reviews, setReviews] = useState<any[]>([]);
@@ -893,49 +894,60 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
   };
 
   const loadData = async () => {
+    const needsCategories = ['stats', 'aiManager', 'products', 'categories'].includes(activeTab);
+    const needsBrands = ['aiManager', 'products'].includes(activeTab);
+    const needsUsers = ['stats', 'aiManager', 'customers'].includes(activeTab);
+    const needsSettings = activeTab === 'settings';
+    const needsPages = activeTab === 'pages';
     setLoading(true);
-    try {
-      const catSnap = await getDocs(query(
-        collection(db, "categories"),
-        orderBy(documentId()),
-        limit(ADMIN_REGISTRY_READ_LIMIT),
-      ));
-      const catList: Category[] = [];
-      catSnap.forEach((d) => catList.push(normalizeCategoryBlueprint({ id: d.id, ...d.data() } as Category)));
-      setCategories(sortCategoriesAlphabetically(catList));
-    } catch (e) { console.warn("Categories load error", e); }
+    if (needsCategories) {
+      try {
+        const catSnap = await getDocs(query(
+          collection(db, "categories"),
+          orderBy(documentId()),
+          limit(ADMIN_REGISTRY_READ_LIMIT),
+        ));
+        const catList: Category[] = [];
+        catSnap.forEach((d) => catList.push(normalizeCategoryBlueprint({ id: d.id, ...d.data() } as Category)));
+        setCategories(sortCategoriesAlphabetically(catList));
+      } catch (e) { console.warn("Categories load error", e); }
+    }
 
-    try {
-      const brandSnap = await getDocs(query(
-        collection(db, 'brands'),
-        orderBy(documentId()),
-        limit(ADMIN_REGISTRY_READ_LIMIT),
-      ));
-      const brandList: Brand[] = [];
-      brandSnap.forEach((d) => brandList.push({ id: d.id, ...d.data() } as Brand));
-      setBrands(sortBrandsAlphabetically(brandList));
-    } catch (e) { console.warn('Brands load error', e); }
+    if (needsBrands) {
+      try {
+        const brandSnap = await getDocs(query(
+          collection(db, 'brands'),
+          orderBy(documentId()),
+          limit(ADMIN_REGISTRY_READ_LIMIT),
+        ));
+        const brandList: Brand[] = [];
+        brandSnap.forEach((d) => brandList.push({ id: d.id, ...d.data() } as Brand));
+        setBrands(sortBrandsAlphabetically(brandList));
+      } catch (e) { console.warn('Brands load error', e); }
+    }
 
-    try {
-      const userSnap = await getDocs(query(
-        collection(db, "users"),
-        orderBy(documentId()),
-        limit(ADMIN_USER_READ_LIMIT),
-      ));
-      const userList: any[] = [];
-      userSnap.forEach((d) => userList.push({ id: d.id, ...d.data() }));
-      const previousFirstPageIds = adminFirstUserPageIdsRef.current;
-      const nextFirstPageIds = new Set(userList.map((user) => user.id));
-      setUsers((current) => [
-        ...userList,
-        ...current.filter((user) => !previousFirstPageIds.has(user.id) && !nextFirstPageIds.has(user.id)),
-      ]);
-      adminFirstUserPageIdsRef.current = nextFirstPageIds;
-      adminUserCursorRef.current = userSnap.docs.at(-1) || null;
-      setHasMoreAdminUsers(userSnap.docs.length === ADMIN_USER_READ_LIMIT);
-    } catch (e) { console.warn("Users load error", e); }
+    if (needsUsers) {
+      try {
+        const userSnap = await getDocs(query(
+          collection(db, "users"),
+          orderBy(documentId()),
+          limit(ADMIN_USER_READ_LIMIT),
+        ));
+        const userList: any[] = [];
+        userSnap.forEach((d) => userList.push({ id: d.id, ...d.data() }));
+        const previousFirstPageIds = adminFirstUserPageIdsRef.current;
+        const nextFirstPageIds = new Set(userList.map((user) => user.id));
+        setUsers((current) => [
+          ...userList,
+          ...current.filter((user) => !previousFirstPageIds.has(user.id) && !nextFirstPageIds.has(user.id)),
+        ]);
+        adminFirstUserPageIdsRef.current = nextFirstPageIds;
+        adminUserCursorRef.current = userSnap.docs.at(-1) || null;
+        setHasMoreAdminUsers(userSnap.docs.length === ADMIN_USER_READ_LIMIT);
+      } catch (e) { console.warn("Users load error", e); }
+    }
 
-    try {
+    if (needsSettings) try {
       const settingsSnap = await getDoc(doc(db, "settings", "website"));
       if (settingsSnap.exists()) {
         const sData = settingsSnap.data() as WebsiteSettings;
@@ -956,7 +968,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
       setSettingsForm(DEFAULT_WEBSITE_SETTINGS);
     }
 
-    try {
+    if (needsPages) try {
       const pageSnap = await getDocs(query(
         collection(db, "pages"),
         orderBy(documentId()),
@@ -1034,8 +1046,11 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
   }, [authorized, loadingOperationsSummary]);
 
   useEffect(() => {
-    if (authorized) void loadOperationsSummary();
-  }, [authorized]);
+    if (authorized && activeTab === 'stats') void loadOperationsSummary();
+    // The loader guards its own in-flight state. Keep this effect scoped to the
+    // active section so completion does not create a second request.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, authorized]);
 
   // Sync users & orders into customers (exclude admin/supplier operator accounts)
   useEffect(() => {
@@ -1088,10 +1103,15 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
   // Live order snapshot and live reviews snapshot
   useEffect(() => {
     if (!authorized) return;
+    const needsOrders = ['stats', 'aiManager', 'orders', 'customers'].includes(activeTab);
+    const needsReviews = ['stats', 'aiManager', 'customers'].includes(activeTab);
+    const needsProducts = ['stats', 'aiManager', 'products'].includes(activeTab);
+    const needsSummaryCounts = ['stats', 'aiManager', 'products'].includes(activeTab);
+    const needsSalesAggregate = activeTab === 'stats';
     let isInitial = true;
     let isMounted = true;
 
-    const unsubscribeOrders = onSnapshot(query(
+    const unsubscribeOrders = needsOrders ? onSnapshot(query(
       collection(db, "orders"),
       orderBy('createdAt', 'desc'),
       limit(ADMIN_ORDER_READ_LIMIT),
@@ -1149,9 +1169,27 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
         });
       }
       isInitial = false;
-    }, (error) => reportAdminDataIssue('orders', 'Live order updates are temporarily unavailable.', error));
+    }, (error) => reportAdminDataIssue('orders', 'Live order updates are temporarily unavailable.', error)) : () => undefined;
 
-    const unsubscribeReviews = onSnapshot(query(
+    // Keep the global notification bell useful outside the Orders screen
+    // without restoring the full order-page listener on every Admin section.
+    const unsubscribePendingOrderNotifications = needsOrders ? () => undefined : onSnapshot(query(
+      collection(db, "orders"),
+      where('status', '==', 'pending'),
+      limit(5),
+    ), (snapshot) => {
+      setPendingOrderNotifications(snapshot.docs.map((document) => ({
+        id: document.id,
+        ...document.data(),
+      } as Order)));
+      clearAdminDataIssue('pending-order-notifications');
+    }, (error) => reportAdminDataIssue(
+      'pending-order-notifications',
+      'Pending order notifications are temporarily unavailable.',
+      error,
+    ));
+
+    const unsubscribeReviews = needsReviews ? onSnapshot(query(
       collection(db, "reviews"),
       orderBy('createdAt', 'desc'),
       limit(ADMIN_REVIEW_READ_LIMIT),
@@ -1167,7 +1205,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
       });
       setReviews(revList);
       clearAdminDataIssue('reviews');
-    }, (error) => reportAdminDataIssue('reviews', 'Live review updates are temporarily unavailable.', error));
+    }, (error) => reportAdminDataIssue('reviews', 'Live review updates are temporarily unavailable.', error)) : () => undefined;
 
     const unsubscribeFulfilmentNotifications = onSnapshot(query(
       collection(db, 'supplier_notifications'),
@@ -1187,7 +1225,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
       error,
     ));
 
-    const unsubscribeProducts = onSnapshot(query(
+    const unsubscribeProducts = needsProducts ? onSnapshot(query(
       collection(db, "products"),
       orderBy(documentId()),
       limit(ADMIN_PRODUCT_PAGE_SIZE),
@@ -1208,9 +1246,9 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
       clearAdminDataIssue('products');
     }, (error) => {
       reportAdminDataIssue('products', 'Live product updates are temporarily unavailable.', error);
-    });
+    }) : () => undefined;
 
-    const unsubscribeProductCommercial = onSnapshot(query(
+    const unsubscribeProductCommercial = needsProducts ? onSnapshot(query(
       collection(db, PRODUCT_PRIVATE_COLLECTION),
       orderBy(documentId()),
       limit(ADMIN_PRODUCT_PAGE_SIZE),
@@ -1225,9 +1263,9 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
       clearAdminDataIssue('product-commercial');
     }, (error) => {
       reportAdminDataIssue('product-commercial', 'Private product controls are temporarily unavailable.', error);
-    });
+    }) : () => undefined;
 
-    void Promise.all([
+    if (needsSummaryCounts) void Promise.all([
       getCountFromServer(collection(db, 'orders')),
       getCountFromServer(collection(db, 'users')),
       getCountFromServer(collection(db, 'products')),
@@ -1242,7 +1280,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
       });
     }).catch((error) => console.warn('Admin summary counts could not be loaded', error));
 
-    void getAggregateFromServer(
+    if (needsSalesAggregate) void getAggregateFromServer(
       query(collection(db, 'orders'), where('status', 'in', ['confirmed', 'delivered'])),
       { totalSales: sum('totalPrice') },
     ).then((snapshot) => {
@@ -1255,12 +1293,13 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
     return () => {
       isMounted = false;
       unsubscribeOrders();
+      unsubscribePendingOrderNotifications();
       unsubscribeReviews();
       unsubscribeFulfilmentNotifications();
       unsubscribeProducts();
       unsubscribeProductCommercial();
     };
-  }, [authorized]);
+    }, [activeTab, authorized]);
 
   const loadMoreAdminProducts = async (): Promise<void> => {
     const cursor = adminProductCursorRef.current;
@@ -2132,7 +2171,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
   const notificationsList = [
     ...adminFulfilmentNotifications.map(notification => ({ ...notification, type: 'fulfilment' })),
     ...lowStockProducts.map(p => ({ id: `stock-${p.id}`, type: 'stock', text: `${p.name} is low on stock (${p.stock} left)`, time: 'Immediate action' })),
-    ...pendingOrders.slice(0, 5).map(o => ({ id: `order-${o.id}`, type: 'order', text: `New pending order #${o.orderNumber || o.id.substring(0,8)}`, time: o.createdAt ? new Date(o.createdAt).toLocaleDateString() : 'Recent' })),
+    ...(['stats', 'aiManager', 'orders', 'customers'].includes(activeTab) ? pendingOrders : pendingOrderNotifications).slice(0, 5).map(o => ({ id: `order-${o.id}`, type: 'order', text: `New pending order #${o.orderNumber || o.id.substring(0,8)}`, time: o.createdAt ? new Date(o.createdAt).toLocaleDateString() : 'Recent' })),
     ...reviews.filter(r => r.approved === false).map(r => ({ id: `rev-${r.id}`, type: 'review', text: `New unapproved review: "${r.comment}"`, time: 'Needs verification' }))
   ];
 

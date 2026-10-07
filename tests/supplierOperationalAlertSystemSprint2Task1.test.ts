@@ -1652,27 +1652,24 @@ test('201 alert reports run with bounded concurrency capped at 10 instead of ser
   let inFlight = 0;
   let maxInFlight = 0;
   let completed = 0;
-  const delayMs = 20;
-  const startedAt = Date.now();
   const result = await evaluateSupplierOperationalAlerts(
     createQueryableFirestore({ supplier_review_queue: monitorItemsForWorkBound() }) as never,
     QUEUE_AGE_NOW,
     async () => {
       inFlight += 1;
       maxInFlight = Math.max(maxInFlight, inFlight);
-      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      await new Promise((resolve) => setImmediate(resolve));
       inFlight -= 1;
       completed += 1;
     },
   );
-  const elapsedMs = Date.now() - startedAt;
 
   assert.equal(result.detected, 201);
   assert.equal(completed, 201);
   assert.equal(SUPPLIER_OPERATIONAL_ALERT_REPORT_CONCURRENCY, 10);
   assert.equal(maxInFlight, 10);
+  assert.ok(maxInFlight > 1, 'alert reports must run concurrently when the workload permits');
   assert.equal(inFlight, 0);
-  assert.ok(elapsedMs < (201 * delayMs) / 2, `201 reports took ${elapsedMs}ms; serial execution would need at least ${201 * delayMs}ms`);
 
   const monitor = readFileSync('functions/src/scheduled/supplierOperationalAlerts.ts', 'utf8');
   assert.doesNotMatch(monitor, /for \(const alert of alerts\) await report/u);

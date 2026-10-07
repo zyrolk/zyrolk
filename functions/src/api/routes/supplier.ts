@@ -22,6 +22,7 @@ import {
   loadSupplierOperationsHistory,
   loadSupplierOperationsQueue,
   loadSupplierOperationsSummary,
+  loadSupplierReviewOverview,
 } from "../suppliers/supplierOperations";
 import { SupplierRegistry } from "../suppliers/SupplierRegistry";
 import { adminAuth, adminDb } from "../firebase";
@@ -1213,6 +1214,18 @@ export function registerSupplierRoutes(app: express.Express): void {
       sendSupplierFailure(res, error, {
         logMessage: "Supplier operations summary failed.",
         fallbackMessage: "Supplier operations could not be loaded.",
+        context: { route: req.path },
+      });
+    }
+  });
+
+  app.get("/api/supplier-operations/overview", requireSupplierHubAdmin, async (req, res) => {
+    try {
+      res.status(200).json({ success: true, ...(await loadSupplierReviewOverview(adminDb)) });
+    } catch (error: unknown) {
+      sendSupplierFailure(res, error, {
+        logMessage: "Supplier overview read model failed.",
+        fallbackMessage: "Supplier overview could not be loaded.",
         context: { route: req.path },
       });
     }

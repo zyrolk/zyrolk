@@ -146,7 +146,7 @@ test('premium gallery retains live images while improving load, zoom, keyboard, 
   assert.match(modal, /buildProductGallery\(product\)/);
   assert.match(modal, /setIsMainImageLoading\(true\)/);
   assert.match(modal, /const image = new Image\(\)/);
-  assert.match(modal, /image\.src = galleryImages\[index\]/);
+  assert.match(modal, /image\.src = productImageVariantUrl\(galleryImages\[index\], 'medium'\) \|\| galleryImages\[index\]/);
   assert.match(modal, /onLoad=\{\(\) => setIsMainImageLoading\(false\)\}/);
   assert.match(modal, /fetchPriority="high"/);
   assert.match(modal, /zy-product-experience-image-loading/);

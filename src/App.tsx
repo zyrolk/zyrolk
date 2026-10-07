@@ -473,7 +473,7 @@ export default function App() {
   useEffect(() => { recentlyViewedIdsRef.current = recentlyViewedProductIds; }, [recentlyViewedProductIds]);
 
   useEffect(() => {
-    if (!routedProductId || paymentReturnContext) {
+    if (isAdminMode || !routedProductId || paymentReturnContext) {
       setIsResolvingRoutedProduct(false);
       return;
     }
@@ -509,7 +509,7 @@ export default function App() {
       if (active) setIsResolvingRoutedProduct(false);
     });
     return () => { active = false; };
-  }, [paymentReturnContext, products, routedProductId]);
+  }, [isAdminMode, paymentReturnContext, products, routedProductId]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -820,6 +820,11 @@ export default function App() {
 
   // Seeding & Firestore Live Sync
   useEffect(() => {
+    // Storefront listeners are customer-only. Admin is rendered from the same
+    // application shell, but must not pay for storefront subscriptions while
+    // the administrator is working in the back office.
+    if (isAdminMode) return;
+
     let isMounted = true;
     let unsubSettings: (() => void) | null = null;
     let unsubProds: (() => void) | null = null;
@@ -959,10 +964,10 @@ export default function App() {
       if (unsubCats) unsubCats();
       if (unsubReviews) unsubReviews();
     };
-  }, []);
+  }, [isAdminMode]);
 
   useEffect(() => {
-    if (categories.length === 0) return;
+    if (isAdminMode || categories.length === 0) return;
     let cancelled = false;
     loadStorefrontCatalogCounts(db, categories)
       .then((counts) => {
@@ -972,7 +977,7 @@ export default function App() {
       })
       .catch((error) => reportClientIssue('storefront-catalog-counts', error, 'warning'));
     return () => { cancelled = true; };
-  }, [categories, products]);
+  }, [categories, isAdminMode]);
 
   const loadMoreProducts = useCallback((): Promise<boolean> => {
     if (nextProductPagePromiseRef.current) return nextProductPagePromiseRef.current;
@@ -1010,7 +1015,7 @@ export default function App() {
   ])], [cart, compareProductIds, recentlyViewedProductIds, wishlist]);
 
   useEffect(() => {
-    if (loading || requestedProductIds.length === 0) return;
+    if (isAdminMode || loading || requestedProductIds.length === 0) return;
     const loadedIds = new Set(productsRef.current.map((product) => product.id));
     const missingIds = requestedProductIds.filter((id) => !loadedIds.has(id));
     if (missingIds.length === 0) return;
@@ -1021,7 +1026,7 @@ export default function App() {
       })
       .catch((error) => reportClientIssue('storefront-targeted-products', error, 'warning'));
     return () => { cancelled = true; };
-  }, [loading, requestedProductIds]);
+  }, [isAdminMode, loading, requestedProductIds]);
 
   // Scroll to top on page change
   useEffect(() => {
@@ -1450,7 +1455,7 @@ export default function App() {
   }, [closeProductDetail, selectedProductResolution.shouldClose]);
 
   useEffect(() => {
-    if (!liveSelectedProduct || lastTrackedProductViewRef.current === liveSelectedProduct.id) return;
+    if (isAdminMode || !liveSelectedProduct || lastTrackedProductViewRef.current === liveSelectedProduct.id) return;
     lastTrackedProductViewRef.current = liveSelectedProduct.id;
     void trackCommerceEvent('view_item', {
       currency: 'LKR',
@@ -1461,7 +1466,7 @@ export default function App() {
         price: liveSelectedProduct.price,
       })],
     });
-  }, [liveSelectedProduct]);
+  }, [isAdminMode, liveSelectedProduct]);
   const recentlyViewedProducts = useMemo(
     () => buildRecentlyViewedProducts(recentlyViewedProductIds, storefrontProducts, 24),
     [recentlyViewedProductIds, storefrontProducts],

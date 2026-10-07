@@ -667,9 +667,42 @@ export function supplierReviewQueueStoragePath(record: Record<string, unknown>):
   return String(large.storagePath || record.originalStoragePath || record.storagePath || "").trim();
 }
 
+/**
+ * Queue cards may reuse a canonical URL only when the record proves that the
+ * URL belongs to a managed Zyro Storage asset. HTTPS alone is not provenance:
+ * supplier URLs, legacy external URLs, and temporary signed URLs can all be
+ * HTTPS. The managed-media writer currently emits only `?alt=media`, so any
+ * other query parameter is treated conservatively as potentially expiring.
+ */
+export function isStableManagedSupplierMediaUrl(record: Record<string, unknown>): boolean {
+  const canonicalUrl = asString(record.firebaseStorageUrl);
+  if (!canonicalUrl || supplierReviewQueueStoragePath(record).length === 0) return false;
+  if (String(record.imageStatus || "").toLowerCase() !== "ready"
+    && String(record.imageStatus || "").toLowerCase() !== "published") return false;
+  try {
+    const parsed = new URL(canonicalUrl);
+    const hostname = parsed.hostname.toLowerCase();
+    const managedHost = hostname === "firebasestorage.googleapis.com"
+      || hostname === "storage.googleapis.com"
+      || hostname.endsWith(".firebasestorage.app");
+    if (parsed.protocol !== "https:" || !managedHost || parsed.username || parsed.password) return false;
+    const storagePath = supplierReviewQueueStoragePath(record);
+    const decodedPath = decodeURIComponent(parsed.pathname);
+    const pathMatchesManagedMetadata = hostname === "firebasestorage.googleapis.com"
+      ? decodedPath.includes("/o/") && decodedPath.slice(decodedPath.indexOf("/o/") + 3) === storagePath
+      : decodedPath.endsWith(`/${storagePath}`) || decodedPath === storagePath;
+    if (!pathMatchesManagedMetadata) return false;
+    const queryKeys = [...parsed.searchParams.keys()].map((key) => key.toLowerCase());
+    return queryKeys.every((key) => key === "alt");
+  } catch {
+    return false;
+  }
+}
+
 export async function decorateSupplierReviewQueueAdminMedia(
   items: Array<Record<string, unknown> & { id: string }>,
   signStoragePath?: (storagePath: string) => Promise<string>,
+  options: { skipSigningForUsableCanonicalUrl?: boolean } = {},
 ): Promise<Array<Record<string, unknown> & { id: string }>> {
   let signer = signStoragePath;
   if (!signer) {
@@ -697,6 +730,9 @@ export async function decorateSupplierReviewQueueAdminMedia(
       const record = asset as Record<string, unknown>;
       const storagePath = supplierReviewQueueStoragePath(record);
       if (!storagePath) return record;
+      if (options.skipSigningForUsableCanonicalUrl && isStableManagedSupplierMediaUrl(record)) {
+        return record;
+      }
       try {
         return { ...record, adminReviewUrl: await signer(storagePath) };
       } catch (error) {
@@ -1726,9 +1762,15 @@ const supplierReviewCategoryId = (record: SupplierQueueRecord): string => (
   asString(asRecord(record.productPayload).category)
 );
 
-const loadSupplierReviewCategoryRequirements = async (db: Firestore): Promise<Map<string, boolean>> => {
-  const snapshot = await db.collection("categories").get();
-  return new Map(snapshot.docs.map((document) => {
+const loadSupplierReviewCategoryRequirements = async (
+  db: Firestore,
+  categoryIds?: Iterable<string>,
+): Promise<Map<string, boolean>> => {
+  const ids = [...new Set([...categoryIds || []].map((id) => String(id || '').trim()).filter(Boolean))];
+  const documents = ids.length > 0
+    ? await db.getAll(...ids.map((id) => db.collection("categories").doc(id)))
+    : (await db.collection("categories").get()).docs;
+  return new Map(documents.filter((document) => document.exists).map((document) => {
     const data = asRecord(document.data());
     const subcategories = Array.isArray(data.subcategories) ? data.subcategories : [];
     const hasActiveSubcategory = subcategories.some((entry) => (
@@ -2216,7 +2258,7 @@ const readExactSupplierReviewDocuments = async (
     snapshot.docs.forEach((document) => documents.set(document.id, document));
   }
   const categoryRequirements = query.businessFilter
-    ? await loadSupplierReviewCategoryRequirements(db)
+    ? await loadSupplierReviewCategoryRequirements(db, [...documents.values()].map((document) => supplierReviewCategoryId(document.data() as SupplierQueueRecord)))
     : undefined;
   return Array.from(documents.values())
     .filter((document) => {
@@ -2283,13 +2325,21 @@ const projectReadModelDocuments = async (
 ): Promise<Array<Record<string, unknown> & { id: string }>> => {
   let categoryRequirements: Map<string, boolean> | undefined;
   if (query.businessFilter && documents.length > 0) {
-    categoryRequirements = await loadSupplierReviewCategoryRequirements(db);
+    categoryRequirements = await loadSupplierReviewCategoryRequirements(
+      db,
+      documents.map((document) => supplierReviewCategoryId(document.data() as SupplierQueueRecord)),
+    );
   }
   const rawDocuments = documents.map((document) => projectSupplierReviewLowStockHold(
     { id: document.id, ...document.data() },
     categoryRequirements?.get(supplierReviewCategoryId(document.data() as SupplierQueueRecord)) === true,
   ));
-  const decorated = await decorateSupplierReviewQueueAdminMedia(rawDocuments);
+  const decorated = await decorateSupplierReviewQueueAdminMedia(rawDocuments, undefined, {
+    // Queue cards can use the canonical managed URL already present in the
+    // projection. Short-lived admin signing remains available to legacy/detail
+    // callers, but is not paid once per asset on every indexed list page.
+    skipSigningForUsableCanonicalUrl: true,
+  });
   return decorated.map((item, index) => ({
     ...item,
     media: classifySupplierMediaObservability(documents[index]?.data() || {}),

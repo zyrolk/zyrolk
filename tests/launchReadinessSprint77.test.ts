@@ -115,7 +115,7 @@ test('storefront imagery has explicit lazy, priority, decoding, and sizing behav
   assert.match(hero, /loading=\{currentSlide === 0 \? 'eager' : 'lazy'\}/);
   assert.match(hero, /fetchPriority=\{currentSlide === 0 \? 'high' : 'low'\}/);
   assert.match(homepage, /loading="lazy" fetchPriority="low" decoding="async" width="160" height="160"/);
-  assert.match(relatedProducts, /loading="lazy" fetchPriority="low" decoding="async" width="600" height="600"/);
+  assert.match(relatedProducts, /productImageVariantUrl\(imageSource, 'thumbnail'\)[\s\S]*loading="lazy" fetchPriority="low" decoding="async" width="320" height="320"/);
   assert.match(footer, /loading="lazy"[\s\S]*fetchPriority="low"[\s\S]*width="220"[\s\S]*height="64"/);
 });
 

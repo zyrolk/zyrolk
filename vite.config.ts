@@ -12,11 +12,13 @@ export default defineConfig(() => {
     build: {
       modulePreload: {
         resolveDependencies(_filename, deps) {
-          return deps.filter((dep) => (
-            !dep.includes('admin-') &&
-            !dep.includes('supplier-') &&
-            !dep.includes('charts-')
-          ));
+          return deps.filter((dep) => {
+            const normalized = dep.toLowerCase();
+            return !normalized.includes('admindashboard')
+              && !normalized.includes('admin-')
+              && !normalized.includes('supplier-')
+              && !normalized.includes('charts-');
+          });
         },
       },
       rollupOptions: {

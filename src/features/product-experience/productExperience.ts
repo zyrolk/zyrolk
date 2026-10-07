@@ -17,6 +17,30 @@ export const PRODUCT_IMAGE_FALLBACK = `data:image/svg+xml,${encodeURIComponent(P
 
 const cleanString = (value: unknown): string => typeof value === 'string' ? value.trim() : '';
 
+export type ProductImageVariant = 'thumbnail' | 'medium' | 'large';
+
+/**
+ * Managed supplier media already has deterministic thumbnail/medium/large
+ * objects. Keep arbitrary legacy or supplier URLs unchanged.
+ */
+export const productImageVariantUrl = (url: string, variant: ProductImageVariant): string => {
+  const source = cleanString(url);
+  if (!source) return '';
+  return source
+    .replace(/%2Flarge%2F/giu, `%2F${variant}%2F`)
+    .replace(/\/large\//giu, `/${variant}/`);
+};
+
+export const productImageSrcSet = (url: string): string | undefined => {
+  const source = cleanString(url);
+  if (!source) return undefined;
+  const thumbnail = productImageVariantUrl(source, 'thumbnail');
+  const medium = productImageVariantUrl(source, 'medium');
+  const large = productImageVariantUrl(source, 'large');
+  if (new Set([thumbnail, medium, large]).size === 1) return undefined;
+  return `${thumbnail} 320w, ${medium} 960w, ${large} 1600w`;
+};
+
 export const buildProductGallery = (product: Pick<Product, 'imageUrl' | 'imageUrls'>): string[] => {
   const images = [product.imageUrl, ...(Array.isArray(product.imageUrls) ? product.imageUrls : [])]
     .map(cleanString)

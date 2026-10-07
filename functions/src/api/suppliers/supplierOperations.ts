@@ -51,6 +51,29 @@ export interface SupplierReviewOverviewReadModel {
   };
 }
 
+export function supplierReviewOverviewCountStatus(input: {
+  actionableReviewCount: number | null;
+  needsAttentionReviewCount: number | null;
+  lowStockHoldReviewCount: number | null;
+  mediaReadyCount: number | null;
+  mediaProcessingCount: number | null;
+  mediaIssueCount: number | null;
+  approvedCount: number | null;
+}): SupplierReviewOverviewReadModel["countStatus"] {
+  const requiredCounts = [
+    input.actionableReviewCount,
+    input.needsAttentionReviewCount,
+    input.lowStockHoldReviewCount,
+    input.mediaReadyCount,
+    input.mediaProcessingCount,
+    input.mediaIssueCount,
+    input.approvedCount,
+  ];
+  return requiredCounts.every((value) => value !== null && value !== undefined)
+    ? "exact"
+    : "partial";
+}
+
 const OPERATIONAL_ALERT_STATUSES = ["open", "acknowledged", "resolved"] as const;
 const OPERATIONAL_ALERT_CATEGORIES = SUPPLIER_OPERATIONAL_ALERT_CATEGORIES;
 const OPERATIONAL_ALERT_SEVERITIES = ["critical", "high", "medium", "low"] as const;
@@ -78,6 +101,47 @@ const loadSupplierReviewMediaProjectionCounts = async (db: Firestore): Promise<{
     return { ready: null, processing: null, issues: null };
   }
 };
+
+/**
+ * Small daily read model for Supplier Hub Overview. Operations keeps its
+ * heavier history/diagnostic fan-out, while the Overview only receives the
+ * counts and health fields it actually renders.
+ */
+export async function loadSupplierReviewOverview(db: Firestore): Promise<Record<string, unknown>> {
+  const [businessProjectionCounts, mediaProjectionCounts, approvedOffers] = await Promise.all([
+    loadSupplierReviewBusinessProjectionCounts(db),
+    loadSupplierReviewMediaProjectionCounts(db),
+    db.collection("supplier_product_offers").where("reviewStatus", "==", "approved").count().get(),
+  ]);
+
+  return {
+    generatedAt: new Date().toISOString(),
+    reviewOverview: {
+      actionableReviewCount: businessProjectionCounts.actionable,
+      needsAttentionReviewCount: businessProjectionCounts.needsAttention,
+      lowStockHoldReviewCount: businessProjectionCounts.lowStockHold,
+      mediaReadyCount: mediaProjectionCounts.ready,
+      mediaProcessingCount: mediaProjectionCounts.processing,
+      mediaIssueCount: mediaProjectionCounts.issues,
+      approvedCount: approvedOffers.data().count,
+      publishedCount: null,
+      countStatus: supplierReviewOverviewCountStatus({
+        actionableReviewCount: businessProjectionCounts.actionable,
+        needsAttentionReviewCount: businessProjectionCounts.needsAttention,
+        lowStockHoldReviewCount: businessProjectionCounts.lowStockHold,
+        mediaReadyCount: mediaProjectionCounts.ready,
+        mediaProcessingCount: mediaProjectionCounts.processing,
+        mediaIssueCount: mediaProjectionCounts.issues,
+        approvedCount: approvedOffers.data().count,
+      }),
+      inventoryRefresh: {
+        schedule: "every 15 minutes",
+        lastRunAt: null,
+        status: "unknown",
+      },
+    } satisfies SupplierReviewOverviewReadModel,
+  };
+}
 
 const loadSupplierReviewBusinessProjectionCounts = async (db: Firestore): Promise<{
   active: boolean;
@@ -588,7 +652,15 @@ export async function loadSupplierOperationsSummary(db: Firestore): Promise<Reco
       // represented by the approved-offer count. Keep it unavailable until a
       // supplier-scoped published aggregate exists.
       publishedCount: null,
-      countStatus: reviewMediaProjectionCounts.ready === null ? "partial" : "exact",
+      countStatus: supplierReviewOverviewCountStatus({
+        actionableReviewCount,
+        needsAttentionReviewCount: businessProjectionCounts.needsAttention,
+        lowStockHoldReviewCount,
+        mediaReadyCount: reviewMediaProjectionCounts.ready,
+        mediaProcessingCount: reviewMediaProjectionCounts.processing,
+        mediaIssueCount: reviewMediaProjectionCounts.issues,
+        approvedCount: approvedOfferSnapshot.data().count,
+      }),
       inventoryRefresh: {
         schedule: "every 15 minutes",
         lastRunAt: null,

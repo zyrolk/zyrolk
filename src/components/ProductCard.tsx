@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { BadgeDollarSign, Check, Eye, Star, ShoppingCart, Heart, Truck } from 'lucide-react';
 import { Product } from '../types';
-import { PRODUCT_IMAGE_FALLBACK } from '../features/product-experience/productExperience';
+import { PRODUCT_IMAGE_FALLBACK, productImageSrcSet, productImageVariantUrl } from '../features/product-experience/productExperience';
 import { sanitizeStorefrontCategoryId } from '../services/storefront/storefrontCatalog';
 import { resolveCustomerPromotion } from '../services/products/promotionPolicy';
 import { useCategoryDisplayName } from './CategoryDisplayContext';
@@ -39,6 +39,9 @@ function ProductCard({
   const deliveryLabel = 'Delivery available';
   const isCodEnabled = settings?.enableCOD !== false;
   const promotion = resolveCustomerPromotion(product);
+  const imageSource = product.imageUrl || PRODUCT_IMAGE_FALLBACK;
+  const cardImageSource = productImageVariantUrl(imageSource, 'thumbnail') || imageSource;
+  const cardImageSrcSet = productImageSrcSet(imageSource);
 
   useEffect(() => () => {
     if (addedTimerRef.current !== null) window.clearTimeout(addedTimerRef.current);
@@ -127,7 +130,9 @@ function ProductCard({
           <span className="sr-only">View product details</span>
         </button>
         <img
-          src={product.imageUrl || PRODUCT_IMAGE_FALLBACK}
+          src={cardImageSource}
+          srcSet={cardImageSrcSet}
+          sizes="(max-width: 640px) 45vw, (max-width: 1024px) 30vw, 240px"
           alt={product.name}
           referrerPolicy="no-referrer"
           loading="lazy"

@@ -2,7 +2,7 @@ import { RefObject } from 'react';
 import { ArrowRight, ChevronLeft, ChevronRight, Star } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
 import { Product } from '../../types';
-import { PRODUCT_IMAGE_FALLBACK } from './productExperience';
+import { PRODUCT_IMAGE_FALLBACK, productImageSrcSet, productImageVariantUrl } from './productExperience';
 import { sanitizeStorefrontCategoryId } from '../../services/storefront/storefrontCatalog';
 import { resolveCustomerPromotion } from '../../services/products/promotionPolicy';
 import { useCategoryDisplayName } from '../../components/CategoryDisplayContext';
@@ -35,13 +35,14 @@ export default function RelatedProductsRail({ products, scrollRef, onScroll, onS
       <div ref={scrollRef} className="zy-related-products-rail flex snap-x snap-mandatory gap-4 overflow-x-auto py-3 scrollbar-none" aria-label="Related products">
         {products.map((item) => {
           const promotion = resolveCustomerPromotion(item);
+          const imageSource = item.imageUrl || PRODUCT_IMAGE_FALLBACK;
           return <motion.button
           type="button" key={item.id} whileHover={shouldReduceMotion ? undefined : { y: -4 }} whileTap={shouldReduceMotion ? undefined : { scale: 0.98 }} onClick={() => onSelect(item)}
           className="zy-related-product-card group flex h-full w-[185px] flex-shrink-0 snap-start flex-col rounded-2xl border border-slate-200 bg-white p-4 text-left transition-all hover:border-brand-blue/25 hover:shadow-lg focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20 sm:w-[230px]"
           aria-label={`View related product ${item.name}`}
         >
           <div className="zy-related-product-image relative mb-4 flex aspect-square w-full items-center justify-center overflow-hidden rounded-xl bg-slate-50 p-3">
-            <img src={item.imageUrl || PRODUCT_IMAGE_FALLBACK} alt={item.name} loading="lazy" fetchPriority="low" decoding="async" width="600" height="600" onError={(event) => { event.currentTarget.onerror = null; event.currentTarget.src = PRODUCT_IMAGE_FALLBACK; }} className="max-h-full max-w-full object-contain transition-transform duration-500 group-hover:scale-105" referrerPolicy="no-referrer" />
+            <img src={productImageVariantUrl(imageSource, 'thumbnail') || imageSource} srcSet={productImageSrcSet(imageSource)} sizes="(max-width: 640px) 185px, 230px" alt={item.name} loading="lazy" fetchPriority="low" decoding="async" width="320" height="320" onError={(event) => { event.currentTarget.onerror = null; event.currentTarget.src = PRODUCT_IMAGE_FALLBACK; }} className="max-h-full max-w-full object-contain transition-transform duration-500 group-hover:scale-105" referrerPolicy="no-referrer" />
             {promotion && <span className="absolute left-2.5 top-2.5 rounded-lg bg-brand-blue px-2.5 py-1 text-[9px] font-black text-white">-{promotion.discountPercent}%</span>}
             <span className={`zy-related-product-stock ${item.stock > 0 ? 'is-available' : 'is-unavailable'}`}>{item.stock > 0 ? 'In stock' : 'Out of stock'}</span>
           </div>

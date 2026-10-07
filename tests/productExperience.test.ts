@@ -4,7 +4,8 @@ import { Product } from '../src/types';
 import {
   PRODUCT_IMAGE_FALLBACK, LatestRequestGate, SubmissionGuard, buildProductGallery,
   calculateReviewSummary, clampGalleryIndex, getDialogEscapeAction, getFocusWrapIndex,
-  groupProductSpecifications, nextGalleryIndexForKey, projectProductReview, selectRelatedProducts,
+  groupProductSpecifications, nextGalleryIndexForKey, productImageSrcSet, productImageVariantUrl,
+  projectProductReview, selectRelatedProducts,
 } from '../src/features/product-experience/productExperience';
 
 const product = (id: string, overrides: Partial<Product> = {}): Product => ({
@@ -17,6 +18,17 @@ test('gallery deduplicates images, supplies fallback, and clamps indexes', () =>
   assert.deepEqual(buildProductGallery(product('p', { imageUrl: '', imageUrls: [] })), [PRODUCT_IMAGE_FALLBACK]);
   assert.equal(clampGalleryIndex(7, 2), 1);
   assert.equal(clampGalleryIndex(-1, 2), 0);
+});
+
+test('responsive product media selects existing managed variants without rewriting legacy URLs', () => {
+  const managedUrl = 'https://storage.example.test/o/media%2Flarge%2Fproduct-1.webp?alt=media';
+  assert.equal(productImageVariantUrl(managedUrl, 'thumbnail'), 'https://storage.example.test/o/media%2Fthumbnail%2Fproduct-1.webp?alt=media');
+  assert.equal(productImageVariantUrl(managedUrl, 'medium'), 'https://storage.example.test/o/media%2Fmedium%2Fproduct-1.webp?alt=media');
+  assert.match(productImageSrcSet(managedUrl) || '', /320w/);
+  assert.match(productImageSrcSet(managedUrl) || '', /960w/);
+  assert.match(productImageSrcSet(managedUrl) || '', /1600w/);
+  assert.equal(productImageVariantUrl('https://supplier.example.test/image.jpg', 'thumbnail'), 'https://supplier.example.test/image.jpg');
+  assert.equal(productImageSrcSet('https://supplier.example.test/image.jpg'), undefined);
 });
 
 test('specifications normalize, order, group, and preserve source immutability', () => {

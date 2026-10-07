@@ -96,8 +96,6 @@ import {
   supplierReviewTerminalLabel,
   supplierReviewStorefrontLabel,
   supplierReviewTerminalItem,
-  supplierReviewActionableQueueCount,
-  supplierReviewLowStockHoldQueueCount,
   supplierBusinessErrorMessage,
   isSupplierReviewStaleObservationError,
   SUPPLIER_REVIEW_STALE_REFRESH_MESSAGE,
@@ -538,17 +536,17 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
   const refreshSupplierReviewActionableCount = useCallback(async (): Promise<void> => {
     const requestId = ++supplierReviewCountRequestIdRef.current;
     try {
-      const response = await getSupplierApi('/api/supplier-operations/summary');
+      const response = await getSupplierApi('/api/supplier-operations/overview');
       const result = await response.json().catch(() => ({})) as {
         success?: boolean;
         queues?: Record<string, unknown>;
         reviewOverview?: SupplierReviewOverviewReadModel;
       };
-      if (!response.ok || result.success !== true || !result.queues) return;
+      if (!response.ok || result.success !== true || !result.reviewOverview) return;
       if (requestId === supplierReviewCountRequestIdRef.current) {
-        setSupplierReviewOverview(result.reviewOverview || null);
-        setSupplierReviewActionableCount(result.reviewOverview?.actionableReviewCount ?? supplierReviewActionableQueueCount(result.queues));
-        setSupplierReviewLowStockHoldCount(supplierReviewLowStockHoldQueueCount(result.queues));
+        setSupplierReviewOverview(result.reviewOverview);
+        setSupplierReviewActionableCount(result.reviewOverview.actionableReviewCount);
+        setSupplierReviewLowStockHoldCount(result.reviewOverview.lowStockHoldReviewCount ?? null);
       }
     } catch {
       // Keep the last authoritative count while a transient summary request fails.
@@ -653,8 +651,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
         ...referencedJobs.filter((job): job is SupplierSyncJobView => Boolean(job)),
       ]);
     }
-    void refreshSupplierReviewActionableCount();
-  }, [applySyncJobViews, refreshSupplierReviewActionableCount]);
+  }, [applySyncJobViews]);
 
   useEffect(() => {
     let cancelled = false;
@@ -734,7 +731,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
   }, []);
 
   useEffect(() => {
-    if (!['review', 'suppliers', 'settings', 'overview'].includes(activeSubTab)) return;
+    if (!['review', 'suppliers', 'settings'].includes(activeSubTab)) return;
     void loadReviewCatalog();
   }, [activeSubTab, loadReviewCatalog]);
 

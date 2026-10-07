@@ -14,6 +14,12 @@ import { SupplierRegistry } from "../functions/src/api/suppliers/SupplierRegistr
 
 const requireFunctions = createRequire(import.meta.url);
 const { buildSupplierProductApprovalBaseline } = requireFunctions("../functions/src/api/suppliers/supplierApprovalConcurrency.ts") as typeof import("../functions/src/api/suppliers/supplierApprovalConcurrency");
+// Node 22's tsx/CJS boundary can load the Functions registry as a separate
+// module instance from the ESM test import. Patch both instances so these
+// tests never fall through to real supplier URL validation or public DNS.
+const { SupplierRegistry: CommonJsSupplierRegistry } = requireFunctions("../functions/src/api/suppliers/SupplierRegistry.ts") as {
+  SupplierRegistry: typeof SupplierRegistry;
+};
 
 type Stored = Record<string, unknown>;
 
@@ -1077,6 +1083,7 @@ test("real draft save, supplier refresh, and approval preserve Admin taxonomy wh
     ],
   };
   const originalCreateConnector = SupplierRegistry.createConnectorForSourceRecord;
+  const originalCommonJsCreateConnector = CommonJsSupplierRegistry.createConnectorForSourceRecord;
   let lookupCount = 0;
   try {
     SupplierRegistry.createConnectorForSourceRecord = async () => ({
@@ -1095,6 +1102,7 @@ test("real draft save, supplier refresh, and approval preserve Admin taxonomy wh
         return freshProduct;
       },
     } as never);
+    CommonJsSupplierRegistry.createConnectorForSourceRecord = SupplierRegistry.createConnectorForSourceRecord;
 
     const refreshed = await withPatchedAdminDb(fixture.db, () => refreshActiveSupplierReviewItem(
       fixture.queueItemId,
@@ -1134,12 +1142,14 @@ test("real draft save, supplier refresh, and approval preserve Admin taxonomy wh
     assert.equal(fixture.db.collections.get("supplier_review_queue")!.get(fixture.queueItemId)!.status, "Approved");
   } finally {
     SupplierRegistry.createConnectorForSourceRecord = originalCreateConnector;
+    CommonJsSupplierRegistry.createConnectorForSourceRecord = originalCommonJsCreateConnector;
   }
 });
 
 test("NEW_PRODUCT provisional payload ids do not become canonical linkage claims", async () => {
   const fixture = createReviewFlowFixture();
   const originalCreateConnector = SupplierRegistry.createConnectorForSourceRecord;
+  const originalCommonJsCreateConnector = CommonJsSupplierRegistry.createConnectorForSourceRecord;
   try {
     SupplierRegistry.createConnectorForSourceRecord = async () => ({
       id: "dropex",
@@ -1165,6 +1175,7 @@ test("NEW_PRODUCT provisional payload ids do not become canonical linkage claims
         providedFields: ["wholesalePrice", "price", "inventoryLevel"],
       }),
     } as never);
+    CommonJsSupplierRegistry.createConnectorForSourceRecord = SupplierRegistry.createConnectorForSourceRecord;
     const refreshed = await withPatchedAdminDb(fixture.db, () => refreshActiveSupplierReviewItem(
       fixture.queueItemId,
       { uid: "admin-1", email: "admin@example.test" },
@@ -1179,6 +1190,7 @@ test("NEW_PRODUCT provisional payload ids do not become canonical linkage claims
     assert.equal(refreshed.item.productId, undefined);
   } finally {
     SupplierRegistry.createConnectorForSourceRecord = originalCreateConnector;
+    CommonJsSupplierRegistry.createConnectorForSourceRecord = originalCommonJsCreateConnector;
   }
 });
 
@@ -1255,6 +1267,7 @@ test("ATF0081-style taxonomy save remains fail closed when supplier truth is unr
   );
   const beforeApproval = structuredClone(fixture.db.collections.get("supplier_review_queue")!.get(fixture.queueItemId));
   const originalCreateConnector = SupplierRegistry.createConnectorForSourceRecord;
+  const originalCommonJsCreateConnector = CommonJsSupplierRegistry.createConnectorForSourceRecord;
   try {
     SupplierRegistry.createConnectorForSourceRecord = async () => ({
       id: "dropex",
@@ -1278,6 +1291,7 @@ test("ATF0081-style taxonomy save remains fail closed when supplier truth is unr
         providedFields: [],
       }),
     } as never);
+    CommonJsSupplierRegistry.createConnectorForSourceRecord = SupplierRegistry.createConnectorForSourceRecord;
 
     await assert.rejects(
       withPatchedAdminDb(fixture.db, () => decideSupplierQueueItem(
@@ -1293,6 +1307,7 @@ test("ATF0081-style taxonomy save remains fail closed when supplier truth is unr
     assert.equal(fixture.db.collections.get("products")?.size || 0, 0);
   } finally {
     SupplierRegistry.createConnectorForSourceRecord = originalCreateConnector;
+    CommonJsSupplierRegistry.createConnectorForSourceRecord = originalCommonJsCreateConnector;
   }
 });
 
