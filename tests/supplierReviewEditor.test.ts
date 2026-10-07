@@ -72,7 +72,7 @@ test('supplier review draft projects editable product values with safe defaults'
     isNew: false,
     isFeatured: false,
     isBestSeller: false,
-    primaryImageUrl: 'https://a2zdropshipping.lk/products/watch.jpg',
+    primaryImageUrl: '',
     galleryImageUrls: [],
     fieldOwnership: {
       name: 'admin', shortDescription: 'admin', description: 'admin', model: 'admin', barcode: 'admin',
@@ -180,7 +180,14 @@ test('supplier review validation blocks invalid publish values', () => {
 });
 
 test('supplier review validation only accepts configured Zyro categories', () => {
-  const draft = createSupplierReviewDraft(queueItem);
+  const draft = {
+    ...createSupplierReviewDraft({
+      ...queueItem,
+      managedMedia: [{ firebaseStorageUrl: 'https://storage.example/watch.webp', imageStatus: 'ready', isPrimary: true, sortOrder: 0 }],
+      mediaStatus: 'ready',
+      mediaReadiness: 'publication_safe',
+    }),
+  };
   assert.deepEqual(validateSupplierReviewDraft(draft, ['electronics']), {});
   assert.equal(validateSupplierReviewDraft({ ...draft, category: 'unknown' }, ['electronics']).category, 'Select a valid Zyro category.');
 });
@@ -271,6 +278,6 @@ test('review draft removes duplicate gallery URLs and keeps the primary separate
   ];
 
   const draft = createSupplierReviewDraft(duplicateItem);
-  assert.equal(draft.primaryImageUrl, duplicateItem.productPayload.imageUrl);
-  assert.deepEqual(draft.galleryImageUrls, ['https://a2zdropshipping.lk/uploads/watch-side.webp']);
+  assert.equal(draft.primaryImageUrl, '');
+  assert.deepEqual(draft.galleryImageUrls, []);
 });

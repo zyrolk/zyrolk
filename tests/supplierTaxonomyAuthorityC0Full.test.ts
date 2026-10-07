@@ -865,7 +865,7 @@ test('C0-FULL 17 legacy supplier-derived NEW_PRODUCT taxonomy is rejected withou
   assert.equal(createSupplierReviewDraft(editorItem({ comparison: { comparisonStatus: 'PRICE_CHANGED' } }) as never).category, 'category-2');
 });
 
-test('C0-FULL 18 sync and refresh create no supplier-taxonomy category or subcategory candidates', () => {
+test('C0-FULL 18 sync and refresh use only existing canonical taxonomy mappings', () => {
   const metadata = buildSupplierTaxonomyMetadata({ supplierCategories: ['Brand New Supplier Category', 'Brand New Child'] });
   assert.equal(Object.hasOwn(metadata, 'candidateCategoryId'), false);
   assert.equal(Object.hasOwn(metadata, 'candidateSubcategoryId'), false);
@@ -875,6 +875,7 @@ test('C0-FULL 18 sync and refresh create no supplier-taxonomy category or subcat
   assert.doesNotMatch(sync, /planSupplierTaxonomyCandidates|upsertSupplierTaxonomyCandidate|taxonomyCandidatePlan/u);
   assert.doesNotMatch(sync, /collection: "categories"/u);
   assert.doesNotMatch(sync, /CATEGORY_AUTO_MATCHED/u);
-  assert.doesNotMatch(sync, /suggestSupplierCategory\(/u);
-  assert.doesNotMatch(sync, /collection\("supplier_category_mappings"\)/u);
+  assert.match(sync, /supplierCategorySuggestionForProduct/u);
+  assert.match(sync, /collection\("supplier_category_mappings"\)/u);
+  assert.doesNotMatch(sync, /planSupplierTaxonomyCandidates|upsertSupplierTaxonomyCandidate/u);
 });

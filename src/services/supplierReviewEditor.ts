@@ -463,9 +463,12 @@ export function createSupplierReviewDraft(item: SupplierReviewSourceItem): Suppl
   const managedImageUrls = managedMediaReadyForDraft(item, managedImageUrlsCandidate)
     ? managedImageUrlsCandidate
     : [];
-  const primaryImageUrl = String(managedImageUrls[0] || payload?.imageUrl || item.imageUrl || '').trim();
+  // A supplier-origin URL is source evidence, not a publishable review image.
+  // Only managed media may populate the normal review draft; an administrator
+  // can still deliberately replace it while editing.
+  const primaryImageUrl = String(managedImageUrls[0] || '').trim();
   const galleryImageUrls = [...new Set(
-    (managedImageUrls.length > 0 ? managedImageUrls.slice(1) : (Array.isArray(payload?.imageUrls) ? payload.imageUrls : []))
+    managedImageUrls.slice(1)
       .filter((value): value is string => typeof value === 'string')
       .map((value) => value.trim())
       .filter((value) => Boolean(value) && value !== primaryImageUrl),

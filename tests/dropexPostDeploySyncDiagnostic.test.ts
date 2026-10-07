@@ -196,13 +196,13 @@ test('POST-DEPLOY-09 zero specs and not required is non-blocking', () => {
   assert.equal(required, false);
 });
 
-test('POST-DEPLOY-10 zero supplier specs remain non-blocking despite category templates', () => {
+test('POST-DEPLOY-10 zero supplier specs block when the category template requires them', () => {
   const required = supplierReviewSpecificationsRequired(
     { productValidation: { missingFields: ['specifications'] } },
     [{ id: 'cat-1', specificationTemplate: [{ required: true }] }],
     'cat-1',
   );
-  assert.equal(required, false);
+  assert.equal(required, true);
 });
 
 test('POST-DEPLOY-11 totalProductLimit=5 scans at most five products', async () => {

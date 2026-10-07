@@ -113,7 +113,7 @@ test('category selection exposes only active subcategories for the editor cascad
   assert.deepEqual(activeSubcategories.map((subcategory) => subcategory.id), ['kitchen']);
 });
 
-test('supplied supplier category and brand auto-map only on exact active matches', () => {
+test('supplier taxonomy alone remains a suggestion while brand mapping remains independently exact', () => {
   const mappedCategories = taxonomy.categories.map((category) => ({
     id: category.id,
     name: category.name,
@@ -135,7 +135,8 @@ test('supplied supplier category and brand auto-map only on exact active matches
   });
 
   assert.equal(category.targetCategoryId, 'electronics');
-  assert.equal(category.autoSelected, true);
+  assert.equal(category.autoSelected, false);
+  assert.equal(category.requiresManualSelection, true);
   assert.equal(brand.mappedBrandId, 'registered-brand');
   assert.equal(brand.autoSelected, true);
 });
@@ -159,6 +160,7 @@ test('same-named active subcategories stay scoped to the resolved parent', () =>
   const suggestion = suggestSupplierCategory({
     sourceId: 'dropex',
     supplierCategories: ['Vehicle Accessories', 'Chargers'],
+    productTitle: 'Vehicle Accessories Chargers',
     categories,
   });
 

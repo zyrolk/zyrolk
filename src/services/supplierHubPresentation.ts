@@ -1,4 +1,3 @@
-import { isValidSupplierImageUrl } from './connectors/a2z-website/productImages';
 import { countStructuredSupplierSpecifications } from './supplierReviewEditor';
 
 /**
@@ -294,24 +293,9 @@ export { countStructuredSupplierSpecifications } from './supplierReviewEditor';
 export function supplierReviewDisplayImageUrl(item: SupplierReviewQuickApprovalItem): string {
   const managed = supplierReviewManagedImageUrl(item);
   if (managed) return managed;
-
-  const payload = item.productPayload || {};
-  const primary = String(payload.imageUrl || (item as { imageUrl?: unknown }).imageUrl || '').trim();
-  if (isValidSupplierImageUrl(primary)) return primary;
-
-  const gallery = Array.isArray(payload.imageUrls) ? payload.imageUrls : [];
-  for (const candidate of gallery) {
-    const url = String(candidate || '').trim();
-    if (isValidSupplierImageUrl(url)) return url;
-  }
-
-  for (const record of managedMediaRecords(item)) {
-    for (const field of ['firebaseStorageUrl', 'url', 'imageUrl', 'src', 'original', 'thumbnail']) {
-      const url = String(record[field] || '').trim();
-      if (isValidSupplierImageUrl(url)) return url;
-    }
-  }
-
+  // Raw supplier URLs are intentionally not a queue-card preview fallback.
+  // They can be retained as source evidence, but must never look like usable
+  // publication media before managed processing succeeds.
   return '';
 }
 
@@ -322,12 +306,11 @@ export function supplierReviewSpecificationCount(item: SupplierReviewQuickApprov
 
 export function supplierReviewSpecificationsRequired(
   _item: Pick<SupplierReviewQuickApprovalItem, 'productValidation'>,
-  _categories: readonly { id?: unknown; specificationTemplate?: Array<{ required?: boolean }> }[] | undefined,
-  _categoryId: string,
+  categories: readonly { id?: unknown; specificationTemplate?: Array<{ required?: boolean }> }[] | undefined,
+  categoryId: string,
 ): boolean {
-  // Supplier Review treats category specifications as optional supplier data.
-  // Category/subcategory selection remains a separate approval requirement.
-  return false;
+  const category = categories?.find((candidate) => String(candidate.id || '').trim() === String(categoryId || '').trim());
+  return (category?.specificationTemplate || []).some((field) => field.required === true);
 }
 
 export function supplierReviewSpecificationsSatisfied(
@@ -374,27 +357,18 @@ export function supplierReviewIsLowStockHold(item: Pick<ReviewPresentationItem, 
 /**
  * Older queue documents may retain a brand-only validation result from before
  * supplier brands became optional. Reconcile that stale presentation metadata
- * without inventing a brand; the approval API remains authoritative.
+ * without inventing a brand; required specifications remain blocking whenever
+ * they are present in the server validation result.
  */
 const supplierReviewEffectiveProductValidation = (item: SupplierReviewQuickApprovalItem) => {
   const validation = item.productValidation || {};
   const hasCanonicalBrand = Boolean(String(item.productPayload?.brand || '').trim());
-  const isOptionalSupplierSpecification = (field: unknown, code?: unknown): boolean => {
-    const normalizedField = String(field || '').trim().toLowerCase();
-    const normalizedCode = String(code || '').trim().toLowerCase();
-    return normalizedField === 'specifications'
-      || normalizedField.startsWith('specs.')
-      || normalizedCode === 'missing_specifications';
-  };
   const missingFields = (validation.missingFields || []).filter((field) => (
-    (hasCanonicalBrand || String(field || '').trim().toLowerCase() !== 'brand')
-      && !isOptionalSupplierSpecification(field)
+    hasCanonicalBrand || String(field || '').trim().toLowerCase() !== 'brand'
   ));
   const errors = (validation.errors || []).filter((error) => {
     const field = error && typeof error === 'object' ? String((error as { field?: unknown }).field || '') : '';
-    const code = error && typeof error === 'object' ? (error as { code?: unknown }).code : undefined;
-    return (hasCanonicalBrand || field.trim().toLowerCase() !== 'brand')
-      && !isOptionalSupplierSpecification(field, code);
+    return hasCanonicalBrand || field.trim().toLowerCase() !== 'brand';
   });
   const hadStaleBrandValidation = !hasCanonicalBrand
     && ((validation.missingFields || []).some((field) => String(field || '').trim().toLowerCase() === 'brand')
@@ -402,15 +376,10 @@ const supplierReviewEffectiveProductValidation = (item: SupplierReviewQuickAppro
         const field = error && typeof error === 'object' ? String((error as { field?: unknown }).field || '') : '';
         return field.trim().toLowerCase() === 'brand';
       }));
-  const hadStaleSpecificationValidation = (validation.missingFields || []).some((field) => isOptionalSupplierSpecification(field))
-    || (validation.errors || []).some((error) => {
-      const record = error && typeof error === 'object' ? error as { field?: unknown; code?: unknown } : {};
-      return isOptionalSupplierSpecification(record.field, record.code);
-    });
   return {
     readyToPublish: validation.readyToPublish === true
       || (validation.readyToPublish === false
-        && (hadStaleBrandValidation || hadStaleSpecificationValidation)
+        && hadStaleBrandValidation
         && missingFields.length === 0
         && errors.length === 0),
     missingFields,

@@ -586,6 +586,7 @@ test('supplier managed media helpers validate reuse preconditions', () => {
     contentHash: 'a'.repeat(64),
     firebaseStorageUrl: 'https://firebasestorage.googleapis.com/v0/b/demo/o/atf0080.jpg',
     originalSupplierUrl: urls[0],
+    imageStatus: 'ready',
     variants: { large: { firebaseStorageUrl: 'https://firebasestorage.googleapis.com/v0/b/demo/o/atf0080.jpg' } },
     isPrimary: true,
     sortOrder: 0,

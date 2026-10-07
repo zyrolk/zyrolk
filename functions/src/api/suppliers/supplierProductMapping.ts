@@ -247,13 +247,52 @@ const overlapScore = (evidence: string, candidate: string): number => {
   return candidateWords.filter((word) => evidenceWords.has(word)).length / candidateWords.length;
 };
 
+const normalizedPhraseInEvidence = (evidence: string, phrase: unknown): boolean => {
+  const normalizedPhrase = normalizeSupplierMappingValue(phrase);
+  if (!normalizedPhrase) return false;
+  const paddedEvidence = ` ${evidence} `;
+  return paddedEvidence.includes(` ${normalizedPhrase} `);
+};
+
+const productEvidenceSupportsCategory = (
+  category: StoreCategoryMappingCandidate,
+  productTitle: string,
+  productEvidence: string,
+): boolean => {
+  const titleEvidence = normalizeSupplierMappingValue(productTitle);
+  const signals = [category.name, ...(category.keywords || [])];
+  return signals.some((signal) => normalizedPhraseInEvidence(titleEvidence, signal)
+    || normalizedPhraseInEvidence(productEvidence, signal));
+};
+
+const productTitleDirectlySupportsCategory = (
+  category: StoreCategoryMappingCandidate,
+  productTitle: string,
+): boolean => {
+  const titleEvidence = normalizeSupplierMappingValue(productTitle);
+  return [category.name].some((signal) => normalizedPhraseInEvidence(titleEvidence, signal));
+};
+
+const productEvidenceSubcategory = (
+  category: StoreCategoryMappingCandidate,
+  productTitle: string,
+  productEvidence: string,
+): string => {
+  const titleEvidence = normalizeSupplierMappingValue(productTitle);
+  return category.subcategories?.find((subcategory) => subcategory.isActive !== false
+    && (normalizedPhraseInEvidence(titleEvidence, subcategory.name)
+      || normalizedPhraseInEvidence(productEvidence, subcategory.name)))?.id || "";
+};
+
 export function suggestSupplierCategory(input: {
   sourceId: string;
   supplierCategories: readonly string[];
   supplierSubcategoryId?: string;
   productTitle?: string;
+  description?: string;
   keywords?: readonly string[];
   productType?: string;
+  specifications?: Record<string, unknown> | readonly string[];
   categories: readonly StoreCategoryMappingCandidate[];
   mappings?: readonly SupplierCategoryMappingRecord[];
 }): SupplierCategorySuggestion {
@@ -263,17 +302,12 @@ export function suggestSupplierCategory(input: {
   const normalizedCategory = normalizeSupplierMappingValue(supplierCategory);
   const categories = activeCategories(input.categories);
   const categoryById = new Map(categories.map((category) => [category.id, category]));
-  const exactSubcategoryId = (category: StoreCategoryMappingCandidate): string => {
-    if (!supplierSubcategory) return "";
-    return category.subcategories?.find((subcategory) => subcategory.isActive !== false
-      && [subcategory.id, subcategory.name].some((value) => normalizeSupplierMappingValue(value) === normalizeSupplierMappingValue(supplierSubcategory)))?.id || "";
-  };
-  const unresolvedSubcategory = (category: StoreCategoryMappingCandidate): boolean => Boolean(supplierSubcategory && !exactSubcategoryId(category));
-  const evidence = normalizeSupplierMappingValue([
-    ...supplierValues,
+  const productEvidence = normalizeSupplierMappingValue([
     input.productTitle || "",
+    input.description || "",
     ...(input.keywords || []),
     input.productType || "",
+    ...(Array.isArray(input.specifications) ? input.specifications : Object.values(input.specifications || {})),
   ].join(" "));
   const selectedMapping = selectSupplierCategoryMapping({
     sourceId: input.sourceId,
@@ -319,6 +353,27 @@ export function suggestSupplierCategory(input: {
     };
   }
 
+  for (const category of categories) {
+    if (!productTitleDirectlySupportsCategory(category, input.productTitle || "")) continue;
+    const targetSubcategoryId = productEvidenceSubcategory(category, input.productTitle || "", productEvidence);
+    const requiresSubcategory = Boolean(category.subcategories?.some((subcategory) => subcategory.isActive !== false));
+    const exactSupplierMatch = supplierCategory === category.id || supplierCategory === category.name;
+    const normalizedSupplierMatch = [category.id, category.name]
+      .some((value) => normalizeSupplierMappingValue(value) === normalizedCategory && normalizedCategory);
+    return {
+      supplierCategory,
+      supplierSubcategory,
+      normalizedCategory,
+      targetCategoryId: category.id,
+      targetSubcategoryId,
+      confidence: exactSupplierMatch ? 100 : normalizedSupplierMatch ? 98 : 100,
+      mappingType: exactSupplierMatch ? "exact" : normalizedSupplierMatch ? "normalized" : "exact",
+      mappingSource: "catalog",
+      autoSelected: !requiresSubcategory || Boolean(targetSubcategoryId),
+      requiresManualSelection: requiresSubcategory && !targetSubcategoryId,
+    };
+  }
+
   const matchesInactiveCategory = Boolean(normalizedCategory) && input.categories.some((category) => (
     category.isActive === false
     && [category.id, category.name, category.normalizedSupplierCategory, category.supplierTaxonomyId]
@@ -339,20 +394,36 @@ export function suggestSupplierCategory(input: {
 
   for (const category of categories) {
     if (supplierCategory && (supplierCategory === category.id || supplierCategory === category.name)) {
+      const productEvidenceMatch = productEvidenceSupportsCategory(category, input.productTitle || "", productEvidence);
+      const targetSubcategoryId = productEvidenceMatch
+        ? productEvidenceSubcategory(category, input.productTitle || "", productEvidence)
+        : "";
       return {
         supplierCategory, supplierSubcategory, normalizedCategory, targetCategoryId: category.id,
-        targetSubcategoryId: exactSubcategoryId(category), confidence: 100, mappingType: "exact", mappingSource: "catalog",
-        autoSelected: !unresolvedSubcategory(category), requiresManualSelection: unresolvedSubcategory(category),
+        targetSubcategoryId, confidence: 100, mappingType: "exact", mappingSource: "catalog",
+        autoSelected: productEvidenceMatch && (!category.subcategories?.some((subcategory) => subcategory.isActive !== false)
+          || Boolean(targetSubcategoryId)),
+        requiresManualSelection: !productEvidenceMatch || Boolean(
+          category.subcategories?.some((subcategory) => subcategory.isActive !== false) && !targetSubcategoryId,
+        ),
       };
     }
   }
 
   for (const category of categories) {
     if ([category.id, category.name].some((value) => normalizeSupplierMappingValue(value) === normalizedCategory && normalizedCategory)) {
+      const productEvidenceMatch = productEvidenceSupportsCategory(category, input.productTitle || "", productEvidence);
+      const targetSubcategoryId = productEvidenceMatch
+        ? productEvidenceSubcategory(category, input.productTitle || "", productEvidence)
+        : "";
       return {
         supplierCategory, supplierSubcategory, normalizedCategory, targetCategoryId: category.id,
-        targetSubcategoryId: exactSubcategoryId(category), confidence: 98, mappingType: "normalized", mappingSource: "catalog",
-        autoSelected: !unresolvedSubcategory(category), requiresManualSelection: unresolvedSubcategory(category),
+        targetSubcategoryId, confidence: 98, mappingType: "normalized", mappingSource: "catalog",
+        autoSelected: productEvidenceMatch && (!category.subcategories?.some((subcategory) => subcategory.isActive !== false)
+          || Boolean(targetSubcategoryId)),
+        requiresManualSelection: !productEvidenceMatch || Boolean(
+          category.subcategories?.some((subcategory) => subcategory.isActive !== false) && !targetSubcategoryId,
+        ),
       };
     }
   }
@@ -360,7 +431,7 @@ export function suggestSupplierCategory(input: {
   let best: { category: StoreCategoryMappingCandidate; score: number } | null = null;
   for (const category of categories) {
     const categorySignals = [category.id, category.name, ...(category.keywords || [])];
-    const categoryScore = Math.max(...categorySignals.map((signal) => overlapScore(evidence, signal)), 0);
+    const categoryScore = Math.max(...categorySignals.map((signal) => overlapScore(productEvidence, signal)), 0);
     if (!best || categoryScore > best.score) best = { category, score: categoryScore };
   }
   if (best && best.score >= 0.4) {

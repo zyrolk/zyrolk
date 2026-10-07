@@ -83,12 +83,13 @@ import {
   SupplierReviewQueueIdentityInput,
 } from "../api/suppliers/supplierQueueIdentity";
 import {
-  buildSupplierTaxonomyMetadata,
+  suggestSupplierCategory,
   StoreBrandMappingCandidate,
   StoreCategoryMappingCandidate,
   suggestSupplierBrand,
   SupplierBrandMappingRecord,
   SupplierBrandSuggestion,
+  SupplierCategoryMappingRecord,
   SupplierCategorySuggestion,
   validateSupplierProductForApproval,
 } from "../api/suppliers/supplierProductMapping";
@@ -115,6 +116,7 @@ import {
   supplierReviewQueueStateFor,
   supplierReviewStaleDecisionFieldDeletes,
   buildSupplierReviewBusinessQueueProjection,
+  supplierReviewQueueMediaIsReady,
 } from "./supplierReviewQueue";
 import {
   normalizeSupplierCatalogPageSize,
@@ -1021,13 +1023,43 @@ async function loadSupplierSources(requestedSourceIds: readonly string[] = []): 
 
 async function loadSupplierProductMappings(sourceId: string, database: Firestore = adminDb): Promise<{
   brandMappings: SupplierBrandMappingRecord[];
+  categoryMappings: SupplierCategoryMappingRecord[];
 }> {
   const sourceScopes = [...new Set([sourceId, "*", "global"])];
-  const brandSnapshot = await database.collection("supplier_brand_mappings").where("sourceId", "in", sourceScopes).get();
+  const [brandSnapshot, categorySnapshot] = await Promise.all([
+    database.collection("supplier_brand_mappings").where("sourceId", "in", sourceScopes).get(),
+    database.collection("supplier_category_mappings").where("sourceId", "in", sourceScopes).get(),
+  ]);
   return {
     brandMappings: brandSnapshot.docs.map((document) => document.data() as SupplierBrandMappingRecord),
+    categoryMappings: categorySnapshot.docs.map((document) => document.data() as SupplierCategoryMappingRecord),
   };
 }
+
+const supplierCategorySuggestionForProduct = (
+  product: RawA2ZProduct,
+  sourceId: string,
+  categories: readonly StoreCategoryMappingCandidate[],
+  mappings: readonly SupplierCategoryMappingRecord[],
+): SupplierCategorySuggestion => {
+  const supplierCategories = product.categoryHierarchy && product.categoryHierarchy.length > 0
+    ? product.categoryHierarchy
+    : [product.supplierCategory, product.supplierSubcategory]
+      .filter((value): value is string => Boolean(String(value || "").trim()));
+  const extraAttributes = asRecord(product.extraAttributes);
+  return suggestSupplierCategory({
+    sourceId,
+    supplierCategories,
+    supplierSubcategoryId: String(extraAttributes.supplierSubcategoryId || "").trim(),
+    productTitle: product.title,
+    description: product.longDescription,
+    keywords: [...(product.keywords || []), ...(product.tags || []), ...(product.features || [])],
+    productType: product.productType,
+    specifications: product.specifications,
+    categories,
+    mappings,
+  });
+};
 
 export function resolveSupplierProductReviewVisibility(
   match: SupplierProductPublicationMatch | undefined,
@@ -2204,12 +2236,12 @@ export async function refreshActiveSupplierReviewItem(
     aliases: Array.isArray(brandDoc.data().aliases) ? brandDoc.data().aliases : [],
   }));
   const storedMappings = await loadSupplierProductMappings(sourceId, refreshDb);
-  const supplierCategoryValues = product.categoryHierarchy && product.categoryHierarchy.length > 0
-    ? product.categoryHierarchy
-    : [product.supplierCategory, product.supplierSubcategory].filter((value): value is string => Boolean(refreshIdentityValue(value)));
-  const categoryMapping: SupplierCategorySuggestion = buildSupplierTaxonomyMetadata({
-    supplierCategories: supplierCategoryValues,
-  });
+  const categoryMapping = supplierCategorySuggestionForProduct(
+    product,
+    sourceId,
+    storeCategories,
+    storedMappings.categoryMappings,
+  );
   const supplierBrand = refreshIdentityValue(product.brand || product.specifications?.brand || product.specifications?.Brand);
   const brandMapping = suggestSupplierBrand({
     sourceId,
@@ -2287,7 +2319,14 @@ export async function refreshActiveSupplierReviewItem(
     source,
     refreshProductId || undefined,
   ), queueItem.productPayload);
-  const productValidationErrors = validateSupplierProductForApproval(productPayload, storeCategories, storeBrands, { supplierReview: true });
+  const productValidationErrors = validateSupplierProductForApproval(productPayload, storeCategories, storeBrands);
+  if (!supplierReviewQueueMediaIsReady(productPayload.supplierMedia || productPayload.media)) {
+    productValidationErrors.push({
+      field: "images",
+      code: "managed_media_required",
+      message: "At least one valid managed primary product image is required before publishing.",
+    });
+  }
   const refreshProductLive = isSupplierProductLive(effectiveMatch ? asRecord(effectiveMatch) : undefined);
   const refreshLowStockHold = isDropexLowStockReviewHold({
     source: sourceId,
@@ -4180,12 +4219,12 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
             continue;
           }
           const supplierBrand = String(product.brand || product.specifications?.brand || product.specifications?.Brand || "").trim();
-          const supplierCategoryValues = (product.categoryHierarchy && product.categoryHierarchy.length > 0)
-            ? product.categoryHierarchy
-            : [product.supplierCategory, product.supplierSubcategory].filter((value): value is string => Boolean(String(value || "").trim()));
-          const categoryMapping: SupplierCategorySuggestion = buildSupplierTaxonomyMetadata({
-            supplierCategories: supplierCategoryValues,
-          });
+          const categoryMapping = supplierCategorySuggestionForProduct(
+            product,
+            source.id,
+            storeCategories,
+            storedMappings.categoryMappings,
+          );
           const brandMapping = suggestSupplierBrand({
             sourceId: source.id,
             supplierBrand,
@@ -4215,7 +4254,14 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
             targetProductId,
             !inventoryAutomated && reactivation.reactivating,
           );
-          const productValidationErrors = validateSupplierProductForApproval(productPayload, storeCategories, storeBrands, { supplierReview: true });
+          const productValidationErrors = validateSupplierProductForApproval(productPayload, storeCategories, storeBrands);
+          if (!supplierReviewQueueMediaIsReady(productPayload.supplierMedia || productPayload.media)) {
+            productValidationErrors.push({
+              field: "images",
+              code: "managed_media_required",
+              message: "At least one valid managed primary product image is required before publishing.",
+            });
+          }
           const matchedProductLive = isSupplierProductLive(effectiveMatch ? asRecord(effectiveMatch) : undefined);
           const lowStockHold = isDropexLowStockReviewHold({
             source: source.id,

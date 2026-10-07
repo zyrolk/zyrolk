@@ -946,11 +946,13 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
     } = {},
   ): Promise<boolean> => {
     const targetPage = Math.max(1, Math.min(10_000, options.page || supplierReviewPage));
-    const dedicatedMediaQueue = reviewQueueMode === 'ready' || reviewQueueMode === 'waiting';
-    const queryFilter = dedicatedMediaQueue ? '' : reviewFilter;
-    const queryMedia = dedicatedMediaQueue
-      ? reviewQueueMode === 'ready' ? 'ready' as const : 'processing' as const
-      : reviewMediaFilter;
+    const dedicatedQueue = reviewQueueMode === 'ready' || reviewQueueMode === 'waiting';
+    const queryFilter = reviewQueueMode === 'ready'
+      ? 'ready_for_review'
+      : dedicatedQueue ? '' : reviewFilter;
+    const queryMedia = reviewQueueMode === 'waiting'
+      ? 'processing' as const
+      : reviewQueueMode === 'ready' ? 'all' as const : reviewMediaFilter;
     const queryKey = buildSupplierReviewQueryKey({
       view: 'review',
       filter: queryFilter,
@@ -1114,7 +1116,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
       });
     };
     if (view === 'ready') {
-      applyQueueQuery('new_products', 'ready');
+      applyQueueQuery('actionable', 'all');
       return;
     }
     if (view === 'actionable') {
@@ -2767,7 +2769,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
               <div className="mt-4 flex min-w-0 flex-wrap gap-1.5" role="tablist" aria-label="Product review queue views">
                 {([
                   ['actionable', 'Actionable'],
-                  ['ready', 'Media ready'],
+                  ['ready', 'Ready for review'],
                   ['new', 'New'],
                   ['updates', 'Updates'],
                   ['issues', 'Needs attention'],
@@ -2805,12 +2807,12 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                   <div className="flex flex-wrap items-center gap-2">
                     <h3 className="flex items-center gap-1.5 text-sm font-extrabold uppercase tracking-wider text-slate-900 dark:text-white">
                       <UserCheck className="h-4 w-4 text-blue-500" aria-hidden="true" />
-                      <span>{({ actionable: 'Actionable', ready: 'Media ready', new: 'New', updates: 'Updates', issues: 'Needs attention', waiting: 'Waiting', history: 'History', low_stock: 'Low Stock Hold' } as Record<SupplierReviewQueueView, string>)[reviewQueueView]}</span>
+                      <span>{({ actionable: 'Actionable', ready: 'Ready for review', new: 'New', updates: 'Updates', issues: 'Needs attention', waiting: 'Waiting', history: 'History', low_stock: 'Low Stock Hold' } as Record<SupplierReviewQueueView, string>)[reviewQueueView]}</span>
                     </h3>
                     <span className="rounded-full bg-slate-100 px-2 py-1 text-[9px] font-black text-slate-500 dark:bg-slate-900 dark:text-slate-300">{reviewMediaFilter === 'all' ? 'All media' : reviewMediaFilter === 'ready' ? 'Media ready' : reviewMediaFilter === 'processing' ? 'Waiting for media' : 'Media issues'}</span>
                   </div>
                   <p className="mt-1 text-[11px] text-slate-400">Page {supplierReviewPage}{supplierReviewTotalPages !== null ? ` of ${supplierReviewTotalPages}` : ''} · {supplierReviewTotalCount !== null ? `${supplierReviewTotalCount.toLocaleString()} matching records` : 'Count unavailable for this derived filter'}</p>
-                  {reviewQueueView === 'ready' && <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">Media ready means the managed image is ready; category, stock, and other approval checks may still be required.</p>}
+                  {reviewQueueView === 'ready' && <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">Ready for review means the managed media and publication checks pass; normal products can be approved without editing required fields.</p>}
                 </div>
                 <div className="flex items-center gap-3 text-[10px] font-bold text-slate-400">
                   {supplierReviewLoading && <span role="status" className="inline-flex items-center gap-1.5 text-blue-600 dark:text-blue-300"><RefreshCw className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> Updating page…</span>}

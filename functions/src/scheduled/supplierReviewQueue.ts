@@ -34,7 +34,10 @@ import {
   supplierReviewMediaMatchesFilter,
 } from "../api/suppliers/supplierMediaObservability";
 import { isSupplierMediaQueueProjectionActive } from "../api/suppliers/supplierMediaQueueProjection";
-import { isSupplierReviewBusinessProjectionActive } from "../api/suppliers/supplierReviewBusinessQueueProjection";
+import {
+  isSupplierReviewBusinessProjectionActive,
+  SUPPLIER_REVIEW_BUSINESS_PROJECTION_VERSION,
+} from "../api/suppliers/supplierReviewBusinessQueueProjection";
 import { recordSupplierQueueProcessingDurationMetric } from "../api/suppliers/supplierCloudMonitoring";
 import { appLogger } from "../api/logging";
 import {
@@ -647,7 +650,12 @@ export function supplierManagedMediaMatchesSuccessfulSourceUrls(
 
 export function supplierReviewQueueMediaIsReady(managedMedia: unknown): boolean {
   const assets = extractSupplierMediaFromRecord(managedMedia);
-  return assets.length > 0 && assets.every((asset) => /^https:\/\/\S+$/u.test(asset.firebaseStorageUrl));
+  return assets.length > 0
+    && assets.some((asset) => asset.isPrimary === true
+      && ["ready", "published"].includes(String(asset.imageStatus || "").trim().toLowerCase())
+      && /^https:\/\/\S+$/u.test(asset.firebaseStorageUrl))
+    && assets.every((asset) => ["ready", "published"].includes(String(asset.imageStatus || "").trim().toLowerCase())
+      && /^https:\/\/\S+$/u.test(asset.firebaseStorageUrl));
 }
 
 export function supplierReviewQueueMediaIsHealthy(record: Record<string, unknown>): boolean {
@@ -1541,6 +1549,7 @@ export type SupplierReviewQueuePageState = "active" | "review_pending" | "confli
 export type SupplierReviewQueueSort = "created" | "updated";
 export type SupplierReviewBusinessFilter =
   | "actionable"
+  | "ready_for_review"
   | "new_products"
   | "product_updates"
   | "removed_products"
@@ -1877,6 +1886,40 @@ const reviewComparisonHasPendingChange = (record: SupplierQueueRecord, compariso
 };
 
 /**
+ * A Ready-for-review item is a complete, server-derived proposal rather than
+ * merely a media-ready observation. Media readiness is checked with the same
+ * publication-safe classifier used by the media worker and approval path.
+ */
+export const supplierReviewRecordHasPublicationReadyMedia = (record: SupplierQueueRecord): boolean => {
+  const payload = asRecord(record.productPayload);
+  const snapshot = asRecord(record.supplierSnapshot);
+  const sourceImageUrls = Array.isArray(record.mediaSourceImageUrls)
+    ? record.mediaSourceImageUrls
+    : Array.isArray(payload.imageUrls)
+      ? payload.imageUrls
+      : Array.isArray(snapshot.imageUrls) ? snapshot.imageUrls : [];
+  const mediaReadiness = classifySupplierMediaReadiness({
+    supplierId: record.sourceId || snapshot.supplierId,
+    sourceImageUrls,
+    managedMedia: record.managedMedia || payload.supplierMedia || payload.media,
+    mediaFailures: record.mediaFailures,
+  });
+  return mediaReadiness.publicationSafe
+    && String(record.mediaStatus || "").trim().toLowerCase() === "ready"
+    && String(record.mediaQueueClass || "").trim().toLowerCase() === "ready";
+};
+
+export const supplierReviewRecordIsReadyForReview = (record: SupplierQueueRecord): boolean => {
+  if (!reviewRecordIsActionable(record) || supplierReviewRecordIsLowStockHold(record)) return false;
+  const validation = asRecord(record.productValidation);
+  return stateFor(record) === "review_pending"
+    && validation.readyToPublish === true
+    && (!Array.isArray(validation.missingFields) || validation.missingFields.length === 0)
+    && (!Array.isArray(validation.errors) || validation.errors.length === 0)
+    && supplierReviewRecordHasPublicationReadyMedia(record);
+};
+
+/**
  * Mirrors the Product Review business filters on the server pagination boundary.
  * Conflicts and removals keep precedence; any other active record that is on a
  * low-stock hold belongs only to low_stock_hold until its stock recovers.
@@ -1899,6 +1942,7 @@ export const reviewRecordMatchesBusinessFilter = (
     return reviewRecordIsActionable(projectedRecord)
       && !supplierReviewRecordIsLowStockHold(projectedRecord);
   }
+  if (filter === "ready_for_review") return supplierReviewRecordIsReadyForReview(projectedRecord);
   if (filter === "conflicts") return reviewRecordIsConflict(projectedRecord);
   if (reviewRecordIsConflict(projectedRecord)) return false;
   if (filter === "removed_products") return reviewComparisonIsRemoval(comparisonStatus);
@@ -1934,10 +1978,11 @@ export const classifySupplierReviewRecordForCounts = (
 };
 
 export const SUPPLIER_REVIEW_BUSINESS_QUEUE_CLASSES_FIELD = "businessQueueClasses" as const;
-export const SUPPLIER_REVIEW_BUSINESS_QUEUE_CLASSES_VERSION = 1;
+export const SUPPLIER_REVIEW_BUSINESS_QUEUE_CLASSES_VERSION = SUPPLIER_REVIEW_BUSINESS_PROJECTION_VERSION;
 
 export type SupplierReviewBusinessQueueClass =
   | "actionable"
+  | "ready_for_review"
   | "new_products"
   | "product_updates"
   | "removed_products"
@@ -1958,6 +2003,7 @@ export const buildSupplierReviewBusinessQueueProjection = (
   const projectedRecord = projectSupplierReviewLowStockHold(record, categoryRequiresSubcategory);
   const classes = new Set<SupplierReviewBusinessQueueClass>();
   if (classifySupplierReviewRecordForCounts(projectedRecord) === "actionable") classes.add("actionable");
+  if (reviewRecordMatchesBusinessFilter(projectedRecord, "ready_for_review")) classes.add("ready_for_review");
   ([
     "new_products",
     "product_updates",

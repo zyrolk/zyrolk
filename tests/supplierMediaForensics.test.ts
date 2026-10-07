@@ -96,6 +96,9 @@ test("review-pending ready item is not selected again", () => {
     managedMedia: [{
       contentHash: "asset-hash",
       firebaseStorageUrl: "https://storage.example/asset.webp",
+      originalSupplierUrl: "https://supplier.example/image.jpg",
+      imageStatus: "ready",
+      isPrimary: true,
       variants: { large: { storageUrl: "https://storage.example/asset.webp" } },
     }],
   }, now);

@@ -160,7 +160,7 @@ export default function SupplierReviewEditorModal({
   const onCloseRef = useRef(onClose);
   const isPublishingRef = useRef(isPublishing);
   const validationErrors = useMemo(
-    () => validateSupplierReviewDraft(draft, validCategoryIds, categories, brands, { supplierReview: true }),
+    () => validateSupplierReviewDraft(draft, validCategoryIds, categories, brands),
     [brands, categories, draft, validCategoryIds],
   );
   const lowStockHold = supplierReviewIsLowStockHold(item);
@@ -212,7 +212,9 @@ export default function SupplierReviewEditorModal({
   const suggestionMatchesCurrentSelection = categorySuggestion.status === 'SUGGESTED'
     && draft.category === categorySuggestion.categoryId
     && String(draft.subcategory || '') === String(categorySuggestion.subcategoryId || '');
-  const specificationsRequired = false;
+  const specificationsRequired = Boolean(
+    (selectedCategory?.specificationTemplate || []).some((field) => field.required === true),
+  );
   const validationChecklist = useMemo(() => {
     const checks: Array<{ label: string; fields: Array<keyof typeof validationErrors> }> = [
       { label: 'Images', fields: ['primaryImageUrl', 'galleryImageUrls'] },

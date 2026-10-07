@@ -100,13 +100,29 @@ const reviewItem = (comparisonStatus = 'NEW_PRODUCT') => ({
     stock: 5,
     category: 'electronics',
     brand: 'brand-1',
-    imageUrl: 'https://supplier.example/promotion.jpg',
-    imageUrls: ['https://supplier.example/promotion.jpg'],
+    imageUrl: managedImage,
+    imageUrls: [managedImage],
+    supplierMedia: [{
+      firebaseStorageUrl: managedImage,
+      originalSupplierUrl: 'https://supplier.example/promotion.jpg',
+      imageStatus: 'ready',
+      isPrimary: true,
+      sortOrder: 0,
+    }],
     specs: {},
     rating: 0,
     reviewsCount: 0,
     isActive: true,
   },
+  managedMedia: [{
+    firebaseStorageUrl: managedImage,
+    originalSupplierUrl: 'https://supplier.example/promotion.jpg',
+    imageStatus: 'ready',
+    isPrimary: true,
+    sortOrder: 0,
+  }],
+  mediaStatus: 'ready',
+  mediaReadiness: 'publication_safe',
 });
 
 test('new supplier products keep market price private when promotion is OFF', () => {

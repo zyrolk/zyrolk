@@ -11,6 +11,8 @@ import {
   SUPPLIER_REVIEW_BUSINESS_PROJECTION_COLLECTION,
   SUPPLIER_REVIEW_BUSINESS_PROJECTION_DOCUMENT,
   SUPPLIER_REVIEW_BUSINESS_PROJECTION_VERSION,
+  isSupplierReviewBusinessProjectionMigrationRequired,
+  migrationCheckpointForProjectionVersion,
   supplierReviewBusinessProjectionReference,
 } from "../functions/src/api/suppliers/supplierReviewBusinessQueueProjection";
 
@@ -69,23 +71,26 @@ const projectionNeedsWrite = (record: Record<string, unknown>, patch: Record<str
 async function migrate(): Promise<void> {
   const existingMetadata = await supplierReviewBusinessProjectionReference(db).get();
   const existing = existingMetadata.exists ? existingMetadata.data() as Record<string, unknown> : {};
-  if (existing.status === "active" && existing.version === SUPPLIER_REVIEW_BUSINESS_PROJECTION_VERSION) {
+  if (!isSupplierReviewBusinessProjectionMigrationRequired(existing)) {
     console.info(JSON.stringify({ mode: "already-active", projectId: expectedProjectId, ...existing }));
     return;
   }
 
   const categoryRequirements = await loadCategoryRequirements();
+  const checkpoint = migrationCheckpointForProjectionVersion(existing);
   const summary: MigrationSummary = {
-    scanned: Number(existing.scanned || 0),
+    scanned: checkpoint.scanned,
     requiringProjection: 0,
-    projected: Number(existing.projected || 0),
-    lastDocumentId: typeof existing.lastDocumentId === "string" ? existing.lastDocumentId : null,
+    projected: checkpoint.projected,
+    lastDocumentId: checkpoint.lastDocumentId,
   };
   let lastDocumentId = summary.lastDocumentId;
   let batchCount = 0;
   let complete = false;
 
-  if (applyRequested && !existingMetadata.exists) {
+  const canResumeExistingCheckpoint = existing.status === "pending"
+    && existing.version === SUPPLIER_REVIEW_BUSINESS_PROJECTION_VERSION;
+  if (applyRequested && !canResumeExistingCheckpoint) {
     await metadataReference.set({
       status: "pending",
       version: SUPPLIER_REVIEW_BUSINESS_PROJECTION_VERSION,

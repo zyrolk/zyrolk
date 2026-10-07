@@ -13,7 +13,7 @@ type StoredDocument = Record<string, unknown>;
 type StoredRecord = { id: string; data: StoredDocument };
 type FakeSnapshot = { exists: boolean; id: string; data: () => StoredDocument | undefined };
 
-const makeFakeDb = (records: StoredRecord[], options: { mediaProjectionActive?: boolean; businessProjectionActive?: boolean } = {}) => {
+const makeFakeDb = (records: StoredRecord[], options: { mediaProjectionActive?: boolean; businessProjectionActive?: boolean; businessProjectionVersion?: number } = {}) => {
   const snapshotFor = (id: string): FakeSnapshot => {
     const record = records.find((entry) => entry.id === id);
     return { exists: Boolean(record), id, data: () => record?.data };
@@ -83,7 +83,9 @@ const makeFakeDb = (records: StoredRecord[], options: { mediaProjectionActive?: 
           id,
           data: () => ((id === 'supplier_review_queue_media_projection' && options.mediaProjectionActive === true)
             || (id === 'supplier_review_queue_business_projection' && options.businessProjectionActive === true))
-            ? { status: 'active', version: 1 }
+            ? { status: 'active', version: id === 'supplier_review_queue_business_projection'
+              ? (options.businessProjectionVersion ?? 2)
+              : 1 }
             : undefined,
         }
         : snapshotFor(id) }),
@@ -304,7 +306,7 @@ test('indexed business projection provides direct Actionable pages and exact cou
       status: 'Pending',
       queueState: 'review_pending',
       businessQueueClasses: ['actionable'],
-      businessQueueClassesVersion: 1,
+      businessQueueClassesVersion: 2,
       comparison: { comparisonStatus: 'NEW_PRODUCT' },
       productValidation: { readyToPublish: true, missingFields: [], errors: [] },
       createdAt: new Date(Date.UTC(2026, 0, 1, 0, 0, 0, 75 - index)).toISOString(),
@@ -327,4 +329,16 @@ test('indexed business projection provides direct Actionable pages and exact cou
   });
   assert.equal(second.items.length, 25);
   assert.equal(new Set([...first.items, ...second.items].map((item) => item.id)).size, 75);
+});
+
+test('active v1 business metadata keeps the legacy-compatible Product Review path', async () => {
+  const db = makeFakeDb(records(3), {
+    businessProjectionActive: true,
+    businessProjectionVersion: 1,
+  }) as never;
+  const result = await listSupplierReviewReadModelPage(db, {
+    query: query({ businessFilter: 'actionable', pageSize: 25 }), page: 1,
+  });
+  assert.equal(result.countStatus, 'unavailable');
+  assert.equal(result.items.length, 3);
 });

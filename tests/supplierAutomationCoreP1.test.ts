@@ -464,14 +464,14 @@ test('P1 13 locked and failover-disabled offer semantics remain authoritative', 
   assert.equal(resolveActiveSupplierOffer([zero, backup], { activeOfferId: zero.id, failoverEnabled: false })?.id, zero.id);
 });
 
-test('P1 14 exact active supplier category match auto-selects the Zyro category', () => {
-  const result = suggestSupplierCategory({ sourceId: 'dropex', supplierCategories: ['Kitchen'], categories });
+test('P1 14 exact product evidence plus supplier category match auto-selects the Zyro category', () => {
+  const result = suggestSupplierCategory({ sourceId: 'dropex', supplierCategories: ['Kitchen'], productTitle: 'Kitchen Cookware blender', categories });
   assert.equal(result.targetCategoryId, 'kitchen');
   assert.equal(result.autoSelected, true);
 });
 
-test('P1 15 category matching normalizes case and spacing', () => {
-  const result = suggestSupplierCategory({ sourceId: 'dropex', supplierCategories: ['  KITCHEN  '], categories });
+test('P1 15 category matching normalizes case and spacing when product evidence corroborates it', () => {
+  const result = suggestSupplierCategory({ sourceId: 'dropex', supplierCategories: ['  KITCHEN  '], productTitle: 'Kitchen Cookware blender', categories });
   assert.equal(result.targetCategoryId, 'kitchen');
   assert.equal(result.mappingType, 'normalized');
 });
@@ -635,9 +635,9 @@ test('P1 16E remapped child restores only itself and name fallback remains expli
   assert.notEqual(supplierChildMappingDocumentId('dropex', 'health beauty', 'Shared', 'child-a'), supplierChildMappingDocumentId('dropex', 'health beauty', 'Shared', 'child-b'));
 });
 
-test('P1 17 repeated supplier category matching is deterministic and needs no repeated mapping', () => {
-  const first = suggestSupplierCategory({ sourceId: 'dropex', supplierCategories: ['Kitchen'], categories });
-  const second = suggestSupplierCategory({ sourceId: 'dropex', supplierCategories: [' kitchen '], categories });
+test('P1 17 repeated category matching is deterministic when product evidence is present', () => {
+  const first = suggestSupplierCategory({ sourceId: 'dropex', supplierCategories: ['Kitchen'], productTitle: 'Kitchen Cookware blender', categories });
+  const second = suggestSupplierCategory({ sourceId: 'dropex', supplierCategories: [' kitchen '], productTitle: 'Kitchen Cookware blender', categories });
   assert.equal(first.targetCategoryId, second.targetCategoryId);
   assert.equal(second.requiresManualSelection, false);
 });
@@ -663,11 +663,11 @@ test('P1 19 inactive category is never silently auto-selected', () => {
   assert.equal(result.autoSelected, false);
 });
 
-test('P1 20 subcategory is never fabricated by exact or normalized category matching', () => {
-  const exact = suggestSupplierCategory({ sourceId: 'dropex', supplierCategories: ['Kitchen', 'Cookware'], categories });
-  const normalized = suggestSupplierCategory({ sourceId: 'dropex', supplierCategories: [' kitchen '], productTitle: 'Cookware set', categories });
+test('P1 20 subcategory requires matching product evidence rather than supplier taxonomy alone', () => {
+  const exact = suggestSupplierCategory({ sourceId: 'dropex', supplierCategories: ['Kitchen', 'Cookware'], productTitle: 'Kitchen Cookware set', categories });
+  const normalized = suggestSupplierCategory({ sourceId: 'dropex', supplierCategories: [' kitchen '], productTitle: 'Kitchen Cookware set', categories });
   assert.equal(exact.targetSubcategoryId, 'cookware');
-  assert.equal(normalized.targetSubcategoryId, '');
+  assert.equal(normalized.targetSubcategoryId, 'cookware');
 });
 
 test('P1 20A Dropex productCategories preserves SHX2924 category provenance without inventing a subcategory', () => {
@@ -690,8 +690,8 @@ test('P1 20A Dropex productCategories preserves SHX2924 category provenance with
   assert.equal(parsed.extraAttributes?.supplierSubcategoryId, undefined);
 });
 
-test('P1 20B exact active supplier subcategory links only under its resolved parent', () => {
-  const result = suggestSupplierCategory({ sourceId: 'dropex', supplierCategories: ['Kitchen', 'Cookware'], categories });
+test('P1 20B exact active subcategory links only under its product-evidenced resolved parent', () => {
+  const result = suggestSupplierCategory({ sourceId: 'dropex', supplierCategories: ['Kitchen', 'Cookware'], productTitle: 'Kitchen Cookware set', categories });
   assert.equal(result.targetCategoryId, 'kitchen');
   assert.equal(result.targetSubcategoryId, 'cookware');
   assert.equal(result.autoSelected, true);

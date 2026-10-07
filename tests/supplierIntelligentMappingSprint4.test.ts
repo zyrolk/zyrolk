@@ -41,14 +41,14 @@ const brands: StoreBrandMappingCandidate[] = [
   { id: 'disabled', name: 'Disabled Brand', isActive: false },
 ];
 
-test('Sprint 4 exact and normalized category matches auto-select with production confidence', () => {
-  const exact = suggestSupplierCategory({ sourceId: 'a2z', supplierCategories: ['Mobile Phones'], categories });
+test('Sprint 4 exact and normalized category matches auto-select only with product evidence', () => {
+  const exact = suggestSupplierCategory({ sourceId: 'a2z', supplierCategories: ['Mobile Phones'], productTitle: 'Mobile Phones Smartphones', categories });
   assert.equal(exact.targetCategoryId, 'phones');
   assert.equal(exact.mappingType, 'exact');
   assert.equal(exact.confidence, 100);
   assert.equal(exact.autoSelected, true);
 
-  const normalized = suggestSupplierCategory({ sourceId: 'a2z', supplierCategories: [' mobile_phones '], categories });
+  const normalized = suggestSupplierCategory({ sourceId: 'a2z', supplierCategories: [' mobile_phones '], productTitle: 'Mobile Phones Smartphones', categories });
   assert.equal(normalized.targetCategoryId, 'phones');
   assert.equal(normalized.mappingType, 'normalized');
   assert.equal(normalized.confidence, 98);
@@ -181,7 +181,7 @@ test('Sprint 4 queue UX exposes suggestion acceptance, confidence, missing field
   const quickCard = readFileSync('src/components/SupplierReviewQuickCard.tsx', 'utf8');
   const editor = readFileSync('src/components/SupplierReviewEditorModal.tsx', 'utf8');
   const sync = readFileSync('functions/src/scheduled/supplierSync.ts', 'utf8');
-  assert.match(sync, /buildSupplierTaxonomyMetadata/);
+  assert.match(sync, /supplierCategorySuggestionForProduct\(/);
   assert.match(sync, /suggestSupplierBrand/);
   assert.match(sync, /readyToPublish/);
   assert.match(quickCard, /Review required/);

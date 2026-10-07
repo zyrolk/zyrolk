@@ -634,6 +634,7 @@ test('active NEW_PRODUCT refresh reuses the review and offer without creating a 
     availability: 'in_stock',
     supplierCategory: 'Vehicle Accessories',
     categoryHierarchy: ['Vehicle Accessories'],
+    productType: 'Vehicle Accessories',
     specifications: { Model: 'AZK1690' },
     providedFields: [
       'costPrice', 'wholesalePrice', 'stock', 'inventoryLevel', 'title', 'longDescription',
@@ -689,10 +690,10 @@ test('active NEW_PRODUCT refresh reuses the review and offer without creating a 
     assert.equal(resultPayload.price, 1650);
     assert.equal(result.item.costPrice, 720);
     assert.equal(result.item.marketPrice, 0);
-    assert.equal(resultPayload.category, '');
+    assert.equal(resultPayload.category, 'vehicle-accessories');
     assert.equal(resultPayload.subcategory, '');
     assert.equal((result.item.categoryMapping as Record<string, unknown>).supplierCategory, 'Vehicle Accessories');
-    assert.equal((result.item.categoryMapping as Record<string, unknown>).targetCategoryId, '');
+    assert.equal((result.item.categoryMapping as Record<string, unknown>).targetCategoryId, 'vehicle-accessories');
     assert.equal(resultPayload.description, 'Fresh supplier description');
     assert.deepEqual(result.item.supplierSnapshot && (result.item.supplierSnapshot as Record<string, unknown>).categoryHierarchy, ['Vehicle Accessories']);
     assert.equal(resultPayload.published, true);
@@ -701,7 +702,7 @@ test('active NEW_PRODUCT refresh reuses the review and offer without creating a 
     assert.equal((result.item.productValidation as Record<string, unknown>).readyToPublish, false);
     assert.deepEqual(
       ((result.item.productValidation as Record<string, unknown>).errors as Array<{ field: string }>).map((error) => error.field),
-      ['category'],
+      ['images'],
     );
     assert.equal(result.stockAutomated, false);
     assert.equal(refreshedOffer.id, offerId);
@@ -1379,7 +1380,7 @@ test('refresh route and sync helper are identity-bound, bounded, and use the cur
   assert.match(sync, /The canonical product for this review item could not be found/u);
   assert.match(sync, /buildSupplierProductComparison\(\s*product,\s*currentProduct \? \{ \.\.\.currentProduct \} : undefined/u);
   assert.match(sync, /buildProductPayload\(/u);
-  assert.match(sync, /buildSupplierTaxonomyMetadata\(/u);
+  assert.match(sync, /supplierCategorySuggestionForProduct\(/u);
   assert.doesNotMatch(sync, /planSupplierTaxonomyCandidates\(/u);
   assert.match(sync, /stageSupplierOfferObservation\(/u);
   assert.match(sync, /commitQueuedItems\(queuedWrites\)/u);
