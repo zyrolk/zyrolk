@@ -247,7 +247,7 @@ Established to make technology and everyday essentials easier to explore in Sri 
 
 Our Promise
 • Curated Marketplace: Explore products presented through Zyro.lk with clear product information.
-• Islandwide Delivery: Delivery is available across Sri Lanka, with availability and timing varying by location.
+• Islandwide Delivery: Estimated delivery: 2–5 days. Delivery time may vary by location, courier, product availability, weather, or other exceptional conditions.
 • Customer Support: Contact our support team for help with products, orders, and eligible order issues.
 • Technology and Essentials: Explore technology, energy, and lifestyle products selected for the marketplace.
 
@@ -293,7 +293,7 @@ You have the right to request access to your stored personal data, request corre
 • Delivery fee is LKR 300 for orders below LKR 3,000.
 • Orders from LKR 3,000 to below LKR 5,000 qualify for LKR 150 delivery.
 • Delivery is free for orders of LKR 5,000 or more.
-• Delivery times may vary by location. Estimated delivery information will be provided where available.
+• Estimated delivery: 2–5 days. Delivery time may vary by location, courier, product availability, weather, or other exceptional conditions.
 • While we make every effort to meet estimated delivery times, external factors such as weather or courier delays are beyond our control.
 
 4. Electronic Specifications & Product Information
@@ -333,7 +333,7 @@ Q: What are your shipping rates?
 A: Delivery fee is LKR 300 for orders below LKR 3,000. Orders from LKR 3,000 to below LKR 5,000 qualify for LKR 150 delivery. Delivery is free for orders of LKR 5,000 or more.
 
 Q: How long does delivery take?
-A: Delivery times may vary by location. Estimated delivery information will be provided where available.
+A: Estimated delivery: 2–5 days. Delivery time may vary by location, courier, product availability, weather, or other exceptional conditions.
 
 Q: Can I pay with Cash on Delivery (COD)?
 A: Yes, Cash on Delivery is supported for most locations and standard items. You can select COD at checkout and pay the courier when your package is delivered.

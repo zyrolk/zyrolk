@@ -74,14 +74,18 @@ test('Fallback shipping copy matches the launch delivery tiers and inclusive thr
   assert.match(cms, /Orders from LKR 3,000 to below LKR 5,000 qualify for LKR 150 delivery\./);
   assert.match(cms, /Delivery is free for orders of LKR 5,000 or more\./);
   assert.doesNotMatch(cms, /LKR 350|LKR 3,500/);
-  assert.doesNotMatch(cms, /2[–-]5 (working )?days/);
+  assert.match(cms, /Estimated delivery: 2–5 days\. Delivery time may vary by location, courier, product availability, weather, or other exceptional conditions\./);
   assert.doesNotMatch(cms, /Shipping costs vary based on your district/);
   assert.doesNotMatch(cms, /orders that exceed our minimum threshold/);
 });
 
-test('Fallback ETA copy makes no unsupported numeric promise', () => {
-  assert.match(cms, /Delivery times may vary by location\. Estimated delivery information will be provided where available\./);
-  assert.doesNotMatch(cms, /1 to 3 business days|3 to 5 business days|1–3 Business Days|2–5 Business Days/);
+test('Fallback ETA copy states the supported estimated 2–5 day window with qualification', () => {
+  const supportedEta = /Estimated delivery: 2–5 days\. Delivery time may vary by location, courier, product availability, weather, or other exceptional conditions\./;
+  for (const source of [cms, admin]) {
+    assert.match(source, supportedEta);
+    const etaLines = source.split(/\r?\n/).filter((line) => line.includes('Estimated delivery: 2–5 days')).join('\n');
+    assert.doesNotMatch(etaLines, /guaranteed|guarantee|same[- ]day|express delivery/i);
+  }
 });
 
 test('WhatsApp remains support and order assistance, not a payment method', () => {

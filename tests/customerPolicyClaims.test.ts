@@ -15,11 +15,11 @@ test('fallback policy copy avoids unsupported authenticity, warranty, return, an
 });
 
 test('fallback copy preserves the verified launch claims', () => {
-  assert.match(cms, /Islandwide Delivery: Delivery is available across Sri Lanka/);
+  assert.match(cms, /Islandwide Delivery: Estimated delivery: 2–5 days\. Delivery time may vary by location, courier, product availability, weather, or other exceptional conditions\./);
   assert.match(cms, /Delivery fee is LKR 300 for orders below LKR 3,000\./);
   assert.match(cms, /Orders from LKR 3,000 to below LKR 5,000 qualify for LKR 150 delivery\./);
   assert.match(cms, /Delivery is free for orders of LKR 5,000 or more\./);
-  assert.match(cms, /Delivery times may vary by location\. Estimated delivery information will be provided where available\./);
+  assert.match(cms, /Estimated delivery: 2–5 days\. Delivery time may vary by location, courier, product availability, weather, or other exceptional conditions\./);
   assert.match(cms, /Cash on Delivery is currently the only payment option available at checkout\./);
   assert.match(cms, /WhatsApp is available for customer support and order assistance only; it is not a separate payment method\./);
   assert.match(cms, /Need help with an order or product\? Contact our support team on WhatsApp for assistance\./);
@@ -27,6 +27,9 @@ test('fallback copy preserves the verified launch claims', () => {
   assert.match(admin, /Delivery fee is LKR 300 for orders below LKR 3,000\./);
   assert.match(admin, /Orders from LKR 3,000 to below LKR 5,000 qualify for LKR 150 delivery\./);
   assert.match(admin, /Delivery is free for orders of LKR 5,000 or more\./);
+  assert.match(admin, /Estimated delivery: 2–5 days\. Delivery time may vary by location, courier, product availability, weather, or other exceptional conditions\./);
+  const adminEtaLines = admin.split(/\r?\n/).filter((line) => line.includes('Estimated delivery: 2–5 days')).join('\n');
+  assert.doesNotMatch(adminEtaLines, /guaranteed|guarantee|same[- ]day|express delivery/i);
   assert.doesNotMatch(admin, /LKR 350 for orders|LKR 3,500/);
   assert.match(admin, /Need help with an order or product\? Contact our support team on WhatsApp for assistance\./);
 });
