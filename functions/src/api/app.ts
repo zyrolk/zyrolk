@@ -10,7 +10,6 @@ import { registerContactRoutes } from "./routes/contact";
 import { registerAdminProductRoutes } from "./routes/adminProducts";
 import { adminAppCheck, adminAuth, adminDb } from "./firebase";
 import { appLogger } from "./logging";
-import { recordSupplierOperationalAlertSafely } from "./suppliers/supplierOperationalAlerts";
 import { createPublicProductMetadataHandler, isPublicProductMetadataRequest } from "./products/publicProductMetadata";
 
 const CONTENT_SECURITY_POLICY = [
@@ -104,11 +103,10 @@ export function createApiApp(): express.Express {
     const token = req.header("X-Firebase-AppCheck");
     if (!token) {
       if (isSupplierHubApiPath(req.path)) {
-        await recordSupplierOperationalAlertSafely({
-          category: "app_check_failure",
-          severity: "critical",
-          dedupeScope: "supplier-hub-app-check",
-          technicalMetadata: { path: req.path, method: req.method, reason: "missing_app_check_token" },
+        appLogger.warn("Supplier API App Check rejected.", {
+          path: req.path,
+          method: req.method,
+          reason: "missing_app_check_token",
         });
       }
       res.status(401).json({ error: "App verification is required" });
@@ -128,11 +126,11 @@ export function createApiApp(): express.Express {
       next();
     } catch (error) {
       if (isSupplierHubApiPath(req.path)) {
-        await recordSupplierOperationalAlertSafely({
-          category: "app_check_failure",
-          severity: "critical",
-          dedupeScope: "supplier-hub-app-check",
-          technicalMetadata: { path: req.path, method: req.method, reason: "app_check_verification_failed", error },
+        appLogger.warn("Supplier API App Check rejected.", {
+          path: req.path,
+          method: req.method,
+          reason: "app_check_verification_failed",
+          error,
         });
       }
       res.status(401).json({ error: "App verification failed" });

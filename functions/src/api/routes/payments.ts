@@ -1,6 +1,6 @@
 import * as express from "express";
 import { FieldValue, Timestamp, type DocumentData, type UpdateData } from "firebase-admin/firestore";
-import { createCheckoutRateLimiter, getClientRateLimitKey, hashValue } from "../checkout/checkoutLogic";
+import { createCheckoutRateLimiter, getBestEffortNetworkRateLimitKey, hashValue } from "../checkout/checkoutLogic";
 import { collectOrderStockQuantities, requireCurrentProductStock } from "../orders/orderStatusLogic";
 import {
   addSupplierLocalDemand,
@@ -140,7 +140,7 @@ export function registerPaymentRoutes(app: express.Express, dependencies: Paymen
 
   app.post("/api/payments/status", async (req, res) => {
     try {
-      enforcePaymentReadLimit(getClientRateLimitKey(req.header("x-forwarded-for"), req.ip));
+      enforcePaymentReadLimit(getBestEffortNetworkRateLimitKey(req.header("x-forwarded-for"), req.ip));
       const orderId = typeof req.body?.orderId === "string" ? req.body.orderId.trim() : "";
       if (!orderId || orderId.length > 200) throw new PaymentError("A valid order ID is required");
       const snapshot = await db.collection("orders").doc(orderId).get();
@@ -159,7 +159,7 @@ export function registerPaymentRoutes(app: express.Express, dependencies: Paymen
 
   app.post("/api/payments/:orderId/retry", async (req, res) => {
     try {
-      enforcePaymentMutationLimit(getClientRateLimitKey(req.header("x-forwarded-for"), req.ip));
+      enforcePaymentMutationLimit(getBestEffortNetworkRateLimitKey(req.header("x-forwarded-for"), req.ip));
       const orderId = String(req.params.orderId || "").trim();
       if (!orderId || orderId.length > 200) throw new PaymentError("A valid order ID is required");
       const config = requirePayHereConfig();
@@ -268,7 +268,7 @@ export function registerPaymentRoutes(app: express.Express, dependencies: Paymen
 
   app.post("/api/payments/payhere/notify", express.urlencoded({ extended: false, limit: "20kb" }), async (req, res) => {
     try {
-      enforceWebhookLimit(getClientRateLimitKey(req.header("x-forwarded-for"), req.ip));
+      enforceWebhookLimit(getBestEffortNetworkRateLimitKey(req.header("x-forwarded-for"), req.ip));
       const config = requirePayHereConfig();
       const notification = parsePayHereNotification(req.body || {});
       if (!verifyPayHereNotification(config, notification)) throw new PaymentError("Invalid PayHere notification signature", 401);

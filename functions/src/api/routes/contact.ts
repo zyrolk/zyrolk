@@ -15,7 +15,7 @@ interface ContactRouteDependencies {
   now?: () => number;
 }
 
-const networkIdentity = (req: express.Request): string => {
+const bestEffortNetworkIdentity = (req: express.Request): string => {
   const forwarded = (req.header("x-forwarded-for") || "").split(",")[0].trim();
   return (forwarded || req.ip || "unknown").slice(0, 180);
 };
@@ -25,10 +25,12 @@ export function registerContactRoutes(app: express.Express, dependencies: Contac
     try {
       const inquiry = validateContactInquiry(req.body);
       const now = (dependencies.now || Date.now)();
-      const networkLimitReference = dependencies.db.collection(CONTACT_RATE_LIMIT_COLLECTION)
-        .doc(contactRateLimitDocumentId("network", networkIdentity(req)));
+      // The normalized phone bucket is the authoritative persistent-write
+      // control. Network identity is only a best-effort secondary heuristic.
       const phoneLimitReference = dependencies.db.collection(CONTACT_RATE_LIMIT_COLLECTION)
         .doc(contactRateLimitDocumentId("phone", inquiry.phone.replace(/\D/gu, "")));
+      const networkLimitReference = dependencies.db.collection(CONTACT_RATE_LIMIT_COLLECTION)
+        .doc(contactRateLimitDocumentId("network", bestEffortNetworkIdentity(req)));
       const inquiryReference = dependencies.db.collection("contact_inquiries").doc();
 
       await dependencies.db.runTransaction(async (transaction) => {
@@ -36,8 +38,8 @@ export function registerContactRoutes(app: express.Express, dependencies: Contac
           transaction.get(networkLimitReference),
           transaction.get(phoneLimitReference),
         ]);
-        const networkState = nextContactRateLimitState(networkLimit.exists ? networkLimit.data() || null : null, now);
         const phoneState = nextContactRateLimitState(phoneLimit.exists ? phoneLimit.data() || null : null, now);
+        const networkState = nextContactRateLimitState(networkLimit.exists ? networkLimit.data() || null : null, now);
         const limitMetadata = {
           updatedAt: FieldValue.serverTimestamp(),
           expiresAt: new Date(now + (CONTACT_RATE_LIMIT_WINDOW_MS * 2)),

@@ -32,12 +32,19 @@ import {
 import {
   GUEST_RECOVERY_GENERIC_ERROR,
   GuestOrderRecoveryError,
+  hashGuestRecoveryToken,
   lookupGuestOrderByRecoveryToken,
+  validateGuestRecoveryToken,
 } from "../orders/guestOrderRecovery";
-import { CHECKOUT_RATE_LIMIT_WINDOW_MS, createCheckoutRateLimiter, getClientRateLimitKey } from "../checkout/checkoutLogic";
+import {
+  CHECKOUT_RATE_LIMIT_WINDOW_MS,
+  createCheckoutRateLimiter,
+  getBestEffortNetworkRateLimitKey,
+} from "../checkout/checkoutLogic";
 
 const VALID_ORDER_STATUSES = new Set<string>(ORDER_STATUSES);
 const enforceGuestTrackingRateLimit = createCheckoutRateLimiter(new Map(), CHECKOUT_RATE_LIMIT_WINDOW_MS, 20);
+const enforceGuestTrackingNetworkRateLimit = createCheckoutRateLimiter(new Map(), CHECKOUT_RATE_LIMIT_WINDOW_MS, 20);
 
 const requireCustomerAuth: express.RequestHandler = async (req, res, next) => {
   const match = (req.header("Authorization") || "").match(/^Bearer\s+(.+)$/i);
@@ -236,8 +243,12 @@ export async function updateOrderStatus(
 export function registerOrderRoutes(app: express.Express): void {
   app.post("/api/orders/guest-track", async (req, res) => {
     try {
-      enforceGuestTrackingRateLimit(getClientRateLimitKey(req.header("x-forwarded-for"), req.ip));
-      const order = await lookupGuestOrderByRecoveryToken(adminDb, req.body?.recoveryToken);
+      // Retain the network guard only as a secondary resource heuristic; the
+      // authoritative limiter is the validated server-issued credential.
+      enforceGuestTrackingNetworkRateLimit(getBestEffortNetworkRateLimitKey(req.header("x-forwarded-for"), req.ip));
+      const recoveryToken = validateGuestRecoveryToken(req.body?.recoveryToken);
+      enforceGuestTrackingRateLimit(`guest-track-token:${hashGuestRecoveryToken(recoveryToken)}`);
+      const order = await lookupGuestOrderByRecoveryToken(adminDb, recoveryToken);
       res.json({ success: true, order });
     } catch (error: any) {
       if (Number(error?.statusCode) === 429) {

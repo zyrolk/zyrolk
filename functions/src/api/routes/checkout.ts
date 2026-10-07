@@ -7,7 +7,9 @@ import {
   CheckoutError,
   createCheckoutRateLimiter,
   createCheckoutRequestHash,
-  getClientRateLimitKey,
+  getAuthenticatedCheckoutRateLimitKey,
+  getBestEffortNetworkRateLimitKey,
+  getGuestCheckoutRateLimitKeys,
   getIdempotencyKeyFromValues,
   getCouponDocumentId,
   hashValue,
@@ -43,6 +45,7 @@ import {
 
 const enforceCheckoutRateLimit = createCheckoutRateLimiter();
 const enforceCouponRateLimit = createCheckoutRateLimiter();
+const enforceCheckoutNetworkRateLimit = createCheckoutRateLimiter();
 
 interface CheckoutOrderResponse {
   id: string;
@@ -95,7 +98,7 @@ async function calculateTrustedCouponSubtotal(cartItems: CheckoutCartItem[]): Pr
 export function registerCheckoutRoutes(app: express.Express): void {
   app.post("/api/checkout/coupon", async (req, res) => {
     try {
-      enforceCouponRateLimit(getClientRateLimitKey(req.header("x-forwarded-for"), req.ip));
+      enforceCouponRateLimit(getBestEffortNetworkRateLimitKey(req.header("x-forwarded-for"), req.ip));
       const code = normalizeCouponCode(req.body?.couponCode);
       const cartItems = validateCheckoutCartItems(req.body?.cartItems);
       const itemsSubtotal = await calculateTrustedCouponSubtotal(cartItems);
@@ -115,21 +118,6 @@ export function registerCheckoutRoutes(app: express.Express): void {
   app.all("/api/checkout", async (req, res) => {
     if (req.method !== "POST") {
       res.status(405).json({ error: "Only POST requests are allowed" });
-      return;
-    }
-
-    try {
-      enforceCheckoutRateLimit(getClientRateLimitKey(req.header("x-forwarded-for"), req.ip));
-    } catch (error: any) {
-      sendApiError(res, error, {
-        logMessage: "Checkout rate limit rejected request.",
-        fallbackMessage: "Too many checkout attempts",
-        fallbackStatusCode: 429,
-        context: {
-          route: "/api/checkout",
-          reason: "rate_limit",
-        },
-      });
       return;
     }
 
@@ -153,12 +141,23 @@ export function registerCheckoutRoutes(app: express.Express): void {
     let requestHash: string;
     let validatedPaymentMethod: "cod" | "whatsapp_confirm" | "payhere";
     let guestRecoveryToken: string | null = null;
+    let authoritativeRateLimitKeys: string[] = [];
     try {
       customerUid = await resolveCheckoutCustomerUid(req.header("Authorization"));
       if (requestedCustomerUid && requestedCustomerUid !== "guest" && requestedCustomerUid !== customerUid) {
         throw new CheckoutError("Checkout customer identity does not match the signed-in account", 403);
       }
       validateCheckoutDetails(req.body);
+      authoritativeRateLimitKeys = customerUid === "guest"
+        ? getGuestCheckoutRateLimitKeys(customerPhone, customerEmail)
+        : [getAuthenticatedCheckoutRateLimitKey(customerUid)];
+      if (authoritativeRateLimitKeys.length === 0) {
+        throw new CheckoutError("Phone is required", 400);
+      }
+      authoritativeRateLimitKeys.forEach((key) => enforceCheckoutRateLimit(key));
+      // Keep the existing network bucket only as a secondary, best-effort
+      // resource guard. It is never the checkout identity or sole limiter.
+      enforceCheckoutNetworkRateLimit(getBestEffortNetworkRateLimitKey(req.header("x-forwarded-for"), req.ip));
       validatedPaymentMethod = validatePaymentMethod(paymentMethod);
       validatedCartItems = validateCheckoutCartItems(cartItems, { requireExpectedUnitPrice: true });
       idempotencyKey = getIdempotencyKeyFromValues(req.header("Idempotency-Key"), req.body?.idempotencyKey);
@@ -202,12 +201,27 @@ export function registerCheckoutRoutes(app: express.Express): void {
           }
         }
 
-        const checkoutNetworkKey = getClientRateLimitKey(req.header("x-forwarded-for"), req.ip);
+        const checkoutNetworkKey = getBestEffortNetworkRateLimitKey(req.header("x-forwarded-for"), req.ip);
         const offlineLimitRefs = validatedPaymentMethod === "payhere" ? [] : [
+          // Preserve the pre-existing phone bucket and threshold for every
+          // offline checkout. The verified UID bucket is additive for signed
+          // in customers; it does not reset or weaken the legacy control.
           {
             ref: adminDb.collection(CHECKOUT_ABUSE_COLLECTION).doc(hashValue(`offline-phone:${String(customerPhone).replace(/\D/gu, "")}`)),
             maximum: OFFLINE_CHECKOUT_PHONE_LIMIT,
           },
+          ...(customerUid === "guest" ? [] : [{
+            ref: adminDb.collection(CHECKOUT_ABUSE_COLLECTION).doc(hashValue(`offline-user:${customerUid}`)),
+            maximum: OFFLINE_CHECKOUT_NETWORK_LIMIT,
+          }]),
+          ...(customerUid === "guest"
+            ? getGuestCheckoutRateLimitKeys(customerPhone, customerEmail)
+              .filter((key) => key.startsWith("guest-checkout-email:"))
+              .map((key) => ({
+                ref: adminDb.collection(CHECKOUT_ABUSE_COLLECTION).doc(hashValue(`offline-email:${key}`)),
+                maximum: OFFLINE_CHECKOUT_NETWORK_LIMIT,
+              }))
+            : []),
           {
             ref: adminDb.collection(CHECKOUT_ABUSE_COLLECTION).doc(hashValue(`offline-network:${checkoutNetworkKey}`)),
             maximum: OFFLINE_CHECKOUT_NETWORK_LIMIT,

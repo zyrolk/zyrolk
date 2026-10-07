@@ -87,9 +87,26 @@ export class CheckoutError extends Error {
   }
 }
 
-export function getClientRateLimitKey(forwardedFor: string | undefined, ip: string | undefined): string {
+/**
+ * Best-effort network signal only. Callers must never treat the forwarded
+ * value as a verified end-user identity because direct Function callers can
+ * supply the header themselves.
+ */
+export function getBestEffortNetworkRateLimitKey(forwardedFor: string | undefined, ip: string | undefined): string {
   const forwardedIp = forwardedFor ? forwardedFor.split(",")[0].trim() : "";
   return forwardedIp || ip || "unknown";
+}
+
+export function getAuthenticatedCheckoutRateLimitKey(uid: string): string {
+  return `checkout-user:${hashValue(uid)}`;
+}
+
+export function getGuestCheckoutRateLimitKeys(customerPhone: unknown, customerEmail: unknown): string[] {
+  const phoneDigits = typeof customerPhone === "string" ? customerPhone.replace(/\D/gu, "") : "";
+  const keys = phoneDigits ? [`guest-checkout-phone:${hashValue(phoneDigits)}`] : [];
+  const email = typeof customerEmail === "string" ? customerEmail.trim().toLowerCase() : "";
+  if (email && email !== "guest@zyro.lk") keys.push(`guest-checkout-email:${hashValue(email)}`);
+  return keys;
 }
 
 export function createCheckoutRateLimiter(

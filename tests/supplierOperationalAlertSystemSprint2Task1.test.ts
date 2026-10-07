@@ -1420,8 +1420,10 @@ test('required failure producers use the shared alert engine and lifecycle remai
   const rules = readFileSync('firestore.rules', 'utf8');
   const index = readFileSync('functions/src/index.ts', 'utf8');
 
-  assert.match(app, /category: "app_check_failure"/u);
-  assert.match(auth, /category: "authentication_failure"/u);
+  assert.doesNotMatch(app, /recordSupplierOperationalAlertSafely/u);
+  assert.doesNotMatch(auth, /recordSupplierOperationalAlertSafely/u);
+  assert.match(app, /Supplier API App Check rejected/u);
+  assert.match(auth, /Supplier Hub API authentication rejected/u);
   assert.match(routes, /category: "supplier_connection_failure"/u);
   assert.match(sync, /category: "supplier_sync_failure"/u);
   assert.match(dispatcher, /category: "scheduler_failure"/u);

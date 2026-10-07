@@ -1,7 +1,6 @@
 import * as express from "express";
 import { adminAuth } from "../firebase";
 import { appLogger } from "../logging";
-import { recordSupplierOperationalAlertSafely } from "../suppliers/supplierOperationalAlerts";
 import { hasSupplierHubAdminAccess } from "../security/adminAuthorization";
 
 export { hasSupplierHubAdminAccess } from "../security/adminAuthorization";
@@ -20,11 +19,10 @@ export const requireSupplierHubAdmin: express.RequestHandler = async (req, res, 
   const authHeader = req.header("Authorization") || "";
   const match = authHeader.match(/^Bearer\s+(.+)$/i);
   if (!match) {
-    await recordSupplierOperationalAlertSafely({
-      category: "authentication_failure",
-      severity: "critical",
-      dedupeScope: "supplier-hub-authentication",
-      technicalMetadata: { path: req.path, method: req.method, reason: "missing_bearer_token" },
+    appLogger.warn("Supplier Hub API authentication rejected.", {
+      path: req.path,
+      method: req.method,
+      reason: "missing_bearer_token",
     });
     res.status(401).json({ error: "Authentication required" });
     return;
@@ -39,11 +37,11 @@ export const requireSupplierHubAdmin: express.RequestHandler = async (req, res, 
       ? await adminAuth.verifyIdToken(match[1])
       : await adminAuth.verifyIdToken(match[1], true);
     if (!hasSupplierHubAdminAccess(decodedToken)) {
-      await recordSupplierOperationalAlertSafely({
-        category: "authentication_failure",
-        severity: "critical",
-        dedupeScope: "supplier-hub-authentication",
-        technicalMetadata: { path: req.path, method: req.method, reason: "admin_claim_required", uid: decodedToken.uid },
+      appLogger.warn("Supplier Hub API authentication rejected.", {
+        path: req.path,
+        method: req.method,
+        reason: "admin_claim_required",
+        uid: decodedToken.uid,
       });
       res.status(403).json({ error: "Supplier Hub administrator access required" });
       return;
@@ -58,12 +56,6 @@ export const requireSupplierHubAdmin: express.RequestHandler = async (req, res, 
       path: req.path,
       method: req.method,
       error,
-    });
-    await recordSupplierOperationalAlertSafely({
-      category: "authentication_failure",
-      severity: "critical",
-      dedupeScope: "supplier-hub-authentication",
-      technicalMetadata: { path: req.path, method: req.method, reason: "id_token_verification_failed", error },
     });
     res.status(401).json({ error: "Invalid, expired, or revoked authentication token" });
   }
