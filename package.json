@@ -24,6 +24,7 @@
     "supplier:media-projection:apply": "tsx scripts/migrateSupplierMediaQueueProjection.ts --apply",
     "supplier:business-projection:dry-run": "tsx scripts/migrateSupplierReviewBusinessQueueProjection.ts",
     "supplier:business-projection:apply": "tsx scripts/migrateSupplierReviewBusinessQueueProjection.ts --apply",
+    "tax-ai:shadow": "tsx scripts/runTaxAiShadow.ts",
     "security:admin-claims:dry-run": "tsx scripts/grantAdminClaims.ts",
     "security:admin-claims:apply": "tsx scripts/grantAdminClaims.ts --apply",
     "release:config:check": "tsx scripts/validateProductionConfiguration.ts",
