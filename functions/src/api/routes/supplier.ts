@@ -97,6 +97,17 @@ import {
   projectSupplierMediaForensicEvidence,
 } from "../suppliers/supplierMediaForensics";
 import type { SupplierQueueRecord } from "../../scheduled/supplierReviewQueue";
+import {
+  approveLaunch1000TaxonomyProposal,
+  createApprovedLaunch1000TaxonomyProposal,
+  previewLaunch1000TaxonomyProposals,
+} from "../launch1000/launch1000Governance";
+import {
+  applyLaunch1000ProductPilot,
+  dryRunLaunch1000ProductApply,
+  parseLaunch1000ApplyRequest,
+  parseLaunch1000DryRunRequest,
+} from "../launch1000/launch1000Apply";
 
 const readSourceIds = (value: unknown): string[] => {
   if (value === undefined) return [];
@@ -657,6 +668,75 @@ export function registerSupplierRoutes(app: express.Express): void {
         logMessage: "Supplier review catalog lookup failed.",
         fallbackMessage: "Active Zyro categories and brands could not be loaded.",
         context: { route: "/api/supplier-review-catalog" },
+      });
+    }
+  });
+
+  app.post("/api/launch1000/taxonomy/preview", requireSupplierHubAdmin, async (req, res) => {
+    try {
+      res.status(200).json({ success: true, ...(await previewLaunch1000TaxonomyProposals(adminDb, req.body || {})) });
+    } catch (error: unknown) {
+      sendSupplierFailure(res, error, {
+        logMessage: "Launch-1000 taxonomy proposal preview failed.",
+        fallbackMessage: "Launch-1000 taxonomy proposals could not be previewed.",
+        context: { route: req.path, action: "preview" },
+      });
+    }
+  });
+
+  app.post("/api/launch1000/taxonomy/approve", requireSupplierHubAdmin, async (req, res) => {
+    try {
+      res.status(200).json({
+        success: true,
+        result: await approveLaunch1000TaxonomyProposal(adminDb, req.body || {}, reviewerFor(res)),
+      });
+    } catch (error: unknown) {
+      sendSupplierFailure(res, error, {
+        logMessage: "Launch-1000 taxonomy proposal approval failed.",
+        fallbackMessage: "Launch-1000 taxonomy proposal approval could not be completed.",
+        context: { route: req.path, action: "approve" },
+      });
+    }
+  });
+
+  app.post("/api/launch1000/taxonomy/create", requireSupplierHubAdmin, async (req, res) => {
+    try {
+      res.status(200).json({
+        success: true,
+        result: await createApprovedLaunch1000TaxonomyProposal(adminDb, req.body || {}, reviewerFor(res)),
+      });
+    } catch (error: unknown) {
+      sendSupplierFailure(res, error, {
+        logMessage: "Launch-1000 taxonomy proposal creation failed.",
+        fallbackMessage: "Launch-1000 taxonomy proposal creation could not be completed.",
+        context: { route: req.path, action: "create" },
+      });
+    }
+  });
+
+  app.post("/api/launch1000/products/dry-run", requireSupplierHubAdmin, async (req, res) => {
+    try {
+      res.status(200).json({ success: true, ...(await dryRunLaunch1000ProductApply(adminDb, parseLaunch1000DryRunRequest(req.body))) });
+    } catch (error: unknown) {
+      sendSupplierFailure(res, error, {
+        logMessage: "Launch-1000 product dry-run failed.",
+        fallbackMessage: "Launch-1000 product eligibility could not be previewed.",
+        context: { route: req.path, action: "dry_run" },
+      });
+    }
+  });
+
+  app.post("/api/launch1000/products/apply-pilot", requireSupplierHubAdmin, async (req, res) => {
+    try {
+      res.status(200).json({
+        success: true,
+        ...(await applyLaunch1000ProductPilot(adminDb, parseLaunch1000ApplyRequest(req.body), reviewerFor(res))),
+      });
+    } catch (error: unknown) {
+      sendSupplierFailure(res, error, {
+        logMessage: "Launch-1000 product pilot apply failed.",
+        fallbackMessage: "Launch-1000 product pilot could not be applied.",
+        context: { route: req.path, action: "apply_pilot" },
       });
     }
   });
