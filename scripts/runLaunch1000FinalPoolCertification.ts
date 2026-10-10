@@ -5,6 +5,10 @@ import { getFirestore } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
 import { validateSupplierProductForApproval, type StoreCategoryMappingCandidate } from "../functions/src/api/suppliers/supplierProductMapping";
 import { supplierReviewRecordHasPublicationReadyMedia } from "../functions/src/scheduled/supplierReviewQueue";
+import {
+  supplierReviewCanonicalProductIds,
+  supplierReviewRecordIsLiveEquivalent,
+} from "../functions/src/api/suppliers/supplierReviewLiveEquivalence";
 
 const PROJECT_ID = "zyrolk-e0164";
 const OUT = path.resolve(".local/launch-1000/final-launch-pool-certification.json");
@@ -243,7 +247,19 @@ function selectedSpec(raw: AnyRecord, semantic: AnyRecord | undefined, familyId:
   return { specs, normalization, missing: [] };
 }
 
+const app = getApps().length > 0 ? getApp() : initializeApp({ credential: applicationDefault(), projectId: PROJECT_ID });
+const db = getFirestore(app);
+
 const source = JSON.parse(await readFile(path.resolve(".local/launch-1000/final-pool-source-read.json"), "utf8")) as { categories: Array<{ id: string; data: AnyRecord }>; rawRecords: AnyRecord[] };
+const liveProductsById = new Map<string, AnyRecord>();
+const liveProductIds = [...new Set(source.rawRecords.flatMap((raw) => supplierReviewCanonicalProductIds(raw)))];
+for (let offset = 0; offset < liveProductIds.length; offset += 200) {
+  const ids = liveProductIds.slice(offset, offset + 200);
+  const snapshots = await db.getAll(...ids.map((id) => db.collection("products").doc(id)));
+  snapshots.forEach((snapshot) => {
+    if (snapshot.exists) liveProductsById.set(snapshot.id, snapshot.data() || {});
+  });
+}
 const semantic = JSON.parse(await readFile(SEMANTIC, "utf8")) as { results: AnyRecord[] };
 const virtual = JSON.parse(await readFile(VIRTUAL, "utf8")) as { familyResults: AnyRecord[]; adminResults: AnyRecord[]; virtualTaxonomy: { nodes: AnyRecord[] } };
 const workbench = JSON.parse(await readFile(WORKBENCH, "utf8")) as { candidates: AnyRecord[] };
@@ -262,6 +278,9 @@ const categoryIds = new Set(overlay.filter((item) => item.isActive === true && i
 
 async function validateAssignment(id: string, categoryId: string | null, subcategoryId: string | null, familyId: string | undefined, sourceKind: string, clusterId: string, taxonomy: readonly StoreCategoryMappingCandidate[] = overlay): Promise<Result> {
   const raw = rawById.get(id) || {};
+  if (supplierReviewRecordIsLiveEquivalent(raw, liveProductsById)) {
+    return { id, sku: candidateSku(raw), title: first(record(raw.productPayload).name, record(raw.productPayload).title, raw.productName), class: "OTHER_BLOCKER", categoryId, subcategoryId, clusterId, blockers: ["LIVE_EQUIVALENT"], media: mediaSummary(raw), source: sourceKind };
+  }
   const semanticResult = semanticById.get(id);
   const media = mediaSummary(raw);
   const type = selectedSpec(raw, semanticResult, familyId);
@@ -305,7 +324,7 @@ for (const item of recoveryCandidates) {
   recoveryResults.push(await validateAssignment(text(item.candidateId), assignment.categoryId, assignment.subcategoryId, assignment.familyId, `admin-recovery:${assignment.reason}`, `recovery:${text(item.candidateId)}`));
 }
 
-const storage = getStorage(getApps().length > 0 ? getApp() : initializeApp({ credential: applicationDefault(), projectId: PROJECT_ID })).bucket("zyrolk-e0164.firebasestorage.app");
+const storage = getStorage(app).bucket("zyrolk-e0164.firebasestorage.app");
 const selected = [...results, ...recoveryResults].filter((item) => item.class === "CERTIFIED_CLEAN");
 const mediaChecks: Array<AnyRecord> = [];
 for (let offset = 0; offset < selected.length; offset += 20) {

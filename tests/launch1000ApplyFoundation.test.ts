@@ -318,6 +318,54 @@ test("product dry-run is zero-write and eligible apply updates only review proje
   });
 });
 
+test("live-equivalent dry-run ignores stale review flags but protects a real live linkage", { skip: !canRunFirestore }, async () => {
+  await withEmulator(async (db) => {
+    const staleProductId = `product-${randomUUID()}`;
+    const liveProductId = `product-${randomUUID()}`;
+    await db.collection("categories").doc("test-category").set({
+      name: "Test Category",
+      isActive: true,
+      taxonomyCandidate: false,
+      specificationTemplate: [],
+      subcategories: [{ id: "test-subcategory", name: "Test Subcategory", slug: "test-subcategory", isActive: true, taxonomyCandidate: false }],
+    });
+    const staleRecord = queueRecordFor(staleProductId, "2026-10-10T00:00:00.000Z");
+    staleRecord.productPayload = {
+      ...staleRecord.productPayload,
+      isActive: true,
+      published: true,
+      approved: true,
+    } as typeof staleRecord.productPayload;
+    const liveRecord = queueRecordFor(liveProductId, "2026-10-10T00:00:00.000Z");
+    liveRecord.productPayload = {
+      ...liveRecord.productPayload,
+      isActive: true,
+      published: true,
+      approved: true,
+    } as typeof liveRecord.productPayload;
+    await db.collection("supplier_review_queue").doc(staleProductId).set(staleRecord);
+    await db.collection("supplier_review_queue").doc(liveProductId).set(liveRecord);
+    await db.collection("products").doc(liveProductId).set({ id: liveProductId, isActive: true, visible: true });
+
+    const snapshot = loadLaunch1000SnapshotFromValues({
+      manifestRevision: "manifest-test-r1",
+      entries: [
+        { ...snapshotFor(staleProductId).entries[0]!, productId: staleProductId },
+        { ...snapshotFor(liveProductId).entries[0]!, productId: liveProductId },
+      ],
+    }, { revision: "taxonomy-test-r1", governanceStatus: "PENDING_ADMIN_APPROVAL", proposals: [] });
+    const dryRun = await dryRunLaunch1000ProductApply(db, {
+      manifestRevision: "manifest-test-r1",
+      productIds: [staleProductId, liveProductId],
+    }, snapshot);
+    const byId = new Map(dryRun.results.map((result) => [result.productId, result]));
+    assert.equal(byId.get(staleProductId)?.outcome, "ELIGIBLE");
+    assert.equal(byId.get(staleProductId)?.reasonCodes.includes("LIVE_EQUIVALENT"), false);
+    assert.equal(byId.get(liveProductId)?.outcome, "NEEDS_ATTENTION");
+    assert.equal(byId.get(liveProductId)?.reasonCodes.includes("LIVE_EQUIVALENT"), true);
+  });
+});
+
 test("invalid apply remains Needs Attention without queue mutation", { skip: !canRunFirestore }, async () => {
   await withEmulator(async (db) => {
     const productId = `product-${randomUUID()}`;

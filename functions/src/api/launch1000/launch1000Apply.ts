@@ -18,6 +18,11 @@ import {
 } from "../suppliers/supplierProductMapping";
 import { classifySupplierMediaReadiness } from "../suppliers/supplierMediaReadiness";
 import {
+  supplierReviewCanonicalProductIds,
+  supplierReviewRecordIsLiveEquivalent,
+  type SupplierReviewLiveProducts,
+} from "../suppliers/supplierReviewLiveEquivalence";
+import {
   Launch1000ManifestEntry,
   Launch1000ManifestSnapshot,
   launch1000RecordFingerprint,
@@ -309,7 +314,7 @@ const evaluate = async (
   db: Firestore,
   entry: Launch1000ManifestEntry,
   current: Record<string, unknown> | null,
-  product: Record<string, unknown> | null,
+  liveProducts: SupplierReviewLiveProducts,
   snapshot: Launch1000ManifestSnapshot,
   expected?: Launch1000Precondition,
 ): Promise<ProductEvaluation> => {
@@ -339,7 +344,7 @@ const evaluate = async (
   if (sourceId !== "dropex") reasons.push("SUPPLIER_SOURCE_NOT_DROPEX");
   if (!["review_pending", "pending"].includes(currentState)) reasons.push("REVIEW_NOT_PENDING");
   if ([current.status, current.queueState, current.reviewStatus].some((value) => asString(value).toLocaleLowerCase("en") === "approved")) reasons.push("ALREADY_DECIDED");
-  if (payload.isActive === true || payload.published === true || payload.approved === true || (product && isSupplierProductLive(product))) reasons.push("LIVE_EQUIVALENT");
+  if (supplierReviewRecordIsLiveEquivalent(current, liveProducts)) reasons.push("LIVE_EQUIVALENT");
   const priorLaunch1000Apply = asRecord(current.launch1000Apply);
   if (priorLaunch1000Apply.manifestRevision === snapshot.manifestRevision && priorLaunch1000Apply.outcome === "READY_FOR_REVIEW") {
     reasons.push("ALREADY_LAUNCH1000_APPLIED");
@@ -457,9 +462,12 @@ export async function dryRunLaunch1000ProductApply(
   for (const productId of input.productIds.slice().sort((left, right) => (entries.get(left)?.launchPriority || 0) - (entries.get(right)?.launchPriority || 0))) {
     const entry = entries.get(productId) as Launch1000ManifestEntry;
     const current = await queueSnapshot(db, productId);
-    const payload = asRecord(current?.productPayload);
-    const product = current && asString(payload.id) ? await db.collection("products").doc(asString(payload.id)).get() : null;
-    const evaluation = await evaluate((reference) => reference.get(), db, entry, current, product?.exists ? product.data() || {} : null, snapshot);
+    const liveProducts = new Map<string, Record<string, unknown>>();
+    for (const linkedProductId of supplierReviewCanonicalProductIds(current)) {
+      const product = await db.collection("products").doc(linkedProductId).get();
+      if (product.exists) liveProducts.set(linkedProductId, product.data() || {});
+    }
+    const evaluation = await evaluate((reference) => reference.get(), db, entry, current, liveProducts, snapshot);
     results.push(evaluation.result);
   }
   return {
@@ -570,8 +578,6 @@ const applyOne = async (
       });
       return result;
     }
-    const payload = asRecord(current.productPayload);
-    const productId = asString(payload.id) || entry.productId;
     const priorLaunch1000Apply = asRecord(current.launch1000Apply);
     if (priorLaunch1000Apply.manifestRevision === input.manifestRevision && priorLaunch1000Apply.outcome === "READY_FOR_REVIEW" && priorLaunch1000Apply.operationId === input.operationId) {
       return {
@@ -583,8 +589,12 @@ const applyOne = async (
         expectedFingerprint: launch1000RecordFingerprint(current),
       };
     }
-    const productSnapshot = await transaction.get(db.collection("products").doc(productId));
-    const evaluation = await evaluate((reference) => transaction.get(reference), db, entry, current, productSnapshot.exists ? productSnapshot.data() || {} : null, snapshot, input.preconditions[entry.productId]);
+    const liveProducts = new Map<string, Record<string, unknown>>();
+    for (const linkedProductId of supplierReviewCanonicalProductIds(current)) {
+      const productSnapshot = await transaction.get(db.collection("products").doc(linkedProductId));
+      if (productSnapshot.exists) liveProducts.set(linkedProductId, productSnapshot.data() || {});
+    }
+    const evaluation = await evaluate((reference) => transaction.get(reference), db, entry, current, liveProducts, snapshot, input.preconditions[entry.productId]);
     if (evaluation.result.outcome !== "ELIGIBLE" || !evaluation.nextPayload || !evaluation.nextValidation || !evaluation.projection) {
       const now = new Date().toISOString();
       const auditReference = db.collection(LAUNCH1000_APPLY_AUDIT_COLLECTION).doc();
