@@ -43,6 +43,7 @@ import SupplierReviewQuickCard from './SupplierReviewQuickCard';
 import SupplierReviewPagination from './SupplierReviewPagination';
 import SupplierOperationsDashboard from './supplier-operations/SupplierOperationsDashboard';
 import SupplierManagementDashboard from './supplier-management/SupplierManagementDashboard';
+import Launch1000PilotDryRunPanel from './Launch1000PilotDryRunPanel';
 import SupplierManualSyncDialog from './supplier-management/SupplierManualSyncDialog';
 import SupplierConnectionBadge from './supplier-ui/SupplierConnectionBadge';
 import { calculateSupplierProfit, createSupplierReviewDraft, SupplierReviewDraft } from '../services/supplierReviewEditor';
@@ -2714,6 +2715,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
 
         {activeSubTab === 'review' && (
           <div className="space-y-8">
+            <Launch1000PilotDryRunPanel />
             <section aria-labelledby="product-review-filters-title" className="rounded-3xl border border-slate-200/70 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950 sm:p-5">
               <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
                 <div className="min-w-0">
