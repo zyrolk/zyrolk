@@ -108,6 +108,10 @@ import {
   parseLaunch1000ApplyRequest,
   parseLaunch1000DryRunRequest,
 } from "../launch1000/launch1000Apply";
+import {
+  approveLaunch1000ProductTypeClassification,
+  parseLaunch1000ProductTypeClassificationInput,
+} from "../launch1000/launch1000ProductTypeClassification";
 
 const readSourceIds = (value: unknown): string[] => {
   if (value === undefined) return [];
@@ -964,6 +968,24 @@ export function registerSupplierRoutes(app: express.Express): void {
         logMessage: "Supplier Product Review draft save failed.",
         fallbackMessage: "Supplier review changes could not be saved.",
         context: { route: req.path, action: "save_draft" },
+      });
+    }
+  });
+
+  app.patch("/api/supplier-review-queue/:queueItemId/product-type-classification", requireSupplierHubAdmin, async (req, res) => {
+    try {
+      const result = await approveLaunch1000ProductTypeClassification(
+        adminDb,
+        readQueueItemId(req.params.queueItemId),
+        parseLaunch1000ProductTypeClassificationInput(req.body),
+        reviewerFor(res),
+      );
+      res.status(200).json({ success: true, status: "review_pending", ...result });
+    } catch (error: unknown) {
+      sendSupplierFailure(res, error, {
+        logMessage: "Launch-1000 Product Type classification failed.",
+        fallbackMessage: "Product Type classification could not be approved.",
+        context: { route: req.path, action: "classification_approved" },
       });
     }
   });

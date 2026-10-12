@@ -225,7 +225,7 @@ const buildReviewValidationPayload = (
   visible: payload.visible ?? current.visible,
 });
 
-const recomputeProductValidation = async (
+export const recomputeProductValidation = async (
   transaction: FirebaseFirestore.Transaction,
   db: Firestore,
   current: Record<string, unknown>,

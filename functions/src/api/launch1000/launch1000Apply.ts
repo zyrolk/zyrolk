@@ -28,6 +28,10 @@ import {
   launch1000RecordFingerprint,
   loadLaunch1000Snapshot,
 } from "./launch1000Snapshot";
+import {
+  isCurrentLaunch1000ProductTypeClassification,
+  resolveLaunch1000QueueRecord,
+} from "./launch1000ProductTypeClassification";
 import { LAUNCH1000_TAXONOMY_GOVERNANCE_COLLECTION } from "./launch1000Governance";
 
 export const LAUNCH1000_APPLY_OPERATIONS_COLLECTION = "launch1000_apply_operations";
@@ -70,6 +74,16 @@ export interface Launch1000ProductResult {
   validationErrors?: Array<Record<string, unknown>>;
   projectionClasses?: string[];
 }
+
+const supplierIdentityConflictResult = (entry: Launch1000ManifestEntry): Launch1000ProductResult => ({
+  productId: entry.productId,
+  sku: entry.sku,
+  outcome: "NEEDS_ATTENTION",
+  reasonCodes: ["SUPPLIER_IDENTITY_CONFLICT"],
+  expectedUpdatedAt: null,
+  expectedFingerprint: null,
+  deterministicSpecNormalization: entry.deterministicSpecNormalization,
+});
 
 type Launch1000Reader = (
   reference: FirebaseFirestore.DocumentReference,
@@ -257,12 +271,22 @@ const applySpecNormalization = (
   current: Record<string, unknown>,
   payload: Record<string, unknown>,
   normalization: Record<string, string>,
+  approvedProductTypeClassification = false,
 ): { specs: Record<string, unknown>; error?: string } => {
   const specs = { ...asRecord(payload.specs) };
   const evidence = evidenceText(current, payload);
   for (const [field, value] of Object.entries(normalization)) {
+    if (field.toLocaleLowerCase("en") === "product type") {
+      for (const key of Object.keys(specs)) {
+        if (key.normalize("NFKC").trim().toLocaleLowerCase("en") === "product type") delete specs[key];
+      }
+    }
     const currentValue = asString(specs[field]);
     if (currentValue && currentValue.toLocaleLowerCase("en") === value.toLocaleLowerCase("en")) continue;
+    if (field.toLocaleLowerCase("en") === "product type" && approvedProductTypeClassification) {
+      specs[field] = value;
+      continue;
+    }
     if (!evidence.includes(value.toLocaleLowerCase("en"))) return { specs, error: "SPEC_EVIDENCE_MISSING" };
     specs[field] = value;
   }
@@ -314,6 +338,7 @@ const evaluate = async (
   db: Firestore,
   entry: Launch1000ManifestEntry,
   current: Record<string, unknown> | null,
+  currentIdentity: import("./launch1000ProductTypeClassification").Launch1000ProductTypeIdentity | null,
   liveProducts: SupplierReviewLiveProducts,
   snapshot: Launch1000ManifestSnapshot,
   expected?: Launch1000Precondition,
@@ -367,7 +392,15 @@ const evaluate = async (
   };
   const brandId = asString(payload.brand);
   const brand = brandId ? await read(db.collection("brands").doc(brandId)) : null;
-  const specResult = applySpecNormalization(current, { ...payload, category: targetValue.categoryId, subcategory: targetValue.subcategoryId }, entry.deterministicSpecNormalization);
+  const storedClassification = asRecord(current.launch1000ProductTypeClassification);
+  const approvedClassification = isCurrentLaunch1000ProductTypeClassification(current, entry, snapshot, currentIdentity);
+  if (Object.keys(storedClassification).length > 0 && !approvedClassification) reasons.push("PRODUCT_TYPE_CLASSIFICATION_STALE");
+  const specResult = applySpecNormalization(
+    current,
+    { ...payload, category: targetValue.categoryId, subcategory: targetValue.subcategoryId },
+    entry.deterministicSpecNormalization,
+    Boolean(approvedClassification),
+  );
   if (specResult.error) reasons.push(specResult.error);
   if (reasons.length > 0) return {
     ...empty("NEEDS_ATTENTION", reasons, currentUpdatedAt, currentFingerprint),
@@ -380,11 +413,30 @@ const evaluate = async (
     ...payload,
     category: targetValue.categoryId,
     subcategory: targetValue.subcategoryId,
+    ...(entry.deterministicSpecNormalization["Product Type"] && asString(specResult.specs["Product Type"])
+      ? { productType: asString(specResult.specs["Product Type"]) }
+      : {}),
     specs: specResult.specs,
     supplierFieldOwnership: {
       ...asRecord(payload.supplierFieldOwnership),
       category: { owner: "admin", sourceId: null, updatedAt: currentUpdatedAt, updatedBy: "launch1000", reason: "review_decision" },
       subcategory: { owner: "admin", sourceId: null, updatedAt: currentUpdatedAt, updatedBy: "launch1000", reason: "review_decision" },
+      ...(approvedClassification ? {
+        specs: {
+          owner: "admin",
+          sourceId: null,
+          updatedAt: approvedClassification.approvedAt,
+          updatedBy: approvedClassification.approvedBy,
+          reason: "review_decision",
+        },
+        productType: {
+          owner: "admin",
+          sourceId: null,
+          updatedAt: approvedClassification.approvedAt,
+          updatedBy: approvedClassification.approvedBy,
+          reason: "review_decision",
+        },
+      } : {}),
     },
   };
   const validation = validationFor(current, nextPayload, categorySnapshot, brand);
@@ -447,11 +499,6 @@ const entryMap = (snapshot: Launch1000ManifestSnapshot, revision: string, produc
   return entries;
 };
 
-const queueSnapshot = async (db: Firestore, productId: string): Promise<Record<string, unknown> | null> => {
-  const snapshot = await db.collection("supplier_review_queue").doc(productId).get();
-  return snapshot.exists ? snapshot.data() || {} : null;
-};
-
 export async function dryRunLaunch1000ProductApply(
   db: Firestore,
   input: Launch1000DryRunRequest,
@@ -461,13 +508,35 @@ export async function dryRunLaunch1000ProductApply(
   const results: Launch1000ProductResult[] = [];
   for (const productId of input.productIds.slice().sort((left, right) => (entries.get(left)?.launchPriority || 0) - (entries.get(right)?.launchPriority || 0))) {
     const entry = entries.get(productId) as Launch1000ManifestEntry;
-    const current = await queueSnapshot(db, productId);
-    const liveProducts = new Map<string, Record<string, unknown>>();
-    for (const linkedProductId of supplierReviewCanonicalProductIds(current)) {
-      const product = await db.collection("products").doc(linkedProductId).get();
-      if (product.exists) liveProducts.set(linkedProductId, product.data() || {});
+    let evaluation: ProductEvaluation;
+    try {
+      const resolvedQueueRecord = await resolveLaunch1000QueueRecord(db, {
+        get: (reference) => reference.get(),
+        getQuery: (query) => query.get(),
+      }, entry.productId);
+      const current = resolvedQueueRecord?.record || null;
+      const liveProducts = new Map<string, Record<string, unknown>>();
+      for (const linkedProductId of supplierReviewCanonicalProductIds(current)) {
+        const product = await db.collection("products").doc(linkedProductId).get();
+        if (product.exists) liveProducts.set(linkedProductId, product.data() || {});
+      }
+      evaluation = await evaluate(
+        (reference) => reference.get(),
+        db,
+        entry,
+        current,
+        resolvedQueueRecord?.identity || null,
+        liveProducts,
+        snapshot,
+      );
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.statusCode !== 409) throw error;
+      results.push({
+        ...supplierIdentityConflictResult(entry),
+        outcome: "NEEDS_ATTENTION",
+      });
+      continue;
     }
-    const evaluation = await evaluate((reference) => reference.get(), db, entry, current, liveProducts, snapshot);
     results.push(evaluation.result);
   }
   return {
@@ -546,9 +615,36 @@ const applyOne = async (
   snapshot: Launch1000ManifestSnapshot,
 ): Promise<Launch1000ProductResult> => {
   const result = await db.runTransaction(async (transaction: Transaction) => {
-    const reference = db.collection("supplier_review_queue").doc(entry.productId);
-    const currentSnapshot = await transaction.get(reference);
-    const current = currentSnapshot.exists ? currentSnapshot.data() || {} : null;
+    let resolvedQueueRecord;
+    try {
+      resolvedQueueRecord = await resolveLaunch1000QueueRecord(db, {
+        get: (documentReference) => transaction.get(documentReference),
+        getQuery: (query) => transaction.get(query),
+      }, entry.productId);
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.statusCode !== 409) throw error;
+      const identityConflict = supplierIdentityConflictResult(entry);
+      const auditReference = db.collection(LAUNCH1000_APPLY_AUDIT_COLLECTION).doc();
+      transaction.create(auditReference, {
+        id: auditReference.id,
+        operationId: input.operationId,
+        manifestRevision: input.manifestRevision,
+        productId: entry.productId,
+        sku: entry.sku,
+        previousTaxonomy: null,
+        newTaxonomy: null,
+        deterministicSpecNormalization: entry.deterministicSpecNormalization,
+        validationResult: identityConflict.outcome,
+        reasonCodes: identityConflict.reasonCodes,
+        operatorUid: operator.uid,
+        operatorEmail: operator.email,
+        timestamp: new Date().toISOString(),
+        outcome: "skipped",
+      });
+      return identityConflict;
+    }
+    const reference = resolvedQueueRecord?.reference || db.collection("supplier_review_queue").doc(entry.productId);
+    const current = resolvedQueueRecord?.record || null;
     if (!current) {
       const result: Launch1000ProductResult = {
         productId: entry.productId,
@@ -594,7 +690,16 @@ const applyOne = async (
       const productSnapshot = await transaction.get(db.collection("products").doc(linkedProductId));
       if (productSnapshot.exists) liveProducts.set(linkedProductId, productSnapshot.data() || {});
     }
-    const evaluation = await evaluate((reference) => transaction.get(reference), db, entry, current, liveProducts, snapshot, input.preconditions[entry.productId]);
+    const evaluation = await evaluate(
+      (reference) => transaction.get(reference),
+      db,
+      entry,
+      current,
+      resolvedQueueRecord?.identity || null,
+      liveProducts,
+      snapshot,
+      input.preconditions[entry.productId],
+    );
     if (evaluation.result.outcome !== "ELIGIBLE" || !evaluation.nextPayload || !evaluation.nextValidation || !evaluation.projection) {
       const now = new Date().toISOString();
       const auditReference = db.collection(LAUNCH1000_APPLY_AUDIT_COLLECTION).doc();

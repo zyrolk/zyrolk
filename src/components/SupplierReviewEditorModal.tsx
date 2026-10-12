@@ -44,6 +44,13 @@ import {
   applyZyroCategorySuggestion,
   suggestZyroCategory,
 } from '../services/categorySuggestion/suggestZyroCategory';
+import {
+  launch1000ProductTypeCandidate,
+  launch1000ProductTypeEvidenceGuidance,
+  LAUNCH1000_PRODUCT_TYPE_CLASSIFICATION_MANIFEST_REVISION,
+  Launch1000ProductTypeClassificationDecision,
+  Launch1000ProductTypeClassificationEvidenceReference,
+} from '../services/launch1000ProductTypeClassification';
 
 interface SupplierReviewEditorModalProps {
   item: SupplierReviewSourceItem;
@@ -63,6 +70,7 @@ interface SupplierReviewEditorModalProps {
   onRemove: () => void;
   onPublish: (draft: SupplierReviewDraft) => Promise<void>;
   onSaveDraft: (draft: { category: string; subcategory: string }) => Promise<void>;
+  onApproveProductTypeClassification?: (decision: Launch1000ProductTypeClassificationDecision) => Promise<void>;
   offers: SupplierOfferView[];
   offerSelection: SupplierOfferSelectionView;
   offersLoading: boolean;
@@ -131,6 +139,7 @@ export default function SupplierReviewEditorModal({
   onRemove,
   onPublish,
   onSaveDraft,
+  onApproveProductTypeClassification,
   offers,
   offerSelection,
   offersLoading,
@@ -152,6 +161,10 @@ export default function SupplierReviewEditorModal({
   const [galleryInputError, setGalleryInputError] = useState('');
   const [specificationName, setSpecificationName] = useState('');
   const [specificationValue, setSpecificationValue] = useState('');
+  const [classificationEvidenceRefs, setClassificationEvidenceRefs] = useState<string[]>([]);
+  const [classificationRationale, setClassificationRationale] = useState('');
+  const [classificationConfirmed, setClassificationConfirmed] = useState(false);
+  const [classificationFeedback, setClassificationFeedback] = useState<{ kind: 'success' | 'error'; message: string } | null>(null);
   const [failedMediaUrls, setFailedMediaUrls] = useState<Set<string>>(() => new Set());
   const firstInputRef = useRef<HTMLInputElement>(null);
   const detailsActionRef = useRef<HTMLButtonElement>(null);
@@ -159,6 +172,29 @@ export default function SupplierReviewEditorModal({
   const previousFocusRef = useRef<HTMLElement | null>(null);
   const onCloseRef = useRef(onClose);
   const isPublishingRef = useRef(isPublishing);
+  const launch1000ProductType = useMemo(() => launch1000ProductTypeCandidate(item.id), [item.id]);
+  const launch1000EvidenceOptions = useMemo(() => {
+    const options: Array<Launch1000ProductTypeClassificationEvidenceReference & { label: string; detail: string }> = [];
+    const supplierSnapshot = item.supplierSnapshot || {};
+    const supplierPayload = supplierSnapshot.productPayload && typeof supplierSnapshot.productPayload === 'object'
+      ? supplierSnapshot.productPayload as Record<string, unknown>
+      : {};
+    const productName = String(supplierPayload.name || supplierSnapshot.title || '').trim();
+    const description = String(supplierPayload.description || supplierSnapshot.description || '').trim();
+    const productNameRef = supplierPayload.name ? 'supplierSnapshot.productPayload.name' : 'supplierSnapshot.title';
+    const descriptionRef = supplierPayload.description ? 'supplierSnapshot.productPayload.description' : 'supplierSnapshot.description';
+    if (productName) options.push({ kind: 'product_title', ref: productNameRef, label: 'Supplier-observed title', detail: productName });
+    if (description) options.push({ kind: 'product_description', ref: descriptionRef, label: 'Supplier-observed description', detail: description });
+    for (const media of item.managedMedia || []) {
+      const contentHash = String(media.contentHash || '').trim().toLowerCase();
+      const status = String(media.imageStatus || '').trim().toLowerCase();
+      const url = String(media.firebaseStorageUrl || '').trim();
+      if (/^[a-f0-9]{64}$/u.test(contentHash) && ['ready', 'published'].includes(status) && /^https:\/\/\S+$/iu.test(url)) {
+        options.push({ kind: 'managed_image', ref: `managedMedia:${contentHash}`, label: 'Managed product image', detail: `Asset ${contentHash.slice(0, 12)}…` });
+      }
+    }
+    return options;
+  }, [item.managedMedia, item.supplierSnapshot]);
   const validationErrors = useMemo(
     () => validateSupplierReviewDraft(draft, validCategoryIds, categories, brands),
     [brands, categories, draft, validCategoryIds],
@@ -312,6 +348,12 @@ export default function SupplierReviewEditorModal({
       setSubmitted(false);
     }
   }, [initialDraft, refreshFeedback]);
+  useEffect(() => {
+    setClassificationEvidenceRefs([]);
+    setClassificationRationale('');
+    setClassificationConfirmed(false);
+    setClassificationFeedback(null);
+  }, [item.id, launch1000ProductType]);
 
   useEffect(() => {
     previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -421,6 +463,39 @@ export default function SupplierReviewEditorModal({
     setSpecification(name, specificationValue.trim());
     setSpecificationName('');
     setSpecificationValue('');
+  };
+
+  const approveProductTypeClassification = async () => {
+    if (!launch1000ProductType || !onApproveProductTypeClassification || classificationEvidenceRefs.length === 0
+      || classificationRationale.trim().length < 20 || !classificationConfirmed) return;
+    const evidence = launch1000EvidenceOptions
+      .filter((option) => classificationEvidenceRefs.includes(option.ref))
+      .map(({ kind, ref }) => ({ kind, ref }));
+    if (evidence.length === 0) return;
+    setClassificationFeedback(null);
+    try {
+      await onApproveProductTypeClassification({
+        decision: 'approve',
+        confirmed: true,
+        manifestRevision: LAUNCH1000_PRODUCT_TYPE_CLASSIFICATION_MANIFEST_REVISION,
+        productType: launch1000ProductType,
+        evidence,
+        rationale: classificationRationale.trim(),
+      });
+      setDraft((current) => updateSupplierReviewDraftField({
+        ...current,
+        specifications: { ...(current.specifications || {}), 'Product Type': launch1000ProductType },
+        productType: launch1000ProductType,
+        fieldOwnership: { ...current.fieldOwnership, productType: 'admin', specs: 'admin' },
+      }, 'specs', {
+        productType: launch1000ProductType,
+        specifications: { ...(current.specifications || {}), 'Product Type': launch1000ProductType },
+      }));
+      setClassificationFeedback({ kind: 'success', message: 'Product Type classification approved. The review remains pending; no publication occurred.' });
+      setClassificationConfirmed(false);
+    } catch (error) {
+      setClassificationFeedback({ kind: 'error', message: error instanceof Error ? error.message : 'Product Type classification could not be approved.' });
+    }
   };
 
   const addGalleryImage = () => {
@@ -913,6 +988,51 @@ export default function SupplierReviewEditorModal({
             </div>
           </section>
           </details>
+          ) : null}
+
+          {isEditing && launch1000ProductType ? (
+          <section className="order-[35] space-y-4 rounded-2xl border border-indigo-500/25 bg-indigo-500/5 p-4" aria-labelledby="launch1000-product-type-classification-title">
+            <div>
+              <h4 id="launch1000-product-type-classification-title" className="text-xs font-black uppercase tracking-wider text-indigo-700 dark:text-indigo-200">Launch-1000 Product Type classification</h4>
+              <p className="mt-1 text-[10px] leading-relaxed text-slate-600 dark:text-slate-300">This records an admin-confirmed Zyro-derived Product Type for the approved Pilot-10 item. It is separate from supplier facts and does not approve or publish the product.</p>
+            </div>
+            <div className="rounded-xl border border-indigo-500/20 bg-white/70 px-3 py-2 text-xs dark:bg-slate-950/30">
+              <span className="block text-[9px] font-black uppercase tracking-wide text-slate-400">Immutable manifest value</span>
+              <strong className="mt-1 block text-indigo-700 dark:text-indigo-200">{launch1000ProductType}</strong>
+            </div>
+            <p className="rounded-xl border border-indigo-500/20 bg-indigo-500/5 px-3 py-2 text-[10px] font-semibold text-indigo-800 dark:text-indigo-200">
+              {launch1000ProductTypeEvidenceGuidance(item.id)} Images may support review but cannot establish Product Type semantics by themselves.
+            </p>
+            <fieldset className="space-y-2">
+              <legend className="text-[10px] font-black uppercase tracking-wide text-slate-600 dark:text-slate-300">Evidence to confirm</legend>
+              {launch1000EvidenceOptions.length === 0 ? (
+                <p className="rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-[10px] font-semibold text-amber-700 dark:text-amber-300">No server-verifiable title, description or managed image evidence is available. Keep this item in NEEDS_ATTENTION.</p>
+              ) : (
+                launch1000EvidenceOptions.map((option) => (
+                  <label key={option.ref} className="flex items-start gap-3 rounded-xl border border-indigo-500/15 bg-white px-3 py-2 text-xs dark:bg-slate-900">
+                    <input
+                      type="checkbox"
+                      checked={classificationEvidenceRefs.includes(option.ref)}
+                      onChange={(event) => setClassificationEvidenceRefs((current) => event.target.checked ? [...new Set([...current, option.ref])] : current.filter((ref) => ref !== option.ref))}
+                      className="mt-0.5"
+                    />
+                    <span className="min-w-0"><strong className="block text-slate-700 dark:text-slate-200">{option.label}</strong><span className="mt-0.5 block max-h-16 overflow-hidden text-[10px] text-slate-500 dark:text-slate-400">{option.detail}</span></span>
+                  </label>
+                ))
+              )}
+            </fieldset>
+            <label className="block space-y-1.5 text-xs">
+              <span className="font-bold text-slate-600 dark:text-slate-300">Admin rationale</span>
+              <textarea value={classificationRationale} onChange={(event) => setClassificationRationale(event.target.value)} minLength={20} maxLength={500} rows={3} placeholder="Explain how the selected title, description or image supports this Product Type." className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900" />
+              <span className="block text-[10px] text-slate-400">At least 20 characters. Do not add technical specifications that are not evidenced.</span>
+            </label>
+            <label className="flex items-start gap-3 rounded-xl border border-indigo-500/15 bg-white px-3 py-2 text-xs dark:bg-slate-900">
+              <input type="checkbox" checked={classificationConfirmed} onChange={(event) => setClassificationConfirmed(event.target.checked)} className="mt-0.5" />
+              <span className="font-semibold text-slate-700 dark:text-slate-200">I confirm this Product Type is supported by the selected evidence and should remain review-only.</span>
+            </label>
+            {classificationFeedback ? <p role={classificationFeedback.kind === 'error' ? 'alert' : 'status'} className={`rounded-xl px-3 py-2 text-[10px] font-semibold ${classificationFeedback.kind === 'error' ? 'bg-red-500/10 text-red-700 dark:text-red-300' : 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'}`}>{classificationFeedback.message}</p> : null}
+            <button type="button" onClick={() => void approveProductTypeClassification()} disabled={!onApproveProductTypeClassification || launch1000EvidenceOptions.length === 0 || classificationEvidenceRefs.length === 0 || classificationRationale.trim().length < 20 || !classificationConfirmed || isPublishing || isSaving || isRefreshing} className="min-h-11 rounded-xl bg-indigo-600 px-4 text-xs font-black text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50">Approve Product Type only</button>
+          </section>
           ) : null}
 
           <details open={!isEditing || specificationCount > 0} className="order-40 rounded-2xl border border-slate-200 p-4 dark:border-slate-800">

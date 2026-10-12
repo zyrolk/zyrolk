@@ -40,6 +40,7 @@ import {
 } from "../api/suppliers/supplierReviewBusinessQueueProjection";
 import { recordSupplierQueueProcessingDurationMetric } from "../api/suppliers/supplierCloudMonitoring";
 import { appLogger } from "../api/logging";
+import { launch1000RecordFingerprint } from "../api/launch1000/launch1000Snapshot";
 import {
   buildSupplierQueueLifecycle,
   SUPPLIER_QUEUE_DEFAULT_RETRY_LIMIT,
@@ -1837,6 +1838,7 @@ export const SUPPLIER_REVIEW_DECISION_METADATA_FIELDS = [
   "decisionProductId",
   "systemDecision",
   "systemDecisionReason",
+  "launch1000ProductTypeClassification",
 ] as const;
 
 /**
@@ -2127,7 +2129,10 @@ export async function listSupplierQueuePage(
     return {
       view: options.view,
       state,
-      items: await decorateSupplierReviewQueueAdminMedia(rawDocuments),
+      items: (await decorateSupplierReviewQueueAdminMedia(rawDocuments)).map((item, index) => ({
+        ...item,
+        launch1000RecordFingerprint: launch1000RecordFingerprint(rawDocuments[index] as Record<string, unknown>),
+      })),
       nextCursor,
     };
   }
@@ -2148,7 +2153,10 @@ export async function listSupplierQueuePage(
   return {
     view: options.view,
     state,
-    items: await decorateSupplierReviewQueueAdminMedia(rawDocuments),
+    items: (await decorateSupplierReviewQueueAdminMedia(rawDocuments)).map((item, index) => ({
+      ...item,
+      launch1000RecordFingerprint: launch1000RecordFingerprint(rawDocuments[index] as Record<string, unknown>),
+    })),
     nextCursor: cursorDocument?.id || null,
   };
 }
@@ -2389,6 +2397,7 @@ const projectReadModelDocuments = async (
   return decorated.map((item, index) => ({
     ...item,
     media: classifySupplierMediaObservability(documents[index]?.data() || {}),
+    launch1000RecordFingerprint: launch1000RecordFingerprint(documents[index]?.data() || {}),
   }));
 };
 

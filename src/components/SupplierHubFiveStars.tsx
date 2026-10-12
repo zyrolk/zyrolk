@@ -47,6 +47,10 @@ import Launch1000PilotDryRunPanel from './Launch1000PilotDryRunPanel';
 import SupplierManualSyncDialog from './supplier-management/SupplierManualSyncDialog';
 import SupplierConnectionBadge from './supplier-ui/SupplierConnectionBadge';
 import { calculateSupplierProfit, createSupplierReviewDraft, SupplierReviewDraft } from '../services/supplierReviewEditor';
+import {
+  LAUNCH1000_PRODUCT_TYPE_CLASSIFICATION_MANIFEST_REVISION,
+  Launch1000ProductTypeClassificationDecision,
+} from '../services/launch1000ProductTypeClassification';
 import { projectSupplierReviewCatalogTaxonomy, supplierReviewValidCategoryIds } from '../services/supplierReviewCatalog';
 import { normalizeCategoryBlueprint } from '../services/products/productBlueprint';
 import { sortCategoriesAlphabetically } from '../services/categories/categoryUtils';
@@ -326,6 +330,23 @@ export interface ReviewQueueItem {
     currentVersion?: string;
   };
   supplierOfferId?: string;
+  launch1000RecordFingerprint?: string;
+  launch1000ProductTypeClassification?: {
+    source?: 'zyro-derived';
+    decision?: 'approved';
+    field?: 'Product Type';
+    value?: string;
+    manifestRevision?: string;
+    sourcePendingRevision?: string;
+    sourceUpdatedAt?: string;
+    sourceFingerprint?: string;
+    evidence?: Array<{ kind?: string; ref?: string }>;
+    rationale?: string;
+    approvedBy?: string;
+    approvedByEmail?: string;
+    approvedAt?: string;
+    auditEventId?: string;
+  };
   reconciliationAction?: string;
   decisionAction?: 'approved' | 'rejected' | 'deleted';
   decisionCompletedAt?: unknown;
@@ -1514,6 +1535,45 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
       setReviewQueue((current) => current.map((candidate) => candidate.id === item.id ? savedItem : candidate));
       setEditingReviewItem(savedItem);
       setSuccessMsg('Changes saved. The review remains pending.');
+      setTimeout(() => setSuccessMsg(null), 5000);
+      void refreshSupplierQueueViews();
+    } finally {
+      setSavingReviewDraftId(null);
+    }
+  };
+
+  const handleApproveLaunch1000ProductTypeClassification = async (
+    item: ReviewQueueItem,
+    decision: Launch1000ProductTypeClassificationDecision,
+  ): Promise<void> => {
+    if (processingChangeId || savingReviewDraftId || refreshingReviewItemId) return;
+    if (!item.supplierOfferPendingRevision || !item.updatedAt || !item.launch1000RecordFingerprint) {
+      throw new Error('This review is missing freshness evidence. Reload it before approving the classification.');
+    }
+    setSavingReviewDraftId(item.id);
+    try {
+      const response = await patchSupplierApi(`/api/supplier-review-queue/${encodeURIComponent(item.id)}/product-type-classification`, {
+        ...decision,
+        manifestRevision: LAUNCH1000_PRODUCT_TYPE_CLASSIFICATION_MANIFEST_REVISION,
+        expectedPendingRevision: item.supplierOfferPendingRevision,
+        expectedUpdatedAt: item.updatedAt,
+        expectedFingerprint: item.launch1000RecordFingerprint,
+      });
+      const result = await response.json().catch(() => ({})) as {
+        success?: boolean;
+        status?: string;
+        error?: string;
+        item?: Record<string, unknown> & { id?: string };
+      };
+      if (!response.ok || result.success !== true || !result.item?.id) {
+        throw new Error(response.status === 409
+          ? (result.error || 'This review changed after it was opened. Reload before approving the classification.')
+          : (result.error || 'Product Type classification could not be approved.'));
+      }
+      const savedItem = result.item as unknown as ReviewQueueItem;
+      setReviewQueue((current) => current.map((candidate) => candidate.id === item.id ? savedItem : candidate));
+      setEditingReviewItem(savedItem);
+      setSuccessMsg('Product Type classification approved. The review remains pending; no publication occurred.');
       setTimeout(() => setSuccessMsg(null), 5000);
       void refreshSupplierQueueViews();
     } finally {
@@ -3884,6 +3944,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
           }}
           onRemove={() => setRemovingReviewItem(editingReviewItem)}
           onSaveDraft={(draft) => handleSaveSupplierReviewDraft(editingReviewItem, draft)}
+          onApproveProductTypeClassification={(decision) => handleApproveLaunch1000ProductTypeClassification(editingReviewItem, decision)}
           onPublish={(draft) => handleApproveReviewItem(editingReviewItem, draft)}
         />
       )}

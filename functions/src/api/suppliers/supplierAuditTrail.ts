@@ -12,7 +12,8 @@ export type SupplierAuditAction =
   | "retry"
   | "resume"
   | "retryable_failure"
-  | "dead_letter";
+  | "dead_letter"
+  | "classification_approved";
 
 export interface SupplierAuditActor {
   uid: string;
@@ -41,7 +42,24 @@ export interface SupplierAuditEventInput {
     oldValues: Partial<Record<string, unknown>>;
     newValues: Partial<Record<string, unknown>>;
   };
-  timestamp?: FieldValue;
+  classificationDecision?: {
+    field: "Product Type";
+    value: string;
+    source: "zyro-derived";
+    confirmed?: true;
+    manifestRevision: string;
+    sourcePendingRevision: string;
+    sourceUpdatedAt: string;
+    sourceFingerprint: string;
+    sourceEvidenceFingerprint?: string;
+    evidence: Array<{ kind: string; ref: string }>;
+    evidenceSnapshot?: Array<Record<string, unknown>>;
+    identity?: Record<string, unknown>;
+    rationale: string;
+  };
+  /** Optional deterministic ID for workflows that need atomic retry identity. */
+  auditEventId?: string;
+  timestamp?: FieldValue | Date;
   now?: number;
 }
 
@@ -211,6 +229,7 @@ export function buildSupplierAuditEvent(input: SupplierAuditEventInput, eventId:
         currentVersion: input.conflict.currentVersion,
       },
     } : {}),
+    ...(input.classificationDecision ? { classificationDecision: input.classificationDecision } : {}),
   };
 
   // Immutable snapshots are intentionally limited to decision events. They make a
@@ -237,7 +256,9 @@ export function createSupplierAuditEvent(
   transaction: Transaction,
   input: SupplierAuditEventInput,
 ): string {
-  const reference = db.collection("supplier_approval_audit").doc();
+  const reference = input.auditEventId
+    ? db.collection("supplier_approval_audit").doc(input.auditEventId)
+    : db.collection("supplier_approval_audit").doc();
   transaction.create(reference, buildSupplierAuditEvent(input, reference.id));
   return reference.id;
 }

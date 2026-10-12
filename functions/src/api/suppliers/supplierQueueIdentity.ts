@@ -70,6 +70,10 @@ export interface ResolvedSupplierQueueIdentity extends SupplierQueueIdentityCand
   offerReference: FirebaseFirestore.DocumentReference | null;
 }
 
+export interface SupplierQueueIdentityDocumentReader {
+  get(reference: FirebaseFirestore.DocumentReference): Promise<FirebaseFirestore.DocumentSnapshot>;
+}
+
 /**
  * Reads every legacy/current queue identity location without trusting any one
  * duplicated copy. The deterministic offer ID is derived from the same Sprint
@@ -183,13 +187,13 @@ const offerMatchesItsDeterministicIdentity = (offer: SupplierProductOffer): bool
  */
 export async function resolveSupplierQueueIdentity(
   db: Firestore,
-  transaction: FirebaseFirestore.Transaction,
+  reader: SupplierQueueIdentityDocumentReader,
   value: unknown,
 ): Promise<ResolvedSupplierQueueIdentity> {
   const candidate = getSupplierQueueIdentityCandidate(value);
   const offerIds = [...new Set([candidate.deterministicOfferId, candidate.claimedOfferId].filter(Boolean))];
   const references = offerIds.map((offerId) => db.collection(SUPPLIER_PRODUCT_OFFERS_COLLECTION).doc(offerId));
-  const snapshots = await Promise.all(references.map((reference) => transaction.get(reference)));
+  const snapshots = await Promise.all(references.map((reference) => reader.get(reference)));
   const offers = snapshots
     .filter((snapshot) => snapshot.exists)
     .map((snapshot) => ({

@@ -17,6 +17,23 @@ export interface SupplierReviewSourceItem {
   batchId?: string;
   matchedProductId?: string | null;
   supplierOfferId?: string;
+  launch1000RecordFingerprint?: string;
+  launch1000ProductTypeClassification?: {
+    source?: 'zyro-derived';
+    decision?: 'approved';
+    field?: 'Product Type';
+    value?: string;
+    manifestRevision?: string;
+    sourcePendingRevision?: string;
+    sourceUpdatedAt?: string;
+    sourceFingerprint?: string;
+    evidence?: Array<{ kind?: string; ref?: string }>;
+    rationale?: string;
+    approvedBy?: string;
+    approvedByEmail?: string;
+    approvedAt?: string;
+    auditEventId?: string;
+  };
   approvalConflict?: {
     reason?: string;
     changedFields?: string[];
