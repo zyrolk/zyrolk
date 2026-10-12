@@ -235,6 +235,14 @@ test("B1-21,22 requeue clears stale decision metadata only; audit history is unt
     decisionProductId: "zyro-x",
     systemDecision: "NEW_PRODUCT_DEFERRED_ZERO_STOCK",
     systemDecisionReason: "old",
+    launch1000ProductTypeClassification: {
+      source: "zyro-derived",
+      decision: "approved",
+      field: "Product Type",
+      value: "Wearables",
+      manifestRevision: REVISION_B,
+      auditEventId: "classification-audit-1",
+    },
     supplierOfferPendingRevision: REVISION_B,
   };
   const deletes = supplierReviewStaleDecisionFieldDeletes(existing, REVISION_A);
@@ -245,7 +253,9 @@ test("B1-21,22 requeue clears stale decision metadata only; audit history is unt
   assert.deepEqual(supplierReviewStaleDecisionFieldDeletes({ ...existing, decisionPendingRevision: REVISION_A }, REVISION_A), {});
   assert.deepEqual(supplierReviewStaleDecisionFieldDeletes(existing, ""), {});
   assert.deepEqual(supplierReviewStaleDecisionFieldDeletes(null, REVISION_A), {});
-  assert.deepEqual(Object.keys(supplierReviewStaleDecisionFieldDeletes({ decisionAction: "approved" }, REVISION_A)), ["decisionAction"]);
+  const absentClassificationDeletes = supplierReviewStaleDecisionFieldDeletes({ decisionAction: "approved" }, REVISION_A);
+  assert.deepEqual(Object.keys(absentClassificationDeletes), ["decisionAction"]);
+  assert.equal(Object.hasOwn(absentClassificationDeletes, "launch1000ProductTypeClassification"), false);
   for (const field of SUPPLIER_REVIEW_DECISION_METADATA_FIELDS) {
     assert.equal(/audit/iu.test(field) && field !== "decisionAuditId", false);
   }
