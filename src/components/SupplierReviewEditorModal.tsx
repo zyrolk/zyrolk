@@ -43,6 +43,7 @@ import { formatSupplierTimestamp } from '../services/supplierHubPresentation';
 import {
   applyZyroCategorySuggestion,
   suggestZyroCategory,
+  ZyroTaxonomyProposal,
 } from '../services/categorySuggestion/suggestZyroCategory';
 import {
   launch1000ProductTypeCandidate,
@@ -70,6 +71,8 @@ interface SupplierReviewEditorModalProps {
   onRemove: () => void;
   onPublish: (draft: SupplierReviewDraft) => Promise<void>;
   onSaveDraft: (draft: { category: string; subcategory: string }) => Promise<void>;
+  taxonomyProposals?: readonly ZyroTaxonomyProposal[];
+  onCreateTaxonomyProposal?: (proposal: ZyroTaxonomyProposal) => Promise<{ categoryId: string; subcategoryId: string }>;
   onApproveProductTypeClassification?: (decision: Launch1000ProductTypeClassificationDecision) => Promise<void>;
   offers: SupplierOfferView[];
   offerSelection: SupplierOfferSelectionView;
@@ -139,6 +142,8 @@ export default function SupplierReviewEditorModal({
   onRemove,
   onPublish,
   onSaveDraft,
+  taxonomyProposals = [],
+  onCreateTaxonomyProposal,
   onApproveProductTypeClassification,
   offers,
   offerSelection,
@@ -165,6 +170,8 @@ export default function SupplierReviewEditorModal({
   const [classificationRationale, setClassificationRationale] = useState('');
   const [classificationConfirmed, setClassificationConfirmed] = useState(false);
   const [classificationFeedback, setClassificationFeedback] = useState<{ kind: 'success' | 'error'; message: string } | null>(null);
+  const [taxonomyProposalBusy, setTaxonomyProposalBusy] = useState(false);
+  const [taxonomyProposalFeedback, setTaxonomyProposalFeedback] = useState<{ kind: 'success' | 'error'; message: string } | null>(null);
   const [failedMediaUrls, setFailedMediaUrls] = useState<Set<string>>(() => new Set());
   const firstInputRef = useRef<HTMLInputElement>(null);
   const detailsActionRef = useRef<HTMLButtonElement>(null);
@@ -237,7 +244,8 @@ export default function SupplierReviewEditorModal({
     keywords: draft.keywords,
     specifications: draft.specifications,
     categories,
-  }), [categories, draft.brand, draft.description, draft.keywords, draft.model, draft.productName, draft.productType, draft.specifications]);
+    taxonomyProposals,
+  }), [categories, draft.brand, draft.description, draft.keywords, draft.model, draft.productName, draft.productType, draft.specifications, taxonomyProposals]);
   const suggestedCategory = useMemo(
     () => categories.find((category) => category.id === categorySuggestion.categoryId),
     [categories, categorySuggestion.categoryId],
@@ -443,6 +451,32 @@ export default function SupplierReviewEditorModal({
     window.requestAnimationFrame(() => detailsActionRef.current?.focus());
   };
 
+  const createSuggestedTaxonomy = async () => {
+    const missing = categorySuggestion.missingTaxonomyProposal;
+    if (!missing || !onCreateTaxonomyProposal || !missing.creationSupported || taxonomyProposalBusy) return;
+    setTaxonomyProposalFeedback(null);
+    setTaxonomyProposalBusy(true);
+    try {
+      const created = await onCreateTaxonomyProposal(missing.proposal);
+      setDraft((current) => updateSupplierReviewDraftField(
+        updateSupplierReviewDraftField(current, 'category', { category: created.categoryId }),
+        'subcategory',
+        { subcategory: created.subcategoryId },
+      ));
+      setTaxonomyProposalFeedback({
+        kind: 'success',
+        message: 'Canonical taxonomy created and selected in this pending Product Review draft. Save Changes to record the draft selection.',
+      });
+    } catch (error) {
+      setTaxonomyProposalFeedback({
+        kind: 'error',
+        message: error instanceof Error ? error.message : 'The taxonomy proposal could not be created.',
+      });
+    } finally {
+      setTaxonomyProposalBusy(false);
+    }
+  };
+
   const setSpecification = (name: string, value: string) => {
     setDraft((current) => updateSupplierReviewDraftField(current, 'specs', {
       specifications: { ...(current.specifications || {}), [name]: value },
@@ -644,6 +678,31 @@ export default function SupplierReviewEditorModal({
                   <button type="button" onClick={() => setDraft((current) => applyZyroCategorySuggestion(current, categorySuggestion))} disabled={isPublishing} className="mt-3 min-h-10 rounded-lg bg-violet-600 px-3 py-2 text-[10px] font-black text-white hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50">Apply Suggestion</button>
                 ) : (
                   <p className="mt-3 text-[10px] font-semibold text-slate-500">Choose Edit product data to apply this suggestion.</p>
+                )}
+              </div>
+            ) : categorySuggestion.status === 'MISSING_TAXONOMY_PROPOSAL' && categorySuggestion.missingTaxonomyProposal ? (
+              <div className="mt-3 rounded-xl border border-amber-500/25 bg-amber-500/10 p-3 dark:bg-amber-900/10">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="rounded-full bg-amber-500/15 px-2 py-1 text-[9px] font-black uppercase tracking-wide text-amber-800 dark:text-amber-200">New taxonomy proposal · {categorySuggestion.missingTaxonomyProposal.confidence} confidence</span>
+                  <span className="font-mono text-[9px] text-slate-500">{categorySuggestion.missingTaxonomyProposal.proposal.proposalId}</span>
+                </div>
+                <p className="mt-2 text-[11px] font-bold text-slate-800 dark:text-slate-100">
+                  {categorySuggestion.missingTaxonomyProposal.kind === 'missing_category' ? 'Proposed parent category' : 'Proposed subcategory'}: {categorySuggestion.missingTaxonomyProposal.proposal.parentCategoryLabel}
+                  {categorySuggestion.missingTaxonomyProposal.kind === 'missing_subcategory' && ` → ${categorySuggestion.missingTaxonomyProposal.proposal.proposedLabel}`}
+                </p>
+                <ul className="mt-2 space-y-1 text-[10px] font-semibold text-slate-600 dark:text-slate-300">
+                  {categorySuggestion.missingTaxonomyProposal.evidence.map((reason) => <li key={reason}>{reason}</li>)}
+                </ul>
+                <p className="mt-2 text-[10px] text-slate-500">This is a bounded checked-in proposal, not a supplier taxonomy assignment. Ambiguous evidence stays manual.</p>
+                {taxonomyProposalFeedback && <p role="status" className={`mt-2 rounded-lg px-3 py-2 text-[10px] font-bold ${taxonomyProposalFeedback.kind === 'success' ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'bg-red-500/10 text-red-700 dark:text-red-300'}`}>{taxonomyProposalFeedback.message}</p>}
+                {categorySuggestion.missingTaxonomyProposal.creationSupported && onCreateTaxonomyProposal ? (
+                  <button type="button" onClick={() => void createSuggestedTaxonomy()} disabled={taxonomyProposalBusy || isPublishing || isSaving || !isEditing} className="mt-3 min-h-10 rounded-lg bg-amber-600 px-3 py-2 text-[10px] font-black text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50">
+                    {taxonomyProposalBusy ? 'Creating canonical taxonomy…' : isEditing ? 'Approve & create subcategory' : 'Choose Edit product data to create'}
+                  </button>
+                ) : categorySuggestion.missingTaxonomyProposal.creationSupported ? (
+                  <p className="mt-3 rounded-lg border border-dashed border-amber-500/25 px-3 py-2 text-[10px] font-semibold text-amber-800 dark:text-amber-200">Creation is available only through the authenticated Product Review governance action.</p>
+                ) : (
+                  <p className="mt-3 rounded-lg border border-dashed border-amber-500/25 px-3 py-2 text-[10px] font-semibold text-amber-800 dark:text-amber-200">The parent is not an active canonical category. Use the existing Admin Category Management workflow to review or create it; this proposal will not create a parent automatically.</p>
                 )}
               </div>
             ) : (

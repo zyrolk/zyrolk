@@ -172,6 +172,9 @@ test("taxonomy governance preview, approval, creation, and repeat creation are i
     const preview = await previewLaunch1000TaxonomyProposals(db, { proposalIds: [proposalId], revision: "taxonomy-test-r1" }, snapshot);
     assert.equal(preview.proposals[0]?.status, "PENDING_ADMIN_APPROVAL");
     assert.equal(preview.proposals[0]?.collision, false);
+    assert.equal(preview.proposals[0]?.parentCategoryLabel, "Test Category");
+    assert.equal(preview.proposals[0]?.proposedLabel, "Test Subcategory");
+    assert.equal(preview.proposals[0]?.proposedSlug, "test-subcategory");
 
     const approved = await approveLaunch1000TaxonomyProposal(db, { proposalId, revision: "taxonomy-test-r1" }, operator, snapshot);
     assert.equal(approved.status, "APPROVED");

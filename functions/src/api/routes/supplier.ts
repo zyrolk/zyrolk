@@ -100,6 +100,7 @@ import type { SupplierQueueRecord } from "../../scheduled/supplierReviewQueue";
 import {
   approveLaunch1000TaxonomyProposal,
   createApprovedLaunch1000TaxonomyProposal,
+  listLaunch1000TaxonomyProposals,
   previewLaunch1000TaxonomyProposals,
 } from "../launch1000/launch1000Governance";
 import {
@@ -684,6 +685,18 @@ export function registerSupplierRoutes(app: express.Express): void {
         logMessage: "Launch-1000 taxonomy proposal preview failed.",
         fallbackMessage: "Launch-1000 taxonomy proposals could not be previewed.",
         context: { route: req.path, action: "preview" },
+      });
+    }
+  });
+
+  app.get("/api/launch1000/taxonomy/proposals", requireSupplierHubAdmin, async (_req, res) => {
+    try {
+      res.status(200).json({ success: true, ...(await listLaunch1000TaxonomyProposals(adminDb)) });
+    } catch (error: unknown) {
+      sendSupplierFailure(res, error, {
+        logMessage: "Launch-1000 taxonomy proposal catalog lookup failed.",
+        fallbackMessage: "Launch-1000 taxonomy proposals could not be loaded.",
+        context: { route: "/api/launch1000/taxonomy/proposals", action: "list" },
       });
     }
   });

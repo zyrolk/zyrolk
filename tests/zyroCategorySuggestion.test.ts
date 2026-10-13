@@ -6,6 +6,7 @@ import SupplierReviewEditorModal from '../src/components/SupplierReviewEditorMod
 import {
   applyZyroCategorySuggestion,
   suggestZyroCategory,
+  type ZyroTaxonomyProposal,
 } from '../src/services/categorySuggestion/suggestZyroCategory';
 import { createSupplierReviewDraft } from '../src/services/supplierReviewEditor';
 
@@ -36,6 +37,18 @@ const suggest = (productName: string, description = '') => suggestZyroCategory({
   categories: taxonomy,
 });
 
+const missingSubcategoryProposal = {
+  proposalId: 'virtual-f01',
+  revision: 'launch1000-taxonomy-r1',
+  parentCategoryId: 'fashion',
+  parentCategoryLabel: 'Fashion',
+  proposedLabel: 'Bags & Travel',
+  proposedSlug: 'bags-travel',
+  status: 'PENDING_ADMIN_APPROVAL',
+  parentActive: true,
+  collision: false,
+} as const;
+
 const baseItem = {
   id: 'review-1',
   productName: 'Healthy Air Fryer 6 L',
@@ -60,7 +73,7 @@ const baseItem = {
   managedMedia: [{ firebaseStorageUrl: 'https://storage.example/primary.webp', isPrimary: true, imageStatus: 'ready', sortOrder: 0 }],
 };
 
-const renderEditor = (draftOverrides: Record<string, unknown> = {}) => {
+const renderEditor = (draftOverrides: Record<string, unknown> = {}, taxonomyProposals: readonly ZyroTaxonomyProposal[] = []) => {
   const item = baseItem as never;
   const draft = { ...createSupplierReviewDraft(item), ...draftOverrides };
   return renderToStaticMarkup(React.createElement(SupplierReviewEditorModal, {
@@ -73,6 +86,7 @@ const renderEditor = (draftOverrides: Record<string, unknown> = {}) => {
     onClose: () => undefined,
     onRemove: () => undefined,
     onPublish: async () => undefined,
+    taxonomyProposals,
     offers: [],
     offerSelection: { activeOfferId: null, lockedOfferId: null, failoverEnabled: true },
     offersLoading: false,
@@ -280,6 +294,58 @@ test('LOW / ambiguous results fall back to manual selection', () => {
   assert.equal(result.subcategoryId, null);
 });
 
+test('a strong product-title match can produce a bounded missing-subcategory proposal', () => {
+  const result = suggestZyroCategory({
+    productName: 'Bags & Travel Backpack',
+    description: 'A durable travel bag for everyday use.',
+    categories: taxonomy,
+    taxonomyProposals: [missingSubcategoryProposal],
+  });
+  assert.equal(result.status, 'MISSING_TAXONOMY_PROPOSAL');
+  assert.equal(result.missingTaxonomyProposal?.kind, 'missing_subcategory');
+  assert.equal(result.missingTaxonomyProposal?.proposal.proposalId, 'virtual-f01');
+  assert.equal(result.missingTaxonomyProposal?.creationSupported, true);
+  assert.match(result.reasons.join(' '), /bags|travel/iu);
+});
+
+test('a proposal with no active parent remains a manual missing-category review', () => {
+  const result = suggestZyroCategory({
+    productName: 'Bags & Travel Backpack',
+    description: 'A durable travel bag for everyday use.',
+    categories: taxonomy.filter((category) => category.id !== 'fashion'),
+    taxonomyProposals: [{ ...missingSubcategoryProposal, parentActive: false }],
+  });
+  assert.equal(result.status, 'MISSING_TAXONOMY_PROPOSAL');
+  assert.equal(result.missingTaxonomyProposal?.kind, 'missing_category');
+  assert.equal(result.missingTaxonomyProposal?.creationSupported, false);
+});
+
+test('ambiguous proposal evidence fails closed without inventing a taxonomy node', () => {
+  const result = suggestZyroCategory({
+    productName: 'Travel',
+    description: 'A useful item.',
+    categories: taxonomy,
+    taxonomyProposals: [
+      missingSubcategoryProposal,
+      { ...missingSubcategoryProposal, proposalId: 'virtual-f02', proposedLabel: 'Travel Jewelry', proposedSlug: 'travel-jewelry' },
+    ],
+  });
+  assert.equal(result.status, 'NO_CONFIDENT_MATCH');
+  assert.equal(result.missingTaxonomyProposal, undefined);
+});
+
+test('supplier taxonomy alone cannot create a missing-taxonomy proposal', () => {
+  const result = suggestZyroCategory({
+    productName: 'Generic Item',
+    description: 'A useful item.',
+    categories: taxonomy,
+    taxonomyProposals: [missingSubcategoryProposal],
+    supplierTaxonomy: 'Bags & Travel',
+  } as never);
+  assert.equal(result.status, 'NO_CONFIDENT_MATCH');
+  assert.equal(result.missingTaxonomyProposal, undefined);
+});
+
 test('alternatives are capped at two', () => {
   const result = suggest('Watch accessory', 'Watch accessory for a smart watch and wrist watch.');
   assert.ok(result.alternatives.length <= 2);
@@ -324,6 +390,16 @@ test('the rendered suggestion has no publish or persistence action', () => {
   assert.match(markup, /Category suggestion/u);
   assert.doesNotMatch(markup, />Apply Suggestion</u);
   assert.doesNotMatch(markup, /suggestion.*Firestore|publish.*suggestion/iu);
+});
+
+test('missing taxonomy proposal stays distinct from Product Review publication', () => {
+  const markup = renderEditor(
+    { productName: 'Bags & Travel Backpack', description: 'A durable travel bag for everyday use.' },
+    [missingSubcategoryProposal],
+  );
+  assert.match(markup, /New taxonomy proposal/u);
+  assert.match(markup, /Creation is available only through the authenticated Product Review governance action/u);
+  assert.match(markup, /Approve &amp; Publish/u);
 });
 
 test('12 launch fixtures resolve conservatively', () => {

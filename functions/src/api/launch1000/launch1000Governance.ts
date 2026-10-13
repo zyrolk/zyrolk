@@ -107,6 +107,9 @@ const projectPreview = (
 ) => ({
   proposalId: proposal.proposalId,
   revision: proposal.revision,
+  parentCategoryLabel: proposal.parentCategoryLabel,
+  proposedLabel: proposal.proposedLabel,
+  proposedSlug: proposal.proposedSlug,
   label: proposal.proposedLabel,
   slug: proposal.proposedSlug,
   parentCategoryId: proposal.parentCategoryId,
@@ -139,6 +142,25 @@ export async function previewLaunch1000TaxonomyProposals(
       readGovernance(governance[index].exists ? governance[index].data() : null),
     )),
   };
+}
+
+/**
+ * Returns the checked-in, bounded proposal catalog for the authenticated
+ * Product Review UI. This is intentionally read-only; approval and creation
+ * remain separate transactional operations below.
+ */
+export async function listLaunch1000TaxonomyProposals(
+  db: Firestore,
+  snapshot: Launch1000ManifestSnapshot = loadLaunch1000Snapshot(),
+): Promise<{ revision: string; proposals: ReturnType<typeof projectPreview>[] }> {
+  return previewLaunch1000TaxonomyProposals(
+    db,
+    {
+      proposalIds: snapshot.taxonomyProposals.map((proposal) => proposal.proposalId),
+      revision: snapshot.taxonomyProposals[0]?.revision || "launch1000-taxonomy-r1",
+    },
+    snapshot,
+  );
 }
 
 const governanceDocument = (

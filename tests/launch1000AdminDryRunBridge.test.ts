@@ -69,7 +69,8 @@ test('bridge uses the existing auth/App Check helper and has no apply or taxonom
   assert.doesNotMatch(service, /fetch\s*\(/u);
   assert.doesNotMatch(service, /getIdToken|getAppCheckRequestHeaders|Authorization/u);
   assert.match(service, /\/api\/launch1000\/products\/dry-run/u);
-  assert.doesNotMatch(`${service}\n${panel}\n${hub}`, /apply-pilot|taxonomy\/(?:approve|create)/u);
+  assert.doesNotMatch(`${service}\n${panel}`, /apply-pilot|taxonomy\/(?:approve|create)/u);
+  assert.doesNotMatch(hub, /\/api\/launch1000\/products\/apply-pilot|applyLaunch1000ProductPilot/u);
   assert.doesNotMatch(`${service}\n${panel}`, /supplier-sync|media.*retry|maintenanceMode|localDemand/u);
   assert.match(hub, /<Launch1000PilotDryRunPanel \/>/u);
   assert.match(apiClient, /getIdToken/u);

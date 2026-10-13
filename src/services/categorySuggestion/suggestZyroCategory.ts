@@ -27,6 +27,7 @@ export interface SuggestZyroCategoryInput {
   keywords?: readonly string[];
   specifications?: Readonly<Record<string, unknown>>;
   categories: readonly ZyroSuggestionCategory[];
+  taxonomyProposals?: readonly ZyroTaxonomyProposal[];
 }
 
 export interface ZyroCategorySuggestionAlternative {
@@ -34,14 +35,37 @@ export interface ZyroCategorySuggestionAlternative {
   subcategoryId: string | null;
 }
 
+export type ZyroMissingTaxonomyKind = 'missing_subcategory' | 'missing_category';
+
+export interface ZyroTaxonomyProposal {
+  proposalId: string;
+  revision: string;
+  parentCategoryId: string;
+  parentCategoryLabel: string;
+  proposedLabel: string;
+  proposedSlug: string;
+  status?: string;
+  parentActive: boolean;
+  collision: boolean;
+}
+
+export interface ZyroMissingTaxonomyProposal {
+  kind: ZyroMissingTaxonomyKind;
+  proposal: ZyroTaxonomyProposal;
+  confidence: 'MEDIUM';
+  evidence: string[];
+  creationSupported: boolean;
+}
+
 export interface ZyroCategorySuggestion {
-  status: 'SUGGESTED' | 'NO_CONFIDENT_MATCH';
+  status: 'SUGGESTED' | 'NO_CONFIDENT_MATCH' | 'MISSING_TAXONOMY_PROPOSAL';
   categoryId: string | null;
   subcategoryId: string | null;
   confidence: 'HIGH' | 'MEDIUM' | 'LOW';
   reasons: string[];
   alternatives: ZyroCategorySuggestionAlternative[];
   engine: 'rules-v1';
+  missingTaxonomyProposal?: ZyroMissingTaxonomyProposal;
 }
 
 interface EvidenceFields {
@@ -101,6 +125,20 @@ const hasActiveSubcategories = (category: ZyroSuggestionCategory): boolean => (
   (category.subcategories || []).some((subcategory) => subcategory.isActive !== false && subcategory.taxonomyCandidate !== true)
 );
 
+const PROPOSAL_STOP_WORDS = new Set([
+  'and', 'the', 'for', 'with', 'from', 'new', 'item', 'product', 'portable',
+  'accessories', 'devices', 'tools', 'care', 'storage', 'repair', 'lighting',
+]);
+
+const proposalTokens = (value: string): string[] => normalizeText(value)
+  .split(' ')
+  .filter((token) => token.length >= 4 && !PROPOSAL_STOP_WORDS.has(token));
+
+const tokenMatches = (evidence: string, token: string): boolean => {
+  const singular = token.endsWith('s') ? token.slice(0, -1) : token;
+  return evidence.split(' ').some((candidate) => candidate === token || candidate === singular || candidate.startsWith(`${singular}-`));
+};
+
 const evidenceFor = (input: SuggestZyroCategoryInput): EvidenceFields => ({
   title: normalizeText([input.productName, input.productType, input.model].filter(Boolean).join(' ')),
   description: normalizeText(input.description),
@@ -110,6 +148,42 @@ const evidenceFor = (input: SuggestZyroCategoryInput): EvidenceFields => ({
     ...Object.entries(input.specifications || {}).flatMap(([key, value]) => [key, String(value ?? '')]),
   ].filter(Boolean).join(' ')),
 });
+
+const missingTaxonomyProposalFor = (
+  evidence: EvidenceFields,
+  proposals: readonly ZyroTaxonomyProposal[] | undefined,
+): ZyroMissingTaxonomyProposal | null => {
+  if (!proposals || proposals.length === 0) return null;
+  const ranked = proposals
+    .filter((proposal) => proposal.status !== 'REJECTED' && !proposal.collision)
+    .map((proposal) => {
+      const terms = proposalTokens(proposal.proposedLabel);
+      const titleMatches = terms.filter((term) => tokenMatches(evidence.title, term));
+      const descriptionMatches = terms.filter((term) => tokenMatches(evidence.description, term));
+      const metadataMatches = terms.filter((term) => tokenMatches(evidence.metadata, term));
+      const phraseMatch = phraseInText(evidence.title, proposal.proposedLabel);
+      const score = (titleMatches.length * 4) + (descriptionMatches.length * 2) + metadataMatches.length + (phraseMatch ? 6 : 0);
+      return { proposal, titleMatches, descriptionMatches, metadataMatches, phraseMatch, score };
+    })
+    .filter((candidate) => candidate.score > 0 && (candidate.phraseMatch || candidate.titleMatches.length >= 2))
+    .sort((left, right) => right.score - left.score || left.proposal.proposalId.localeCompare(right.proposal.proposalId));
+  const best = ranked[0];
+  const runnerUp = ranked[1];
+  if (!best || (runnerUp && best.score === runnerUp.score)) return null;
+  const evidenceReasons = [
+    ...best.titleMatches.map((term) => `Matched "${term}" in product name`),
+    ...best.descriptionMatches.map((term) => `Matched "${term}" in description`),
+    ...best.metadataMatches.map((term) => `Matched "${term}" in product metadata`),
+  ].slice(0, 3);
+  if (evidenceReasons.length === 0) return null;
+  return {
+    kind: best.proposal.parentActive ? 'missing_subcategory' : 'missing_category',
+    proposal: best.proposal,
+    confidence: 'MEDIUM',
+    evidence: evidenceReasons,
+    creationSupported: best.proposal.parentActive && !best.proposal.collision,
+  };
+};
 
 const scoreRule = (
   rule: ZyroCategoryRule,
@@ -163,6 +237,18 @@ const noMatch = (): ZyroCategorySuggestion => ({
 export function suggestZyroCategory(input: SuggestZyroCategoryInput): ZyroCategorySuggestion {
   const evidence = evidenceFor(input);
   const candidates = new Map<string, ScoredCandidate>();
+  const proposalSuggestion = (): ZyroCategorySuggestion => {
+    const missingTaxonomyProposal = missingTaxonomyProposalFor(evidence, input.taxonomyProposals);
+    return missingTaxonomyProposal
+      ? {
+        ...noMatch(),
+        status: 'MISSING_TAXONOMY_PROPOSAL',
+        confidence: missingTaxonomyProposal.confidence,
+        reasons: missingTaxonomyProposal.evidence,
+        missingTaxonomyProposal,
+      }
+      : noMatch();
+  };
 
   for (const rule of ZYRO_CATEGORY_RULES) {
     const category = input.categories.find((candidate) => candidate.id === rule.categoryId);
@@ -197,10 +283,10 @@ export function suggestZyroCategory(input: SuggestZyroCategoryInput): ZyroCatego
     || String(left.subcategoryId || '').localeCompare(String(right.subcategoryId || ''))
   ));
   const best = ranked[0];
-  if (!best) return noMatch();
+  if (!best) return proposalSuggestion();
   const runnerUp = ranked[1];
   const lead = runnerUp ? best.score - runnerUp.score : best.score;
-  if (best.score < 5 || (runnerUp && lead === 0) || !best.hasRequiredSubcategory) return noMatch();
+  if (best.score < 5 || (runnerUp && lead === 0) || !best.hasRequiredSubcategory) return proposalSuggestion();
 
   const confidence: ZyroCategorySuggestion['confidence'] = best.score >= 10 && lead >= 6 && best.strongTitle
     ? 'HIGH'

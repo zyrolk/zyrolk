@@ -56,6 +56,7 @@ import { normalizeCategoryBlueprint } from '../services/products/productBlueprin
 import { sortCategoriesAlphabetically } from '../services/categories/categoryUtils';
 import { sortBrandsAlphabetically } from '../services/brands/brandUtils';
 import { normalizeSupplierCategory, supplierCategoryMappingUiKey } from '../services/supplierCategoryMapping';
+import type { ZyroTaxonomyProposal } from '../services/categorySuggestion/suggestZyroCategory';
 import {
   sortSupplierOffers,
   SupplierOfferSelectionView,
@@ -706,6 +707,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
 
   const [categories, setCategories] = useState<any[]>([]);
   const [brands, setBrands] = useState<any[]>([]);
+  const [launch1000TaxonomyProposals, setLaunch1000TaxonomyProposals] = useState<ZyroTaxonomyProposal[]>([]);
   const [supplierCategoryMappings, setSupplierCategoryMappings] = useState<SupplierCategoryMappingView[]>([]);
   const [supplierCategoryMappingDrafts, setSupplierCategoryMappingDrafts] = useState<Record<string, { targetCategoryId: string; targetSubcategoryId: string }>>({});
   const [savingSupplierCategoryMapping, setSavingSupplierCategoryMapping] = useState<string | null>(null);
@@ -721,6 +723,15 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
         taxonomy.categories.map((category) => normalizeCategoryBlueprint(category)),
       ));
       setBrands(sortBrandsAlphabetically(taxonomy.brands));
+      try {
+        const proposalsResponse = await getSupplierApi('/api/launch1000/taxonomy/proposals');
+        const proposalsPayload = proposalsResponse.ok
+          ? await proposalsResponse.json() as { proposals?: ZyroTaxonomyProposal[] }
+          : {};
+        setLaunch1000TaxonomyProposals(Array.isArray(proposalsPayload.proposals) ? proposalsPayload.proposals : []);
+      } catch {
+        setLaunch1000TaxonomyProposals([]);
+      }
       try {
         const mappingsResponse = await getSupplierApi('/api/supplier-category-mappings');
         const mappingsPayload = mappingsResponse.ok
@@ -749,6 +760,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
       console.error('Supplier review catalog fetch error:', error);
       setCategories([]);
       setBrands([]);
+      setLaunch1000TaxonomyProposals([]);
     }
   }, []);
 
@@ -1576,6 +1588,48 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
       setSuccessMsg('Product Type classification approved. The review remains pending; no publication occurred.');
       setTimeout(() => setSuccessMsg(null), 5000);
       void refreshSupplierQueueViews();
+    } finally {
+      setSavingReviewDraftId(null);
+    }
+  };
+
+  const handleCreateLaunch1000TaxonomyProposal = async (
+    proposal: ZyroTaxonomyProposal,
+  ): Promise<{ categoryId: string; subcategoryId: string }> => {
+    if (processingChangeId || savingReviewDraftId || refreshingReviewItemId) {
+      throw new Error('This review is busy. Wait for the current operation to finish.');
+    }
+    if (!proposal.parentActive || proposal.collision) {
+      throw new Error('This taxonomy proposal is no longer available for creation. Reload the review catalog.');
+    }
+    setSavingReviewDraftId(editingReviewItem?.id || 'taxonomy-proposal');
+    try {
+      const approvalResponse = await postSupplierApi('/api/launch1000/taxonomy/approve', {
+        proposalId: proposal.proposalId,
+        revision: proposal.revision,
+      });
+      const approvalPayload = await approvalResponse.json().catch(() => ({})) as { success?: boolean; result?: { status?: string }; error?: string };
+      if (!approvalResponse.ok || approvalPayload.success !== true) {
+        throw new Error(approvalPayload.error || 'The taxonomy proposal could not be approved.');
+      }
+
+      const createResponse = await postSupplierApi('/api/launch1000/taxonomy/create', {
+        proposalId: proposal.proposalId,
+        revision: proposal.revision,
+      });
+      const createPayload = await createResponse.json().catch(() => ({})) as {
+        success?: boolean;
+        result?: { createdSubcategoryId?: string };
+        error?: string;
+      };
+      const createdSubcategoryId = String(createPayload.result?.createdSubcategoryId || '').trim();
+      if (!createResponse.ok || createPayload.success !== true || !createdSubcategoryId) {
+        throw new Error(createPayload.error || 'The canonical taxonomy node could not be created.');
+      }
+      await loadReviewCatalog();
+      setSuccessMsg(`Created canonical subcategory "${proposal.proposedLabel}". The Product Review draft remains pending.`);
+      setTimeout(() => setSuccessMsg(null), 5000);
+      return { categoryId: proposal.parentCategoryId, subcategoryId: createdSubcategoryId };
     } finally {
       setSavingReviewDraftId(null);
     }
@@ -3944,6 +3998,8 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
           }}
           onRemove={() => setRemovingReviewItem(editingReviewItem)}
           onSaveDraft={(draft) => handleSaveSupplierReviewDraft(editingReviewItem, draft)}
+          taxonomyProposals={launch1000TaxonomyProposals}
+          onCreateTaxonomyProposal={handleCreateLaunch1000TaxonomyProposal}
           onApproveProductTypeClassification={(decision) => handleApproveLaunch1000ProductTypeClassification(editingReviewItem, decision)}
           onPublish={(draft) => handleApproveReviewItem(editingReviewItem, draft)}
         />
