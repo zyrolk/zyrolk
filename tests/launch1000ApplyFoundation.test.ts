@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
 import { deleteApp, initializeApp } from "firebase-admin/app";
@@ -14,7 +15,10 @@ import {
 } from "../functions/src/api/launch1000/launch1000Apply";
 import {
   approveLaunch1000TaxonomyProposal,
+  approveMissingParentCategoryProposal,
   createApprovedLaunch1000TaxonomyProposal,
+  createApprovedMissingParentCategory,
+  launch1000MissingParentProposalId,
   previewLaunch1000TaxonomyProposals,
   LAUNCH1000_TAXONOMY_AUDIT_COLLECTION,
   LAUNCH1000_TAXONOMY_GOVERNANCE_COLLECTION,
@@ -29,6 +33,15 @@ const canRunFirestore = /^(127\.0\.0\.1|localhost):\d+$/u.test(String(process.en
   && String(process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT || "demo-zyro-launch1000").startsWith("demo-");
 
 const operator = { uid: "launch1000-test-admin", email: "launch1000-test@example.invalid" };
+
+test("missing parent category endpoints retain Supplier Hub Admin and global App Check boundaries", () => {
+  const routes = readFileSync("functions/src/api/routes/supplier.ts", "utf8");
+  assert.match(routes, /app\.post\("\/api\/launch1000\/taxonomy\/parent\/approve", requireSupplierHubAdmin/u);
+  assert.match(routes, /app\.post\("\/api\/launch1000\/taxonomy\/parent\/create", requireSupplierHubAdmin/u);
+  const app = readFileSync("functions/src/api/app.ts", "utf8");
+  assert.ok(app.indexOf("app.use(async (req, res, next) => {") < app.indexOf("registerSupplierRoutes(app);"));
+  assert.match(app, /adminAppCheck\.verifyToken\(token\)/u);
+});
 
 const snapshotFor = (
   productId: string,
@@ -120,6 +133,18 @@ const queueRecordFor = (productId: string, updatedAt: string) => ({
   mediaFailures: [],
   supplierSyncState: { batchId: "sync-before", state: "pending", revision: "sync-1" },
   productValidation: { readyToPublish: false, missingFields: ["category"], errors: [{ field: "category", code: "required" }] },
+});
+
+const parentQueueRecordFor = (productId: string, updatedAt: string, pendingRevision = "supplier-offer-revision-1") => ({
+  ...queueRecordFor(productId, updatedAt),
+  supplierOfferPendingRevision: pendingRevision,
+  supplierSnapshot: {
+    ...queueRecordFor(productId, updatedAt).supplierSnapshot,
+    productPayload: {
+      name: "Industrial 3D Printer Filament",
+      description: "A spool of thermoplastic filament for compatible 3D printers.",
+    },
+  },
 });
 
 const withEmulator = async (callback: (db: Firestore) => Promise<void>): Promise<void> => {
@@ -439,4 +464,215 @@ test("apply preconditions use the same record fingerprint exposed by dry-run", (
   const record = queueRecordFor("fingerprint-product", "2026-10-10T00:00:00.000Z");
   assert.equal(typeof launch1000RecordFingerprint(record), "string");
   assert.equal(launch1000RecordFingerprint(record), launch1000RecordFingerprint({ ...record }));
+});
+
+test("missing parent category approval and creation are bounded, auditable, and idempotent", { skip: !canRunFirestore }, async () => {
+  await withEmulator(async (db) => {
+    const productId = `parent-product-${randomUUID()}`;
+    const updatedAt = "2026-10-10T00:00:00.000Z";
+    const queueRecord = parentQueueRecordFor(productId, updatedAt);
+    const queueReference = db.collection("supplier_review_queue").doc(productId);
+    await queueReference.set(queueRecord);
+    const input = {
+      queueItemId: productId,
+      expectedPendingRevision: queueRecord.supplierOfferPendingRevision,
+      expectedUpdatedAt: updatedAt,
+      expectedFingerprint: launch1000RecordFingerprint(queueRecord),
+      proposedName: "3D Printer Filament Variant",
+      proposedSlug: "3d-printer-filament-variant",
+      proposedSubcategoryName: "",
+      proposedSubcategorySlug: "",
+      evidenceRefs: ["supplierSnapshot.productPayload.name", "supplierSnapshot.productPayload.description"],
+      adminConfirmed: true as const,
+    };
+    const approved = await approveMissingParentCategoryProposal(db, input, operator);
+    assert.equal(approved.status, "APPROVED");
+    const concurrentApprovals = await Promise.all([
+      approveMissingParentCategoryProposal(db, input, operator),
+      approveMissingParentCategoryProposal(db, input, operator),
+    ]);
+    assert.equal(concurrentApprovals.every((result) => result.status === "APPROVED"), true);
+    assert.equal(concurrentApprovals.some((result) => result.idempotent === true), true);
+    const created = await createApprovedMissingParentCategory(db, {
+      proposalId: approved.proposalId,
+      proposalRevision: approved.proposalRevision,
+    }, operator);
+    assert.equal(created.status, "CREATED");
+    assert.equal(created.createdCategoryId, "3d-printer-filament-variant");
+    const createdAgain = await createApprovedMissingParentCategory(db, {
+      proposalId: approved.proposalId,
+      proposalRevision: approved.proposalRevision,
+    }, operator);
+    assert.equal(createdAgain.idempotent, true);
+    assert.equal((await db.collection("categories").doc("3d-printer-filament-variant").get()).data()?.name, "3D Printer Filament Variant");
+    const parentAudits = (await db.collection(LAUNCH1000_TAXONOMY_AUDIT_COLLECTION).get()).docs
+      .filter((document) => document.data().proposalId === approved.proposalId);
+    assert.equal(parentAudits.length, 2);
+    assert.equal((await queueReference.get()).data()?.productPayload.category, "");
+  });
+});
+
+test("missing parent category creation fails closed after supplier evidence changes", { skip: !canRunFirestore }, async () => {
+  await withEmulator(async (db) => {
+    const productId = `stale-parent-product-${randomUUID()}`;
+    const updatedAt = "2026-10-10T00:00:00.000Z";
+    const queueRecord = parentQueueRecordFor(productId, updatedAt);
+    const queueReference = db.collection("supplier_review_queue").doc(productId);
+    await queueReference.set(queueRecord);
+    const input = {
+      queueItemId: productId,
+      expectedPendingRevision: queueRecord.supplierOfferPendingRevision,
+      expectedUpdatedAt: updatedAt,
+      expectedFingerprint: launch1000RecordFingerprint(queueRecord),
+      proposedName: "3D Printer Filament",
+      proposedSlug: "3d-printer-filament",
+      proposedSubcategoryName: "",
+      proposedSubcategorySlug: "",
+      evidenceRefs: ["supplierSnapshot.productPayload.name"],
+      adminConfirmed: true as const,
+    };
+    const approved = await approveMissingParentCategoryProposal(db, input, operator);
+    await queueReference.update({
+      updatedAt: "2026-10-10T00:01:00.000Z",
+      supplierSnapshot: {
+        ...queueRecord.supplierSnapshot,
+        productPayload: { name: "Unrelated Household Item", description: "No printer evidence remains." },
+      },
+    });
+    await assert.rejects(
+      () => createApprovedMissingParentCategory(db, { proposalId: approved.proposalId, proposalRevision: approved.proposalRevision }, operator),
+      /changed|stale|evidence/iu,
+    );
+    assert.equal((await db.collection("categories").doc("3d-printer-filament").get()).exists, false);
+    const staleParentAudits = (await db.collection(LAUNCH1000_TAXONOMY_AUDIT_COLLECTION).get()).docs
+      .filter((document) => document.data().proposalId === approved.proposalId);
+    assert.equal(staleParentAudits.length, 1);
+  });
+});
+
+test("missing parent category evidence rejects qualified and punctuated contradictions", { skip: !canRunFirestore }, async () => {
+  await withEmulator(async (db) => {
+    const descriptions = [
+      "Not a 3D Printer Filament; this is a household storage item.",
+      "Not an 3D Printer Filament; this is a household storage item.",
+      "Not 3D Printer Filament; this is a household storage item.",
+      "No 3D Printer Filament; this is a household storage item.",
+      "Without 3D Printer Filament; this is a household storage item.",
+      "Instead of 3D Printer Filament, this is a household storage item.",
+      "Not, the actual 3D Printer Filament; this is a household storage item.",
+    ];
+    for (const description of descriptions) {
+      const productId = `contradictory-parent-product-${randomUUID()}`;
+      const updatedAt = "2026-10-10T00:00:00.000Z";
+      const queueRecord = parentQueueRecordFor(productId, updatedAt);
+      queueRecord.supplierSnapshot.productPayload.description = description;
+      await db.collection("supplier_review_queue").doc(productId).set(queueRecord);
+      await assert.rejects(
+        () => approveMissingParentCategoryProposal(db, {
+          queueItemId: productId,
+          expectedPendingRevision: queueRecord.supplierOfferPendingRevision,
+          expectedUpdatedAt: updatedAt,
+          expectedFingerprint: launch1000RecordFingerprint(queueRecord),
+          proposedName: "3D Printer Filament",
+          proposedSlug: "3d-printer-filament",
+          proposedSubcategoryName: "",
+          proposedSubcategorySlug: "",
+          evidenceRefs: ["supplierSnapshot.productPayload.name", "supplierSnapshot.productPayload.description"],
+          adminConfirmed: true as const,
+        }, operator),
+        /contradict/iu,
+      );
+      assert.equal((await db.collection(LAUNCH1000_TAXONOMY_AUDIT_COLLECTION).get()).docs
+        .some((document) => document.data().queueItemId === productId), false);
+    }
+  });
+});
+
+test("missing parent approval rolls back when its deterministic audit write collides", { skip: !canRunFirestore }, async () => {
+  await withEmulator(async (db) => {
+    const productId = `parent-approval-audit-failure-${randomUUID()}`;
+    const updatedAt = "2026-10-10T00:00:00.000Z";
+    const queueRecord = parentQueueRecordFor(productId, updatedAt);
+    const expectedFingerprint = launch1000RecordFingerprint(queueRecord);
+    const proposalId = launch1000MissingParentProposalId(productId, expectedFingerprint);
+    const queueReference = db.collection("supplier_review_queue").doc(productId);
+    await queueReference.set(queueRecord);
+    await db.collection(LAUNCH1000_TAXONOMY_AUDIT_COLLECTION).doc(`parent-approve-${proposalId}`).set({ occupied: true });
+    await assert.rejects(() => approveMissingParentCategoryProposal(db, {
+      queueItemId: productId,
+      expectedPendingRevision: queueRecord.supplierOfferPendingRevision,
+      expectedUpdatedAt: updatedAt,
+      expectedFingerprint,
+      proposedName: "3D Printer Filament",
+      proposedSlug: "3d-printer-filament",
+      proposedSubcategoryName: "",
+      proposedSubcategorySlug: "",
+      evidenceRefs: ["supplierSnapshot.productPayload.name", "supplierSnapshot.productPayload.description"],
+      adminConfirmed: true as const,
+    }, operator));
+    assert.equal((await db.collection(LAUNCH1000_TAXONOMY_GOVERNANCE_COLLECTION).doc(proposalId).get()).exists, false);
+    assert.equal((await db.collection("categories").doc("3d-printer-filament").get()).exists, false);
+  });
+});
+
+test("missing parent creation rolls back category and governance when its audit write collides", { skip: !canRunFirestore }, async () => {
+  await withEmulator(async (db) => {
+    const productId = `parent-creation-audit-failure-${randomUUID()}`;
+    const updatedAt = "2026-10-10T00:00:00.000Z";
+    const queueRecord = parentQueueRecordFor(productId, updatedAt);
+    const expectedFingerprint = launch1000RecordFingerprint(queueRecord);
+    const queueReference = db.collection("supplier_review_queue").doc(productId);
+    await queueReference.set(queueRecord);
+    const approved = await approveMissingParentCategoryProposal(db, {
+      queueItemId: productId,
+      expectedPendingRevision: queueRecord.supplierOfferPendingRevision,
+      expectedUpdatedAt: updatedAt,
+      expectedFingerprint,
+      proposedName: "3D Printer Filament",
+      proposedSlug: "3d-printer-filament",
+      proposedSubcategoryName: "",
+      proposedSubcategorySlug: "",
+      evidenceRefs: ["supplierSnapshot.productPayload.name", "supplierSnapshot.productPayload.description"],
+      adminConfirmed: true as const,
+    }, operator);
+    await db.collection(LAUNCH1000_TAXONOMY_AUDIT_COLLECTION).doc(`parent-create-${approved.proposalId}`).set({ occupied: true });
+    await assert.rejects(() => createApprovedMissingParentCategory(db, {
+      proposalId: approved.proposalId,
+      proposalRevision: approved.proposalRevision,
+    }, operator));
+    assert.equal((await db.collection("categories").doc("3d-printer-filament").get()).exists, false);
+    assert.equal((await db.collection(LAUNCH1000_TAXONOMY_GOVERNANCE_COLLECTION).doc(approved.proposalId).get()).data()?.status, "APPROVED");
+  });
+});
+
+test("concurrent missing parent creation attempts produce one category and deterministic audits", { skip: !canRunFirestore }, async () => {
+  await withEmulator(async (db) => {
+    const productId = `parent-concurrent-creation-${randomUUID()}`;
+    const updatedAt = "2026-10-10T00:00:00.000Z";
+    const queueRecord = parentQueueRecordFor(productId, updatedAt);
+    await db.collection("supplier_review_queue").doc(productId).set(queueRecord);
+    const approved = await approveMissingParentCategoryProposal(db, {
+      queueItemId: productId,
+      expectedPendingRevision: queueRecord.supplierOfferPendingRevision,
+      expectedUpdatedAt: updatedAt,
+      expectedFingerprint: launch1000RecordFingerprint(queueRecord),
+      proposedName: "3D Printer Filament",
+      proposedSlug: "3d-printer-filament",
+      proposedSubcategoryName: "",
+      proposedSubcategorySlug: "",
+      evidenceRefs: ["supplierSnapshot.productPayload.name", "supplierSnapshot.productPayload.description"],
+      adminConfirmed: true as const,
+    }, operator);
+    const results = await Promise.all([
+      createApprovedMissingParentCategory(db, { proposalId: approved.proposalId, proposalRevision: approved.proposalRevision }, operator),
+      createApprovedMissingParentCategory(db, { proposalId: approved.proposalId, proposalRevision: approved.proposalRevision }, operator),
+    ]);
+    assert.equal(results.every((result) => result.status === "CREATED"), true);
+    assert.equal(results.some((result) => result.idempotent === true), true);
+    assert.equal((await db.collection("categories").doc("3d-printer-filament").get()).exists, true);
+    assert.equal((await db.collection(LAUNCH1000_TAXONOMY_GOVERNANCE_COLLECTION).doc(approved.proposalId).get()).data()?.status, "CREATED");
+    const audits = (await db.collection(LAUNCH1000_TAXONOMY_AUDIT_COLLECTION).get()).docs
+      .filter((document) => document.data().proposalId === approved.proposalId);
+    assert.equal(audits.length, 2);
+  });
 });

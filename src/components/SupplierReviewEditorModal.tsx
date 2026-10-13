@@ -43,6 +43,7 @@ import { formatSupplierTimestamp } from '../services/supplierHubPresentation';
 import {
   applyZyroCategorySuggestion,
   suggestZyroCategory,
+  ZyroMissingParentCategoryProposal,
   ZyroTaxonomyProposal,
 } from '../services/categorySuggestion/suggestZyroCategory';
 import {
@@ -73,6 +74,7 @@ interface SupplierReviewEditorModalProps {
   onSaveDraft: (draft: { category: string; subcategory: string }) => Promise<void>;
   taxonomyProposals?: readonly ZyroTaxonomyProposal[];
   onCreateTaxonomyProposal?: (proposal: ZyroTaxonomyProposal) => Promise<{ categoryId: string; subcategoryId: string }>;
+  onCreateMissingParentCategory?: (proposal: ZyroMissingParentCategoryProposal) => Promise<{ categoryId: string; subcategoryId: string }>;
   onApproveProductTypeClassification?: (decision: Launch1000ProductTypeClassificationDecision) => Promise<void>;
   offers: SupplierOfferView[];
   offerSelection: SupplierOfferSelectionView;
@@ -144,6 +146,7 @@ export default function SupplierReviewEditorModal({
   onSaveDraft,
   taxonomyProposals = [],
   onCreateTaxonomyProposal,
+  onCreateMissingParentCategory,
   onApproveProductTypeClassification,
   offers,
   offerSelection,
@@ -172,6 +175,11 @@ export default function SupplierReviewEditorModal({
   const [classificationFeedback, setClassificationFeedback] = useState<{ kind: 'success' | 'error'; message: string } | null>(null);
   const [taxonomyProposalBusy, setTaxonomyProposalBusy] = useState(false);
   const [taxonomyProposalFeedback, setTaxonomyProposalFeedback] = useState<{ kind: 'success' | 'error'; message: string } | null>(null);
+  const [missingParentName, setMissingParentName] = useState('');
+  const [missingParentSlug, setMissingParentSlug] = useState('');
+  const [missingParentSubcategoryName, setMissingParentSubcategoryName] = useState('');
+  const [missingParentSubcategorySlug, setMissingParentSubcategorySlug] = useState('');
+  const [missingParentConfirmed, setMissingParentConfirmed] = useState(false);
   const [failedMediaUrls, setFailedMediaUrls] = useState<Set<string>>(() => new Set());
   const firstInputRef = useRef<HTMLInputElement>(null);
   const detailsActionRef = useRef<HTMLButtonElement>(null);
@@ -245,7 +253,10 @@ export default function SupplierReviewEditorModal({
     specifications: draft.specifications,
     categories,
     taxonomyProposals,
-  }), [categories, draft.brand, draft.description, draft.keywords, draft.model, draft.productName, draft.productType, draft.specifications, taxonomyProposals]);
+    sourceEvidence: launch1000EvidenceOptions
+      .filter((option) => option.kind === 'product_title' || option.kind === 'product_description')
+      .map(({ kind, ref, detail }) => ({ kind, ref, value: detail })),
+  }), [categories, draft.brand, draft.description, draft.keywords, draft.model, draft.productName, draft.productType, draft.specifications, launch1000EvidenceOptions, taxonomyProposals]);
   const suggestedCategory = useMemo(
     () => categories.find((category) => category.id === categorySuggestion.categoryId),
     [categories, categorySuggestion.categoryId],
@@ -256,6 +267,7 @@ export default function SupplierReviewEditorModal({
   const suggestionMatchesCurrentSelection = categorySuggestion.status === 'SUGGESTED'
     && draft.category === categorySuggestion.categoryId
     && String(draft.subcategory || '') === String(categorySuggestion.subcategoryId || '');
+  const missingParentProposal = categorySuggestion.missingParentCategoryProposal;
   const specificationsRequired = Boolean(
     (selectedCategory?.specificationTemplate || []).some((field) => field.required === true),
   );
@@ -362,6 +374,14 @@ export default function SupplierReviewEditorModal({
     setClassificationConfirmed(false);
     setClassificationFeedback(null);
   }, [item.id, launch1000ProductType]);
+  useEffect(() => {
+    setMissingParentName(missingParentProposal?.proposedName || '');
+    setMissingParentSlug(missingParentProposal?.proposedSlug || '');
+    setMissingParentSubcategoryName(missingParentProposal?.proposedSubcategoryName || '');
+    setMissingParentSubcategorySlug(missingParentProposal?.proposedSubcategorySlug || '');
+    setMissingParentConfirmed(false);
+    setTaxonomyProposalFeedback(null);
+  }, [missingParentProposal?.proposedName, missingParentProposal?.proposedSlug, missingParentProposal?.proposedSubcategoryName, missingParentProposal?.proposedSubcategorySlug]);
 
   useEffect(() => {
     previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -472,6 +492,47 @@ export default function SupplierReviewEditorModal({
         kind: 'error',
         message: error instanceof Error ? error.message : 'The taxonomy proposal could not be created.',
       });
+    } finally {
+      setTaxonomyProposalBusy(false);
+    }
+  };
+
+  const createMissingParentCategory = async () => {
+    if (!missingParentProposal || !onCreateMissingParentCategory || taxonomyProposalBusy || !missingParentConfirmed) return;
+    if (draft.fieldOwnership.category === 'admin' || draft.fieldOwnership.subcategory === 'admin') {
+      setTaxonomyProposalFeedback({ kind: 'error', message: 'The current Product Review taxonomy is Admin-owned. Do not replace it from this proposal; reconcile it manually.' });
+      return;
+    }
+    const proposedName = missingParentName.normalize('NFKC').trim();
+    const proposedSlug = missingParentSlug.normalize('NFKC').trim().toLowerCase();
+    const proposedSubcategoryName = missingParentSubcategoryName.normalize('NFKC').trim();
+    const proposedSubcategorySlug = missingParentSubcategorySlug.normalize('NFKC').trim().toLowerCase();
+    if (!proposedName || !proposedSlug || (proposedSubcategoryName && !proposedSubcategorySlug)) {
+      setTaxonomyProposalFeedback({ kind: 'error', message: 'Enter a parent name and slug. A subcategory requires both a name and slug.' });
+      return;
+    }
+    setTaxonomyProposalFeedback(null);
+    setTaxonomyProposalBusy(true);
+    try {
+      const created = await onCreateMissingParentCategory({
+        ...missingParentProposal,
+        proposedName,
+        proposedSlug,
+        proposedSubcategoryName,
+        proposedSubcategorySlug: proposedSubcategoryName ? proposedSubcategorySlug : '',
+      });
+      setDraft((current) => updateSupplierReviewDraftField(
+        updateSupplierReviewDraftField(current, 'category', { category: created.categoryId }),
+        'subcategory',
+        { subcategory: created.subcategoryId || '' },
+      ));
+      setTaxonomyProposalFeedback({
+        kind: 'success',
+        message: 'Canonical category created and selected in this pending Product Review draft. Save Changes to record the draft selection.',
+      });
+      setMissingParentConfirmed(false);
+    } catch (error) {
+      setTaxonomyProposalFeedback({ kind: 'error', message: error instanceof Error ? error.message : 'The missing parent category could not be created.' });
     } finally {
       setTaxonomyProposalBusy(false);
     }
@@ -678,6 +739,44 @@ export default function SupplierReviewEditorModal({
                   <button type="button" onClick={() => setDraft((current) => applyZyroCategorySuggestion(current, categorySuggestion))} disabled={isPublishing} className="mt-3 min-h-10 rounded-lg bg-violet-600 px-3 py-2 text-[10px] font-black text-white hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50">Apply Suggestion</button>
                 ) : (
                   <p className="mt-3 text-[10px] font-semibold text-slate-500">Choose Edit product data to apply this suggestion.</p>
+                )}
+              </div>
+            ) : categorySuggestion.status === 'MISSING_PARENT_CATEGORY_PROPOSAL' && missingParentProposal ? (
+              <div className="mt-3 rounded-xl border border-orange-500/25 bg-orange-500/10 p-3 dark:bg-orange-900/10">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="rounded-full bg-orange-500/15 px-2 py-1 text-[9px] font-black uppercase tracking-wide text-orange-800 dark:text-orange-200">Missing parent category · {missingParentProposal.confidence} confidence</span>
+                  <span className="font-mono text-[9px] text-slate-500">Supplier evidence only</span>
+                </div>
+                <p className="mt-2 text-[11px] font-bold text-slate-800 dark:text-slate-100">No existing canonical parent matched the supported product family.</p>
+                <ul className="mt-2 space-y-1 text-[10px] font-semibold text-slate-600 dark:text-slate-300">
+                  {missingParentProposal.evidence.map((reason) => <li key={reason}>{reason}</li>)}
+                </ul>
+                <p className="mt-2 text-[10px] text-slate-500">This suggestion does not create a category automatically. Check the catalog and correct the proposed name or slug before explicit Admin confirmation.</p>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  <label className="text-[10px] font-black uppercase tracking-wide text-slate-500" htmlFor="missing-parent-category-name">Parent category name
+                    <input id="missing-parent-category-name" value={missingParentName} onChange={(event) => { setMissingParentName(event.target.value); setMissingParentConfirmed(false); }} disabled={!isEditing || taxonomyProposalBusy} className="mt-1 min-h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold normal-case tracking-normal text-slate-800 outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100" />
+                  </label>
+                  <label className="text-[10px] font-black uppercase tracking-wide text-slate-500" htmlFor="missing-parent-category-slug">Parent category slug
+                    <input id="missing-parent-category-slug" value={missingParentSlug} onChange={(event) => { setMissingParentSlug(event.target.value); setMissingParentConfirmed(false); }} disabled={!isEditing || taxonomyProposalBusy} className="mt-1 min-h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold normal-case tracking-normal text-slate-800 outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100" />
+                  </label>
+                  <label className="text-[10px] font-black uppercase tracking-wide text-slate-500" htmlFor="missing-parent-subcategory-name">Optional subcategory name
+                    <input id="missing-parent-subcategory-name" value={missingParentSubcategoryName} onChange={(event) => { setMissingParentSubcategoryName(event.target.value); setMissingParentConfirmed(false); }} disabled={!isEditing || taxonomyProposalBusy} className="mt-1 min-h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold normal-case tracking-normal text-slate-800 outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100" />
+                  </label>
+                  <label className="text-[10px] font-black uppercase tracking-wide text-slate-500" htmlFor="missing-parent-subcategory-slug">Optional subcategory slug
+                    <input id="missing-parent-subcategory-slug" value={missingParentSubcategorySlug} onChange={(event) => { setMissingParentSubcategorySlug(event.target.value); setMissingParentConfirmed(false); }} disabled={!isEditing || taxonomyProposalBusy || !missingParentSubcategoryName} className="mt-1 min-h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold normal-case tracking-normal text-slate-800 outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100" />
+                  </label>
+                </div>
+                <label className="mt-3 flex items-start gap-2 text-[10px] font-semibold text-slate-700 dark:text-slate-200">
+                  <input type="checkbox" checked={missingParentConfirmed} onChange={(event) => setMissingParentConfirmed(event.target.checked)} disabled={!isEditing || taxonomyProposalBusy} className="mt-0.5 h-4 w-4 rounded border-slate-300 text-orange-600 focus:ring-orange-500" />
+                  <span>I confirm this proposed parent is supported by the displayed supplier evidence and is not an existing or equivalent category.</span>
+                </label>
+                {taxonomyProposalFeedback && <p role="status" className={`mt-2 rounded-lg px-3 py-2 text-[10px] font-bold ${taxonomyProposalFeedback.kind === 'success' ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'bg-red-500/10 text-red-700 dark:text-red-300'}`}>{taxonomyProposalFeedback.message}</p>}
+                {onCreateMissingParentCategory ? (
+                  <button type="button" onClick={() => void createMissingParentCategory()} disabled={taxonomyProposalBusy || isPublishing || isSaving || !isEditing || !missingParentConfirmed} className="mt-3 min-h-10 rounded-lg bg-orange-600 px-3 py-2 text-[10px] font-black text-white hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-50">
+                    {taxonomyProposalBusy ? 'Creating canonical category…' : isEditing ? 'Approve & create category' : 'Choose Edit product data to create'}
+                  </button>
+                ) : (
+                  <p className="mt-3 rounded-lg border border-dashed border-orange-500/25 px-3 py-2 text-[10px] font-semibold text-orange-800 dark:text-orange-200">Creation is available only through the authenticated Product Review governance action.</p>
                 )}
               </div>
             ) : categorySuggestion.status === 'MISSING_TAXONOMY_PROPOSAL' && categorySuggestion.missingTaxonomyProposal ? (

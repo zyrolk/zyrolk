@@ -13,6 +13,7 @@ export interface ZyroSuggestionSubcategory {
 export interface ZyroSuggestionCategory {
   id: string;
   name?: string;
+  slug?: string;
   isActive?: boolean;
   taxonomyCandidate?: boolean;
   subcategories?: readonly ZyroSuggestionSubcategory[];
@@ -28,6 +29,13 @@ export interface SuggestZyroCategoryInput {
   specifications?: Readonly<Record<string, unknown>>;
   categories: readonly ZyroSuggestionCategory[];
   taxonomyProposals?: readonly ZyroTaxonomyProposal[];
+  sourceEvidence?: readonly ZyroSourceEvidence[];
+}
+
+export interface ZyroSourceEvidence {
+  kind: 'product_title' | 'product_description';
+  ref: string;
+  value: string;
 }
 
 export interface ZyroCategorySuggestionAlternative {
@@ -57,8 +65,20 @@ export interface ZyroMissingTaxonomyProposal {
   creationSupported: boolean;
 }
 
+export interface ZyroMissingParentCategoryProposal {
+  kind: 'missing_parent_category';
+  proposedName: string;
+  proposedSlug: string;
+  proposedSubcategoryName: string;
+  proposedSubcategorySlug: string;
+  evidenceRefs: string[];
+  confidence: 'MEDIUM';
+  evidence: string[];
+  creationSupported: boolean;
+}
+
 export interface ZyroCategorySuggestion {
-  status: 'SUGGESTED' | 'NO_CONFIDENT_MATCH' | 'MISSING_TAXONOMY_PROPOSAL';
+  status: 'SUGGESTED' | 'NO_CONFIDENT_MATCH' | 'MISSING_TAXONOMY_PROPOSAL' | 'MISSING_PARENT_CATEGORY_PROPOSAL';
   categoryId: string | null;
   subcategoryId: string | null;
   confidence: 'HIGH' | 'MEDIUM' | 'LOW';
@@ -66,6 +86,7 @@ export interface ZyroCategorySuggestion {
   alternatives: ZyroCategorySuggestionAlternative[];
   engine: 'rules-v1';
   missingTaxonomyProposal?: ZyroMissingTaxonomyProposal;
+  missingParentCategoryProposal?: ZyroMissingParentCategoryProposal;
 }
 
 interface EvidenceFields {
@@ -185,6 +206,93 @@ const missingTaxonomyProposalFor = (
   };
 };
 
+const PARENT_PROPOSAL_STOP_WORDS = new Set([
+  'and', 'the', 'for', 'with', 'from', 'new', 'item', 'product', 'category', 'general',
+  'misc', 'other', 'goods', 'supplies', 'accessory', 'accessories', 'device', 'devices',
+]);
+
+const parentProposalTokens = (value: string): string[] => normalizeText(value)
+  .split(' ')
+  .filter((token) => (token.length >= 3 || /\d/u.test(token)) && !PARENT_PROPOSAL_STOP_WORDS.has(token));
+
+const parentProposalSlug = (value: string): string => normalizeText(value)
+  .replace(/\s+/gu, '-')
+  .replace(/-+/gu, '-')
+  .replace(/^-|-$/gu, '');
+
+const parentMeaningTokens = (value: string): string[] => [...new Set(parentProposalTokens(value).map((token) => (
+  token.endsWith('s') ? token.slice(0, -1) : token
+)))].sort();
+
+const parentMeaningfullyEquivalent = (left: string, right: string): boolean => {
+  const leftTokens = parentMeaningTokens(left);
+  const rightTokens = parentMeaningTokens(right);
+  return leftTokens.length > 0
+    && leftTokens.length === rightTokens.length
+    && leftTokens.every((token, index) => token === rightTokens[index]);
+};
+
+const parentDescriptionContradicts = (input: SuggestZyroCategoryInput): boolean => {
+  const titleEvidence = (input.sourceEvidence || []).find((evidence) => evidence.kind === 'product_title' && evidence.value.trim());
+  const descriptionEvidence = (input.sourceEvidence || []).find((evidence) => evidence.kind === 'product_description' && evidence.value.trim());
+  const candidate = String(input.productType || '').normalize('NFKC').trim().replace(/\s+/gu, ' ');
+  if (!titleEvidence || !descriptionEvidence || !candidate) return false;
+  const candidateTokens = parentProposalTokens(candidate);
+  const title = normalizeText(titleEvidence.value);
+  const titleSupported = phraseInText(title, candidate)
+    || candidateTokens.filter((token) => tokenMatches(title, token)).length >= Math.min(2, candidateTokens.length);
+  if (!titleSupported) return false;
+  const normalizedDescription = normalizeText(descriptionEvidence.value);
+  const normalizedCandidate = normalizeText(candidate);
+  return [
+    `not ${normalizedCandidate}`,
+    `no ${normalizedCandidate}`,
+    `without ${normalizedCandidate}`,
+    `instead of ${normalizedCandidate}`,
+  ].some((phrase) => normalizedDescription.includes(phrase));
+};
+
+const missingParentCategoryProposalFor = (
+  input: SuggestZyroCategoryInput,
+): ZyroMissingParentCategoryProposal | null => {
+  const titleEvidence = (input.sourceEvidence || []).find((evidence) => evidence.kind === 'product_title' && evidence.value.trim());
+  if (!titleEvidence) return null;
+  const candidate = String(input.productType || '').normalize('NFKC').trim().replace(/\s+/gu, ' ');
+  const candidateNormalized = normalizeText(candidate);
+  const candidateTokens = parentProposalTokens(candidate);
+  const descriptionEvidence = (input.sourceEvidence || []).find((entry) => entry.kind === 'product_description' && entry.value.trim());
+  if (!candidateNormalized || candidateTokens.length === 0 || candidate.length > 120) return null;
+  if (candidateTokens.length === 1 && candidateTokens[0].length < 5) return null;
+  if (PARENT_PROPOSAL_STOP_WORDS.has(candidateNormalized)) return null;
+  const title = normalizeText(titleEvidence.value);
+  const phraseMatch = phraseInText(title, candidate);
+  const matchedTokens = candidateTokens.filter((token) => tokenMatches(title, token));
+  if (!phraseMatch && matchedTokens.length < Math.min(2, candidateTokens.length)) return null;
+  if (parentDescriptionContradicts(input)) return null;
+  const proposedSlug = parentProposalSlug(candidate);
+  if (!proposedSlug) return null;
+  const equivalent = input.categories.some((category) => (
+    normalizeText(String(category.name || '')) === candidateNormalized
+    || parentProposalSlug(category.id) === proposedSlug
+    || parentProposalSlug(String(category.slug || '')) === proposedSlug
+    || parentMeaningfullyEquivalent(String(category.name || ''), candidate)
+  ));
+  if (equivalent) return null;
+  const evidence = [`Matched "${candidate}" in supplier-observed title`];
+  const evidenceRefs = [titleEvidence.ref, ...(descriptionEvidence ? [descriptionEvidence.ref] : [])];
+  return {
+    kind: 'missing_parent_category',
+    proposedName: candidate,
+    proposedSlug,
+    proposedSubcategoryName: '',
+    proposedSubcategorySlug: '',
+    evidenceRefs,
+    confidence: 'MEDIUM',
+    evidence,
+    creationSupported: true,
+  };
+};
+
 const scoreRule = (
   rule: ZyroCategoryRule,
   evidence: EvidenceFields,
@@ -236,16 +344,27 @@ const noMatch = (): ZyroCategorySuggestion => ({
 
 export function suggestZyroCategory(input: SuggestZyroCategoryInput): ZyroCategorySuggestion {
   const evidence = evidenceFor(input);
+  if (parentDescriptionContradicts(input)) return noMatch();
   const candidates = new Map<string, ScoredCandidate>();
   const proposalSuggestion = (): ZyroCategorySuggestion => {
     const missingTaxonomyProposal = missingTaxonomyProposalFor(evidence, input.taxonomyProposals);
-    return missingTaxonomyProposal
-      ? {
+    if (missingTaxonomyProposal) {
+      return {
         ...noMatch(),
         status: 'MISSING_TAXONOMY_PROPOSAL',
         confidence: missingTaxonomyProposal.confidence,
         reasons: missingTaxonomyProposal.evidence,
         missingTaxonomyProposal,
+      };
+    }
+    const missingParentCategoryProposal = missingParentCategoryProposalFor(input);
+    return missingParentCategoryProposal
+      ? {
+        ...noMatch(),
+        status: 'MISSING_PARENT_CATEGORY_PROPOSAL',
+        confidence: missingParentCategoryProposal.confidence,
+        reasons: missingParentCategoryProposal.evidence,
+        missingParentCategoryProposal,
       }
       : noMatch();
   };

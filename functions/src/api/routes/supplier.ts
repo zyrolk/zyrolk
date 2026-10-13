@@ -99,7 +99,9 @@ import {
 import type { SupplierQueueRecord } from "../../scheduled/supplierReviewQueue";
 import {
   approveLaunch1000TaxonomyProposal,
+  approveMissingParentCategoryProposal,
   createApprovedLaunch1000TaxonomyProposal,
+  createApprovedMissingParentCategory,
   listLaunch1000TaxonomyProposals,
   previewLaunch1000TaxonomyProposals,
 } from "../launch1000/launch1000Governance";
@@ -727,6 +729,36 @@ export function registerSupplierRoutes(app: express.Express): void {
         logMessage: "Launch-1000 taxonomy proposal creation failed.",
         fallbackMessage: "Launch-1000 taxonomy proposal creation could not be completed.",
         context: { route: req.path, action: "create" },
+      });
+    }
+  });
+
+  app.post("/api/launch1000/taxonomy/parent/approve", requireSupplierHubAdmin, async (req, res) => {
+    try {
+      res.status(200).json({
+        success: true,
+        result: await approveMissingParentCategoryProposal(adminDb, req.body || {}, reviewerFor(res)),
+      });
+    } catch (error: unknown) {
+      sendSupplierFailure(res, error, {
+        logMessage: "Launch-1000 missing parent category approval failed.",
+        fallbackMessage: "The missing parent category proposal could not be approved.",
+        context: { route: req.path, action: "parent_approve" },
+      });
+    }
+  });
+
+  app.post("/api/launch1000/taxonomy/parent/create", requireSupplierHubAdmin, async (req, res) => {
+    try {
+      res.status(200).json({
+        success: true,
+        result: await createApprovedMissingParentCategory(adminDb, req.body || {}, reviewerFor(res)),
+      });
+    } catch (error: unknown) {
+      sendSupplierFailure(res, error, {
+        logMessage: "Launch-1000 missing parent category creation failed.",
+        fallbackMessage: "The missing parent category could not be created.",
+        context: { route: req.path, action: "parent_create" },
       });
     }
   });

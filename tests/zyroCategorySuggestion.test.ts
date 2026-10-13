@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -73,8 +74,8 @@ const baseItem = {
   managedMedia: [{ firebaseStorageUrl: 'https://storage.example/primary.webp', isPrimary: true, imageStatus: 'ready', sortOrder: 0 }],
 };
 
-const renderEditor = (draftOverrides: Record<string, unknown> = {}, taxonomyProposals: readonly ZyroTaxonomyProposal[] = []) => {
-  const item = baseItem as never;
+const renderEditor = (draftOverrides: Record<string, unknown> = {}, taxonomyProposals: readonly ZyroTaxonomyProposal[] = [], itemOverrides: Record<string, unknown> = {}) => {
+  const item = { ...baseItem, ...itemOverrides } as never;
   const draft = { ...createSupplierReviewDraft(item), ...draftOverrides };
   return renderToStaticMarkup(React.createElement(SupplierReviewEditorModal, {
     item,
@@ -334,6 +335,56 @@ test('ambiguous proposal evidence fails closed without inventing a taxonomy node
   assert.equal(result.missingTaxonomyProposal, undefined);
 });
 
+test('a missing parent proposal requires supplier title support and no equivalent canonical parent', () => {
+  const sourceEvidence = [
+    { kind: 'product_title' as const, ref: 'supplierSnapshot.productPayload.name', value: 'Industrial 3D Printer Filament' },
+    { kind: 'product_description' as const, ref: 'supplierSnapshot.productPayload.description', value: 'Thermoplastic spool for compatible printers.' },
+  ];
+  const result = suggestZyroCategory({
+    productName: 'Industrial 3D Printer Filament',
+    productType: '3D Printer Filament',
+    description: 'Thermoplastic spool for compatible printers.',
+    categories: taxonomy,
+    sourceEvidence,
+  });
+  assert.equal(result.status, 'MISSING_PARENT_CATEGORY_PROPOSAL');
+  assert.equal(result.missingParentCategoryProposal?.proposedSlug, '3d-printer-filament');
+  assert.deepEqual(result.missingParentCategoryProposal?.evidenceRefs, [
+    'supplierSnapshot.productPayload.name',
+    'supplierSnapshot.productPayload.description',
+  ]);
+
+  const unsupported = suggestZyroCategory({
+    productName: 'Industrial 3D Printer Filament',
+    productType: 'Watercraft Equipment',
+    description: 'Thermoplastic spool for compatible printers.',
+    categories: taxonomy,
+    sourceEvidence,
+  });
+  assert.equal(unsupported.status, 'NO_CONFIDENT_MATCH');
+
+  const contradictory = suggestZyroCategory({
+    productName: 'Industrial 3D Printer Filament',
+    productType: '3D Printer Filament',
+    description: 'Not 3D Printer Filament; this is a household storage item.',
+    categories: taxonomy,
+    sourceEvidence: [
+      sourceEvidence[0],
+      { kind: 'product_description' as const, ref: 'supplierSnapshot.productPayload.description', value: 'Not 3D Printer Filament; this is a household storage item.' },
+    ],
+  });
+  assert.equal(contradictory.status, 'NO_CONFIDENT_MATCH');
+
+  const equivalent = suggestZyroCategory({
+    productName: 'Industrial 3D Printer Filament',
+    productType: '3D Printer Filament',
+    description: 'Thermoplastic spool for compatible printers.',
+    categories: [...taxonomy, { id: 'legacy-3d-supplies', name: '3D Printers & Filaments', isActive: true, subcategories: [] }],
+    sourceEvidence,
+  });
+  assert.equal(equivalent.status, 'NO_CONFIDENT_MATCH');
+});
+
 test('supplier taxonomy alone cannot create a missing-taxonomy proposal', () => {
   const result = suggestZyroCategory({
     productName: 'Generic Item',
@@ -400,6 +451,22 @@ test('missing taxonomy proposal stays distinct from Product Review publication',
   assert.match(markup, /New taxonomy proposal/u);
   assert.match(markup, /Creation is available only through the authenticated Product Review governance action/u);
   assert.match(markup, /Approve &amp; Publish/u);
+});
+
+test('missing parent UI keeps creation explicit and separate from Product Review publication', () => {
+  const markup = renderEditor(
+    { productName: 'Industrial 3D Printer Filament', productType: '3D Printer Filament', description: 'Thermoplastic spool for compatible printers.' },
+    [],
+    { supplierSnapshot: { productPayload: { name: 'Industrial 3D Printer Filament', description: 'Thermoplastic spool for compatible printers.' } } },
+  );
+  assert.match(markup, /Missing parent category/u);
+  assert.match(markup, /Parent category name/u);
+  assert.match(markup, /I confirm this proposed parent/u);
+  const editorSource = readFileSync('src/components/SupplierReviewEditorModal.tsx', 'utf8');
+  assert.match(editorSource, /setMissingParentName\(event\.target\.value\); setMissingParentConfirmed\(false\)/u);
+  assert.match(editorSource, /setMissingParentSlug\(event\.target\.value\); setMissingParentConfirmed\(false\)/u);
+  assert.match(markup, /Approve &amp; Publish/u);
+  assert.doesNotMatch(markup, /Create category.*publish/iu);
 });
 
 test('12 launch fixtures resolve conservatively', () => {

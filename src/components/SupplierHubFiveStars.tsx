@@ -56,7 +56,7 @@ import { normalizeCategoryBlueprint } from '../services/products/productBlueprin
 import { sortCategoriesAlphabetically } from '../services/categories/categoryUtils';
 import { sortBrandsAlphabetically } from '../services/brands/brandUtils';
 import { normalizeSupplierCategory, supplierCategoryMappingUiKey } from '../services/supplierCategoryMapping';
-import type { ZyroTaxonomyProposal } from '../services/categorySuggestion/suggestZyroCategory';
+import type { ZyroMissingParentCategoryProposal, ZyroTaxonomyProposal } from '../services/categorySuggestion/suggestZyroCategory';
 import {
   sortSupplierOffers,
   SupplierOfferSelectionView,
@@ -1630,6 +1630,66 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
       setSuccessMsg(`Created canonical subcategory "${proposal.proposedLabel}". The Product Review draft remains pending.`);
       setTimeout(() => setSuccessMsg(null), 5000);
       return { categoryId: proposal.parentCategoryId, subcategoryId: createdSubcategoryId };
+    } finally {
+      setSavingReviewDraftId(null);
+    }
+  };
+
+  const handleCreateMissingParentCategory = async (
+    proposal: ZyroMissingParentCategoryProposal,
+  ): Promise<{ categoryId: string; subcategoryId: string }> => {
+    const item = editingReviewItem;
+    if (!item) throw new Error('Open the Product Review before creating a category.');
+    if (processingChangeId || savingReviewDraftId || refreshingReviewItemId) {
+      throw new Error('This review is busy. Wait for the current operation to finish.');
+    }
+    if (!item.supplierOfferPendingRevision || !item.updatedAt || !item.launch1000RecordFingerprint) {
+      throw new Error('This review is missing freshness evidence. Reload it before creating the category.');
+    }
+    setSavingReviewDraftId(item.id);
+    try {
+      const approvalResponse = await postSupplierApi('/api/launch1000/taxonomy/parent/approve', {
+        queueItemId: item.id,
+        expectedPendingRevision: item.supplierOfferPendingRevision,
+        expectedUpdatedAt: item.updatedAt,
+        expectedFingerprint: item.launch1000RecordFingerprint,
+        proposedName: proposal.proposedName,
+        proposedSlug: proposal.proposedSlug,
+        proposedSubcategoryName: proposal.proposedSubcategoryName,
+        proposedSubcategorySlug: proposal.proposedSubcategorySlug,
+        evidenceRefs: proposal.evidenceRefs,
+        adminConfirmed: true,
+      });
+      const approvalPayload = await approvalResponse.json().catch(() => ({})) as {
+        success?: boolean;
+        result?: { proposalId?: string; proposalRevision?: string; status?: string };
+        error?: string;
+      };
+      if (!approvalResponse.ok || approvalPayload.success !== true || !approvalPayload.result?.proposalId || !approvalPayload.result.proposalRevision) {
+        throw new Error(approvalPayload.error || (approvalResponse.status === 409
+          ? 'This review changed or conflicts with an existing category. Reload before trying again.'
+          : 'The missing parent category proposal could not be approved.'));
+      }
+      const createResponse = await postSupplierApi('/api/launch1000/taxonomy/parent/create', {
+        proposalId: approvalPayload.result.proposalId,
+        proposalRevision: approvalPayload.result.proposalRevision,
+      });
+      const createPayload = await createResponse.json().catch(() => ({})) as {
+        success?: boolean;
+        result?: { createdCategoryId?: string; createdSubcategoryId?: string };
+        error?: string;
+      };
+      const categoryId = String(createPayload.result?.createdCategoryId || '').trim();
+      const subcategoryId = String(createPayload.result?.createdSubcategoryId || '').trim();
+      if (!createResponse.ok || createPayload.success !== true || !categoryId) {
+        throw new Error(createPayload.error || (createResponse.status === 409
+          ? 'This category proposal is stale or conflicts with the current catalog. Reload before trying again.'
+          : 'The missing parent category could not be created.'));
+      }
+      await loadReviewCatalog();
+      setSuccessMsg(`Created canonical category "${proposal.proposedName}". The Product Review draft remains pending.`);
+      setTimeout(() => setSuccessMsg(null), 5000);
+      return { categoryId, subcategoryId };
     } finally {
       setSavingReviewDraftId(null);
     }
@@ -4000,6 +4060,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
           onSaveDraft={(draft) => handleSaveSupplierReviewDraft(editingReviewItem, draft)}
           taxonomyProposals={launch1000TaxonomyProposals}
           onCreateTaxonomyProposal={handleCreateLaunch1000TaxonomyProposal}
+          onCreateMissingParentCategory={handleCreateMissingParentCategory}
           onApproveProductTypeClassification={(decision) => handleApproveLaunch1000ProductTypeClassification(editingReviewItem, decision)}
           onPublish={(draft) => handleApproveReviewItem(editingReviewItem, draft)}
         />
