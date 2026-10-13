@@ -1412,7 +1412,7 @@ test('supplier review refresh reconciles the modal and list immediately with one
   const modal = read('src/components/SupplierReviewEditorModal.tsx');
   const hub = read('src/components/SupplierHubFiveStars.tsx');
   const start = hub.indexOf('const handleRefreshSupplierReviewItem');
-  const end = hub.indexOf('const handleRefreshPendingReviewBatch', start);
+  const end = hub.indexOf('const handleSaveSupplierReviewDraft', start);
   const handler = hub.slice(start, end);
   assert.ok(start >= 0 && end > start);
 
