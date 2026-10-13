@@ -9,6 +9,19 @@ import {
 
 const read = (path: string): string => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
+const EXPECTED_PILOT_PRODUCT_IDS = [
+  'dropex-aju0011',
+  'dropex-aju0014',
+  'dropex-ajuch-3416',
+  'dropex-asn0034',
+  'dropex-asn0036',
+  'dropex-asn0158',
+  'dropex-atf0375',
+  'dropex-atf0376',
+  'dropex-atf0487',
+  'dropex-atfch-376',
+] as const;
+
 const successResponse = (): Response => new Response(JSON.stringify({
   success: true,
   mode: 'dry_run',
@@ -29,6 +42,11 @@ const successResponse = (): Response => new Response(JSON.stringify({
 }), { status: 200, headers: { 'Content-Type': 'application/json' } });
 
 test('Launch-1000 bridge sends the exact fixed pilot request through the privileged API client', async () => {
+  assert.equal(LAUNCH1000_PILOT_MANIFEST_REVISION, 'launch1000-final800-visual-freeze-r1');
+  assert.deepEqual(LAUNCH1000_PILOT_PRODUCT_IDS, EXPECTED_PILOT_PRODUCT_IDS);
+  assert.equal(LAUNCH1000_PILOT_PRODUCT_IDS.length, 10);
+  assert.equal(new Set(LAUNCH1000_PILOT_PRODUCT_IDS).size, 10);
+
   let request: { path: string; body: Record<string, unknown> } | null = null;
   const response = await runLaunch1000PilotDryRun(async (path, body) => {
     request = { path, body };

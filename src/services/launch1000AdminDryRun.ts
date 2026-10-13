@@ -4,16 +4,16 @@ import { postSupplierApi } from './supplierHubApi';
 export const LAUNCH1000_PILOT_MANIFEST_REVISION = 'launch1000-final800-visual-freeze-r1';
 
 export const LAUNCH1000_PILOT_PRODUCT_IDS = [
-  'dropex-adl0019',
-  'dropex-aju0010',
   'dropex-aju0011',
-  'dropex-aju0013',
   'dropex-aju0014',
-  'dropex-aju0019',
-  'dropex-aju0021',
-  'dropex-aju0022',
-  'dropex-aju0027',
-  'dropex-ajuch-3338',
+  'dropex-ajuch-3416',
+  'dropex-asn0034',
+  'dropex-asn0036',
+  'dropex-asn0158',
+  'dropex-atf0375',
+  'dropex-atf0376',
+  'dropex-atf0487',
+  'dropex-atfch-376',
 ] as const;
 
 export interface Launch1000PilotDryRunResult {
