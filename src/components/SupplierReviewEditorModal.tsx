@@ -29,6 +29,7 @@ import {
   supplierReviewManagedImageUrlForCanonical,
   supplierReviewSpecificationsSatisfied,
   supplierReviewIsLowStockHold,
+  supplierReviewDecisionReady,
 } from '../services/supplierHubPresentation';
 import {
   supplierDescriptionPlainText,
@@ -287,7 +288,7 @@ export default function SupplierReviewEditorModal({
       categories,
       draft.category,
     );
-    return checks.map((check) => {
+    const fieldChecks = checks.map((check) => {
       if (check.label === 'Specifications' && !specificationsRequired && specificationCount === 0) {
         return { label: check.label, valid: true, note: 'Not required' };
       }
@@ -314,8 +315,18 @@ export default function SupplierReviewEditorModal({
         error,
       };
     });
+    const decisionReady = supplierReviewDecisionReady(item);
+    return [
+      ...fieldChecks,
+      {
+        label: 'Review queue state',
+        valid: decisionReady,
+        error: decisionReady ? undefined : 'Review queue state is not ready for an Admin decision.',
+      },
+    ];
   }, [categories, draft.category, item, lowStockHold, specificationCount, specificationsRequired, validationErrors]);
   const hasChecklistBlocker = validationChecklist.some((check) => !check.valid);
+  const queueDecisionBlocked = validationChecklist.some((check) => check.label === 'Review queue state' && !check.valid);
   const previewImages = useMemo(() => {
     const managedPreviewImages = supplierReviewManagedImageUrls(item);
     const images = !isEditing && supplierReviewManagedMediaReady(item) && managedPreviewImages.length > 0
@@ -438,7 +449,7 @@ export default function SupplierReviewEditorModal({
     event.preventDefault();
     if (!isEditing) return;
     setSubmitted(true);
-    if (Object.keys(validationErrors).length > 0 || isPublishing) return;
+    if (Object.keys(validationErrors).length > 0 || !supplierReviewDecisionReady(item) || isPublishing) return;
     await onPublish(draft);
   };
 
@@ -1365,7 +1376,7 @@ export default function SupplierReviewEditorModal({
           </div>
 
           <section id="supplier-publish-readiness" className={`order-[55] rounded-2xl border p-4 text-xs ${!hasChecklistBlocker ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-700' : 'border-amber-500/20 bg-amber-500/10 text-amber-700'}`} aria-live="polite" aria-labelledby="supplier-publish-readiness-title">
-             <h4 id="supplier-publish-readiness-title" className="flex items-center gap-2 font-black">{!hasChecklistBlocker ? <Check className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}{!hasChecklistBlocker ? 'Ready to publish' : 'Complete required product details'}</h4>
+             <h4 id="supplier-publish-readiness-title" className="flex items-center gap-2 font-black">{!hasChecklistBlocker ? <Check className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}{queueDecisionBlocked ? 'Not ready for Admin decision' : !hasChecklistBlocker ? 'Ready to publish' : 'Complete required product details'}</h4>
             <ul className="mt-3 grid gap-2 sm:grid-cols-2">
               {validationChecklist.map((check) => (
                 <li key={check.label} className="flex items-start gap-2 rounded-xl bg-white/60 px-3 py-2 dark:bg-slate-950/30">
@@ -1374,7 +1385,7 @@ export default function SupplierReviewEditorModal({
                 </li>
               ))}
             </ul>
-             {hasChecklistBlocker && <p id="supplier-publish-blocked-reason" className="mt-3 text-[10px] font-bold">Approve & Publish is unavailable until every failed checklist item is completed.</p>}
+             {hasChecklistBlocker && <p id="supplier-publish-blocked-reason" className="mt-3 text-[10px] font-bold">{queueDecisionBlocked ? 'Review queue state is not ready for an Admin decision. Reload Product Review before deciding.' : 'Approve & Publish is unavailable until every failed checklist item is completed.'}</p>}
           </section>
           </fieldset>
           </div>
@@ -1418,7 +1429,7 @@ export default function SupplierReviewEditorModal({
                 <button type="button" onClick={() => void handleSaveDraft()} disabled={isPublishing || isSaving || isRefreshing} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-blue-500/30 bg-blue-500/10 px-5 text-xs font-black text-blue-700 hover:bg-blue-500/20 disabled:cursor-not-allowed disabled:opacity-50 dark:text-blue-300">
                   <Save className="h-4 w-4" />{isSaving ? 'Saving...' : 'Save Changes'}
                 </button>
-                <button type="submit" disabled={isPublishing || isSaving || hasChecklistBlocker} aria-describedby={hasChecklistBlocker ? 'supplier-publish-blocked-reason' : undefined} title={hasChecklistBlocker ? `Publishing blocked: ${[...Object.values(validationErrors), ...(lowStockHold ? ['Supplier stock must be at least 4 units before publication.'] : [])].join(' ')}` : 'Approve and publish this product'} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 text-xs font-black text-white disabled:cursor-not-allowed disabled:bg-slate-600 sm:w-auto">
+                <button type="submit" disabled={isPublishing || isSaving || hasChecklistBlocker} aria-describedby={hasChecklistBlocker ? 'supplier-publish-blocked-reason' : undefined} title={hasChecklistBlocker ? `Publishing blocked: ${[...Object.values(validationErrors), ...(queueDecisionBlocked ? ['Review queue state is not ready for an Admin decision.'] : []), ...(lowStockHold ? ['Supplier stock must be at least 4 units before publication.'] : [])].join(' ')}` : 'Approve and publish this product'} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 text-xs font-black text-white disabled:cursor-not-allowed disabled:bg-slate-600 sm:w-auto">
                   <Check className="h-4 w-4" />{isPublishing ? 'Publishing...' : 'Approve & Publish'}
                 </button>
               </>

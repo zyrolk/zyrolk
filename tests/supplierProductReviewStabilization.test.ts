@@ -196,6 +196,39 @@ test('PR-STAB-05 processing queue items are not decision-ready review targets', 
   assert.equal(supplierReviewDecisionReady({ queueState: 'review_pending' }), true);
 });
 
+test('PR-STAB-05b modal readiness follows queue decision state without hiding field or media blockers', () => {
+  const reviewPending = modalMarkup();
+  assert.doesNotMatch(reviewPending, /Not ready for Admin decision/u);
+  assert.match(reviewPending, /Review queue state/u);
+  assert.match(reviewPending, /Complete required product details/u);
+
+  for (const queueState of ['retryable_failure', 'dead_letter']) {
+    const blocked = modalMarkup({ item: { queueState } });
+    assert.match(blocked, /Not ready for Admin decision/u);
+    assert.match(blocked, /Review queue state is not ready for an Admin decision/u);
+  }
+
+  const legacyPending = modalMarkup({ item: { queueState: undefined, status: 'Pending' } });
+  assert.doesNotMatch(legacyPending, /Not ready for Admin decision/u);
+
+  const legacyAttention = modalMarkup({ item: { queueState: undefined, status: 'Needs Attention' } });
+  assert.match(legacyAttention, /Not ready for Admin decision/u);
+
+  const conflict = modalMarkup({ item: { queueState: 'conflict' } });
+  assert.doesNotMatch(conflict, /Review queue state is not ready for an Admin decision/u);
+
+  const mediaWarning = modalMarkup({
+    item: {
+      mediaStatus: 'partial',
+      mediaReadiness: 'publication_safe_with_media_warnings',
+      mediaFailures: [{ code: 'OPTIONAL_IMAGE_REJECTED', retryable: false, isPrimary: false }],
+      managedMedia: [{ firebaseStorageUrl: managedImage, imageStatus: 'ready', isPrimary: true, sortOrder: 0 }],
+    },
+  });
+  assert.match(mediaWarning, /Some optional supplier images were rejected; usable managed media is ready/u);
+  assert.doesNotMatch(mediaWarning, /Managed supplier media is not ready for publication/u);
+});
+
 // 6. review count/list converges after reconciliation
 test('PR-STAB-06 open review items reconcile when queue revisions or states change', () => {
   assert.match(hub, /fresh\.supplierOfferPendingRevision !== editingReviewItem\.supplierOfferPendingRevision/u);
