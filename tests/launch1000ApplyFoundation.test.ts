@@ -156,6 +156,19 @@ const withEmulator = async (callback: (db: Firestore) => Promise<void>): Promise
   }
 };
 
+const launch800PilotExpectations = [
+  { productId: "dropex-aju0011", categoryId: "automotive", subcategoryId: "exterior-accessories", productType: null },
+  { productId: "dropex-aju0014", categoryId: "automotive", subcategoryId: "exterior-accessories", productType: null },
+  { productId: "dropex-ajuch-3416", categoryId: "health-beauty", subcategoryId: "massage-wellness", productType: null },
+  { productId: "dropex-asn0034", categoryId: "automotive", subcategoryId: "exterior-accessories", productType: null },
+  { productId: "dropex-asn0036", categoryId: "automotive", subcategoryId: "exterior-accessories", productType: null },
+  { productId: "dropex-asn0158", categoryId: "automotive", subcategoryId: "exterior-accessories", productType: null },
+  { productId: "dropex-atf0375", categoryId: "electronics", subcategoryId: "smart-watches", productType: "smart watch" },
+  { productId: "dropex-atf0376", categoryId: "electronics", subcategoryId: "smart-watches", productType: "smart watch" },
+  { productId: "dropex-atf0487", categoryId: "health-beauty", subcategoryId: "hair-care", productType: null },
+  { productId: "dropex-atfch-376", categoryId: "health-beauty", subcategoryId: "hair-styling", productType: null },
+] as const;
+
 test("Launch-1000 snapshot is immutable, bounded, and proposal references are separate from manifest revision", () => {
   const snapshot = loadLaunch1000Snapshot();
   assert.equal(snapshot.entries.length, 800);
@@ -164,6 +177,148 @@ test("Launch-1000 snapshot is immutable, bounded, and proposal references are se
   assert.equal(snapshot.taxonomyProposals[0]?.revision, "launch1000-taxonomy-r1");
   assert.equal(snapshot.manifestRevision, "launch1000-final800-visual-freeze-r1");
   assert.notEqual(snapshot.manifestRevision, snapshot.taxonomyProposals[0]?.revision);
+});
+
+test("selected Launch-800 Pilot-10 entries use existing taxonomy and bounded deterministic normalization", () => {
+  const snapshot = loadLaunch1000Snapshot();
+  const matchedProductIds = launch800PilotExpectations.map((expectation) => {
+    const entry = snapshot.entries.find((candidate) => candidate.productId === expectation.productId);
+    assert.ok(entry, `Missing frozen manifest entry for ${expectation.productId}`);
+    assert.equal(entry.sku, expectation.productId);
+    assert.equal(entry.sourcePool, "existing-safe");
+    assert.equal(entry.taxonomyDecisionSource, "existing-safe");
+    assert.equal(entry.taxonomyProposalId, null);
+    assert.equal(entry.parentCategoryId, expectation.categoryId);
+    assert.equal(entry.subcategoryId, expectation.subcategoryId);
+    assert.deepEqual(entry.deterministicSpecNormalization, expectation.productType
+      ? { "Product Type": expectation.productType }
+      : {});
+    return entry.productId;
+  });
+  assert.deepEqual(matchedProductIds, launch800PilotExpectations.map((expectation) => expectation.productId));
+});
+
+test("selected Launch-800 Pilot-10 dry-run is zero-write and accepts only evidenced smart watch normalization", { skip: !canRunFirestore }, async () => {
+  await withEmulator(async (db) => {
+    const categories = new Map<string, string[]>([
+      ["automotive", ["exterior-accessories"]],
+      ["electronics", ["smart-watches"]],
+      ["health-beauty", ["massage-wellness", "hair-care", "hair-styling"]],
+    ]);
+    for (const [categoryId, subcategoryIds] of categories) {
+      await db.collection("categories").doc(categoryId).set({
+        name: categoryId,
+        isActive: true,
+        taxonomyCandidate: false,
+        specificationTemplate: [],
+        subcategories: subcategoryIds.map((id) => ({ id, name: id, isActive: true, taxonomyCandidate: false })),
+      });
+    }
+
+    const before = new Map<string, Record<string, unknown>>();
+    for (const expectation of launch800PilotExpectations) {
+      const record = queueRecordFor(expectation.productId, "2026-10-10T00:00:00.000Z");
+      record.productPayload.name = expectation.productType ? `Wireless ${expectation.productType}` : `Managed ${expectation.productId}`;
+      record.productPayload.description = expectation.productType ? "A genuine smart watch with managed media." : "A complete managed product with existing taxonomy.";
+      await db.collection("supplier_review_queue").doc(expectation.productId).set(record);
+      before.set(expectation.productId, record);
+    }
+
+    const snapshot = loadLaunch1000Snapshot();
+    const dryRun = await dryRunLaunch1000ProductApply(db, {
+      manifestRevision: snapshot.manifestRevision,
+      productIds: launch800PilotExpectations.map((expectation) => expectation.productId),
+    }, snapshot);
+    assert.equal(dryRun.results.length, launch800PilotExpectations.length);
+    for (let index = 0; index < launch800PilotExpectations.length; index += 1) {
+      const expectation = launch800PilotExpectations[index];
+      const result = dryRun.results[index];
+      assert.equal(result?.productId, expectation.productId);
+      assert.equal(result?.outcome, "ELIGIBLE", JSON.stringify(result));
+      assert.deepEqual(result?.intendedTaxonomy, {
+        categoryId: expectation.categoryId,
+        subcategoryId: expectation.subcategoryId,
+        proposalId: null,
+      });
+      assert.deepEqual(result?.deterministicSpecNormalization, expectation.productType
+        ? { "Product Type": expectation.productType }
+        : {});
+      assert.equal(result?.reasonCodes.includes("SPEC_EVIDENCE_MISSING"), false);
+      assert.deepEqual((await db.collection("supplier_review_queue").doc(expectation.productId).get()).data(), before.get(expectation.productId));
+    }
+
+  });
+});
+
+test("deterministic smart watch normalization fails closed for missing or contradictory evidence", { skip: !canRunFirestore }, async () => {
+  await withEmulator(async (db) => {
+    await db.collection("categories").doc("electronics").set({
+      name: "Electronics",
+      isActive: true,
+      taxonomyCandidate: false,
+      specificationTemplate: [],
+      subcategories: [{ id: "smart-watches", name: "Smart Watches", isActive: true, taxonomyCandidate: false }],
+    });
+    for (const [index, description] of ["A wearable storage case.", "Not a smart watch; this is a storage case."].entries()) {
+      const record = queueRecordFor("dropex-atf0375", `2026-10-10T00:0${index}:00.000Z`);
+      record.productPayload.name = "Generic wearable accessory";
+      record.productPayload.description = description;
+      await db.collection("supplier_review_queue").doc("dropex-atf0375").set(record);
+      const before = (await db.collection("supplier_review_queue").doc("dropex-atf0375").get()).data();
+      const snapshot = loadLaunch1000Snapshot();
+      const dryRun = await dryRunLaunch1000ProductApply(db, {
+        manifestRevision: snapshot.manifestRevision,
+        productIds: ["dropex-atf0375"],
+      }, snapshot);
+      assert.equal(dryRun.results[0]?.outcome, "NEEDS_ATTENTION");
+      assert.equal(dryRun.results[0]?.reasonCodes.includes("SPEC_EVIDENCE_MISSING"), true);
+      assert.deepEqual((await db.collection("supplier_review_queue").doc("dropex-atf0375").get()).data(), before);
+      await db.collection("supplier_review_queue").doc("dropex-atf0375").delete();
+    }
+  });
+});
+
+test("selected Launch-800 Pilot-10 fails closed for missing or inactive canonical taxonomy", { skip: !canRunFirestore }, async () => {
+  await withEmulator(async (db) => {
+    const productId = "dropex-aju0011";
+    const queueReference = db.collection("supplier_review_queue").doc(productId);
+    const categoryReference = db.collection("categories").doc("automotive");
+    const queueRecord = queueRecordFor(productId, "2026-10-10T00:00:00.000Z");
+    await queueReference.set(queueRecord);
+    await categoryReference.delete();
+    const snapshot = loadLaunch1000Snapshot();
+    const runDryRun = () => dryRunLaunch1000ProductApply(db, {
+      manifestRevision: snapshot.manifestRevision,
+      productIds: [productId],
+    }, snapshot);
+
+    let dryRun = await runDryRun();
+    assert.equal(dryRun.results[0]?.outcome, "NEEDS_ATTENTION");
+    assert.equal(dryRun.results[0]?.reasonCodes.includes("CATEGORY_INVALID_OR_INACTIVE"), true);
+
+    await categoryReference.set({
+      name: "Automotive",
+      isActive: false,
+      taxonomyCandidate: false,
+      specificationTemplate: [],
+      subcategories: [{ id: "exterior-accessories", name: "Exterior Accessories", isActive: true, taxonomyCandidate: false }],
+    });
+    dryRun = await runDryRun();
+    assert.equal(dryRun.results[0]?.outcome, "NEEDS_ATTENTION");
+    assert.equal(dryRun.results[0]?.reasonCodes.includes("CATEGORY_INVALID_OR_INACTIVE"), true);
+
+    await categoryReference.set({
+      name: "Automotive",
+      isActive: true,
+      taxonomyCandidate: false,
+      specificationTemplate: [],
+      subcategories: [{ id: "exterior-accessories", name: "Exterior Accessories", isActive: false, taxonomyCandidate: false }],
+    });
+    dryRun = await runDryRun();
+    assert.equal(dryRun.results[0]?.outcome, "NEEDS_ATTENTION");
+    assert.equal(dryRun.results[0]?.reasonCodes.includes("SUBCATEGORY_INVALID_OR_INACTIVE"), true);
+    assert.deepEqual((await queueReference.get()).data(), queueRecord);
+  });
 });
 
 test("Launch-1000 request parsers enforce the pilot ceiling and dry-run preconditions", () => {
@@ -674,5 +829,46 @@ test("concurrent missing parent creation attempts produce one category and deter
     const audits = (await db.collection(LAUNCH1000_TAXONOMY_AUDIT_COLLECTION).get()).docs
       .filter((document) => document.data().proposalId === approved.proposalId);
     assert.equal(audits.length, 2);
+  });
+});
+
+test("selected Smart Watch Apply remains review-only and persists deterministic Product Type", { skip: !canRunFirestore }, async () => {
+  await withEmulator(async (db) => {
+    await db.collection("categories").doc("electronics").set({
+      name: "Electronics",
+      isActive: true,
+      taxonomyCandidate: false,
+      specificationTemplate: [],
+      subcategories: [{ id: "smart-watches", name: "Smart Watches", isActive: true, taxonomyCandidate: false }],
+    });
+    const queueRecord = queueRecordFor("dropex-atf0375", "2026-10-10T00:00:00.000Z");
+    queueRecord.productPayload.name = "Wireless smart watch";
+    queueRecord.productPayload.description = "A genuine smart watch with managed media.";
+    await db.collection("supplier_review_queue").doc("dropex-atf0375").set(queueRecord);
+    const snapshot = loadLaunch1000Snapshot();
+    const dryRun = await dryRunLaunch1000ProductApply(db, {
+      manifestRevision: snapshot.manifestRevision,
+      productIds: ["dropex-atf0375"],
+    }, snapshot);
+    assert.equal(dryRun.results[0]?.outcome, "ELIGIBLE");
+    const applied = await applyLaunch1000ProductPilot(db, {
+      manifestRevision: snapshot.manifestRevision,
+      productIds: ["dropex-atf0375"],
+      operationId: `launch800-pilot10-${randomUUID()}`,
+      preconditions: {
+        "dropex-atf0375": {
+          expectedUpdatedAt: dryRun.results[0]?.expectedUpdatedAt || "",
+          expectedFingerprint: dryRun.results[0]?.expectedFingerprint || "",
+        },
+      },
+    }, operator, snapshot);
+    assert.equal(applied.results[0]?.outcome, "APPLIED");
+    const appliedRecord = (await db.collection("supplier_review_queue").doc("dropex-atf0375").get()).data() || {};
+    const appliedPayload = appliedRecord.productPayload as Record<string, unknown>;
+    assert.equal(appliedPayload.productType, "smart watch");
+    assert.equal((appliedPayload.specs as Record<string, unknown>)["Product Type"], "smart watch");
+    assert.equal((appliedRecord.launch1000Apply as Record<string, unknown>).outcome, "READY_FOR_REVIEW");
+    assert.equal(appliedPayload.visible, false);
+    assert.equal((await db.collection("products").doc("dropex-atf0375").get()).exists, false);
   });
 });

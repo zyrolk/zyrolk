@@ -267,6 +267,51 @@ const evidenceText = (current: Record<string, unknown>, payload: Record<string, 
   ].flatMap((value) => Array.isArray(value) ? value : [value]).map(String).join(" ").toLocaleLowerCase("en");
 };
 
+const productTypeNegationPrefixes = [
+  ["not"],
+  ["no"],
+  ["without"],
+  ["instead", "of"],
+] as const;
+
+const productTypeNegationQualifiers = new Set([
+  "a",
+  "an",
+  "the",
+  "actual",
+  "this",
+  "that",
+  "genuine",
+  "kind",
+  "type",
+  "product",
+  "item",
+]);
+
+const normalizedEvidenceTokens = (value: string): string[] => value
+  .normalize("NFKC")
+  .toLocaleLowerCase("en")
+  .replace(/[^\p{L}\p{N}]+/gu, " ")
+  .trim()
+  .split(/\s+/u)
+  .filter(Boolean);
+
+const productTypeEvidenceContradicts = (evidence: string, candidate: string): boolean => {
+  const evidenceTokens = normalizedEvidenceTokens(evidence);
+  const candidateTokens = normalizedEvidenceTokens(candidate);
+  if (candidateTokens.length === 0) return false;
+  return evidenceTokens.some((_, index) => productTypeNegationPrefixes.some((prefix) => {
+    if (evidenceTokens.slice(index, index + prefix.length).join(" ") !== prefix.join(" ")) return false;
+    let candidateStart = index + prefix.length;
+    let qualifierCount = 0;
+    while (qualifierCount < 3 && productTypeNegationQualifiers.has(evidenceTokens[candidateStart] || "")) {
+      candidateStart += 1;
+      qualifierCount += 1;
+    }
+    return evidenceTokens.slice(candidateStart, candidateStart + candidateTokens.length).join(" ") === candidateTokens.join(" ");
+  }));
+};
+
 const applySpecNormalization = (
   current: Record<string, unknown>,
   payload: Record<string, unknown>,
@@ -276,14 +321,18 @@ const applySpecNormalization = (
   const specs = { ...asRecord(payload.specs) };
   const evidence = evidenceText(current, payload);
   for (const [field, value] of Object.entries(normalization)) {
-    if (field.toLocaleLowerCase("en") === "product type") {
+    const isProductType = field.toLocaleLowerCase("en") === "product type";
+    if (isProductType && !approvedProductTypeClassification && productTypeEvidenceContradicts(evidence, value)) {
+      return { specs, error: "SPEC_EVIDENCE_MISSING" };
+    }
+    if (isProductType) {
       for (const key of Object.keys(specs)) {
         if (key.normalize("NFKC").trim().toLocaleLowerCase("en") === "product type") delete specs[key];
       }
     }
     const currentValue = asString(specs[field]);
     if (currentValue && currentValue.toLocaleLowerCase("en") === value.toLocaleLowerCase("en")) continue;
-    if (field.toLocaleLowerCase("en") === "product type" && approvedProductTypeClassification) {
+    if (isProductType && approvedProductTypeClassification) {
       specs[field] = value;
       continue;
     }
