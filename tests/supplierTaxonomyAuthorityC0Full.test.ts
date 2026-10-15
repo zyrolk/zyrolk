@@ -16,6 +16,7 @@ import {
 import {
   decideSupplierQueueItem,
   hasLegacySupplierDerivedReviewTaxonomy,
+  isTrustedSupplierDerivedReviewTaxonomy,
   toPublicProductPayload,
 } from '../functions/src/api/suppliers/supplierApproval';
 import { buildSupplierProductApprovalBaseline } from '../functions/src/api/suppliers/supplierApprovalConcurrency';
@@ -63,6 +64,22 @@ const projectFile = (path: string): string => readFileSync(new URL(`../${path}`,
 
 const SUPPLIER_CATEGORY = 'Supplier Audio';
 const SUPPLIER_SUBCATEGORY = 'Supplier Buds';
+const ADMIN_TAXONOMY_OWNERSHIP = {
+  category: {
+    owner: 'admin',
+    sourceId: null,
+    updatedAt: '2026-10-14T00:00:00.000Z',
+    updatedBy: 'admin-reviewer',
+    reason: 'review_decision',
+  },
+  subcategory: {
+    owner: 'admin',
+    sourceId: null,
+    updatedAt: '2026-10-14T00:00:00.000Z',
+    updatedBy: 'admin-reviewer',
+    reason: 'review_decision',
+  },
+};
 
 const createFakeFirestore = (initial: Record<string, StoredDocument>) => {
   const documents = new Map<string, StoredDocument>(Object.entries(initial));
@@ -494,7 +511,7 @@ test('C0-FULL 04 admin-owned taxonomy survives re-observation and editor draft c
   const adminOwned = newProductQueueItem({
     productPayload: {
       ...(newProductQueueItem().productPayload as StoredDocument),
-      supplierFieldOwnership: { category: { owner: 'admin' }, subcategory: { owner: 'admin' } },
+      supplierFieldOwnership: ADMIN_TAXONOMY_OWNERSHIP,
     },
   });
   assert.equal(hasLegacySupplierDerivedReviewTaxonomy(adminOwned), false);
@@ -502,6 +519,14 @@ test('C0-FULL 04 admin-owned taxonomy survives re-observation and editor draft c
   const draft = createSupplierReviewDraft(editorItem(adminOwned) as never);
   assert.equal(draft.category, 'category-2');
   assert.equal(draft.subcategory, 'subcategory-2');
+
+  const incompleteAdminOwnership = newProductQueueItem({
+    productPayload: {
+      ...(newProductQueueItem().productPayload as StoredDocument),
+      supplierFieldOwnership: { category: { owner: 'admin' }, subcategory: { owner: 'admin' } },
+    },
+  });
+  assert.equal(toPublicProductPayload(incompleteAdminOwnership as never, undefined).category, '');
 });
 
 const listingFirestore = (
@@ -642,7 +667,7 @@ test('C0-R1 admin-owned NEW_PRODUCT and approved UPDATE taxonomy are not falsely
         productValidation: { readyToPublish: true, missingFields: [], errors: [] },
         productPayload: {
           ...(newProductQueueItem().productPayload as StoredDocument),
-          supplierFieldOwnership: { category: { owner: 'admin' }, subcategory: { owner: 'admin' } },
+          supplierFieldOwnership: ADMIN_TAXONOMY_OWNERSHIP,
         },
       }),
     },
@@ -857,12 +882,246 @@ test('C0-FULL 17 legacy supplier-derived NEW_PRODUCT taxonomy is rejected withou
     categoryMapping: buildSupplierTaxonomyMetadata({ supplierCategories: [SUPPLIER_CATEGORY] }),
   });
   assert.equal(hasLegacySupplierDerivedReviewTaxonomy(manuallyStored), false);
-  assert.equal(toPublicProductPayload(manuallyStored as never, undefined).category, 'category-2');
+  assert.equal(toPublicProductPayload(manuallyStored as never, undefined).category, '');
+  assert.equal(toPublicProductPayload(manuallyStored as never, undefined).subcategory, '');
 
   const update = newProductQueueItem({ comparisonStatus: 'PRICE_CHANGED' });
   assert.equal(hasLegacySupplierDerivedReviewTaxonomy(update), false);
   assert.equal(toPublicProductPayload(update as never, undefined).category, 'category-2');
   assert.equal(createSupplierReviewDraft(editorItem({ comparison: { comparisonStatus: 'PRICE_CHANGED' } }) as never).category, 'category-2');
+});
+
+test('C0 trusted source mapping requires current canonical evidence before approval', () => {
+  const currentMapping = {
+    mappingDocumentId: supplierChildMappingDocumentId('dropex', 'supplier audio', SUPPLIER_SUBCATEGORY),
+    sourceId: 'dropex',
+    supplierCategory: SUPPLIER_CATEGORY,
+    normalizedCategory: 'supplier audio',
+    supplierSubcategory: SUPPLIER_SUBCATEGORY,
+    normalizedSupplierSubcategory: 'supplier buds',
+    targetCategoryId: 'category-2',
+    targetSubcategoryId: 'subcategory-2',
+    confidence: 100,
+    mappingType: 'manual',
+    mappingScope: 'child',
+    version: 3,
+    updatedAt: '2026-10-14T00:00:00.000Z',
+  };
+  const trusted = newProductQueueItem({
+    productPayload: {
+      ...(newProductQueueItem().productPayload as StoredDocument),
+      name: 'Category Two Subcategory Two Product',
+      description: 'A genuine Subcategory Two product in Category Two.',
+      category: 'category-2',
+      subcategory: 'subcategory-2',
+    },
+    categoryMapping: {
+      ...(newProductQueueItem().categoryMapping as StoredDocument),
+      sourceId: 'dropex',
+      mappingDocumentId: supplierChildMappingDocumentId('dropex', 'supplier audio', SUPPLIER_SUBCATEGORY),
+      mappingScope: 'child',
+      normalizedCategory: 'supplier audio',
+      version: 3,
+      updatedAt: currentMapping.updatedAt,
+      mappingSource: 'source',
+      mappingType: 'manual',
+      confidence: 100,
+    },
+  });
+  assert.equal(hasLegacySupplierDerivedReviewTaxonomy(trusted), true);
+  assert.equal(isTrustedSupplierDerivedReviewTaxonomy(trusted as never, serverCategories[0] as never, currentMapping), true);
+  assert.equal(toPublicProductPayload(trusted as never, undefined).category, '');
+  const approvedPayload = toPublicProductPayload(
+    trusted as never,
+    undefined,
+    undefined,
+    serverCategories[0] as never,
+    currentMapping,
+  );
+  assert.equal(approvedPayload.category, 'category-2');
+  assert.equal(approvedPayload.subcategory, 'subcategory-2');
+  const unownedDraftOverride = toPublicProductPayload(
+    trusted as never,
+    approvalDraft({ category: 'category-other', subcategory: 'subcategory-other' }) as never,
+    undefined,
+    serverCategories[0] as never,
+    currentMapping,
+  );
+  assert.equal(unownedDraftOverride.category, 'category-2');
+  assert.equal(unownedDraftOverride.subcategory, 'subcategory-2');
+
+  for (const name of [
+    'Not Subcategory Two; this is a storage item.',
+    'No Subcategory Two; this is a storage item.',
+    'Without Subcategory Two; this is a storage item.',
+    'Instead of Subcategory Two; this is a storage item.',
+    'Not a genuine Subcategory Two product; this is a storage item.',
+  ]) {
+    const contradictory = newProductQueueItem({
+      productPayload: {
+        ...(trusted.productPayload as StoredDocument),
+        name,
+        description: 'Storage item with contradictory classification evidence.',
+      },
+      categoryMapping: trusted.categoryMapping,
+    });
+    assert.equal(isTrustedSupplierDerivedReviewTaxonomy(contradictory as never, serverCategories[0] as never, currentMapping), false);
+    assert.equal(
+      toPublicProductPayload(contradictory as never, undefined, undefined, serverCategories[0] as never, currentMapping).category,
+      '',
+    );
+  }
+  assert.equal(isTrustedSupplierDerivedReviewTaxonomy(trusted as never, serverCategories[1] as never, currentMapping), false);
+  assert.equal(isTrustedSupplierDerivedReviewTaxonomy(trusted as never, undefined, currentMapping), false);
+  assert.equal(isTrustedSupplierDerivedReviewTaxonomy(trusted as never, serverCategories[0] as never, null), false);
+  assert.equal(isTrustedSupplierDerivedReviewTaxonomy({
+    ...trusted,
+    categoryMapping: { ...(trusted.categoryMapping as StoredDocument), version: 2 },
+  } as never, serverCategories[0] as never, currentMapping), false);
+  assert.equal(isTrustedSupplierDerivedReviewTaxonomy(
+    trusted as never,
+    serverCategories[0] as never,
+    { ...currentMapping, targetCategoryId: 'category-other' },
+  ), false);
+  assert.equal(isTrustedSupplierDerivedReviewTaxonomy(
+    trusted as never,
+    serverCategories[0] as never,
+    { ...currentMapping, mappingDocumentId: 'other-mapping-document' },
+  ), false);
+  assert.equal(isTrustedSupplierDerivedReviewTaxonomy({
+    ...trusted,
+    categoryMapping: { ...(trusted.categoryMapping as StoredDocument), sourceId: 'other-source' },
+  } as never, serverCategories[0] as never, currentMapping), false);
+  assert.equal(isTrustedSupplierDerivedReviewTaxonomy(
+    trusted as never,
+    serverCategories[0] as never,
+    { ...currentMapping, version: undefined },
+  ), false);
+  const ambiguousCategory = {
+    ...serverCategories[0],
+    subcategories: [
+      ...(serverCategories[0].subcategories || []),
+      { id: 'subcategory-other', name: 'Subcategory Other', isActive: true },
+    ],
+  };
+  const ambiguous = newProductQueueItem({
+    productPayload: {
+      ...(trusted.productPayload as StoredDocument),
+      name: 'Category Two Product',
+      description: 'This product is for Subcategory Two and Subcategory Other.',
+    },
+    categoryMapping: trusted.categoryMapping,
+  });
+  assert.equal(isTrustedSupplierDerivedReviewTaxonomy(ambiguous as never, ambiguousCategory as never, currentMapping), false);
+  const candidateSubcategory = {
+    ...serverCategories[0],
+    subcategories: [{ id: 'subcategory-2', name: 'Subcategory Two', isActive: true, taxonomyCandidate: true }],
+  };
+  assert.equal(isTrustedSupplierDerivedReviewTaxonomy(trusted as never, candidateSubcategory as never, currentMapping), false);
+
+  const adminCategoryOnly = newProductQueueItem({
+    productPayload: {
+      ...(trusted.productPayload as StoredDocument),
+      supplierFieldOwnership: { category: ADMIN_TAXONOMY_OWNERSHIP.category },
+    },
+    categoryMapping: trusted.categoryMapping,
+  });
+  assert.equal(isTrustedSupplierDerivedReviewTaxonomy(
+    adminCategoryOnly as never,
+    serverCategories[0] as never,
+    currentMapping,
+    { supplierCategory: false, supplierSubcategory: true },
+  ), true);
+  const adminCategoryOnlyPayload = toPublicProductPayload(
+    adminCategoryOnly as never,
+    undefined,
+    undefined,
+    serverCategories[0] as never,
+    currentMapping,
+  );
+  assert.equal(adminCategoryOnlyPayload.category, 'category-2');
+  assert.equal(adminCategoryOnlyPayload.subcategory, 'subcategory-2');
+  const adminCategoryOnlyBlocked = toPublicProductPayload(
+    adminCategoryOnly as never,
+    undefined,
+    undefined,
+    serverCategories[0] as never,
+    null,
+  );
+  assert.equal(adminCategoryOnlyBlocked.category, 'category-2');
+  assert.equal(adminCategoryOnlyBlocked.subcategory, '');
+
+  const parentMapping = {
+    ...currentMapping,
+    mappingDocumentId: supplierMappingDocumentId('dropex', 'supplier audio'),
+    mappingScope: 'parent',
+    targetSubcategoryId: '',
+    supplierSubcategory: undefined,
+    normalizedSupplierSubcategory: undefined,
+    supplierSubcategoryId: undefined,
+  };
+  const adminSubcategoryOnly = newProductQueueItem({
+    productPayload: {
+      ...(trusted.productPayload as StoredDocument),
+      supplierFieldOwnership: { subcategory: ADMIN_TAXONOMY_OWNERSHIP.subcategory },
+    },
+    categoryMapping: {
+      ...(trusted.categoryMapping as StoredDocument),
+      mappingDocumentId: parentMapping.mappingDocumentId,
+      mappingScope: 'parent',
+      targetSubcategoryId: '',
+      supplierSubcategory: undefined,
+      normalizedSupplierSubcategory: undefined,
+      supplierSubcategoryId: undefined,
+    },
+  });
+  assert.equal(isTrustedSupplierDerivedReviewTaxonomy(
+    adminSubcategoryOnly as never,
+    serverCategories[0] as never,
+    parentMapping,
+    { supplierCategory: true, supplierSubcategory: false },
+  ), true);
+  const adminSubcategoryOnlyPayload = toPublicProductPayload(
+    adminSubcategoryOnly as never,
+    undefined,
+    undefined,
+    serverCategories[0] as never,
+    parentMapping,
+  );
+  assert.equal(adminSubcategoryOnlyPayload.category, 'category-2');
+  assert.equal(adminSubcategoryOnlyPayload.subcategory, 'subcategory-2');
+  const adminSubcategoryOnlyBlocked = toPublicProductPayload(
+    adminSubcategoryOnly as never,
+    undefined,
+    undefined,
+    serverCategories[0] as never,
+    null,
+  );
+  assert.equal(adminSubcategoryOnlyBlocked.category, '');
+  assert.equal(adminSubcategoryOnlyBlocked.subcategory, 'subcategory-2');
+  assert.equal(isTrustedSupplierDerivedReviewTaxonomy(
+    adminSubcategoryOnly as never,
+    serverCategories[0] as never,
+    { ...parentMapping, targetSubcategoryId: 'subcategory-other' },
+    { supplierCategory: true, supplierSubcategory: false },
+  ), false);
+
+  const incompleteAdminOwnership = newProductQueueItem({
+    productPayload: {
+      ...(trusted.productPayload as StoredDocument),
+      supplierFieldOwnership: { category: { owner: 'admin' } },
+    },
+    categoryMapping: trusted.categoryMapping,
+  });
+  const incompleteAdminPayload = toPublicProductPayload(
+    incompleteAdminOwnership as never,
+    undefined,
+    undefined,
+    serverCategories[0] as never,
+    null,
+  );
+  assert.equal(incompleteAdminPayload.category, '');
+  assert.equal(incompleteAdminPayload.subcategory, '');
 });
 
 test('C0-FULL 18 sync and refresh use only existing canonical taxonomy mappings', () => {

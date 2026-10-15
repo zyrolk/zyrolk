@@ -17,7 +17,9 @@ import { classifySupplierMediaReadiness } from "./supplierMediaReadiness";
 import { createSupplierAuditEvent } from "./supplierAuditTrail";
 import {
   normalizeSupplierMappingValue,
+  supplierChildMappingDocumentId,
   supplierMappingDocumentId,
+  type SupplierCategoryMappingRecord,
   validateSupplierProductForApproval,
 } from "./supplierProductMapping";
 import {
@@ -79,13 +81,18 @@ import {
   projectSupplierAvailableStock,
   resolveSupplierLocalDemand,
 } from "../orders/supplierInventoryReconciliation";
-import { hasLegacySupplierDerivedReviewTaxonomy } from "./supplierReviewTaxonomyAuthority";
+import {
+  isTrustedSupplierDerivedReviewTaxonomy,
+} from "./supplierReviewTaxonomyAuthority";
 import {
   refreshReviewIsNewProduct,
   revalidateSupplierReviewItemForApproval,
 } from "../../scheduled/supplierSync";
 
-export { hasLegacySupplierDerivedReviewTaxonomy } from "./supplierReviewTaxonomyAuthority";
+export {
+  hasLegacySupplierDerivedReviewTaxonomy,
+  isTrustedSupplierDerivedReviewTaxonomy,
+} from "./supplierReviewTaxonomyAuthority";
 
 /**
  * Guards any approval that makes a not-live Dropex product public (creation,
@@ -434,17 +441,102 @@ export function buildAutoProductSku(productId: string): string {
   return buildZyroSkuCandidates(cleanText(productId, "Product ID", 160))[0];
 }
 
-const draftOwnsTaxonomy = (draft: SupplierApprovalDraft | undefined): boolean => Boolean(draft && (
-  draft.editedFields?.includes("category")
-  || draft.editedFields?.includes("subcategory")
-  || draft.fieldOwnership?.category === "admin"
-  || draft.fieldOwnership?.subcategory === "admin"
+type TaxonomyField = "category" | "subcategory";
+
+const draftOwnsTaxonomyField = (draft: SupplierApprovalDraft | undefined, field: TaxonomyField): boolean => Boolean(draft && (
+  draft.editedFields?.includes(field)
+  || draft.fieldOwnership?.[field] === "admin"
 ));
+
+const explicitAdminTaxonomyOwnership = (queueItem: QueueItemRecord, field: TaxonomyField): boolean => {
+  const ownership = parseSupplierProductFieldOwnership(record(queueItem.productPayload).supplierFieldOwnership);
+  const entry = ownership[field];
+  return entry?.owner === "admin"
+    && entry.reason !== "legacy_default"
+    && Boolean(stringValue(entry.updatedBy))
+    && Boolean(entry.updatedAt);
+};
+
+const supplierDerivedTaxonomyAuthorityScope = (
+  queueItem: QueueItemRecord,
+  draft?: SupplierApprovalDraft,
+): { supplierCategory: boolean; supplierSubcategory: boolean } => {
+  const comparisonStatus = String(queueItem.comparisonStatus || record(queueItem.comparison).comparisonStatus || "").toUpperCase();
+  if (comparisonStatus !== "NEW_PRODUCT") return { supplierCategory: false, supplierSubcategory: false };
+  const payload = record(queueItem.productPayload);
+  return {
+    supplierCategory: !explicitAdminTaxonomyOwnership(queueItem, "category")
+      && !draftOwnsTaxonomyField(draft, "category")
+      && Boolean(stringValue(payload.category)),
+    supplierSubcategory: !explicitAdminTaxonomyOwnership(queueItem, "subcategory")
+      && !draftOwnsTaxonomyField(draft, "subcategory")
+      && Boolean(stringValue(payload.subcategory)),
+  };
+};
+
+const taxonomyAuthorityRequired = (scope: { supplierCategory: boolean; supplierSubcategory: boolean }): boolean => (
+  scope.supplierCategory || scope.supplierSubcategory
+);
+
+const readCurrentSupplierCategoryMapping = async (
+  db: Firestore,
+  transaction: FirebaseFirestore.Transaction,
+  queueItem: QueueItemRecord,
+): Promise<SupplierCategoryMappingRecord | null> => {
+  const mapping = record(queueItem.categoryMapping);
+  const supplierSnapshot = record(queueItem.supplierSnapshot);
+  const sourceId = stringValue(queueItem.sourceId || supplierSnapshot.sourceId);
+  const normalizedCategory = stringValue(mapping.normalizedCategory);
+  const mappingDocumentId = stringValue(mapping.mappingDocumentId);
+  if (!sourceId || !normalizedCategory || !mappingDocumentId) return null;
+  const expectedDocumentId = mapping.mappingScope === "child"
+    ? supplierChildMappingDocumentId(
+      sourceId,
+      normalizedCategory,
+      stringValue(mapping.supplierSubcategory),
+      stringValue(mapping.supplierSubcategoryId),
+    )
+    : mapping.mappingScope === "parent"
+      ? supplierMappingDocumentId(sourceId, normalizedCategory)
+      : "";
+  if (!expectedDocumentId || expectedDocumentId !== mappingDocumentId) return null;
+  const mappingReference = db.collection("supplier_category_mappings").doc(mappingDocumentId);
+  const parentReference = mapping.mappingScope === "child"
+    ? db.collection("supplier_category_mappings").doc(supplierMappingDocumentId(sourceId, normalizedCategory))
+    : null;
+  const [snapshot, parentSnapshot] = await Promise.all([
+    transaction.get(mappingReference),
+    parentReference ? transaction.get(parentReference) : Promise.resolve(null),
+  ]);
+  if (!snapshot.exists) return null;
+  if (parentReference && (!parentSnapshot?.exists
+    || stringValue(parentSnapshot.data()?.sourceId) !== sourceId
+    || stringValue(parentSnapshot.data()?.targetCategoryId) !== stringValue(snapshot.data()?.targetCategoryId))) return null;
+  return {
+    ...(snapshot.data() as SupplierCategoryMappingRecord),
+    mappingDocumentId: snapshot.id,
+  };
+};
 
 export const toPublicProductPayload = (
   queueItem: QueueItemRecord,
   draft: SupplierApprovalDraft | undefined,
   managedMediaOverride?: readonly SupplierManagedMediaAsset[],
+  canonicalTaxonomy?: {
+    id: string;
+    name: string;
+    isActive?: boolean;
+    taxonomyCandidate?: boolean;
+    keywords?: string[];
+    subcategories?: Array<{
+      id: string;
+      name: string;
+      isActive?: boolean;
+      taxonomyCandidate?: boolean;
+      supplierTaxonomySourceId?: string;
+    }>;
+  } | null,
+  currentMapping?: unknown,
 ): Record<string, unknown> => {
   const originalPayload = record(queueItem.productPayload);
   const productId = cleanText(originalPayload.id, "Product payload ID", 160);
@@ -509,16 +601,33 @@ export const toPublicProductPayload = (
   }
   const stock = draft?.stock ?? Number(originalPayload.stock);
   if (!Number.isInteger(stock) || stock < 0) throw new ApiError("Supplier product stock is invalid.", 422);
-  const storedTaxonomyTrusted = !hasLegacySupplierDerivedReviewTaxonomy(queueItem);
-  const taxonomyFromDraft = storedTaxonomyTrusted || draftOwnsTaxonomy(draft);
-  const category = taxonomyFromDraft
-    ? draft?.category || (storedTaxonomyTrusted ? stringValue(originalPayload.category) : "")
-    : "";
-  const subcategory = taxonomyFromDraft
-    ? draft?.subcategory !== undefined
-      ? draft.subcategory
-      : storedTaxonomyTrusted ? stringValue(originalPayload.subcategory) : ""
-    : "";
+  const authorityScope = supplierDerivedTaxonomyAuthorityScope(queueItem, draft);
+  const storedTaxonomyNeedsAuthority = taxonomyAuthorityRequired(authorityScope);
+  const storedTaxonomyTrusted = !storedTaxonomyNeedsAuthority
+    || isTrustedSupplierDerivedReviewTaxonomy(
+      { ...queueItem, productPayload: {
+        ...originalPayload,
+        ...(draftOwnsTaxonomyField(draft, "category") && draft?.category !== undefined ? { category: draft.category } : {}),
+        ...(draftOwnsTaxonomyField(draft, "subcategory") && draft?.subcategory !== undefined ? { subcategory: draft.subcategory } : {}),
+      } },
+      canonicalTaxonomy,
+      currentMapping,
+      authorityScope,
+    );
+  const adminOwnsCategory = explicitAdminTaxonomyOwnership(queueItem, "category")
+    || draftOwnsTaxonomyField(draft, "category");
+  const adminOwnsSubcategory = explicitAdminTaxonomyOwnership(queueItem, "subcategory")
+    || draftOwnsTaxonomyField(draft, "subcategory");
+  const category = adminOwnsCategory
+    ? draft?.category || stringValue(originalPayload.category)
+    : authorityScope.supplierCategory
+      ? storedTaxonomyTrusted ? stringValue(originalPayload.category) : ""
+      : stringValue(originalPayload.category);
+  const subcategory = adminOwnsSubcategory
+    ? draft?.subcategory !== undefined ? draft.subcategory : stringValue(originalPayload.subcategory)
+    : authorityScope.supplierSubcategory
+      ? storedTaxonomyTrusted ? stringValue(originalPayload.subcategory) : ""
+      : stringValue(originalPayload.subcategory);
   const productName = draft?.productName || stringValue(originalPayload.name) || stringValue(queueItem.productName);
   if (!productName) throw new ApiError("Product name is required.", 422);
   const discountPercent = promotionEnabled ? calculatePromotionDiscountPercent(comparePrice, price) : undefined;
@@ -798,7 +907,52 @@ export async function decideSupplierQueueItem(
     if (action === "approved" && createsNewZyroProduct) assertTrustedPublicationStock();
     const isSupplierOfferRemoval = action === "approved"
       && stringValue(queueItem.reconciliationAction) === "supplier_offer_unavailable";
-    let approvedPayload = action === "approved" ? toPublicProductPayload(queueItem, effectiveDraft, approvedManagedMedia) : undefined;
+    const authorityScope = supplierDerivedTaxonomyAuthorityScope(queueItem, effectiveDraft);
+    let categorySnapshot: FirebaseFirestore.DocumentSnapshot | null = null;
+    const storedCategoryId = stringValue(record(queueItem.productPayload).category);
+    const finalCategoryId = (explicitAdminTaxonomyOwnership(queueItem, "category")
+      || draftOwnsTaxonomyField(effectiveDraft, "category"))
+      && effectiveDraft?.category !== undefined
+      ? effectiveDraft.category
+      : storedCategoryId;
+    if (action === "approved" && finalCategoryId) {
+      categorySnapshot = await transaction.get(db.collection("categories").doc(finalCategoryId));
+    }
+    const storedCategoryData = categorySnapshot?.exists ? categorySnapshot.data() || {} : {};
+    const canonicalTaxonomy = categorySnapshot?.exists ? {
+      id: categorySnapshot.id,
+      name: stringValue(storedCategoryData.name) || categorySnapshot.id,
+      isActive: storedCategoryData.isActive === true,
+      taxonomyCandidate: storedCategoryData.taxonomyCandidate === true,
+      keywords: Array.isArray(storedCategoryData.keywords)
+        ? storedCategoryData.keywords.filter((value): value is string => typeof value === "string")
+        : [],
+      subcategories: Array.isArray(storedCategoryData.subcategories)
+        ? storedCategoryData.subcategories.filter((value): value is {
+          id: string;
+          name: string;
+          isActive?: boolean;
+          taxonomyCandidate?: boolean;
+          supplierTaxonomySourceId?: string;
+        } => (
+          value && typeof value === "object" && !Array.isArray(value)
+          && typeof (value as Record<string, unknown>).id === "string"
+          && typeof (value as Record<string, unknown>).name === "string"
+        )).map((value) => ({
+          id: value.id,
+          name: value.name,
+          isActive: value.isActive,
+          taxonomyCandidate: value.taxonomyCandidate,
+          supplierTaxonomySourceId: value.supplierTaxonomySourceId,
+        }))
+        : [],
+    } : null;
+    const currentCategoryMapping = action === "approved" && taxonomyAuthorityRequired(authorityScope)
+      ? await readCurrentSupplierCategoryMapping(db, transaction, queueItem)
+      : null;
+    let approvedPayload = action === "approved"
+      ? toPublicProductPayload(queueItem, effectiveDraft, approvedManagedMedia, canonicalTaxonomy, currentCategoryMapping)
+      : undefined;
     const reviewedCommercialPayload: Record<string, unknown> | null = approvedPayload && isSupplierOfferRemoval
       ? {
         price: approvedPayload.price,
@@ -814,6 +968,9 @@ export async function decideSupplierQueueItem(
     const categoryReference = approvedPayload && String(approvedPayload.category || "").trim()
       ? db.collection("categories").doc(String(approvedPayload.category))
       : null;
+    if (categoryReference && (!categorySnapshot || categorySnapshot.id !== categoryReference.id)) {
+      categorySnapshot = await transaction.get(categoryReference);
+    }
     const approvedBrandId = approvedPayload ? String(approvedPayload.brand || "").trim() : "";
     const brandReference = approvedBrandId ? db.collection("brands").doc(approvedBrandId) : null;
     const productReference = approvedPayload ? db.collection("products").doc(String(approvedPayload.id)) : null;
@@ -832,14 +989,12 @@ export async function decideSupplierQueueItem(
       ? db.collection("supplier_brand_mappings").doc(supplierMappingDocumentId(sourceId, normalizedSupplierBrand))
       : null;
     const [
-      categorySnapshot,
       brandSnapshot,
       existingProductSnapshot,
       existingPrivateProductSnapshot,
       existingBrandMappingSnapshot,
       productOffersSnapshot,
     ] = await Promise.all([
-      categoryReference ? transaction.get(categoryReference) : Promise.resolve(null),
       brandReference ? transaction.get(brandReference) : Promise.resolve(null),
       decisionProductReference ? transaction.get(decisionProductReference) : Promise.resolve(null),
       privateProductReference ? transaction.get(privateProductReference) : Promise.resolve(null),

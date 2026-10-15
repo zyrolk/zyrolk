@@ -1032,7 +1032,10 @@ async function loadSupplierProductMappings(sourceId: string, database: Firestore
   ]);
   return {
     brandMappings: brandSnapshot.docs.map((document) => document.data() as SupplierBrandMappingRecord),
-    categoryMappings: categorySnapshot.docs.map((document) => document.data() as SupplierCategoryMappingRecord),
+    categoryMappings: categorySnapshot.docs.map((document) => ({
+      ...(document.data() as SupplierCategoryMappingRecord),
+      mappingDocumentId: document.id,
+    })),
   };
 }
 

@@ -39,6 +39,7 @@ const text = (value: unknown, max = 160): string => {
 
 const projectMapping = (id: string, value: Record<string, unknown>): SupplierCategoryMappingRecord & { id: string } => ({
   id,
+  mappingDocumentId: id,
   sourceId: text(value.sourceId),
   supplierCategory: text(value.supplierCategory),
   normalizedCategory: text(value.normalizedCategory),

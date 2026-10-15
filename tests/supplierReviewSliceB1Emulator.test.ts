@@ -25,6 +25,10 @@ const {
 } = requireFunctions("../functions/src/api/suppliers/supplierApproval.ts") as typeof import("../functions/src/api/suppliers/supplierApproval");
 const { SupplierRegistry } = requireFunctions("../functions/src/api/suppliers/SupplierRegistry.ts") as typeof import("../functions/src/api/suppliers/SupplierRegistry");
 const { ProductParser } = requireFunctions("../functions/src/api/suppliers/a2z/ProductParser.ts") as typeof import("../functions/src/api/suppliers/a2z/ProductParser");
+const {
+  supplierChildMappingDocumentId,
+  supplierMappingDocumentId,
+} = requireFunctions("../functions/src/api/suppliers/supplierProductMapping.ts") as typeof import("../functions/src/api/suppliers/supplierProductMapping");
 const { SERVER_FILTERED_FULL_CATALOG_CAPABILITIES } = requireFunctions("../functions/src/api/suppliers/supplierSyncCapabilities.ts") as typeof import("../functions/src/api/suppliers/supplierSyncCapabilities");
 const { buildSupplierProductOffer } = requireFunctions("../functions/src/api/suppliers/supplierOfferEngine.ts") as typeof import("../functions/src/api/suppliers/supplierOfferEngine");
 const {
@@ -407,8 +411,27 @@ test("B1 emulator: low-stock hold, authoritative approval safety and revision-sc
       const data = await reviewData(suppressedReviewId);
       const revision = await pendingRevision(data);
       const productsBefore = await productCount();
+      const adminTaxonomyEntry = {
+        owner: "admin",
+        sourceId: null,
+        updatedAt: "2026-10-14T00:00:00.000Z",
+        updatedBy: ADMIN.uid,
+        reason: "review_decision",
+      };
+      // This historical approval fixture represents the saved Product Review
+      // decision, not an arbitrary client-side trust flag.
+      await adminDb.collection("supplier_review_queue").doc(suppressedReviewId).set({
+        productPayload: {
+          ...data.productPayload,
+          supplierFieldOwnership: {
+            category: adminTaxonomyEntry,
+            subcategory: adminTaxonomyEntry,
+          },
+        },
+      }, { merge: true });
+      const approvedReviewData = await reviewData(suppressedReviewId);
       const result = await decideSupplierQueueItem(adminDb, suppressedReviewId, "approved", ADMIN, {
-        draft: approvalDraft(suppressedReviewId, data),
+        draft: approvalDraft(suppressedReviewId, approvedReviewData),
         expectedPendingRevision: revision,
       });
       assert.equal(result.success, true);
@@ -565,6 +588,223 @@ test("B1 emulator: low-stock hold, authoritative approval safety and revision-sc
       assert.equal((await adminDb.collection("supplier_product_offers").doc(liveOffer.id).get()).data()?.stock, 1);
       assert.equal((await adminDb.collection("products").doc(productId).get()).data()?.stock, 1);
       assert.equal((await adminDb.collection("supplier_review_queue").where("canonicalProductId", "==", productId).get()).empty, true);
+    });
+
+    await t.test("H: supplier taxonomy approval requires current versioned mapping provenance", async () => {
+      const updatedAt = "2026-10-14T00:00:00.000Z";
+      const normalizedCategory = "electronics";
+      const parentMappingReference = adminDb.collection("supplier_category_mappings").doc(
+        supplierMappingDocumentId(SOURCE_ID, normalizedCategory),
+      );
+      const childMappingReference = adminDb.collection("supplier_category_mappings").doc(
+        supplierChildMappingDocumentId(SOURCE_ID, normalizedCategory, "Phones"),
+      );
+      const manualMapping = {
+        sourceId: SOURCE_ID,
+        supplierCategory: "Electronics",
+        normalizedCategory,
+        mappingScope: "parent",
+        targetCategoryId: "electronics",
+        targetSubcategoryId: "",
+        confidence: 100,
+        mappingType: "manual",
+        version: 1,
+        updatedBy: ADMIN.uid,
+        updatedAt,
+      };
+      const childMapping = {
+        ...manualMapping,
+        supplierSubcategory: "Phones",
+        normalizedSupplierSubcategory: "phones",
+        mappingScope: "child",
+        targetSubcategoryId: "phones",
+      };
+      await Promise.all([
+        parentMappingReference.set(manualMapping),
+        childMappingReference.set(childMapping),
+      ]);
+
+      const prepareMappedQueue = async (identity: string): Promise<{ id: string; data: Record<string, any>; revision: string }> => {
+        setCatalogProduct(identity, {
+          title: `Electronics Phones ${identity}`,
+          categoryHierarchy: ["Electronics", "Phones"],
+          specifications: { Model: identity, Brand: "Test Brand" },
+        });
+        await runSync();
+        const initial = await reviewForIdentity(identity);
+        const initialData = await reviewData(initial.id);
+        assert.equal(initialData.categoryMapping?.sourceId, SOURCE_ID);
+        assert.equal(initialData.categoryMapping?.mappingDocumentId, childMappingReference.id);
+        assert.equal(initialData.categoryMapping?.mappingScope, "child");
+        assert.equal(initialData.categoryMapping?.mappingSource, "source");
+        assert.equal(initialData.categoryMapping?.mappingType, "manual");
+        assert.equal(initialData.categoryMapping?.confidence, 100);
+        assert.equal(initialData.categoryMapping?.autoSelected, true);
+        assert.equal(initialData.categoryMapping?.requiresManualSelection, false);
+        assert.equal(initialData.categoryMapping?.version, 1);
+        assert.equal(initialData.categoryMapping?.updatedAt, updatedAt);
+        assert.equal(initialData.categoryMapping?.targetCategoryId, "electronics");
+        assert.equal(initialData.categoryMapping?.targetSubcategoryId, "phones");
+        const ready = await prepareReview(initial.id, identity);
+        rememberOffer(ready);
+        return { id: initial.id, data: ready, revision: await pendingRevision(ready) };
+      };
+
+      const trusted = await prepareMappedQueue(identityFor("trusted-taxonomy"));
+      const approved = await decideSupplierQueueItem(adminDb, trusted.id, "approved", ADMIN, {
+        draft: approvalDraft(trusted.id, trusted.data),
+        expectedPendingRevision: trusted.revision,
+      });
+      assert.equal(approved.success, true, JSON.stringify(approved));
+      const approvedProduct = (await adminDb.collection("products").doc(String(approved.productId)).get()).data()!;
+      assert.equal(approvedProduct.category, "electronics");
+      assert.equal(approvedProduct.subcategory, "phones");
+
+      const adminTaxonomyEntry = {
+        owner: "admin",
+        sourceId: null,
+        updatedAt,
+        updatedBy: ADMIN.uid,
+        reason: "review_decision",
+      };
+      const categoryAdmin = await prepareMappedQueue(identityFor("mixed-category-admin"));
+      await adminDb.collection("supplier_review_queue").doc(categoryAdmin.id).set({
+        productPayload: {
+          ...categoryAdmin.data.productPayload,
+          supplierFieldOwnership: { category: adminTaxonomyEntry },
+        },
+      }, { merge: true });
+      const categoryAdminApproval = await decideSupplierQueueItem(adminDb, categoryAdmin.id, "approved", ADMIN, {
+        draft: approvalDraft(categoryAdmin.id, {
+          ...(await reviewData(categoryAdmin.id)),
+          productPayload: {
+            ...categoryAdmin.data.productPayload,
+            supplierFieldOwnership: { category: adminTaxonomyEntry },
+          },
+        }),
+        expectedPendingRevision: categoryAdmin.revision,
+      });
+      assert.equal(categoryAdminApproval.success, true, JSON.stringify(categoryAdminApproval));
+      const categoryAdminProduct = (await adminDb.collection("products").doc(String(categoryAdminApproval.productId)).get()).data()!;
+      assert.equal(categoryAdminProduct.category, "electronics");
+      assert.equal(categoryAdminProduct.subcategory, "phones");
+
+      const subcategoryAdmin = await prepareMappedQueue(identityFor("mixed-subcategory-admin"));
+      const parentMapping = {
+        ...manualMapping,
+        mappingDocumentId: parentMappingReference.id,
+        mappingScope: "parent" as const,
+        targetSubcategoryId: "",
+      };
+      await Promise.all([
+        parentMappingReference.set(parentMapping, { merge: true }),
+        adminDb.collection("supplier_review_queue").doc(subcategoryAdmin.id).set({
+          categoryMapping: {
+            sourceId: SOURCE_ID,
+            mappingDocumentId: parentMappingReference.id,
+            supplierCategory: "Electronics",
+            normalizedCategory,
+            mappingScope: "parent",
+            targetCategoryId: "electronics",
+            targetSubcategoryId: "",
+            mappingSource: "source",
+            autoSelected: true,
+            requiresManualSelection: false,
+            confidence: 100,
+            mappingType: "manual",
+            version: 1,
+            updatedAt,
+          },
+          productPayload: {
+            ...subcategoryAdmin.data.productPayload,
+            supplierFieldOwnership: { subcategory: adminTaxonomyEntry },
+          },
+        }, { merge: true }),
+      ]);
+      const subcategoryAdminData = await reviewData(subcategoryAdmin.id);
+      assert.equal(subcategoryAdminData.productPayload?.category, "electronics");
+      assert.equal(subcategoryAdminData.productPayload?.subcategory, "phones");
+      const subcategoryAdminDraft = approvalDraft(subcategoryAdmin.id, subcategoryAdminData);
+      assert.equal(subcategoryAdminDraft?.fieldOwnership?.subcategory, "admin");
+      assert.equal(subcategoryAdminDraft?.fieldOwnership?.category, "supplier");
+      const subcategoryAdminApproval = await decideSupplierQueueItem(adminDb, subcategoryAdmin.id, "approved", ADMIN, {
+        draft: subcategoryAdminDraft,
+        expectedPendingRevision: subcategoryAdmin.revision,
+      });
+      assert.equal(subcategoryAdminApproval.success, true, JSON.stringify(subcategoryAdminApproval));
+      const subcategoryAdminProduct = (await adminDb.collection("products").doc(String(subcategoryAdminApproval.productId)).get()).data()!;
+      assert.equal(subcategoryAdminProduct.category, "electronics");
+      assert.equal(subcategoryAdminProduct.subcategory, "phones");
+
+      const mixedMismatch = await prepareMappedQueue(identityFor("mixed-mismatch"));
+      await Promise.all([
+        parentMappingReference.set({ targetCategoryId: "other-category" }, { merge: true }),
+        adminDb.collection("supplier_review_queue").doc(mixedMismatch.id).set({
+          categoryMapping: {
+            sourceId: SOURCE_ID,
+            mappingDocumentId: parentMappingReference.id,
+            supplierCategory: "Electronics",
+            normalizedCategory,
+            mappingScope: "parent",
+            targetCategoryId: "electronics",
+            targetSubcategoryId: "",
+            mappingSource: "source",
+            autoSelected: true,
+            requiresManualSelection: false,
+            confidence: 100,
+            mappingType: "manual",
+            version: 1,
+            updatedAt,
+          },
+          productPayload: {
+            ...mixedMismatch.data.productPayload,
+            supplierFieldOwnership: { subcategory: adminTaxonomyEntry },
+          },
+        }, { merge: true }),
+      ]);
+      const productsBeforeMixedMismatch = await productCount();
+      await assert.rejects(
+        decideSupplierQueueItem(adminDb, mixedMismatch.id, "approved", ADMIN, {
+          draft: approvalDraft(mixedMismatch.id, await reviewData(mixedMismatch.id)),
+          expectedPendingRevision: mixedMismatch.revision,
+        }),
+        (error: any) => {
+          assert.equal(error?.statusCode, 422);
+          return true;
+        },
+      );
+      assert.equal(await productCount(), productsBeforeMixedMismatch);
+
+      // Restore the authoritative parent mapping before the independent stale
+      // and deleted-mapping cases; each case must start from valid provenance.
+      await parentMappingReference.set(manualMapping, { merge: true });
+      const stale = await prepareMappedQueue(identityFor("stale-taxonomy"));
+      await childMappingReference.set({ version: 2, updatedAt: "2026-10-14T00:01:00.000Z" }, { merge: true });
+      const productsBeforeStale = await productCount();
+      await assert.rejects(
+        decideSupplierQueueItem(adminDb, stale.id, "approved", ADMIN, {
+          draft: approvalDraft(stale.id, stale.data),
+          expectedPendingRevision: stale.revision,
+        }),
+        (error: any) => {
+          assert.equal(error?.statusCode, 422);
+          return true;
+        },
+      );
+      assert.equal(await productCount(), productsBeforeStale);
+
+      await childMappingReference.delete();
+      await assert.rejects(
+        decideSupplierQueueItem(adminDb, stale.id, "approved", ADMIN, {
+          draft: approvalDraft(stale.id, stale.data),
+          expectedPendingRevision: stale.revision,
+        }),
+        (error: any) => {
+          assert.equal(error?.statusCode, 422);
+          return true;
+        },
+      );
+      assert.equal(await productCount(), productsBeforeStale);
     });
   } finally {
     await Promise.all([...createdOfferIds].map((offerId) => (

@@ -334,9 +334,26 @@ test("Supplier category mapping API stays admin-managed while review listing and
       assert.equal(persisted.data()?.targetCategoryId, categoryId);
       assert.equal(persisted.data()?.targetSubcategoryId, subcategoryId);
       assert.equal(persisted.data()?.mappingScope, "child");
+      assert.equal(persisted.data()?.version, 1);
+      assert.ok(persisted.data()?.updatedAt);
+      assert.equal(savedBody.mapping.mappingDocumentId, childMappingId);
       const audits = await adminDb.collection("supplier_mapping_audit").where("mappingId", "==", childMappingId).get();
       assert.equal(audits.size, 1);
       assert.equal(audits.docs[0].data().action, "admin_mapping_saved");
+
+      const revisionResponse = await request("POST", "/supplier-category-mappings", adminToken, {
+        sourceId,
+        supplierCategory,
+        supplierSubcategory: "Legacy Buds",
+        targetCategoryId: categoryId,
+        targetSubcategoryId: subcategoryId,
+      });
+      assert.equal(revisionResponse.status, 200);
+      const revised = await adminDb.collection("supplier_category_mappings").doc(childMappingId).get();
+      assert.equal(revised.data()?.version, 2);
+      assert.ok(revised.data()?.updatedAt);
+      assert.equal(revised.id, childMappingId);
+      assert.equal((await adminDb.collection("supplier_mapping_audit").where("mappingId", "==", childMappingId).get()).size, 2);
 
       const secondChild = await request("POST", "/supplier-category-mappings", adminToken, {
         sourceId,

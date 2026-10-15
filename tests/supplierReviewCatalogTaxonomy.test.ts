@@ -181,7 +181,7 @@ test('same-named active subcategories stay scoped to the resolved parent', () =>
   assert.equal(taxonomyPlan, null);
 });
 
-test('supplier category mapping never pre-fills the draft; brand suggestion still does and admin can override both', () => {
+test('trusted source mapping pre-fills only with canonical evidence; autoSelected alone stays blocked', () => {
   const autoMappedItem = {
     ...reviewItem,
     categoryMapping: {
@@ -198,13 +198,138 @@ test('supplier category mapping never pre-fills the draft; brand suggestion stil
       mappedBrandId: 'registered-brand',
     },
   };
-  const draft = createSupplierReviewDraft(autoMappedItem);
-  assert.equal(draft.category, '');
-  assert.equal(draft.subcategory, '');
-  assert.equal(draft.brand, 'registered-brand');
+  const unsafeDraft = createSupplierReviewDraft(autoMappedItem, clientTaxonomy.categories);
+  assert.equal(unsafeDraft.category, '');
+  assert.equal(unsafeDraft.subcategory, '');
+  assert.equal(unsafeDraft.brand, 'registered-brand');
+
+  const trustedDraft = createSupplierReviewDraft({
+    ...autoMappedItem,
+    sourceId: 'dropex',
+    categoryMapping: {
+      ...autoMappedItem.categoryMapping,
+      sourceId: 'dropex',
+      mappingDocumentId: 'dropex-category-electronics-kitchen',
+      mappingScope: 'child',
+      normalizedCategory: 'electronics',
+      version: 3,
+      updatedAt: '2026-10-14T00:00:00.000Z',
+      mappingSource: 'source',
+      mappingType: 'manual',
+      confidence: 100,
+    },
+    productPayload: {
+      ...reviewItem.productPayload,
+      name: 'Kitchen Electronics Product',
+      description: 'A genuine kitchen electronics product.',
+      category: 'electronics',
+      subcategory: 'kitchen',
+    },
+  }, clientTaxonomy.categories);
+  assert.equal(trustedDraft.category, 'electronics');
+  assert.equal(trustedDraft.subcategory, 'kitchen');
+
+  const snapshotSpecificationDraft = createSupplierReviewDraft({
+    ...autoMappedItem,
+    sourceId: 'dropex',
+    supplierSnapshot: {
+      specifications: {
+        Category: 'Electronics',
+        Subcategory: 'Kitchen',
+      },
+    },
+    categoryMapping: {
+      ...autoMappedItem.categoryMapping,
+      sourceId: 'dropex',
+      mappingDocumentId: 'dropex-category-electronics-kitchen',
+      mappingScope: 'child',
+      normalizedCategory: 'electronics',
+      version: 3,
+      updatedAt: '2026-10-14T00:00:00.000Z',
+      mappingSource: 'source',
+      mappingType: 'manual',
+      confidence: 100,
+    },
+    productPayload: {
+      ...reviewItem.productPayload,
+      name: 'Generic Device',
+      description: 'A useful device with genuine supplier specifications.',
+      category: 'electronics',
+      subcategory: 'kitchen',
+      specs: {},
+    },
+  }, clientTaxonomy.categories);
+  assert.equal(snapshotSpecificationDraft.category, 'electronics');
+  assert.equal(snapshotSpecificationDraft.subcategory, 'kitchen');
+
+  for (const name of [
+    'Not Kitchen Electronics; this is a storage item.',
+    'No Kitchen Electronics; this is a storage item.',
+    'Without Kitchen Electronics; this is a storage item.',
+    'Instead of Kitchen Electronics; this is a storage item.',
+    'Not a genuine Kitchen Electronics product; this is a storage item.',
+  ]) {
+    const contradictoryDraft = createSupplierReviewDraft({
+      ...autoMappedItem,
+      sourceId: 'dropex',
+      categoryMapping: {
+        ...autoMappedItem.categoryMapping,
+        sourceId: 'dropex',
+        mappingDocumentId: 'dropex-category-electronics-kitchen',
+        mappingScope: 'child',
+        normalizedCategory: 'electronics',
+        version: 3,
+        updatedAt: '2026-10-14T00:00:00.000Z',
+        mappingSource: 'source',
+        mappingType: 'manual',
+        confidence: 100,
+      },
+      productPayload: {
+        ...reviewItem.productPayload,
+        name,
+        description: 'Storage item with contradictory classification evidence.',
+        category: 'electronics',
+        subcategory: 'kitchen',
+      },
+    }, clientTaxonomy.categories);
+    assert.equal(contradictoryDraft.category, '');
+    assert.equal(contradictoryDraft.subcategory, '');
+  }
+
+  const ambiguousDraft = createSupplierReviewDraft({
+    ...autoMappedItem,
+    sourceId: 'dropex',
+    categoryMapping: {
+      ...autoMappedItem.categoryMapping,
+      sourceId: 'dropex',
+      mappingDocumentId: 'dropex-category-electronics-kitchen',
+      mappingScope: 'child',
+      normalizedCategory: 'electronics',
+      version: 3,
+      updatedAt: '2026-10-14T00:00:00.000Z',
+      mappingSource: 'source',
+      mappingType: 'manual',
+      confidence: 100,
+    },
+    productPayload: {
+      ...reviewItem.productPayload,
+      name: 'Kitchen Electronics Product',
+      description: 'This product is for Kitchen and Storage.',
+      category: 'electronics',
+      subcategory: 'kitchen',
+    },
+  }, [{
+    ...clientTaxonomy.categories[0],
+    subcategories: [
+      ...(clientTaxonomy.categories[0].subcategories || []),
+      { id: 'storage', name: 'Storage', isActive: true },
+    ],
+  }]);
+  assert.equal(ambiguousDraft.category, '');
+  assert.equal(ambiguousDraft.subcategory, '');
 
   const overridden = updateSupplierReviewDraftField(
-    updateSupplierReviewDraftField(draft, 'category', { category: 'electronics', subcategory: '' }),
+    updateSupplierReviewDraftField(unsafeDraft, 'category', { category: 'electronics', subcategory: '' }),
     'brand',
     { brand: 'registered-brand' },
   );

@@ -3030,7 +3030,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                   {/* Product Review page: one bounded server-backed page, never an accumulating Load More list. */}
                   {/* Launch-ready quick review list: one bounded page, no bulk actions. */}
                   {visibleReviewItems.map((item) => {
-                    const draft = createSupplierReviewDraft(item);
+                    const draft = createSupplierReviewDraft(item, categories);
                     const profit = calculateSupplierProfit(draft.sellingPrice, draft.costPrice, draft.supplierCostAvailable);
                     const managedImageUrl = supplierReviewDisplayImageUrl(item);
                     const isPreparing = supplierReviewIsPreparing(item);
@@ -4031,7 +4031,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
       {editingReviewItem && (
         <SupplierReviewEditorModal
           item={editingReviewItem}
-          initialDraft={createSupplierReviewDraft(editingReviewItem)}
+          initialDraft={createSupplierReviewDraft(editingReviewItem, categories)}
           categories={categories}
           brands={brands}
           validCategoryIds={validCategoryIds}

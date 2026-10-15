@@ -48,14 +48,23 @@ export interface SupplierReviewSourceItem {
   mediaProcessedAt?: string;
   mediaReadiness?: string;
   categoryMapping?: {
+    sourceId?: string;
+    mappingDocumentId?: string;
+    mappingScope?: 'parent' | 'child';
     supplierCategory?: string;
     supplierSubcategory?: string;
+    normalizedCategory?: string;
+    normalizedSupplierSubcategory?: string;
+    supplierSubcategoryId?: string;
     targetCategoryId?: string;
     targetSubcategoryId?: string;
     candidateCategoryId?: string;
     candidateSubcategoryId?: string;
     confidence?: number;
     mappingType?: string;
+    mappingSource?: 'source' | 'global' | 'catalog' | 'none';
+    version?: number;
+    updatedAt?: unknown;
     autoSelected?: boolean;
     requiresManualSelection?: boolean;
   };
@@ -242,6 +251,124 @@ const isHttpsSupplierImageUrl = (value: unknown): value is string => {
   } catch {
     return false;
   }
+};
+
+export interface SupplierReviewTaxonomyCategory {
+  id: string;
+  name?: string;
+  isActive?: boolean;
+  taxonomyCandidate?: boolean;
+  keywords?: string[];
+  subcategories?: Array<{ id: string; name?: string; isActive?: boolean; taxonomyCandidate?: boolean }>;
+}
+
+const taxonomyFreshnessToken = (value: unknown): string => {
+  if (value && typeof value === 'object') {
+    const timestamp = value as { toMillis?: unknown; seconds?: unknown; nanoseconds?: unknown };
+    if (typeof timestamp.toMillis === 'function') return String(timestamp.toMillis());
+    if (typeof timestamp.seconds === 'number') {
+      return `${timestamp.seconds}:${typeof timestamp.nanoseconds === 'number' ? timestamp.nanoseconds : 0}`;
+    }
+  }
+  return typeof value === 'string' ? value.trim() : '';
+};
+
+const normalizeTaxonomyEvidence = (value: unknown): string => String(value || '')
+  .normalize('NFKC')
+  .trim()
+  .toLocaleLowerCase('en')
+  .replace(/[^\p{L}\p{N}]+/gu, ' ')
+  .replace(/\s+/gu, ' ')
+  .trim();
+
+const taxonomyPhraseInEvidence = (evidence: string, phrase: unknown): boolean => {
+  const normalizedEvidence = normalizeTaxonomyEvidence(evidence);
+  const normalizedPhrase = normalizeTaxonomyEvidence(phrase);
+  return Boolean(normalizedEvidence && normalizedPhrase && ` ${normalizedEvidence} `.includes(` ${normalizedPhrase} `));
+};
+
+const taxonomyEvidenceNegates = (evidence: string, signals: readonly string[]): boolean => {
+  const tokens = normalizeTaxonomyEvidence(evidence).split(' ').filter(Boolean);
+  const normalizedSignals = signals
+    .map((signal) => normalizeTaxonomyEvidence(signal).split(' ').filter(Boolean))
+    .filter((signal) => signal.length > 0);
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    const start = token === 'instead' && tokens[index + 1] === 'of'
+      ? index + 2
+      : ['not', 'no', 'without'].includes(token)
+        ? index + 1
+        : -1;
+    if (start < 0) continue;
+    const candidate = tokens.slice(start, start + 7);
+    const withoutArticle = ['a', 'an'].includes(candidate[0]) ? candidate.slice(1) : candidate;
+    if (normalizedSignals.some((signal) => Array.from({ length: Math.min(4, withoutArticle.length) }, (_, offset) => offset)
+      .some((offset) => signal.every((word, signalOffset) => withoutArticle[offset + signalOffset] === word)))) return true;
+  }
+  return false;
+};
+
+/** Mirrors the server's conservative supplier-derived taxonomy authority. */
+export const isTrustedSupplierReviewTaxonomyPrefill = (
+  item: SupplierReviewSourceItem,
+  categories: readonly SupplierReviewTaxonomyCategory[] | undefined,
+): boolean => {
+  const payload = (item.productPayload || {}) as Record<string, unknown>;
+  const mapping = item.categoryMapping;
+  const categoryId = String(payload.category || '').trim();
+  if (item.comparison?.comparisonStatus !== 'NEW_PRODUCT' || !categoryId || !mapping) return false;
+  if (!Number.isInteger(Number(mapping.version)) || Number(mapping.version) <= 0 || !taxonomyFreshnessToken(mapping.updatedAt)) return false;
+  if (!String(mapping.mappingDocumentId || '').trim()) return false;
+  if (!String(mapping.sourceId || '').trim() || String(mapping.sourceId).trim() !== String(item.sourceId || '').trim()) return false;
+  if (mapping.mappingSource !== 'source' || mapping.mappingType !== 'manual' || mapping.autoSelected !== true
+    || mapping.requiresManualSelection === true || Number(mapping.confidence) < 100
+    || String(mapping.targetCategoryId || '').trim() !== categoryId) return false;
+  const category = categories?.find((candidate) => candidate.id === categoryId);
+  if (!category || category.isActive !== true || category.taxonomyCandidate === true) return false;
+  const activeSubcategories = (category.subcategories || []).filter((subcategory) => (
+    subcategory.isActive !== false && subcategory.taxonomyCandidate !== true
+  ));
+  const subcategoryId = String(payload.subcategory || '').trim();
+  const mappedSubcategoryId = String(mapping.targetSubcategoryId || '').trim();
+  if (activeSubcategories.length > 0) {
+    if (!subcategoryId || mappedSubcategoryId !== subcategoryId
+      || !activeSubcategories.some((subcategory) => subcategory.id === subcategoryId)) return false;
+  } else if (subcategoryId || mappedSubcategoryId) {
+    return false;
+  }
+  const specs = payload.specs && typeof payload.specs === 'object' && !Array.isArray(payload.specs) ? payload.specs : {};
+  const snapshotSpecifications = item.supplierSnapshot?.specifications
+    && typeof item.supplierSnapshot.specifications === 'object'
+    && !Array.isArray(item.supplierSnapshot.specifications)
+    ? item.supplierSnapshot.specifications
+    : {};
+  const primaryEvidence = [payload.name, payload.productType].filter(Boolean).join(' ');
+  const supportingEvidence = [
+    payload.description,
+    payload.shortDescription,
+    payload.keywords,
+    item.supplierSnapshot?.description,
+    item.supplierSnapshot?.productType,
+    Object.keys(specs),
+    Object.values(specs),
+    Object.keys(snapshotSpecifications),
+    Object.values(snapshotSpecifications),
+  ].flatMap((value) => Array.isArray(value) ? value : [value]).filter(Boolean).join(' ');
+  const signals = [
+    category.name,
+    ...(category.keywords || []),
+    ...(subcategoryId ? activeSubcategories.filter((subcategory) => subcategory.id === subcategoryId).map((subcategory) => subcategory.name) : []),
+  ].filter(Boolean) as string[];
+  const allEvidence = `${primaryEvidence} ${supportingEvidence}`;
+  if (signals.length === 0 || taxonomyEvidenceNegates(allEvidence, signals)) return false;
+  if (!signals.some((signal) => taxonomyPhraseInEvidence(primaryEvidence, signal)
+    || taxonomyPhraseInEvidence(supportingEvidence, signal))) return false;
+  if (activeSubcategories.length > 1) {
+    const evidencedSubcategories = activeSubcategories.filter((candidate) => taxonomyPhraseInEvidence(allEvidence, candidate.name));
+    if (evidencedSubcategories.some((candidate) => candidate.id !== subcategoryId)
+      || evidencedSubcategories.length > 1) return false;
+  }
+  return true;
 };
 
 export function buildSupplierReviewFieldChanges(item: SupplierReviewSourceItem): SupplierReviewFieldChange[] {
@@ -449,7 +576,10 @@ export function buildSupplierFailoverProposalSummary(item: SupplierReviewSourceI
   };
 }
 
-export function createSupplierReviewDraft(item: SupplierReviewSourceItem): SupplierReviewDraft {
+export function createSupplierReviewDraft(
+  item: SupplierReviewSourceItem,
+  categories?: readonly SupplierReviewTaxonomyCategory[],
+): SupplierReviewDraft {
   const payload = item.productPayload;
   const snapshot = item.supplierSnapshot || {};
   const metadata = (payload?.supplierMetadata && typeof payload.supplierMetadata === 'object'
@@ -508,12 +638,14 @@ export function createSupplierReviewDraft(item: SupplierReviewSourceItem): Suppl
         ? 'supplier'
         : (isNewProduct && !ADMIN_ONLY_REVIEW_FIELDS.has(field) ? 'supplier' : 'admin')),
   ])) as Record<string, SupplierProductFieldOwner>;
+  const trustedSupplierDerivedTaxonomy = isTrustedSupplierReviewTaxonomyPrefill(item, categories);
   const legacySupplierDerivedTaxonomy = isNewProduct
     && Boolean(String(payload?.category || '').trim())
     && item.categoryMapping?.autoSelected === true
     && String(item.categoryMapping.targetCategoryId || '').trim() === String(payload?.category || '').trim()
     && storedOwnership.category?.owner !== 'admin'
-    && storedOwnership.subcategory?.owner !== 'admin';
+    && storedOwnership.subcategory?.owner !== 'admin'
+    && !trustedSupplierDerivedTaxonomy;
 
   return {
     productSku: /^ZY-/iu.test(String(payload?.sku || '').trim()) ? String(payload?.sku).trim() : '',

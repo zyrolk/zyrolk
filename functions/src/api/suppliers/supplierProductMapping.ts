@@ -3,6 +3,8 @@ import { createHash } from "node:crypto";
 export type SupplierMappingType = "manual" | "learned" | "exact" | "normalized" | "keyword" | "unmapped";
 
 export interface SupplierCategoryMappingRecord {
+  /** The authoritative Firestore document ID from which this record was read. */
+  mappingDocumentId?: string;
   sourceId: string;
   supplierCategory: string;
   normalizedCategory: string;
@@ -73,15 +75,23 @@ export interface StoreBrandMappingCandidate {
 }
 
 export interface SupplierCategorySuggestion {
+  /** Snapshot identity copied from the authoritative mapping document. */
+  sourceId?: string;
+  mappingDocumentId?: string;
+  mappingScope?: "parent" | "child";
   supplierCategory: string;
   supplierSubcategory?: string;
   normalizedCategory: string;
+  normalizedSupplierSubcategory?: string;
+  supplierSubcategoryId?: string;
   targetCategoryId: string;
   targetSubcategoryId: string;
   candidateCategoryId?: string;
   candidateSubcategoryId?: string;
   confidence: number;
   mappingType: SupplierMappingType;
+  version?: number;
+  updatedAt?: unknown;
   mappingSource: "source" | "global" | "catalog" | "none";
   autoSelected: boolean;
   requiresManualSelection: boolean;
@@ -337,13 +347,20 @@ export function suggestSupplierCategory(input: {
       : "";
     const targetSubcategoryId = mappedSubcategoryId;
     return {
-      supplierCategory,
-      supplierSubcategory,
-      normalizedCategory,
+      sourceId: mapping.sourceId,
+      ...(mapping.mappingDocumentId ? { mappingDocumentId: mapping.mappingDocumentId } : {}),
+      ...(mapping.mappingScope ? { mappingScope: mapping.mappingScope } : {}),
+      supplierCategory: mapping.supplierCategory || supplierCategory,
+      ...(mapping.supplierSubcategory ? { supplierSubcategory: mapping.supplierSubcategory } : supplierSubcategory ? { supplierSubcategory } : {}),
+      normalizedCategory: mapping.normalizedCategory || normalizedCategory,
+      ...(mapping.normalizedSupplierSubcategory ? { normalizedSupplierSubcategory: mapping.normalizedSupplierSubcategory } : {}),
+      ...(mapping.supplierSubcategoryId ? { supplierSubcategoryId: mapping.supplierSubcategoryId } : {}),
       targetCategoryId: category.id,
       targetSubcategoryId,
       confidence: 100,
       mappingType: mapping.mappingType === "learned" ? "learned" : "manual",
+      ...(Number.isInteger(Number(mapping.version)) && Number(mapping.version) > 0 ? { version: Number(mapping.version) } : {}),
+      ...(mapping.updatedAt !== undefined ? { updatedAt: mapping.updatedAt } : {}),
       mappingSource: scope,
       autoSelected: true,
       requiresManualSelection: Boolean(
