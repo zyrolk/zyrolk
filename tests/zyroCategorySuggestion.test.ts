@@ -450,7 +450,13 @@ test('missing taxonomy proposal stays distinct from Product Review publication',
   );
   assert.match(markup, /New taxonomy proposal/u);
   assert.match(markup, /Creation is available only through the authenticated Product Review governance action/u);
-  assert.match(markup, /Approve &amp; Publish/u);
+  assert.match(markup, /Details are read-only\. Choose Edit product data before changing storefront values\./u);
+  assert.match(markup, /Edit product data/u);
+  assert.doesNotMatch(markup, /Approve &amp; Publish/u);
+  const editorSource = readFileSync('src/components/SupplierReviewEditorModal.tsx', 'utf8');
+  assert.match(editorSource, /<button type="button" onClick=\{\(\) => void createSuggestedTaxonomy\(\)\}/u);
+  assert.match(editorSource, /type="submit"/u);
+  assert.match(editorSource, /Approve & Publish/u);
 });
 
 test('missing parent UI keeps creation explicit and separate from Product Review publication', () => {
@@ -465,7 +471,12 @@ test('missing parent UI keeps creation explicit and separate from Product Review
   const editorSource = readFileSync('src/components/SupplierReviewEditorModal.tsx', 'utf8');
   assert.match(editorSource, /setMissingParentName\(event\.target\.value\); setMissingParentConfirmed\(false\)/u);
   assert.match(editorSource, /setMissingParentSlug\(event\.target\.value\); setMissingParentConfirmed\(false\)/u);
-  assert.match(markup, /Approve &amp; Publish/u);
+  assert.match(markup, /Details are read-only\. Choose Edit product data before changing storefront values\./u);
+  assert.match(markup, /Edit product data/u);
+  assert.doesNotMatch(markup, /Approve &amp; Publish/u);
+  assert.match(editorSource, /<button type="button" onClick=\{\(\) => void createMissingParentCategory\(\)\}/u);
+  assert.match(editorSource, /type="submit"/u);
+  assert.match(editorSource, /Approve & Publish/u);
   assert.doesNotMatch(markup, /Create category.*publish/iu);
 });
 

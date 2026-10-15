@@ -167,7 +167,14 @@ test('Sprint 4 learned mapping IDs are stable and approval persists immutable ma
   assert.notEqual(supplierMappingDocumentId('source-a', 'phones'), supplierMappingDocumentId('source-b', 'phones'));
 
   const approval = readFileSync('functions/src/api/suppliers/supplierApproval.ts', 'utf8');
-  assert.doesNotMatch(approval, /supplier_category_mappings/);
+  const mappingAuthorityReaderStart = approval.indexOf('const readCurrentSupplierCategoryMapping');
+  const mappingAuthorityReaderEnd = approval.indexOf('export const toPublicProductPayload');
+  assert.ok(mappingAuthorityReaderStart >= 0 && mappingAuthorityReaderEnd > mappingAuthorityReaderStart);
+  const mappingAuthorityReader = approval.slice(mappingAuthorityReaderStart, mappingAuthorityReaderEnd);
+  assert.match(mappingAuthorityReader, /supplier_category_mappings/u);
+  assert.match(mappingAuthorityReader, /transaction\.get\(mappingReference\)/u);
+  assert.doesNotMatch(mappingAuthorityReader, /transaction\.(?:set|update|create|delete)/u);
+  assert.match(approval, /currentCategoryMapping/u);
   assert.match(approval, /supplier_brand_mappings/);
   assert.match(approval, /mappingType: "learned"/);
   assert.match(approval, /supplier_mapping_audit/);
