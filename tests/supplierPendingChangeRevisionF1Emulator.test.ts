@@ -11,6 +11,7 @@ import type {
 } from "../functions/src/api/suppliers/types";
 import {
   createSupplierReviewDraft,
+  updateSupplierReviewDraftField,
   SupplierReviewDraft,
   SupplierReviewSourceItem,
 } from "../src/services/supplierReviewEditor";
@@ -262,7 +263,14 @@ const approvalDraft = (reviewId: string, data: Record<string, any>, overrides: P
     productValidation: data.productValidation,
     comparison: data.comparison,
   };
-  const draft = createSupplierReviewDraft(sourceItem);
+  let draft = createSupplierReviewDraft(sourceItem);
+  // This helper represents the explicit taxonomy selection made in Product
+  // Review; it must not rely on supplier-derived values for approval authority.
+  draft = updateSupplierReviewDraftField(draft, "category", {
+    category: "electronics",
+    subcategory: "",
+  });
+  draft = updateSupplierReviewDraftField(draft, "subcategory", { subcategory: "phones" });
   const managedAssets = Array.isArray(data.managedMedia) ? data.managedMedia : [];
   return parseSupplierApprovalDraft({
     ...draft,

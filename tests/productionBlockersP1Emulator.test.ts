@@ -11,7 +11,7 @@ import { collection, doc, getDoc, getDocs, query, setDoc, where } from "firebase
 import { adminAuth, adminDb, FieldValue } from "../functions/src/api/firebase";
 import { createAdminProduct } from "../functions/src/api/products/adminProductManagement";
 import { hashValue } from "../functions/src/api/checkout/checkoutLogic";
-import { createSupplierReviewDraft } from "../src/services/supplierReviewEditor";
+import { createSupplierReviewDraft, updateSupplierReviewDraftField } from "../src/services/supplierReviewEditor";
 import { decideSupplierQueueItem, parseSupplierApprovalDraft } from "../functions/src/api/suppliers/supplierApproval";
 import { buildSupplierProductOffer } from "../functions/src/api/suppliers/supplierOfferEngine";
 import type { SupplierOutboundResponse } from "../functions/src/api/security/supplierOutboundRequest";
@@ -393,7 +393,18 @@ test("P1 production blockers fail closed at trusted and Rules boundaries", {
         supplierSnapshot: queue.supplierSnapshot, managedMedia: media, mediaStatus: "ready", comparison: queue.comparison,
         productValidation: queue.productValidation,
       };
-      const reviewDraft = createSupplierReviewDraft(sourceItem);
+      let reviewDraft = createSupplierReviewDraft(sourceItem);
+      // Supplier Portal submission supplies observations only. The approval
+      // fixture must model the later explicit Admin taxonomy decision.
+      reviewDraft = updateSupplierReviewDraftField(reviewDraft, "category", {
+        category: categoryId,
+        subcategory: "",
+      });
+      reviewDraft = updateSupplierReviewDraftField(reviewDraft, "subcategory", {
+        subcategory: "items",
+      });
+      assert.equal(reviewDraft.fieldOwnership.category, "admin");
+      assert.equal(reviewDraft.fieldOwnership.subcategory, "admin");
       assert.equal(reviewDraft.fieldOwnership.stock, "supplier");
       const approvalDraft = parseSupplierApprovalDraft({
         ...reviewDraft,

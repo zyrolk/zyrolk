@@ -11,6 +11,7 @@ import type {
 } from "../functions/src/api/suppliers/types";
 import {
   createSupplierReviewDraft,
+  updateSupplierReviewDraftField,
   SupplierReviewDraft,
   SupplierReviewSourceItem,
 } from "../src/services/supplierReviewEditor";
@@ -306,15 +307,29 @@ const approvalDraft = (
   overrides: Partial<SupplierReviewDraft> = {},
 ) => {
   const draft = createSupplierReviewDraft(reviewSourceItem(reviewId, data));
+  const selectedCategory = String(overrides.category || draft.category || "").trim();
+  const selectedSubcategory = String(overrides.subcategory || draft.subcategory || "").trim();
+  let adminSelectedDraft = draft;
+  if (selectedCategory && selectedSubcategory) {
+    // Model the existing Product Review category and subcategory selections.
+    // Supplier-provided taxonomy alone is never treated as Admin authority.
+    adminSelectedDraft = updateSupplierReviewDraftField(adminSelectedDraft, "category", {
+      category: selectedCategory,
+      subcategory: "",
+    });
+    adminSelectedDraft = updateSupplierReviewDraftField(adminSelectedDraft, "subcategory", {
+      subcategory: selectedSubcategory,
+    });
+  }
   const managedAssets = Array.isArray(data.managedMedia)
     ? data.managedMedia as Array<Record<string, unknown>>
     : [];
   const managedPrimaryUrl = String(managedAssets[0]?.firebaseStorageUrl || "").trim();
   const supplierImageFallback = `https://supplier.example/${String(data.supplierSnapshot && (data.supplierSnapshot as Record<string, unknown>).supplierProductId || reviewId).replace(/-supplier-product$/u, "")}.jpg`;
   return parseSupplierApprovalDraft({
-    ...draft,
+    ...adminSelectedDraft,
     ...overrides,
-    description: String(overrides.description || draft.description || "").trim() || "Supplier approved description for emulator review.",
+    description: String(overrides.description || adminSelectedDraft.description || "").trim() || "Supplier approved description for emulator review.",
     primaryImageUrl: managedPrimaryUrl || supplierImageFallback,
     galleryImageUrls: managedAssets.slice(1).map((asset) => String(asset.firebaseStorageUrl || "").trim()).filter(Boolean),
   })!;
