@@ -2509,12 +2509,13 @@ const projectReadModelDocuments = async (
     { id: document.id, ...document.data() },
     categoryRequirements?.get(supplierReviewCategoryId(document.data() as SupplierQueueRecord)) === true,
   ));
-  const decorated = await decorateSupplierReviewQueueAdminMedia(rawDocuments, undefined, {
-    // Queue cards can use the canonical managed URL already present in the
-    // projection. Short-lived admin signing remains available to legacy/detail
-    // callers, but is not paid once per asset on every indexed list page.
-    skipSigningForUsableCanonicalUrl: true,
-  });
+  // Product Review renders managed media through ordinary browser <img>
+  // elements. Firebase Storage admin-read rules are not satisfied by the
+  // browser's Firebase Auth session on those direct image requests, so the
+  // canonical `?alt=media` URL alone is not a usable Admin preview. Keep the
+  // canonical URL as identity metadata, but mint the short-lived review URL
+  // for every managed asset returned to the list UI.
+  const decorated = await decorateSupplierReviewQueueAdminMedia(rawDocuments);
   return decorated.map((item, index) => ({
     ...item,
     readinessGroup: supplierReviewReadinessGroupForRecord(

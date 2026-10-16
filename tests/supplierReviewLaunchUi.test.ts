@@ -72,6 +72,16 @@ const renderQuickCard = (overrides: Partial<SupplierReviewQuickCardProps> = {}):
   renderToStaticMarkup(React.createElement(SupplierReviewQuickCard, quickCardProps(overrides)))
 );
 
+test('Product Review list responses sign managed Storage media for browser previews', () => {
+  const queueSource = projectFile('functions/src/scheduled/supplierReviewQueue.ts');
+  const start = queueSource.indexOf('const projectReadModelDocuments');
+  const end = queueSource.indexOf('const emptySupplierReviewMediaSummary', start);
+  assert.ok(start >= 0 && end > start);
+  const projection = queueSource.slice(start, end);
+  assert.match(projection, /decorateSupplierReviewQueueAdminMedia\(rawDocuments\)/u);
+  assert.doesNotMatch(projection, /skipSigningForUsableCanonicalUrl:\s*true/u);
+});
+
 test('normal ready products are the only records eligible for quick approval', () => {
   assert.equal(supplierReviewCanQuickApprove(readyItem), true);
   assert.equal(supplierReviewCanQuickApprove({
