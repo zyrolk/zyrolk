@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   buildSupplierReviewBusinessQueueProjection,
   reviewRecordMatchesBusinessFilter,
+  supplierReviewReadinessGroupForRecord,
   supplierReviewQueueMediaIsReady,
 } from "../functions/src/scheduled/supplierReviewQueue";
 import {
@@ -33,7 +34,7 @@ const baseRecord = (patch: Record<string, unknown> = {}): Record<string, unknown
 test("business projection preserves the existing overlapping queue semantics", () => {
   const actionableNew = baseRecord();
   const projection = buildSupplierReviewBusinessQueueProjection(actionableNew as never);
-  assert.deepEqual(projection.businessQueueClasses, ["actionable", "new_products"]);
+  assert.deepEqual(projection.businessQueueClasses, ["actionable", "category_decision_required", "new_products"]);
   assert.equal(reviewRecordMatchesBusinessFilter(actionableNew as never, "actionable"), true);
   assert.equal(reviewRecordMatchesBusinessFilter(actionableNew as never, "new_products"), true);
 
@@ -43,12 +44,12 @@ test("business projection preserves the existing overlapping queue semantics", (
     productValidation: { readyToPublish: false, missingFields: ["category"], errors: [{ code: "required" }] },
   });
   assert.deepEqual(buildSupplierReviewBusinessQueueProjection(attention as never).businessQueueClasses, [
-    "actionable", "product_updates", "needs_attention",
+    "actionable", "category_decision_required", "product_updates", "needs_attention",
   ]);
 
   const lowStock = baseRecord({ stock: 2, productPayload: { category: "", stock: 2 } });
   assert.deepEqual(buildSupplierReviewBusinessQueueProjection(lowStock as never).businessQueueClasses, [
-    "low_stock_hold",
+    "stock_price_issues", "low_stock_hold",
   ]);
 
   const history = baseRecord({ status: "Approved", queueState: "approved", comparisonStatus: "UNCHANGED" });
@@ -140,7 +141,10 @@ test("ready_for_review is only projected when the complete server proposal and m
   });
   assert.equal(supplierReviewQueueMediaIsReady(managedMedia), true);
   assert.equal(reviewRecordMatchesBusinessFilter(complete as never, "ready_for_review"), true);
+  assert.equal(supplierReviewReadinessGroupForRecord(complete as never), "ready_to_publish");
+  assert.equal(reviewRecordMatchesBusinessFilter(complete as never, "ready_to_publish"), true);
   assert.ok((buildSupplierReviewBusinessQueueProjection(complete as never).businessQueueClasses as string[]).includes("ready_for_review"));
+  assert.ok((buildSupplierReviewBusinessQueueProjection(complete as never).businessQueueClasses as string[]).includes("ready_to_publish"));
 
   const missingCategory = {
     ...complete,
@@ -157,4 +161,24 @@ test("ready_for_review is only projected when the complete server proposal and m
   };
   assert.equal(supplierReviewQueueMediaIsReady(rawOnly.managedMedia), false);
   assert.equal(reviewRecordMatchesBusinessFilter(rawOnly as never, "ready_for_review"), false);
+});
+
+test("readiness groups preserve primary blocker precedence without weakening approval predicates", () => {
+  const categoryDecision = baseRecord({
+    productValidation: { readyToPublish: false, missingFields: ["category"], errors: [{ field: "category", code: "required" }] },
+  });
+  assert.equal(supplierReviewReadinessGroupForRecord(categoryDecision as never), "category_decision_required");
+
+  const stockAndDetails = baseRecord({
+    productValidation: { readyToPublish: false, missingFields: ["stock", "images"], errors: [{ field: "stock", code: "required" }] },
+    stock: 1,
+    productPayload: { category: "category-1", stock: 1 },
+  });
+  assert.equal(supplierReviewReadinessGroupForRecord(stockAndDetails as never), "stock_price_issues");
+
+  const conflict = baseRecord({
+    productValidation: { readyToPublish: false, missingFields: [], errors: [{ field: "identity", code: "duplicate_product" }] },
+  });
+  assert.equal(supplierReviewReadinessGroupForRecord(conflict as never), "conflicts");
+  assert.equal(reviewRecordMatchesBusinessFilter(conflict as never, "missing_details"), false);
 });

@@ -211,6 +211,10 @@ const readSupplierReviewBusinessFilter = (value: unknown): SupplierReviewBusines
   const allowed: SupplierReviewBusinessFilter[] = [
     "actionable",
     "ready_for_review",
+    "ready_to_publish",
+    "category_decision_required",
+    "missing_details",
+    "stock_price_issues",
     "new_products",
     "product_updates",
     "removed_products",

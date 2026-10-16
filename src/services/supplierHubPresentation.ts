@@ -15,6 +15,10 @@ export const SUPPLIER_REVIEW_FRESHNESS_HOLD_MESSAGE =
 
 export type ProductReviewFilter =
   | 'actionable'
+  | 'ready_to_publish'
+  | 'category_decision_required'
+  | 'missing_details'
+  | 'stock_price_issues'
   | 'new_products'
   | 'product_updates'
   | 'removed_products'
@@ -25,6 +29,10 @@ export type ProductReviewFilter =
 
 export const PRODUCT_REVIEW_FILTERS: ReadonlyArray<{ id: ProductReviewFilter; label: string }> = [
   { id: 'actionable', label: 'Actionable' },
+  { id: 'ready_to_publish', label: 'Ready to Publish' },
+  { id: 'category_decision_required', label: 'Category Decision Required' },
+  { id: 'missing_details', label: 'Missing Details' },
+  { id: 'stock_price_issues', label: 'Stock / Price Issues' },
   { id: 'new_products', label: 'New Products' },
   { id: 'product_updates', label: 'Product Updates' },
   { id: 'removed_products', label: 'Removed Products' },
@@ -32,6 +40,21 @@ export const PRODUCT_REVIEW_FILTERS: ReadonlyArray<{ id: ProductReviewFilter; la
   { id: 'needs_attention', label: 'Needs Attention' },
   { id: 'low_stock_hold', label: 'Low Stock Hold' },
   { id: 'approved_history', label: 'Review History' },
+];
+
+export type SupplierReviewReadinessGroup =
+  | 'ready_to_publish'
+  | 'category_decision_required'
+  | 'missing_details'
+  | 'stock_price_issues'
+  | 'conflicts';
+
+export const SUPPLIER_REVIEW_READINESS_GROUPS: ReadonlyArray<{ id: SupplierReviewReadinessGroup; label: string }> = [
+  { id: 'ready_to_publish', label: 'Ready to Publish' },
+  { id: 'category_decision_required', label: 'Category Decision Required' },
+  { id: 'missing_details', label: 'Missing Details' },
+  { id: 'stock_price_issues', label: 'Stock / Price Issues' },
+  { id: 'conflicts', label: 'Conflicts' },
 ];
 
 export interface ReviewPresentationItem {
@@ -48,6 +71,7 @@ export interface ReviewPresentationItem {
   changedFields?: unknown[];
   fieldChanges?: unknown[];
   comparison?: { comparisonStatus?: unknown; changedFields?: unknown[]; fieldChanges?: unknown[] } | null;
+  readinessGroup?: unknown;
   productValidation?: { readyToPublish?: unknown; missingFields?: unknown[]; errors?: unknown[]; lowStockHold?: unknown } | null;
 }
 
@@ -75,6 +99,20 @@ export interface SupplierReviewDisplayOption {
 export type SupplierReviewTerminalAction = 'approved' | 'rejected';
 
 const normalized = (value: unknown): string => String(value || '').trim().toLowerCase();
+
+/** Reads the server-owned primary Product Review group without inferring one
+ * from a legacy UI label. Missing data remains unknown to the presentation. */
+export function supplierReviewReadinessGroup(item: ReviewPresentationItem): SupplierReviewReadinessGroup | null {
+  const value = normalized(item.readinessGroup);
+  return SUPPLIER_REVIEW_READINESS_GROUPS.some((group) => group.id === value)
+    ? value as SupplierReviewReadinessGroup
+    : null;
+}
+
+export function supplierReviewReadinessGroupLabel(item: ReviewPresentationItem): string {
+  const group = supplierReviewReadinessGroup(item);
+  return SUPPLIER_REVIEW_READINESS_GROUPS.find((candidate) => candidate.id === group)?.label || 'Readiness not recorded';
+}
 
 interface FirestoreTimestampLike {
   toDate?: () => Date;
@@ -706,6 +744,12 @@ export const supplierReviewIsTerminalDecision = (item: ReviewPresentationItem): 
 export function matchesProductReviewFilter(item: ReviewPresentationItem, filter: ProductReviewFilter): boolean {
   const comparisonStatus = normalized(item.comparison?.comparisonStatus || item.comparisonStatus);
   const terminal = supplierReviewIsTerminalDecision(item);
+  if (filter === 'ready_to_publish' || filter === 'category_decision_required' || filter === 'missing_details' || filter === 'stock_price_issues') {
+    return supplierReviewReadinessGroup(item) === filter;
+  }
+  if (filter === 'conflicts' && supplierReviewReadinessGroup(item)) {
+    return supplierReviewReadinessGroup(item) === 'conflicts';
+  }
   if (filter === 'approved_history') return terminal;
   if (terminal) return false;
   if (filter === 'actionable') {

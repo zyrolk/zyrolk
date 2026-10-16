@@ -80,6 +80,7 @@ import {
 import { SupplierManualSyncRequest } from '../services/supplierManualSync';
 import {
   PRODUCT_REVIEW_FILTERS,
+  SUPPLIER_REVIEW_READINESS_GROUPS,
   ProductReviewFilter,
   hasSupplierHubAdvancedAccess,
   supplierHealthLabel,
@@ -101,6 +102,7 @@ import {
   supplierReviewStatusLabel,
   supplierReviewTerminalLabel,
   supplierReviewStorefrontLabel,
+  supplierReviewReadinessGroupLabel,
   supplierReviewTerminalItem,
   supplierBusinessErrorMessage,
   isSupplierReviewStaleObservationError,
@@ -129,6 +131,10 @@ type SupplierReviewQueueMode = 'ready' | 'waiting' | 'advanced';
 
 const PRODUCT_REVIEW_URL_VIEWS: Record<ProductReviewFilter, string> = {
   actionable: 'actionable',
+  ready_to_publish: 'ready-to-publish',
+  category_decision_required: 'category-decision',
+  missing_details: 'missing-details',
+  stock_price_issues: 'stock-price-issues',
   new_products: 'new',
   product_updates: 'updates',
   removed_products: 'removed',
@@ -2942,13 +2948,26 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                 </label>
               </div>
               <p className="mt-2 text-[10px] text-slate-400">Search by exact supplier SKU, product ID or item code. Product-name search is not enabled.</p>
-              <div className="mt-4 flex min-w-0 flex-wrap gap-1.5" role="tablist" aria-label="Product review queue views">
+              <div className="mt-4 rounded-2xl border border-blue-500/20 bg-blue-500/5 p-3 dark:bg-blue-500/10" aria-label="Product readiness groups">
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-[10px] font-black uppercase tracking-wider text-blue-700 dark:text-blue-300">Publish readiness</p>
+                  <p className="text-[10px] text-slate-500 dark:text-slate-400">Server validation groups; approval remains an Admin decision.</p>
+                </div>
+                <div className="flex min-w-0 flex-wrap gap-1.5" role="tablist" aria-label="Product readiness groups">
+                  {SUPPLIER_REVIEW_READINESS_GROUPS.map((group) => (
+                    <button key={group.id} type="button" role="tab" aria-selected={reviewFilter === group.id} onClick={() => handleReviewFilterChange(group.id)} className={`min-h-10 rounded-xl px-3 text-[11px] font-black transition-colors ${reviewFilter === group.id ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-blue-50 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800'}`}>
+                      {group.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="mt-3 flex min-w-0 flex-wrap gap-1.5" role="tablist" aria-label="Product review operational views">
                 {([
                   ['actionable', 'Actionable'],
-                  ['ready', 'Ready for review'],
+                  ['ready', 'Validated'],
                   ['new', 'New'],
                   ['updates', 'Updates'],
-                  ['issues', 'Needs attention'],
+                  ['issues', 'Other issues'],
                   ['waiting', 'Waiting'],
                   ['history', 'History'],
                 ] as const).map(([value, label]) => (
@@ -2958,9 +2977,9 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                 ))}
               </div>
               <details className="mt-3 rounded-xl border border-slate-200/70 px-3 py-2 dark:border-slate-800">
-                <summary className="cursor-pointer list-none text-[10px] font-black text-slate-500 outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-slate-300">More filters</summary>
+                <summary className="cursor-pointer list-none text-[10px] font-black text-slate-500 outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-slate-300">Operational filters</summary>
                 <div className="mt-3 flex min-w-0 flex-wrap gap-1.5" role="tablist" aria-label="Product review filters">
-                  {PRODUCT_REVIEW_FILTERS.map((filter) => (
+                  {PRODUCT_REVIEW_FILTERS.filter((filter) => !SUPPLIER_REVIEW_READINESS_GROUPS.some((group) => group.id === filter.id)).map((filter) => (
                     <button key={filter.id} type="button" role="tab" aria-selected={reviewFilter === filter.id} onClick={() => handleReviewFilterChange(filter.id)} className={`min-h-9 rounded-lg px-2.5 text-[10px] font-black transition-colors ${reviewFilter === filter.id ? 'bg-slate-800 text-white dark:bg-white dark:text-slate-900' : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800'}`}>
                       {filter.label}
                       {filter.id === 'low_stock_hold' && supplierReviewLowStockHoldCount !== null && <span className="ml-1.5" aria-label={`${supplierReviewLowStockHoldCount} products on low stock hold`}>{supplierReviewLowStockHoldCount}</span>}
@@ -2983,12 +3002,14 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                   <div className="flex flex-wrap items-center gap-2">
                     <h3 className="flex items-center gap-1.5 text-sm font-extrabold uppercase tracking-wider text-slate-900 dark:text-white">
                       <UserCheck className="h-4 w-4 text-blue-500" aria-hidden="true" />
-                      <span>{({ actionable: 'Actionable', ready: 'Ready for review', new: 'New', updates: 'Updates', issues: 'Needs attention', waiting: 'Waiting', history: 'History', low_stock: 'Low Stock Hold' } as Record<SupplierReviewQueueView, string>)[reviewQueueView]}</span>
+                      <span>{SUPPLIER_REVIEW_READINESS_GROUPS.find((group) => group.id === reviewFilter)?.label || ({ actionable: 'Actionable', ready: 'Validated', new: 'New', updates: 'Updates', issues: 'Other issues', waiting: 'Waiting', history: 'History', low_stock: 'Low Stock Hold' } as Record<SupplierReviewQueueView, string>)[reviewQueueView]}</span>
                     </h3>
                     <span className="rounded-full bg-slate-100 px-2 py-1 text-[9px] font-black text-slate-500 dark:bg-slate-900 dark:text-slate-300">{reviewMediaFilter === 'all' ? 'All media' : reviewMediaFilter === 'ready' ? 'Media ready' : reviewMediaFilter === 'processing' ? 'Waiting for media' : 'Media issues'}</span>
                   </div>
                   <p className="mt-1 text-[11px] text-slate-400">Page {supplierReviewPage}{supplierReviewTotalPages !== null ? ` of ${supplierReviewTotalPages}` : ''} · {supplierReviewTotalCount !== null ? `${supplierReviewTotalCount.toLocaleString()} matching records` : 'Count unavailable for this derived filter'}</p>
-                  {reviewQueueView === 'ready' && <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">Ready for review means the managed media and publication checks pass; normal products can be approved without editing required fields.</p>}
+                  {SUPPLIER_REVIEW_READINESS_GROUPS.some((group) => group.id === reviewFilter)
+                    ? <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">This group is server-derived. Review every displayed reason, then use the existing Admin approval action.</p>
+                    : reviewQueueView === 'ready' && <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">Validated is the legacy operational view. Use the Publish readiness groups above for the primary publication decision.</p>}
                 </div>
                 <div className="flex items-center gap-3 text-[10px] font-bold text-slate-400">
                   {supplierReviewLoading && <span role="status" className="inline-flex items-center gap-1.5 text-blue-600 dark:text-blue-300"><RefreshCw className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> Updating page…</span>}
@@ -3056,6 +3077,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                         supplierItemCode={draft.supplierItemCode}
                         managedImageUrl={managedImageUrl}
                         statusLabel={statusLabel}
+                        readinessLabel={supplierReviewReadinessGroupLabel(item)}
                         changeLabel={supplierReviewChangeLabel(item.comparison)}
                         sellingPrice={draft.sellingPrice}
                         supplierCost={draft.costPrice}

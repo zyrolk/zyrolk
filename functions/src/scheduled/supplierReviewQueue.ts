@@ -1551,6 +1551,10 @@ export type SupplierReviewQueueSort = "created" | "updated";
 export type SupplierReviewBusinessFilter =
   | "actionable"
   | "ready_for_review"
+  | "ready_to_publish"
+  | "category_decision_required"
+  | "missing_details"
+  | "stock_price_issues"
   | "new_products"
   | "product_updates"
   | "removed_products"
@@ -1705,8 +1709,16 @@ export const SUPPLIER_REVIEW_CLASSIFICATION_FIELDS = [
   "comparison.matchedProductLive",
   "comparison.matchFound",
   "approvalBaseline.exists",
+  "reconciliationAction",
+  "approvalConflict",
+  "productValidation.readyToPublish",
+  "productValidation.lowStockHold",
+  "productValidation.missingFields",
+  "productValidation.errors",
   "categoryMapping.autoSelected",
   "categoryMapping.targetCategoryId",
+  "categoryMapping.targetSubcategoryId",
+  "categoryMapping.requiresManualSelection",
   "productPayload.category",
   "productPayload.supplierFieldOwnership.category",
   "productPayload.supplierFieldOwnership.subcategory",
@@ -1921,6 +1933,90 @@ export const supplierReviewRecordIsReadyForReview = (record: SupplierQueueRecord
     && supplierReviewRecordHasPublicationReadyMedia(record);
 };
 
+export type SupplierReviewReadinessGroup =
+  | "ready_to_publish"
+  | "category_decision_required"
+  | "missing_details"
+  | "stock_price_issues"
+  | "conflicts";
+
+const validationEntries = (record: SupplierQueueRecord): {
+  missingFields: string[];
+  errors: Array<Record<string, unknown>>;
+} => {
+  const validation = asRecord(record.productValidation);
+  return {
+    missingFields: Array.isArray(validation.missingFields)
+      ? validation.missingFields.map((field) => normalizedReviewValue(field)).filter(Boolean)
+      : [],
+    errors: Array.isArray(validation.errors)
+      ? validation.errors.map((error) => asRecord(error))
+      : [],
+  };
+};
+
+const validationFieldOrCodeMatches = (
+  entries: ReturnType<typeof validationEntries>,
+  matcher: RegExp,
+): boolean => entries.missingFields.some((field) => matcher.test(field))
+  || entries.errors.some((error) => matcher.test(`${normalizedReviewValue(error.field)} ${normalizedReviewValue(error.code)} ${normalizedReviewValue(error.message)}`));
+
+const supplierReviewRecordHasConflictIssue = (record: SupplierQueueRecord): boolean => {
+  if (reviewRecordIsConflict(record) || reviewComparisonIsRemoval(
+    asRecord(record.comparison).comparisonStatus || record.comparisonStatus,
+  )) return true;
+  const entries = validationEntries(record);
+  return validationFieldOrCodeMatches(entries, /conflict|duplicate|identity|match|live_equivalent|already_exists/u)
+    || Boolean(asRecord(record).approvalConflict);
+};
+
+const supplierReviewRecordHasStockOrPriceIssue = (record: SupplierQueueRecord): boolean => {
+  if (supplierReviewRecordIsLowStockHold(record)) return true;
+  return validationFieldOrCodeMatches(
+    validationEntries(record),
+    /stock|inventory|price|cost|margin|selling/u,
+  );
+};
+
+const supplierReviewRecordNeedsCategoryDecision = (
+  record: SupplierQueueRecord,
+  categoryRequiresSubcategory = false,
+): boolean => {
+  const projectedRecord = projectLegacySupplierDerivedReviewValidation(record, categoryRequiresSubcategory) as SupplierQueueRecord;
+  const entries = validationEntries(projectedRecord);
+  if (validationFieldOrCodeMatches(entries, /^category$|^subcategory$|taxonomy|category_required/u)) return true;
+
+  const payload = asRecord(projectedRecord.productPayload);
+  const categoryId = asString(payload.category);
+  const subcategoryId = asString(payload.subcategory);
+  if (!categoryId || categoryRequiresSubcategory && !subcategoryId) return true;
+  if (asRecord(projectedRecord.categoryMapping).requiresManualSelection === true) return true;
+
+  // A source-derived taxonomy suggestion remains a suggestion until the
+  // administrator owns the category hierarchy. This is the same conservative
+  // legacy rule used by the approval-time taxonomy authority.
+  if (hasLegacySupplierDerivedReviewTaxonomy(projectedRecord)) return true;
+  return false;
+};
+
+/**
+ * One primary operator group for the existing Product Review workflow. The
+ * complete validation evidence is intentionally left on the record; this
+ * helper only chooses the first navigation bucket using explicit precedence.
+ */
+export const supplierReviewReadinessGroupForRecord = (
+  record: SupplierQueueRecord,
+  categoryRequiresSubcategory = false,
+): SupplierReviewReadinessGroup | null => {
+  const projectedRecord = projectSupplierReviewLowStockHold(record, categoryRequiresSubcategory);
+  if (!reviewRecordIsActionable(projectedRecord) || reviewRecordIsTerminalDecision(projectedRecord)) return null;
+  if (supplierReviewRecordHasConflictIssue(projectedRecord)) return "conflicts";
+  if (supplierReviewRecordHasStockOrPriceIssue(projectedRecord)) return "stock_price_issues";
+  if (supplierReviewRecordNeedsCategoryDecision(projectedRecord, categoryRequiresSubcategory)) return "category_decision_required";
+  if (supplierReviewRecordIsReadyForReview(projectedRecord)) return "ready_to_publish";
+  return "missing_details";
+};
+
 /**
  * Mirrors the Product Review business filters on the server pagination boundary.
  * Conflicts and removals keep precedence; any other active record that is on a
@@ -1945,10 +2041,15 @@ export const reviewRecordMatchesBusinessFilter = (
       && !supplierReviewRecordIsLowStockHold(projectedRecord);
   }
   if (filter === "ready_for_review") return supplierReviewRecordIsReadyForReview(projectedRecord);
-  if (filter === "conflicts") return reviewRecordIsConflict(projectedRecord);
-  if (reviewRecordIsConflict(projectedRecord)) return false;
+  if (filter === "ready_to_publish") return supplierReviewReadinessGroupForRecord(projectedRecord, categoryRequirements?.get(supplierReviewCategoryId(record)) === true) === "ready_to_publish";
+  if (filter === "category_decision_required") return supplierReviewReadinessGroupForRecord(projectedRecord, categoryRequirements?.get(supplierReviewCategoryId(record)) === true) === "category_decision_required";
+  if (filter === "missing_details") return supplierReviewReadinessGroupForRecord(projectedRecord, categoryRequirements?.get(supplierReviewCategoryId(record)) === true) === "missing_details";
+  if (filter === "stock_price_issues") return supplierReviewReadinessGroupForRecord(projectedRecord, categoryRequirements?.get(supplierReviewCategoryId(record)) === true) === "stock_price_issues";
+  if (filter === "conflicts") return supplierReviewReadinessGroupForRecord(projectedRecord, categoryRequirements?.get(supplierReviewCategoryId(record)) === true) === "conflicts";
   if (filter === "removed_products") return reviewComparisonIsRemoval(comparisonStatus);
   if (reviewComparisonIsRemoval(comparisonStatus)) return false;
+  if (supplierReviewRecordHasConflictIssue(projectedRecord)) return false;
+  if (reviewRecordIsConflict(projectedRecord)) return false;
   const lowStockHold = supplierReviewRecordIsLowStockHold(projectedRecord);
   if (filter === "low_stock_hold") return lowStockHold;
   if (lowStockHold) return false;
@@ -1985,6 +2086,10 @@ export const SUPPLIER_REVIEW_BUSINESS_QUEUE_CLASSES_VERSION = SUPPLIER_REVIEW_BU
 export type SupplierReviewBusinessQueueClass =
   | "actionable"
   | "ready_for_review"
+  | "ready_to_publish"
+  | "category_decision_required"
+  | "missing_details"
+  | "stock_price_issues"
   | "new_products"
   | "product_updates"
   | "removed_products"
@@ -2006,6 +2111,8 @@ export const buildSupplierReviewBusinessQueueProjection = (
   const classes = new Set<SupplierReviewBusinessQueueClass>();
   if (classifySupplierReviewRecordForCounts(projectedRecord) === "actionable") classes.add("actionable");
   if (reviewRecordMatchesBusinessFilter(projectedRecord, "ready_for_review")) classes.add("ready_for_review");
+  const readinessGroup = supplierReviewReadinessGroupForRecord(projectedRecord, categoryRequiresSubcategory);
+  if (readinessGroup) classes.add(readinessGroup);
   ([
     "new_products",
     "product_updates",
@@ -2131,6 +2238,10 @@ export async function listSupplierQueuePage(
       state,
       items: (await decorateSupplierReviewQueueAdminMedia(rawDocuments)).map((item, index) => ({
         ...item,
+        readinessGroup: supplierReviewReadinessGroupForRecord(
+          rawDocuments[index],
+          categoryRequirements?.get(supplierReviewCategoryId(rawDocuments[index])) === true,
+        ),
         launch1000RecordFingerprint: launch1000RecordFingerprint(rawDocuments[index] as Record<string, unknown>),
       })),
       nextCursor,
@@ -2155,6 +2266,10 @@ export async function listSupplierQueuePage(
     state,
     items: (await decorateSupplierReviewQueueAdminMedia(rawDocuments)).map((item, index) => ({
       ...item,
+      readinessGroup: supplierReviewReadinessGroupForRecord(
+        rawDocuments[index],
+        categoryRequirements?.get(supplierReviewCategoryId(rawDocuments[index])) === true,
+      ),
       launch1000RecordFingerprint: launch1000RecordFingerprint(rawDocuments[index] as Record<string, unknown>),
     })),
     nextCursor: cursorDocument?.id || null,
@@ -2396,6 +2511,10 @@ const projectReadModelDocuments = async (
   });
   return decorated.map((item, index) => ({
     ...item,
+    readinessGroup: supplierReviewReadinessGroupForRecord(
+      rawDocuments[index],
+      categoryRequirements?.get(supplierReviewCategoryId(rawDocuments[index])) === true,
+    ),
     media: classifySupplierMediaObservability(documents[index]?.data() || {}),
     launch1000RecordFingerprint: launch1000RecordFingerprint(documents[index]?.data() || {}),
   }));

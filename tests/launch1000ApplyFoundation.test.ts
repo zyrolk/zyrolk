@@ -475,7 +475,7 @@ test("product dry-run is zero-write and eligible apply updates only review proje
     const afterPayload = (after.productPayload || {}) as Record<string, unknown>;
     assert.equal(afterPayload.category, "test-category");
     assert.equal(afterPayload.subcategory, "test-subcategory");
-    assert.equal(after.businessQueueClassesVersion, 2);
+    assert.equal(after.businessQueueClassesVersion, 3);
     assert.equal((after.productValidation || {}).readyToPublish, true);
     assert.equal((after.launch1000Apply || {}).outcome, "READY_FOR_REVIEW");
     assert.equal(afterPayload.stock, queueRecord.productPayload.stock);

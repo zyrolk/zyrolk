@@ -34,6 +34,10 @@ test('Supplier Hub exposes the five simple primary sections', () => {
 test('Product Review presents the required business filters and maps them to existing data', () => {
   assert.deepEqual(PRODUCT_REVIEW_FILTERS.map((filter) => filter.label), [
     'Actionable',
+    'Ready to Publish',
+    'Category Decision Required',
+    'Missing Details',
+    'Stock / Price Issues',
     'New Products',
     'Product Updates',
     'Removed Products',
@@ -42,6 +46,10 @@ test('Product Review presents the required business filters and maps them to exi
     'Low Stock Hold',
     'Review History',
   ]);
+  assert.equal(matchesProductReviewFilter({ readinessGroup: 'ready_to_publish' }, 'ready_to_publish'), true);
+  assert.equal(matchesProductReviewFilter({ readinessGroup: 'category_decision_required' }, 'category_decision_required'), true);
+  assert.equal(matchesProductReviewFilter({ readinessGroup: 'missing_details' }, 'missing_details'), true);
+  assert.equal(matchesProductReviewFilter({ readinessGroup: 'stock_price_issues' }, 'stock_price_issues'), true);
   assert.equal(matchesProductReviewFilter({ comparison: { comparisonStatus: 'NEW_PRODUCT' } }, 'new_products'), true);
   assert.equal(matchesProductReviewFilter({ comparison: { comparisonStatus: 'PRICE_CHANGED' } }, 'product_updates'), true);
   assert.equal(matchesProductReviewFilter({ comparison: { comparisonStatus: 'SUPPLIER_OFFER_REMOVED' } }, 'removed_products'), true);

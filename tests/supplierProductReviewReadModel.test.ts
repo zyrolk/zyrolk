@@ -84,7 +84,7 @@ const makeFakeDb = (records: StoredRecord[], options: { mediaProjectionActive?: 
           data: () => ((id === 'supplier_review_queue_media_projection' && options.mediaProjectionActive === true)
             || (id === 'supplier_review_queue_business_projection' && options.businessProjectionActive === true))
             ? { status: 'active', version: id === 'supplier_review_queue_business_projection'
-              ? (options.businessProjectionVersion ?? 2)
+              ? (options.businessProjectionVersion ?? 3)
               : 1 }
             : undefined,
         }
@@ -306,7 +306,7 @@ test('indexed business projection provides direct Actionable pages and exact cou
       status: 'Pending',
       queueState: 'review_pending',
       businessQueueClasses: ['actionable'],
-      businessQueueClassesVersion: 2,
+      businessQueueClassesVersion: 3,
       comparison: { comparisonStatus: 'NEW_PRODUCT' },
       productValidation: { readyToPublish: true, missingFields: [], errors: [] },
       createdAt: new Date(Date.UTC(2026, 0, 1, 0, 0, 0, 75 - index)).toISOString(),

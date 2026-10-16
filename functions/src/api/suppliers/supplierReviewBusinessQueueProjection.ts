@@ -7,7 +7,7 @@ export const SUPPLIER_REVIEW_BUSINESS_PROJECTION_DOCUMENT = "supplier_review_que
  * classes.  It must move with the class schema so an older active marker can
  * never authorize a newer indexed query contract.
  */
-export const SUPPLIER_REVIEW_BUSINESS_PROJECTION_VERSION = 2;
+export const SUPPLIER_REVIEW_BUSINESS_PROJECTION_VERSION = 3;
 
 export interface SupplierReviewBusinessProjectionStatus {
   status: "pending" | "active";
