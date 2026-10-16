@@ -2010,6 +2010,12 @@ export const supplierReviewReadinessGroupForRecord = (
 ): SupplierReviewReadinessGroup | null => {
   const projectedRecord = projectSupplierReviewLowStockHold(record, categoryRequiresSubcategory);
   if (!reviewRecordIsActionable(projectedRecord) || reviewRecordIsTerminalDecision(projectedRecord)) return null;
+  const comparisonStatus = normalizedReviewValue(
+    asRecord(projectedRecord.comparison).comparisonStatus || projectedRecord.comparisonStatus,
+  );
+  // Removals retain their established Removed Products precedence and are not
+  // publication-readiness work, even when their old payload has other issues.
+  if (reviewComparisonIsRemoval(comparisonStatus)) return null;
   if (supplierReviewRecordHasConflictIssue(projectedRecord)) return "conflicts";
   if (supplierReviewRecordHasStockOrPriceIssue(projectedRecord)) return "stock_price_issues";
   if (supplierReviewRecordNeedsCategoryDecision(projectedRecord, categoryRequiresSubcategory)) return "category_decision_required";

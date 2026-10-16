@@ -57,8 +57,8 @@ test('empty Supplier Hub views use business empty states while real App Check fa
 test('mobile Supplier Hub navigation and review filters wrap without horizontal tab scrolling', () => {
   assert.match(supplierHubSource, /id="supplier-hub-section-mobile"/);
   assert.match(supplierHubSource, /hidden flex-wrap items-center gap-1\.5 md:flex/);
-  assert.match(supplierHubSource, /role="tablist" aria-label="Product review queue views"/);
-  assert.match(supplierHubSource, /<summary[^>]*>More filters<\/summary>/);
+  assert.match(supplierHubSource, /role="tablist" aria-label="Product readiness groups"/);
+  assert.match(supplierHubSource, /<summary[^>]*>Operational filters<\/summary>/);
 });
 
 test('supplier card does not imply a successful sync is merely waiting to update', () => {

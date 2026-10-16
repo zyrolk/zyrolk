@@ -36,7 +36,7 @@ test('Review Queue uses simple views while retaining exact search and bounded pa
   assert.doesNotMatch(hub, />Load more products</u);
   assert.doesNotMatch(hub, /\.offset\(/u);
   assert.match(hub, /\['ready', 'Media ready'\]/u);
-  assert.match(hub, /\['issues', 'Needs attention'\]/u);
+  assert.match(hub, /\['issues', 'Other issues'\]/u);
 });
 
 test('Compact review cards keep decisions safe and move diagnostics into secondary actions', () => {

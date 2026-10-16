@@ -73,6 +73,10 @@ test('Product Review is the only normal approval workspace and uses business lan
 
   assert.deepEqual(PRODUCT_REVIEW_FILTERS.map((item) => item.label), [
     'Actionable',
+    'Ready to Publish',
+    'Category Decision Required',
+    'Missing Details',
+    'Stock / Price Issues',
     'New Products',
     'Product Updates',
     'Removed Products',
