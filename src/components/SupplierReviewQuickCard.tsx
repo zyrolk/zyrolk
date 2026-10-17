@@ -69,7 +69,15 @@ export interface SupplierReviewQuickCardProps {
   onRetryMedia?: () => void;
 }
 
-function ManagedSupplierImage({ src, alt }: { src?: string; alt: string }) {
+function ManagedSupplierImage({
+  src,
+  alt,
+  mediaState,
+}: {
+  src?: string;
+  alt: string;
+  mediaState?: SupplierReviewMediaEvidence['state'];
+}) {
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
@@ -77,9 +85,22 @@ function ManagedSupplierImage({ src, alt }: { src?: string; alt: string }) {
   }, [src]);
 
   if (!isValidSupplierImageUrl(src) || failed) {
+    const reason = failed
+      ? 'Preview failed to load'
+      : mediaState === 'PROCESSING' || mediaState === 'RETRY_SCHEDULED'
+        ? 'Managed media is processing'
+        : mediaState === 'NEEDS_ATTENTION' || mediaState === 'SUPPLIER_IMAGE_UNAVAILABLE' || mediaState === 'PERMANENT_MEDIA_CONSTRAINT'
+          ? 'Managed media needs attention'
+          : 'Managed preview is unavailable';
     return (
-        <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-center text-[8px] font-bold uppercase leading-tight text-slate-400 dark:bg-slate-800 sm:h-16 sm:w-16">
-        No image
+      <div
+        className="flex h-14 w-14 shrink-0 flex-col items-center justify-center rounded-xl bg-slate-100 px-1 text-center text-[8px] font-bold leading-tight text-slate-500 dark:bg-slate-800 dark:text-slate-300 sm:h-16 sm:w-16"
+        role="img"
+        aria-label={`Image preview unavailable: ${reason}`}
+        data-media-preview="unavailable"
+      >
+        <span>Preview unavailable</span>
+        <span className="mt-0.5 text-[7px] font-semibold normal-case text-slate-400 dark:text-slate-500">{failed ? 'Load failed' : 'Managed media'}</span>
       </div>
     );
   }
@@ -88,6 +109,7 @@ function ManagedSupplierImage({ src, alt }: { src?: string; alt: string }) {
     <img
       src={src}
       alt={alt}
+      data-media-preview="managed"
       className="h-14 w-14 shrink-0 rounded-xl border border-slate-200 object-cover dark:border-slate-800 sm:h-16 sm:w-16"
       referrerPolicy="no-referrer"
       loading="lazy"
@@ -180,26 +202,41 @@ export function SupplierReviewQuickCard({
     return (
       <article className="supplier-review-compact-card group rounded-2xl border border-slate-200 bg-white shadow-sm transition-shadow hover:shadow-md dark:border-slate-800 dark:bg-slate-950">
         <div className="grid min-w-0 gap-3 p-3 sm:grid-cols-[auto_minmax(0,1fr)_repeat(4,minmax(4.5rem,auto))_auto] sm:items-center">
-          <ManagedSupplierImage src={managedImageUrl} alt={`Managed product image for ${productName}`} />
+          <ManagedSupplierImage src={managedImageUrl} alt={`Managed product image for ${productName}`} mediaState={mediaState} />
           <div className="min-w-0">
             <div className="flex min-w-0 items-start gap-2">
               <div className="min-w-0 flex-1">
                 <h4 className="line-clamp-2 break-words text-sm font-black text-slate-900 dark:text-white">{productName}</h4>
                 <p className="mt-1 truncate text-[9px] font-bold uppercase tracking-wide text-slate-400">SKU <span className="font-mono normal-case">{supplierItemCode || 'Not supplied'}</span></p>
               </div>
-              <span className={`shrink-0 rounded-full px-2 py-1 text-[9px] font-black ${highLevelStatus === 'Actionable' || highLevelStatus === 'Ready to Publish' ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : highLevelStatus === 'Waiting' ? 'bg-blue-500/10 text-blue-700 dark:text-blue-300' : highLevelStatus === 'Review' ? 'bg-slate-500/10 text-slate-700 dark:text-slate-300' : 'bg-amber-500/10 text-amber-700 dark:text-amber-300'}`} aria-label={`Review status: ${highLevelStatus}`}>{highLevelStatus}</span>
+              <span className={`shrink-0 rounded-full px-2 py-1 text-[9px] font-black ${highLevelStatus === 'Actionable' || highLevelStatus === 'Ready to Publish' ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : highLevelStatus === 'Waiting' ? 'bg-blue-500/10 text-blue-700 dark:text-blue-300' : highLevelStatus === 'Review' ? 'bg-slate-500/10 text-slate-700 dark:text-slate-300' : 'bg-amber-500/10 text-amber-700 dark:text-amber-300'}`} aria-label={`Readiness status: ${highLevelStatus}`}>{highLevelStatus}</span>
             </div>
             <div className="mt-2 flex flex-wrap items-center gap-1.5">
               <span className={`rounded-full px-2 py-0.5 text-[9px] font-black ${mediaTone}`} aria-label={`Media status: ${mediaLabel}`}>{mediaLabel}</span>
               {mediaAgeLabel && <span className="text-[9px] font-semibold text-slate-400">{mediaAgeLabel}</span>}
-              {blockingProblems.slice(0, 2).map((problem) => <span key={problem} className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[9px] font-black text-amber-700 dark:text-amber-300">{problem}</span>)}
             </div>
+            {blockingProblems.length > 0 && (
+              <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[9px]" aria-label="Primary blocker">
+                <span className="font-black uppercase tracking-wide text-amber-700 dark:text-amber-300">Primary blocker</span>
+                <span className="rounded-full bg-amber-500/10 px-2 py-0.5 font-black text-amber-700 dark:text-amber-300">{blockingProblems[0]}</span>
+                {blockingProblems.length > 1 && <span className="font-semibold text-slate-400">+{blockingProblems.length - 1} more</span>}
+              </div>
+            )}
+            {blockingProblems.length > 1 && (
+              <details className="mt-2 text-[9px]" onClick={(event) => event.stopPropagation()}>
+                <summary className="cursor-pointer font-black text-slate-500 outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-slate-400">View all blockers</summary>
+                <ul className="mt-1 list-disc space-y-1 pl-4 text-amber-700 dark:text-amber-300">
+                  {blockingProblems.map((problem) => <li key={problem}>{problem}</li>)}
+                </ul>
+              </details>
+            )}
+            <p className="mt-1 truncate text-[9px] font-semibold text-slate-500 dark:text-slate-400">{supplierAttribution || 'Supplier source unavailable'}</p>
           </div>
           <div className="grid grid-cols-2 gap-2 border-t border-slate-100 pt-2 text-[10px] dark:border-slate-800 sm:contents sm:border-0 sm:pt-0">
             <div><span className="block text-slate-400">Selling</span><strong className="font-black text-blue-600">LKR {sellingPrice.toLocaleString()}</strong></div>
             <div><span className="block text-slate-400">Stock</span><strong className="font-black">{formatSupplierStockLabel(stock, supplierStockAvailable)}</strong></div>
             <div><span className="block text-slate-400">Margin</span><strong className="font-black">{formatSupplierMarginLabel(marginPercent, profitAvailable)}</strong></div>
-            <div><span className="block text-slate-400">Zyro</span><strong className="line-clamp-2 font-black">{categoryLabel}{subcategoryLabel ? ` / ${subcategoryLabel}` : ''}</strong></div>
+            <div><span className="block text-slate-400">Suggested Zyro taxonomy</span><strong className="line-clamp-2 font-black">{categoryLabel}{subcategoryLabel ? ` / ${subcategoryLabel}` : ''}</strong><span className="mt-0.5 block text-[9px] font-semibold text-slate-400">Admin confirms</span></div>
           </div>
           <div className="flex items-center gap-2 sm:justify-end">
             <button type="button" onClick={onViewDetails} disabled={processing} aria-label={`Review product ${productName}`} className="min-h-11 flex-1 rounded-xl bg-blue-600 px-4 text-[10px] font-black text-white hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-50 sm:flex-none">Review</button>
@@ -225,7 +262,7 @@ export function SupplierReviewQuickCard({
     >
       <div className="flex min-w-0 flex-1 flex-col">
         <div className="flex items-start gap-3 p-3 sm:p-4">
-          <ManagedSupplierImage src={managedImageUrl} alt={`Managed product image for ${productName}`} />
+          <ManagedSupplierImage src={managedImageUrl} alt={`Managed product image for ${productName}`} mediaState={mediaState} />
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-start justify-between gap-2">
               <div className="min-w-0">
@@ -235,6 +272,7 @@ export function SupplierReviewQuickCard({
               <span className="rounded-full bg-slate-100 px-2 py-1 text-[9px] font-black text-slate-600 dark:bg-slate-800 dark:text-slate-300">{terminalState || statusLabel}</span>
             </div>
             <div className="mt-3 flex flex-wrap gap-2">
+              {readinessLabel && readinessLabel !== 'Readiness not recorded' && <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[9px] font-black text-emerald-700 dark:text-emerald-300" aria-label={`Readiness status: ${readinessLabel}`}>Readiness: {readinessLabel}</span>}
               <span className="rounded-full bg-blue-500/10 px-2 py-0.5 text-[9px] font-black text-blue-600">{terminalState === 'Dismissed by admin' ? 'Removed from Review' : changeLabel}</span>
               <span className={`rounded-full px-2 py-0.5 text-[9px] font-black ${mediaTone}`} aria-label={`Media status: ${mediaLabel}`}>{mediaLabel}</span>
               {(!terminalState || terminalState === 'Approved') && (
@@ -253,7 +291,7 @@ export function SupplierReviewQuickCard({
         </dl>
 
         <div className="grid gap-2 border-b border-slate-100 px-3 py-3 text-[10px] dark:border-slate-800 sm:grid-cols-3 sm:px-4">
-          <div><span className="font-black uppercase tracking-wide text-slate-400">Zyro taxonomy</span><p className="mt-1 font-semibold text-slate-700 dark:text-slate-200">{categoryLabel}</p>{subcategoryLabel && <p className="mt-0.5 text-[9px] font-semibold text-slate-500 dark:text-slate-400">{subcategoryLabel}</p>}</div>
+          <div><span className="font-black uppercase tracking-wide text-slate-400">Suggested Zyro taxonomy</span><p className="mt-1 font-semibold text-slate-700 dark:text-slate-200">{categoryLabel}</p>{subcategoryLabel && <p className="mt-0.5 text-[9px] font-semibold text-slate-500 dark:text-slate-400">{subcategoryLabel}</p>}<p className="mt-0.5 text-[9px] font-semibold text-slate-400">Admin confirms</p></div>
           <div><span className="font-black uppercase tracking-wide text-slate-400">Zyro brand</span><p className="mt-1 font-semibold text-slate-700 dark:text-slate-200">{brandLabel}</p></div>
           <div><span className="font-black uppercase tracking-wide text-slate-400">Storefront</span><p className="mt-1 font-semibold text-slate-700 dark:text-slate-200">{storefrontStatusLabel}</p></div>
         </div>

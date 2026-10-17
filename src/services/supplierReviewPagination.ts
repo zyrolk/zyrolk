@@ -2,6 +2,7 @@ export interface SupplierReviewPaginationQuery {
   view: string;
   filter: string;
   media: string;
+  supplierScope?: string;
   search: string;
   sort: string;
   pageSize: number;
@@ -11,6 +12,7 @@ export const buildSupplierReviewQueryKey = (query: SupplierReviewPaginationQuery
   view: query.view,
   filter: query.filter,
   media: query.media,
+  supplierScope: query.supplierScope?.trim() || '',
   search: query.search.trim(),
   sort: query.sort,
   pageSize: query.pageSize,

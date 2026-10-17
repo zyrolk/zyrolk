@@ -170,6 +170,94 @@
       "collectionGroup": "supplier_review_queue",
       "queryScope": "COLLECTION",
       "fields": [
+        { "fieldPath": "sourceId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" },
+        { "fieldPath": "__name__", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "supplier_review_queue",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "sourceId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "updatedAt", "order": "DESCENDING" },
+        { "fieldPath": "__name__", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "supplier_review_queue",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "mediaQueueClass", "order": "ASCENDING" },
+        { "fieldPath": "sourceId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" },
+        { "fieldPath": "__name__", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "supplier_review_queue",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "mediaQueueClass", "order": "ASCENDING" },
+        { "fieldPath": "sourceId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "updatedAt", "order": "DESCENDING" },
+        { "fieldPath": "__name__", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "supplier_review_queue",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "businessQueueClasses", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "sourceId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" },
+        { "fieldPath": "__name__", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "supplier_review_queue",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "businessQueueClasses", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "sourceId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "updatedAt", "order": "DESCENDING" },
+        { "fieldPath": "__name__", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "supplier_review_queue",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "businessQueueClasses", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "mediaQueueClass", "order": "ASCENDING" },
+        { "fieldPath": "sourceId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" },
+        { "fieldPath": "__name__", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "supplier_review_queue",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "businessQueueClasses", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "mediaQueueClass", "order": "ASCENDING" },
+        { "fieldPath": "sourceId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "updatedAt", "order": "DESCENDING" },
+        { "fieldPath": "__name__", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "supplier_review_queue",
+      "queryScope": "COLLECTION",
+      "fields": [
         { "fieldPath": "batchId", "order": "ASCENDING" },
         { "fieldPath": "createdAt", "order": "ASCENDING" }
       ]

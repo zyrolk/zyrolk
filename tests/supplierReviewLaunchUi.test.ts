@@ -150,6 +150,25 @@ test('rendered quick review uses verified catalogue labels and never renders raw
   assert.doesNotMatch(missingMarkup, new RegExp(`${categoryId}|${subcategoryId}|${brandId}`, 'u'));
 });
 
+test('compact review cards make supplier scope, readiness, taxonomy ownership, and unavailable media explicit', () => {
+  const markup = renderQuickCard({
+    managedImageUrl: '',
+    readinessLabel: 'Ready to Publish',
+    supplierAttribution: 'Dropex · Dropex',
+    blockingProblems: ['Select an active product category.', 'Supplier quantity not verified.'],
+    media: { state: 'PROCESSING', readiness: 'blocked' },
+    compact: true,
+  });
+  assert.match(markup, /Preview unavailable/u);
+  assert.doesNotMatch(markup, />No image</u);
+  assert.match(markup, /Dropex · Dropex/u);
+  assert.match(markup, /Primary blocker/u);
+  assert.match(markup, /View all blockers/u);
+  assert.match(markup, /Readiness status: Ready to Publish/u);
+  assert.match(markup, /Suggested Zyro taxonomy/u);
+  assert.match(markup, /Admin confirms/u);
+});
+
 test('rendered quick actions follow ready, invalid, conflict, and removal gates', () => {
   assert.match(renderQuickCard(), /aria-label="Approve Rendered QA product"/u);
   assert.match(renderQuickCard(), /aria-label="Reject Rendered QA product"/u);

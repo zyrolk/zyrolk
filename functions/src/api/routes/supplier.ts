@@ -295,6 +295,11 @@ const readSupplierReviewSearch = (value: unknown): string => {
   return value.trim();
 };
 
+const readSupplierReviewSourceId = (value: unknown): string | undefined => {
+  if (value === undefined || value === "") return undefined;
+  return cleanSupplierSourceId(value);
+};
+
 const startLocalSupplierSyncJob = (jobId: string): void => {
   if (!isLocalSupplierSyncWorkerRuntime()) return;
   void processSupplierSyncJob(jobId).catch((error) => {
@@ -864,6 +869,7 @@ export function registerSupplierRoutes(app: express.Express): void {
       const queryRevision = readSupplierReviewQueryRevision(req.query.revision);
       const search = readSupplierReviewSearch(req.query.search);
       const searchMode = readSupplierReviewSearchMode(req.query.searchMode);
+      const supplierSourceId = view === "review" ? readSupplierReviewSourceId(req.query.sourceId) : undefined;
       const mediaFilter = readSupplierReviewMediaFilter(req.query.media);
       const useReadModel = view === "review"
         && (readPageNumber !== undefined
@@ -871,12 +877,14 @@ export function registerSupplierRoutes(app: express.Express): void {
           || req.query.pageSize !== undefined
           || req.query.search !== undefined
           || req.query.media !== undefined
-          || req.query.searchMode !== undefined);
+          || req.query.searchMode !== undefined
+          || req.query.sourceId !== undefined);
       if (useReadModel) {
         const readModelQuery: SupplierReviewQueryModel = {
           view: "review",
           state,
           ...(businessFilter ? { businessFilter } : {}),
+          ...(supplierSourceId ? { supplierSourceId } : {}),
           mediaFilter,
           search,
           searchMode,

@@ -1570,6 +1570,7 @@ export interface SupplierReviewQueryModel {
   view: "review";
   state: SupplierReviewQueuePageState;
   businessFilter?: SupplierReviewBusinessFilter;
+  supplierSourceId?: string;
   mediaFilter: SupplierReviewMediaFilter;
   search: string;
   searchMode: SupplierReviewSearchMode;
@@ -2317,6 +2318,7 @@ export const buildSupplierReviewQueryFingerprint = (query: SupplierReviewQueryMo
     view: query.view,
     state: query.state,
     businessFilter: query.businessFilter || null,
+    supplierSourceId: query.supplierSourceId || null,
     mediaFilter: query.mediaFilter,
     search: query.search.trim(),
     searchMode: query.searchMode,
@@ -2385,6 +2387,9 @@ const reviewPageQuery = (
   if (useIndexedBusinessProjection && query.businessFilter) {
     result = result.where(SUPPLIER_REVIEW_BUSINESS_QUEUE_CLASSES_FIELD, "array-contains", query.businessFilter);
   }
+  if (query.supplierSourceId) {
+    result = result.where("sourceId", "==", query.supplierSourceId);
+  }
   if (useIndexedMediaProjection && query.mediaFilter !== "all") {
     const mediaQueueClass = query.mediaFilter === "ready"
       ? "ready"
@@ -2441,6 +2446,7 @@ const readExactSupplierReviewDocuments = async (
       const sortValue = reviewCursorValue(record[reviewSortField(query.sort)]);
       return Boolean(sortValue && sortValue <= queryRevision)
         && reviewRecordMatchesState(record, query.state)
+        && (!query.supplierSourceId || asString(record.sourceId) === query.supplierSourceId)
         && (!query.businessFilter || reviewRecordMatchesBusinessFilter(record, query.businessFilter, categoryRequirements))
         && supplierReviewMediaMatchesFilter(record, query.mediaFilter);
     })
@@ -2551,7 +2557,7 @@ const loadSupplierReviewMediaSummary = async (
   db: Firestore,
   query: SupplierReviewQueryModel,
 ): Promise<SupplierReviewMediaSummary> => {
-  if (query.businessFilter || query.search || query.mediaFilter !== "all" || query.state !== "active") {
+  if (query.businessFilter || query.search || query.supplierSourceId || query.mediaFilter !== "all" || query.state !== "active") {
     return emptySupplierReviewMediaSummary("Media summary is only aggregated for the unfiltered active review population.");
   }
   const [queued, leased, processing, retryScheduled] = await Promise.all([
@@ -2622,7 +2628,7 @@ export async function listSupplierReviewReadModelPage(
   const useIndexedQueueProjection = !query.search
     && (query.businessFilter ? useIndexedBusinessProjection : true)
     && (query.mediaFilter === "all" ? true : useIndexedMediaProjection)
-    && Boolean(query.businessFilter || query.mediaFilter !== "all");
+    && Boolean(query.supplierSourceId || query.businessFilter || query.mediaFilter !== "all");
   const count = await countSupplierReviewQuery(
     db,
     query,

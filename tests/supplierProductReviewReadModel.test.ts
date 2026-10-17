@@ -170,6 +170,101 @@ test('PR-1 exact supplier identity search finds a later-page record without brow
   assert.equal(result.searchCapabilities.productNamePrefix, false);
 });
 
+test('PR-1 supplier scope pages beyond the exact-search limit with an exact count', async () => {
+  const scopedRecords = records(150).map((record, index) => ({
+    ...record,
+    data: { ...record.data, sourceId: index < 121 ? 'dropex' : 'other-source' },
+  }));
+  const db = makeFakeDb(scopedRecords) as never;
+  const first = await listSupplierReviewReadModelPage(db, {
+    query: query({ supplierSourceId: 'dropex', pageSize: 50 }), page: 1,
+  });
+  const second = await listSupplierReviewReadModelPage(db, {
+    query: query({ supplierSourceId: 'dropex', pageSize: 50 }),
+    page: 2,
+    cursor: first.nextCursor || undefined,
+    queryRevision: first.queryRevision,
+  });
+  const third = await listSupplierReviewReadModelPage(db, {
+    query: query({ supplierSourceId: 'dropex', pageSize: 50 }),
+    page: 3,
+    cursor: second.nextCursor || undefined,
+    queryRevision: first.queryRevision,
+  });
+  assert.equal(first.countStatus, 'exact');
+  assert.equal(first.totalCount, 121);
+  assert.equal(first.totalPages, 3);
+  assert.equal(first.items.length, 50);
+  assert.equal(second.items.length, 50);
+  assert.equal(third.items.length, 21);
+  assert.equal(third.nextCursor, null);
+  assert.equal(new Set([...first.items, ...second.items, ...third.items].map((item) => item.id)).size, 121);
+  assert.equal(first.items[0]?.id, 'review-000');
+  assert.equal(third.items[0]?.id, 'review-100');
+});
+
+test('PR-1 supplier scope combines readiness and media predicates without client filtering', async () => {
+  const scopedRecords = records(120).map((record, index) => ({
+    ...record,
+    data: {
+      ...record.data,
+      sourceId: index < 100 ? 'dropex' : 'other-source',
+      businessQueueClasses: index < 60 ? ['category_decision_required'] : ['stock_price_issues'],
+      mediaQueueClass: index < 40 ? 'ready' : 'issues',
+    },
+  }));
+  const db = makeFakeDb(scopedRecords, { businessProjectionActive: true, mediaProjectionActive: true }) as never;
+  const first = await listSupplierReviewReadModelPage(db, {
+    query: query({
+      supplierSourceId: 'dropex',
+      businessFilter: 'category_decision_required',
+      mediaFilter: 'ready',
+      sort: 'updated',
+      pageSize: 25,
+    }),
+    page: 1,
+  });
+  const second = await listSupplierReviewReadModelPage(db, {
+    query: query({
+      supplierSourceId: 'dropex',
+      businessFilter: 'category_decision_required',
+      mediaFilter: 'ready',
+      sort: 'updated',
+      pageSize: 25,
+    }),
+    page: 2,
+    cursor: first.nextCursor || undefined,
+    queryRevision: first.queryRevision,
+  });
+  assert.equal(first.countStatus, 'exact');
+  assert.equal(first.totalCount, 40);
+  assert.equal(first.items.length, 25);
+  assert.equal(second.items.length, 15);
+  assert.equal(second.nextCursor, null);
+  assert.ok([...first.items, ...second.items].every((item) => item.sourceId === 'dropex'));
+});
+
+test('PR-1 All Suppliers mode remains an unscoped exact count and query fingerprint changes with scope', async () => {
+  const scopedRecords = records(150).map((record, index) => ({
+    ...record,
+    data: { ...record.data, sourceId: index < 121 ? 'dropex' : 'other-source' },
+  }));
+  const db = makeFakeDb(scopedRecords) as never;
+  const allSuppliers = await listSupplierReviewReadModelPage(db, {
+    query: query({ pageSize: 50 }), page: 1,
+  });
+  const dropex = await listSupplierReviewReadModelPage(db, {
+    query: query({ supplierSourceId: 'dropex', pageSize: 50 }), page: 1,
+  });
+  assert.equal(allSuppliers.countStatus, 'exact');
+  assert.equal(allSuppliers.totalCount, 150);
+  assert.equal(dropex.totalCount, 121);
+  assert.notEqual(
+    buildSupplierReviewQueryFingerprint(query()),
+    buildSupplierReviewQueryFingerprint(query({ supplierSourceId: 'dropex' })),
+  );
+});
+
 test('PR-1 query fingerprints and cursors cannot cross query boundaries', async () => {
   const db = makeFakeDb(records(60)) as never;
   const first = await listSupplierReviewReadModelPage(db, { query: query(), page: 1 });
@@ -193,8 +288,21 @@ test('PR-1 client anchor cache is query-scoped and bounded', () => {
   cache.set(key, 2, 'opaque-page-2');
   assert.deepEqual(cache.nearest(key, 2), { page: 2, cursor: 'opaque-page-2' });
   assert.equal(cache.nearest('different-query', 2), null);
+  assert.notEqual(key, buildSupplierReviewQueryKey({ view: 'review', filter: 'new_products', media: 'all', supplierScope: 'dropex', search: '', sort: 'created', pageSize: 50 }));
   for (let page = 3; page <= 40; page += 1) cache.set(key, page, `cursor-${page}`);
   assert.equal(cache.nearest(key, 40)?.page, 40);
+});
+
+test('PR-1 supplier scope uses dedicated indexed fields and leaves identity search separate', () => {
+  const queue = readFileSync('functions/src/scheduled/supplierReviewQueue.ts', 'utf8');
+  const indexes = JSON.parse(readFileSync('firestore.indexes.json', 'utf8')) as {
+    indexes?: Array<{ collectionGroup?: string; fields?: Array<{ fieldPath?: string }> }>;
+  };
+  assert.match(queue, /where\("sourceId", "==", query\.supplierSourceId\)/u);
+  assert.match(queue, /Boolean\(query\.supplierSourceId \|\| query\.businessFilter/u);
+  assert.doesNotMatch(queue.slice(queue.indexOf('const SUPPLIER_REVIEW_EXACT_SEARCH_FIELDS'), queue.indexOf('] as const;', queue.indexOf('const SUPPLIER_REVIEW_EXACT_SEARCH_FIELDS'))), /sourceId|supplierId/u);
+  assert.equal(indexes.indexes?.filter((index) => index.collectionGroup === 'supplier_review_queue'
+    && index.fields?.some((field) => field.fieldPath === 'sourceId')).length, 8);
 });
 
 test('PR-1 preserves Admin authorization and does not introduce offset pagination', () => {

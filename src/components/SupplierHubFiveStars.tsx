@@ -528,6 +528,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
   const [pendingReviewBatchResult, setPendingReviewBatchResult] = useState<PendingReviewBatchJobView | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [reviewSearch, setReviewSearch] = useState<string>(initialProductReviewUrlState.search);
+  const [reviewSupplierScope, setReviewSupplierScope] = useState<string>('');
 
   // 1. Supplier Sources & Connect states
   const [supplierSources, setSupplierSources] = useState<any[]>([]);
@@ -880,6 +881,23 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
         : connectorValue.replaceAll('_', ' ').replace(/\b\w/gu, (letter) => letter.toUpperCase());
     return `${supplierLabel} · ${connectorLabel}`;
   }, [supplierSourceById]);
+  const supplierScopeOptions = useMemo(() => supplierSources
+    .map((source) => {
+      const sourceId = String(source.id || '').trim();
+      if (!sourceId) return null;
+      const supplierName = String(source.supplierName || source.name || sourceId).trim();
+      const connector = String(source.connectorType || source.supplierType || '').trim().toLowerCase();
+      const connectorLabel = connector.includes('dropex') ? 'Dropex' : connector.includes('a2z') ? 'A2Z' : '';
+      return {
+        id: sourceId,
+        label: connectorLabel && !supplierName.toLowerCase().includes(connectorLabel.toLowerCase())
+          ? `${supplierName} · ${connectorLabel}`
+          : supplierName,
+        priority: connectorLabel === 'Dropex' ? 0 : 1,
+      };
+    })
+    .filter((source): source is { id: string; label: string; priority: number } => Boolean(source))
+    .sort((left, right) => left.priority - right.priority || left.label.localeCompare(right.label)), [supplierSources]);
   const sourceIsSyncing = useCallback((sourceId: string): boolean => Boolean(
     currentSyncJob
     && isSupplierSyncJobActive(currentSyncJob)
@@ -993,11 +1011,13 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
     const queryMedia = reviewQueueMode === 'waiting'
       ? 'processing' as const
       : reviewQueueMode === 'ready' ? 'all' as const : reviewMediaFilter;
+    const effectiveReviewSearch = reviewSearch.trim();
     const queryKey = buildSupplierReviewQueryKey({
       view: 'review',
       filter: queryFilter,
       media: queryMedia,
-      search: reviewSearch,
+      supplierScope: reviewSupplierScope,
+      search: effectiveReviewSearch,
       sort: reviewSort,
       pageSize: supplierReviewPageSize,
     });
@@ -1032,8 +1052,9 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
         if (reviewSort === 'updated') parameters.set('sort', 'updated');
         if (queryFilter) parameters.set('filter', queryFilter);
         if (queryMedia !== 'all') parameters.set('media', queryMedia);
-        if (reviewSearch.trim()) {
-          parameters.set('search', reviewSearch.trim());
+        if (reviewSupplierScope.trim()) parameters.set('sourceId', reviewSupplierScope.trim());
+        if (effectiveReviewSearch) {
+          parameters.set('search', effectiveReviewSearch);
           parameters.set('searchMode', 'exact');
         }
         if (supplierReviewQueryRevisionRef.current) parameters.set('revision', supplierReviewQueryRevisionRef.current);
@@ -1110,7 +1131,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
       cancelled = true;
       if (refreshTimer !== null) window.clearTimeout(refreshTimer);
     };
-  }, [activeSubTab, refreshSupplierReviewActionableCount, reviewFilter, reviewMediaFilter, reviewQueueMode, reviewSort, reviewSearch, supplierReviewPage, supplierReviewPageSize]);
+  }, [activeSubTab, refreshSupplierReviewActionableCount, reviewFilter, reviewMediaFilter, reviewQueueMode, reviewSort, reviewSearch, reviewSupplierScope, supplierReviewPage, supplierReviewPageSize]);
 
   const updateProductReviewUrl = (
     patch: Partial<{ filter: ProductReviewFilter; media: 'all' | 'ready' | 'processing' | 'issues'; queueMode: SupplierReviewQueueMode; sort: 'created' | 'updated'; search: string; page: number; pageSize: ProductReviewPageSize }>,
@@ -1189,9 +1210,17 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
   };
 
   const handleReviewSearchChange = (search: string): void => {
+    setReviewSupplierScope('');
     setReviewSearch(search);
     setSupplierReviewPage(1);
     updateProductReviewUrl({ search, page: 1 }, 'replace');
+  };
+
+  const handleReviewSupplierScopeChange = (sourceId: string): void => {
+    setReviewSupplierScope(sourceId);
+    setReviewSearch('');
+    setSupplierReviewPage(1);
+    updateProductReviewUrl({ search: '', page: 1 });
   };
 
   const handleReviewPageSizeChange = (pageSize: ProductReviewPageSize): void => {
@@ -2793,7 +2822,8 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
               <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Review actionable products and check supplier health at a glance.</p>
             </div>
 
-            <div className="grid grid-cols-2 gap-3 lg:grid-cols-5" aria-label="Supplier Hub actionable summary">
+            <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Global review overview</p>
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-5" aria-label="Global Supplier Hub actionable summary">
               {[
                 { label: 'Actionable review', value: supplierReviewOverview?.actionableReviewCount ?? null, tone: 'emerald' },
                 { label: 'Media ready', value: overviewMediaCounts?.ready ?? null, tone: 'teal' },
@@ -2906,12 +2936,12 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                   <p className="mt-1 max-w-xl text-xs text-slate-500 dark:text-slate-400">Review actionable supplier products before they appear in your store.</p>
                 </div>
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:min-w-[25rem]">
-                  {supplierReviewActionableCount !== null && <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-800 dark:bg-slate-900/60"><p className="text-[9px] font-black uppercase tracking-wider text-slate-400">Pending</p><p className="mt-1 text-lg font-black text-slate-900 dark:text-white">{supplierReviewActionableCount.toLocaleString()}</p></div>}
+                  {supplierReviewActionableCount !== null && <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-800 dark:bg-slate-900/60" aria-label="Global supplier review pending count"><p className="text-[9px] font-black uppercase tracking-wider text-slate-400">Global pending</p><p className="mt-1 text-lg font-black text-slate-900 dark:text-white">{supplierReviewActionableCount.toLocaleString()}</p></div>}
                   {supplierReviewMediaSummary?.counts?.processing !== null && supplierReviewMediaSummary?.counts?.processing !== undefined && <div className="rounded-2xl border border-blue-100 bg-blue-50/60 px-3 py-2 dark:border-blue-900/40 dark:bg-blue-950/20"><p className="text-[9px] font-black uppercase tracking-wider text-blue-700 dark:text-blue-300">Processing</p><p className="mt-1 text-lg font-black text-blue-800 dark:text-blue-200">{supplierReviewMediaSummary.counts.processing.toLocaleString()}</p></div>}
                   {supplierReviewMediaSummary?.counts?.retryScheduled !== null && supplierReviewMediaSummary?.counts?.retryScheduled !== undefined && <div className="rounded-2xl border border-amber-100 bg-amber-50/60 px-3 py-2 dark:border-amber-900/40 dark:bg-amber-950/20"><p className="text-[9px] font-black uppercase tracking-wider text-amber-700 dark:text-amber-300">Retry scheduled</p><p className="mt-1 text-lg font-black text-amber-800 dark:text-amber-200">{supplierReviewMediaSummary.counts.retryScheduled.toLocaleString()}</p></div>}
                 </div>
               </div>
-              <div className="mt-5 grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto_auto] lg:items-end">
+              <div className="mt-5 grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(12rem,16rem)_auto_auto] lg:items-end">
                 <div className="relative min-w-0">
                   <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" aria-hidden="true" />
                   <input
@@ -2923,6 +2953,18 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                     className="min-h-11 w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-9 pr-3 text-xs focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-slate-800 dark:bg-slate-900/50"
                   />
                 </div>
+                <label className="flex min-w-0 flex-col gap-1 text-[10px] font-black uppercase tracking-wider text-slate-400">
+                  <span>Supplier focus</span>
+                  <select
+                    value={reviewSupplierScope}
+                    onChange={(event) => handleReviewSupplierScopeChange(event.target.value)}
+                    aria-label="Filter Product Review by supplier"
+                    className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold normal-case tracking-normal text-slate-700 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200"
+                  >
+                    <option value="">All suppliers</option>
+                    {supplierScopeOptions.map((source) => <option key={source.id} value={source.id}>{source.label}</option>)}
+                  </select>
+                </label>
                 <label className="flex items-center gap-2 text-[10px] font-black uppercase tracking-wider text-slate-400">
                   <span>Sort</span>
                   <select
@@ -2947,7 +2989,11 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                   </select>
                 </label>
               </div>
-              <p className="mt-2 text-[10px] text-slate-400">Search by exact supplier SKU, product ID or item code. Product-name search is not enabled.</p>
+              <p className="mt-2 text-[10px] text-slate-400">
+                {reviewSupplierScope
+                  ? `Showing ${supplierScopeOptions.find((source) => source.id === reviewSupplierScope)?.label || 'selected supplier'} using an exact server-side source match; counts and pagination remain authoritative.`
+                  : 'Search by exact supplier SKU, product ID or item code. Product-name search is not enabled.'}
+              </p>
               <div className="mt-4 rounded-2xl border border-blue-500/20 bg-blue-500/5 p-3 dark:bg-blue-500/10" aria-label="Product readiness groups">
                 <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                   <p className="text-[10px] font-black uppercase tracking-wider text-blue-700 dark:text-blue-300">Publish readiness</p>
@@ -2956,10 +3002,18 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                 <div className="flex min-w-0 flex-wrap gap-1.5" role="tablist" aria-label="Product readiness groups">
                   {SUPPLIER_REVIEW_READINESS_GROUPS.map((group) => (
                     <button key={group.id} type="button" role="tab" aria-selected={reviewFilter === group.id} onClick={() => handleReviewFilterChange(group.id)} className={`min-h-10 rounded-xl px-3 text-[11px] font-black transition-colors ${reviewFilter === group.id ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-blue-50 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800'}`}>
-                      {group.label}
+                      <span>{group.label}</span>
+                      {reviewFilter === group.id && supplierReviewTotalCount !== null && <span className="ml-1.5 rounded-full bg-white/20 px-1.5 py-0.5 font-mono text-[9px]" aria-label={`${supplierReviewTotalCount.toLocaleString()} server-counted products`}>{supplierReviewTotalCount.toLocaleString()}</span>}
                     </button>
                   ))}
                 </div>
+                <p className="mt-2 text-[10px] text-slate-500 dark:text-slate-400">
+                  {SUPPLIER_REVIEW_READINESS_GROUPS.some((group) => group.id === reviewFilter)
+                    ? supplierReviewTotalCount === null
+                      ? 'Select a readiness group to load its exact server count.'
+                      : `${supplierReviewTotalCount.toLocaleString()} products in the selected group · server-counted`
+                    : 'Select one of the five readiness groups for the primary publication review.'}
+                </p>
               </div>
               <div className="mt-3 flex min-w-0 flex-wrap gap-1.5" role="tablist" aria-label="Product review operational views">
                 {([

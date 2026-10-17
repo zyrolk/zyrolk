@@ -39,6 +39,17 @@ test('Review Queue uses simple views while retaining exact search and bounded pa
   assert.match(hub, /\['issues', 'Other issues'\]/u);
 });
 
+test('Review Queue exposes a server-backed supplier scope without client-side pagination filtering', () => {
+  assert.match(hub, /Filter Product Review by supplier/u);
+  assert.match(hub, /handleReviewSupplierScopeChange/u);
+  assert.match(hub, /exact server-side source match/u);
+  assert.match(hub, /supplierScope: reviewSupplierScope/u);
+  assert.match(hub, /parameters\.set\('sourceId', reviewSupplierScope\.trim\(\)\)/u);
+  assert.match(hub, /const effectiveReviewSearch = reviewSearch\.trim\(\)/u);
+  assert.match(hub, /Global review overview/u);
+  assert.match(hub, /Global pending/u);
+});
+
 test('Compact review cards keep decisions safe and move diagnostics into secondary actions', () => {
   assert.match(hub, /compact\s*\n?\s*mediaForensics/u);
   assert.match(card, /compact\?: boolean/u);

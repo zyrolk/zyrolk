@@ -54,9 +54,10 @@ test('supplier image diagnostics log each failed URL once during development', (
   });
 });
 
-test('Supplier Hub preserves the No image fallback after reporting a load failure', () => {
+test('Supplier Hub exposes an unavailable preview after reporting a load failure', () => {
   const source = readFileSync('src/components/SupplierReviewQuickCard.tsx', 'utf8');
 
-  assert.match(source, /if \(!isValidSupplierImageUrl\(src\) \|\| failed\)[\s\S]*?No image/);
+  assert.match(source, /if \(!isValidSupplierImageUrl\(src\) \|\| failed\)[\s\S]*?Preview unavailable/);
+  assert.doesNotMatch(source, />No image</u);
   assert.match(source, /onError=\{\(event\) => \{[\s\S]*?reportSupplierImageFailure\(event\.currentTarget\);[\s\S]*?setFailed\(true\);/);
 });
