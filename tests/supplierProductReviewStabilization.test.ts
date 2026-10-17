@@ -43,6 +43,8 @@ import {
 const projectFile = (path: string): string => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 const hub = projectFile('src/components/SupplierHubFiveStars.tsx');
 const editor = projectFile('src/components/SupplierReviewEditorModal.tsx');
+const supplierReviewDraftSource = projectFile('functions/src/api/suppliers/supplierReviewDraft.ts');
+const supplierApprovalSource = projectFile('functions/src/api/suppliers/supplierApproval.ts');
 
 const managedImage = 'https://firebasestorage.googleapis.com/v0/b/demo/o/supplier-media%2Fmanaged.webp?alt=media';
 const supplierImages = [
@@ -358,6 +360,70 @@ test('PR-STAB-08 missing required supplier specifications block review readiness
 
   const strictErrors = validateSupplierReviewDraft(draft, ['electronics'], categories as never, [{ id: 'brand-1', name: 'Brand', isActive: true }] as never);
   assert.equal(strictErrors.specifications, 'Complete required specifications: Model.');
+  const supplierReviewErrors = validateSupplierReviewDraft(
+    draft,
+    ['electronics'],
+    categories as never,
+    [{ id: 'brand-1', name: 'Brand', isActive: true }] as never,
+    { supplierReview: true },
+  );
+  assert.equal(supplierReviewErrors.specifications, 'Complete required specifications: Model.');
+});
+
+// 8b. Product Type is optional only in supplier-review validation
+test('PR-STAB-08b Product Type is optional for AJU0027 without weakening technical requirements', () => {
+  const categories = [{
+    id: 'home-garden',
+    name: 'Home & Garden',
+    isActive: true,
+    subcategories: [{ id: 'household', name: 'Household', isActive: true }],
+    specificationTemplate: [{ name: 'Product Type', required: true }],
+  }];
+  const draft = {
+    ...createSupplierReviewDraft({
+      ...baseItem,
+      productPayload: {
+        ...baseItem.productPayload,
+        name: 'Multi Purpose Cleaning Brush',
+        specs: {},
+      },
+    } as never),
+    category: 'home-garden',
+    subcategory: 'household',
+    specifications: {},
+  };
+  const frontendErrors = validateSupplierReviewDraft(draft, ['home-garden'], categories as never, [], { supplierReview: true });
+  assert.equal(frontendErrors.specifications, undefined);
+  assert.equal(supplierReviewSpecificationsRequired(baseItem, categories, 'home-garden'), false);
+  assert.equal(supplierReviewSpecificationsSatisfied(0, baseItem, categories, 'home-garden', {}), true);
+
+  const serverProduct = {
+    name: 'Multi Purpose Cleaning Brush',
+    imageUrl: 'https://cdn.example.test/brush.jpg',
+    price: 100,
+    description: 'A household cleaning brush.',
+    stock: 10,
+    isActive: true,
+    category: 'home-garden',
+    subcategory: 'household',
+    specs: {},
+  };
+  const supplierReviewErrors = validateSupplierProductForApproval(serverProduct, categories, [], { supplierReview: true });
+  assert.equal(supplierReviewErrors.some((error) => error.field === 'specs.Product Type'), false);
+  assert.equal(validateSupplierProductForApproval(serverProduct, categories, []).some((error) => error.field === 'specs.Product Type'), true);
+
+  const technicalCategories = [{
+    ...categories[0],
+    specificationTemplate: [
+      { name: 'Product Type', required: true },
+      { name: 'Model', required: true },
+    ],
+  }];
+  const technicalErrors = validateSupplierProductForApproval(serverProduct, technicalCategories, [], { supplierReview: true });
+  assert.equal(technicalErrors.some((error) => error.field === 'specs.Product Type'), false);
+  assert.equal(technicalErrors.some((error) => error.field === 'specs.Model'), true);
+  assert.match(supplierReviewDraftSource, /buildReviewValidationPayload\([\s\S]*?\{ supplierReview: true \}/u);
+  assert.match(supplierApprovalSource, /brandSnapshot\?\.exists[\s\S]*?\{ supplierReview: true \}/u);
 });
 
 // 9. supplier-provided values are preserved and never fabricated
@@ -390,7 +456,7 @@ test('PR-STAB-10 read-only modal hides mutation controls and image editor worksp
 
 // 11. edit/save refreshes category, specification, and optional brand validation
 test('PR-STAB-11 edit mode revalidates category and optional brand through the shared draft validator', () => {
-  assert.match(editor, /validateSupplierReviewDraft\(draft, validCategoryIds, categories, brands\)/u);
+  assert.match(editor, /validateSupplierReviewDraft\(draft, validCategoryIds, categories, brands, \{ supplierReview: true \}\)/u);
   assert.match(editor, /if \(!isEditing\) setDraft\(initialDraft\)/u);
   const draft = { ...createSupplierReviewDraft(baseItem as never), category: '', brand: '' };
   const categories = [{ id: 'electronics', name: 'Electronics', specificationTemplate: [] }];
@@ -492,6 +558,8 @@ test('PR-STAB-15 supplier approval enforces required specifications', () => {
   };
   const errors = validateSupplierProductForApproval(validWithoutSpecs, categories, brands);
   assert.ok(errors.some((error) => error.field === 'specs.Product Type'));
+  const supplierReviewErrors = validateSupplierProductForApproval(validWithoutSpecs, categories, brands, { supplierReview: true });
+  assert.equal(supplierReviewErrors.some((error) => error.field === 'specs.Product Type'), false);
   assert.deepEqual(validateSupplierProductForApproval({ ...validWithoutSpecs, category: '' }, categories, brands)
     .map((error) => error.field), ['category']);
   assert.ok(validateSupplierProductForApproval({ ...validWithoutSpecs, name: '' }, categories, brands)

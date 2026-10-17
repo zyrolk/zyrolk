@@ -252,6 +252,7 @@ export const recomputeProductValidation = async (
     buildReviewValidationPayload(current, payload),
     [category],
     brands,
+    { supplierReview: true },
   );
   const previous = asRecord(current.productValidation);
   const lowStockRecord = {

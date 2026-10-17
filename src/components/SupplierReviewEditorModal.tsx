@@ -27,6 +27,7 @@ import {
   supplierReviewManagedImageUrls,
   supplierReviewManagedCanonicalImageUrls,
   supplierReviewManagedImageUrlForCanonical,
+  supplierReviewSpecificationsRequired,
   supplierReviewSpecificationsSatisfied,
   supplierReviewIsLowStockHold,
   supplierReviewDecisionReady,
@@ -212,7 +213,7 @@ export default function SupplierReviewEditorModal({
     return options;
   }, [item.managedMedia, item.supplierSnapshot]);
   const validationErrors = useMemo(
-    () => validateSupplierReviewDraft(draft, validCategoryIds, categories, brands),
+    () => validateSupplierReviewDraft(draft, validCategoryIds, categories, brands, { supplierReview: true }),
     [brands, categories, draft, validCategoryIds],
   );
   const lowStockHold = supplierReviewIsLowStockHold(item);
@@ -269,9 +270,7 @@ export default function SupplierReviewEditorModal({
     && draft.category === categorySuggestion.categoryId
     && String(draft.subcategory || '') === String(categorySuggestion.subcategoryId || '');
   const missingParentProposal = categorySuggestion.missingParentCategoryProposal;
-  const specificationsRequired = Boolean(
-    (selectedCategory?.specificationTemplate || []).some((field) => field.required === true),
-  );
+  const specificationsRequired = supplierReviewSpecificationsRequired(item, categories, draft.category);
   const validationChecklist = useMemo(() => {
     const checks: Array<{ label: string; fields: Array<keyof typeof validationErrors> }> = [
       { label: 'Images', fields: ['primaryImageUrl', 'galleryImageUrls'] },
@@ -287,6 +286,7 @@ export default function SupplierReviewEditorModal({
       item,
       categories,
       draft.category,
+      draft.specifications,
     );
     const fieldChecks = checks.map((check) => {
       if (check.label === 'Specifications' && !specificationsRequired && specificationCount === 0) {

@@ -228,6 +228,21 @@ const finiteNumber = (value: unknown, fallback = 0): number => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
+export const normalizeSupplierSpecificationName = (value: unknown): string => String(value || '')
+  .normalize('NFKC')
+  .trim()
+  .toLocaleLowerCase('en')
+  .replace(/[^\p{L}\p{N}]+/gu, ' ')
+  .replace(/\s+/gu, ' ')
+  .trim();
+
+/** Product Type is optional only inside the supplier-review workflow. */
+export const isSupplierReviewOptionalSpecificationField = (
+  fieldName: unknown,
+  options: { supplierReview?: boolean } = {},
+): boolean => options.supplierReview === true
+  && normalizeSupplierSpecificationName(fieldName) === 'product type';
+
 const displayValue = (value: unknown): boolean => {
   if (value === undefined || value === null) return false;
   if (typeof value === 'string') return value.trim().length > 0;
@@ -810,16 +825,17 @@ export function validateSupplierReviewDraft(
   if (brand && brands && !brands.some((candidate) => candidate.id === brand && candidate.isActive !== false)) {
     errors.brand = 'Select an active registered brand.';
   }
-  if (options.supplierReview !== true) {
+  {
     const normalizedSpecifications = new Map(Object.entries(draft.specifications || {})
-      .map(([key, value]) => [key.normalize('NFKC').trim().toLocaleLowerCase(), value.trim()]));
-    const missingSpecifications = (selectedCategory?.specificationTemplate || [])
-      .filter((field) => field.required && !normalizedSpecifications.get(field.name.normalize('NFKC').trim().toLocaleLowerCase()))
+      .map(([key, value]) => [normalizeSupplierSpecificationName(key), value.trim()]));
+    const requiredSpecifications = (selectedCategory?.specificationTemplate || [])
+      .filter((field) => field.required && !isSupplierReviewOptionalSpecificationField(field.name, options));
+    const missingSpecifications = requiredSpecifications
+      .filter((field) => !normalizedSpecifications.get(normalizeSupplierSpecificationName(field.name)))
       .map((field) => field.name);
     if (missingSpecifications.length > 0) {
       errors.specifications = `Complete required specifications: ${missingSpecifications.join(', ')}.`;
-    } else if (countStructuredSupplierSpecifications(draft.specifications) === 0
-      && (selectedCategory?.specificationTemplate || []).some((field) => field.required === true)) {
+    } else if (countStructuredSupplierSpecifications(draft.specifications) === 0 && requiredSpecifications.length > 0) {
       errors.specifications = 'Complete required specifications before publishing.';
     }
   }
@@ -867,7 +883,7 @@ export function buildSupplierApprovalItem(
   draft: SupplierReviewDraft,
   validCategoryIds?: readonly string[],
 ): SupplierReviewSourceItem {
-  const validationErrors = validateSupplierReviewDraft(draft, validCategoryIds);
+  const validationErrors = validateSupplierReviewDraft(draft, validCategoryIds, undefined, undefined, { supplierReview: true });
   if (Object.keys(validationErrors).length > 0) {
     throw new Error(Object.values(validationErrors)[0]);
   }

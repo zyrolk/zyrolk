@@ -2322,7 +2322,7 @@ export async function refreshActiveSupplierReviewItem(
     source,
     refreshProductId || undefined,
   ), queueItem.productPayload);
-  const productValidationErrors = validateSupplierProductForApproval(productPayload, storeCategories, storeBrands);
+  const productValidationErrors = validateSupplierProductForApproval(productPayload, storeCategories, storeBrands, { supplierReview: true });
   if (!supplierReviewQueueMediaIsReady(productPayload.supplierMedia || productPayload.media)) {
     productValidationErrors.push({
       field: "images",
@@ -4257,7 +4257,7 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
             targetProductId,
             !inventoryAutomated && reactivation.reactivating,
           );
-          const productValidationErrors = validateSupplierProductForApproval(productPayload, storeCategories, storeBrands);
+          const productValidationErrors = validateSupplierProductForApproval(productPayload, storeCategories, storeBrands, { supplierReview: true });
           if (!supplierReviewQueueMediaIsReady(productPayload.supplierMedia || productPayload.media)) {
             productValidationErrors.push({
               field: "images",

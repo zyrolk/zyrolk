@@ -1,4 +1,7 @@
-import { countStructuredSupplierSpecifications } from './supplierReviewEditor';
+import {
+  countStructuredSupplierSpecifications,
+  isSupplierReviewOptionalSpecificationField,
+} from './supplierReviewEditor';
 
 /**
  * Primary Supplier Hub destinations. `activity` remains a compatibility alias
@@ -344,21 +347,31 @@ export function supplierReviewSpecificationCount(item: SupplierReviewQuickApprov
 
 export function supplierReviewSpecificationsRequired(
   _item: Pick<SupplierReviewQuickApprovalItem, 'productValidation'>,
-  categories: readonly { id?: unknown; specificationTemplate?: Array<{ required?: boolean }> }[] | undefined,
+  categories: readonly { id?: unknown; specificationTemplate?: Array<{ name?: unknown; required?: boolean }> }[] | undefined,
   categoryId: string,
 ): boolean {
   const category = categories?.find((candidate) => String(candidate.id || '').trim() === String(categoryId || '').trim());
-  return (category?.specificationTemplate || []).some((field) => field.required === true);
+  return (category?.specificationTemplate || []).some((field) => field.required === true
+    && !isSupplierReviewOptionalSpecificationField(field.name, { supplierReview: true }));
 }
 
 export function supplierReviewSpecificationsSatisfied(
   specificationCount: number,
   item: Pick<SupplierReviewQuickApprovalItem, 'productValidation'>,
-  categories: readonly { id?: unknown; specificationTemplate?: Array<{ required?: boolean }> }[] | undefined,
+  categories: readonly { id?: unknown; specificationTemplate?: Array<{ name?: unknown; required?: boolean }> }[] | undefined,
   categoryId: string,
+  specifications?: Record<string, unknown>,
 ): boolean {
-  if (specificationCount > 0) return true;
-  return !supplierReviewSpecificationsRequired(item, categories, categoryId);
+  const category = categories?.find((candidate) => String(candidate.id || '').trim() === String(categoryId || '').trim());
+  const requiredFields = (category?.specificationTemplate || []).filter((field) => field.required === true
+    && !isSupplierReviewOptionalSpecificationField(field.name, { supplierReview: true }));
+  if (requiredFields.length === 0) return true;
+  if (specifications) {
+    const normalized = new Map(Object.entries(specifications)
+      .map(([key, value]) => [String(key || '').normalize('NFKC').trim().toLocaleLowerCase(), String(value ?? '').trim()]));
+    return requiredFields.every((field) => normalized.get(String(field.name || '').normalize('NFKC').trim().toLocaleLowerCase()));
+  }
+  return specificationCount > 0;
 }
 
 export function isSupplierReviewStaleObservationError(message: unknown): boolean {

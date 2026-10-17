@@ -156,6 +156,12 @@ export const normalizeSupplierMappingValue = (value: unknown): string => String(
   .replace(/\s+/gu, " ")
   .trim();
 
+/** Product Type is optional only for supplier-reviewed products. */
+export const isSupplierReviewOptionalSpecificationField = (
+  fieldName: unknown,
+  supplierReview = false,
+): boolean => supplierReview && normalizeSupplierMappingValue(fieldName) === "product type";
+
 export interface SupplierTaxonomyCandidatePlan {
   categoryId: string;
   subcategoryId: string;
@@ -713,13 +719,13 @@ export function validateSupplierProductForApproval(
     if (activeSubcategories.length > 0 && !activeSubcategories.some((subcategory) => subcategory.id === subcategoryId)) {
       add("subcategory", "invalid", "Select an active subcategory belonging to the category.");
     }
-    if (options.supplierReview !== true) {
-      const specs = asRecord(product.specs);
-      const normalizedSpecs = new Map(Object.entries(specs).map(([key, value]) => [normalizeSupplierMappingValue(key), String(value || "").trim()]));
-      for (const field of category.specificationTemplate || []) {
-        if (field.required && !normalizedSpecs.get(normalizeSupplierMappingValue(field.name))) {
-          add(`specs.${field.name}`, "required", `Required specification "${field.name}" must have a value.`);
-        }
+    const specs = asRecord(product.specs);
+    const normalizedSpecs = new Map(Object.entries(specs).map(([key, value]) => [normalizeSupplierMappingValue(key), String(value || "").trim()]));
+    for (const field of category.specificationTemplate || []) {
+      if (field.required
+        && !isSupplierReviewOptionalSpecificationField(field.name, options.supplierReview === true)
+        && !normalizedSpecs.get(normalizeSupplierMappingValue(field.name))) {
+        add(`specs.${field.name}`, "required", `Required specification "${field.name}" must have a value.`);
       }
     }
   }
