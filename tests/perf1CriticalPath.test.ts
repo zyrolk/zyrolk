@@ -33,13 +33,18 @@ test('Supplier Hub Overview uses a bounded lightweight contract while Operations
   assert.match(routes, /app\.get\("\/api\/supplier-operations\/summary", requireSupplierHubAdmin/);
 });
 
-test('Supplier queue list projection avoids per-asset signing and full category reads for indexed pages', () => {
+test('Supplier queue list projection signs managed media and keeps indexed reads bounded', () => {
   const queue = source('functions/src/scheduled/supplierReviewQueue.ts');
   assert.match(queue, /skipSigningForUsableCanonicalUrl\?: boolean/);
   assert.match(queue, /isStableManagedSupplierMediaUrl\(record\)/);
   assert.match(queue, /skipSigningForUsableCanonicalUrl && isStableManagedSupplierMediaUrl\(record\)/);
   assert.match(queue, /db\.getAll\(\.\.\.ids\.map\(\(id\) => db\.collection\("categories"\)\.doc\(id\)\)\)/);
-  assert.match(queue, /skipSigningForUsableCanonicalUrl: true/);
+  const listProjectionStart = queue.indexOf('const projectReadModelDocuments');
+  const listProjectionEnd = queue.indexOf('const emptySupplierReviewMediaSummary', listProjectionStart);
+  assert.ok(listProjectionStart >= 0 && listProjectionEnd > listProjectionStart);
+  const listProjection = queue.slice(listProjectionStart, listProjectionEnd);
+  assert.match(listProjection, /decorateSupplierReviewQueueAdminMedia\(rawDocuments\)/);
+  assert.doesNotMatch(listProjection, /skipSigningForUsableCanonicalUrl:\s*true/);
 });
 
 test('Public module-preload filtering is case-insensitive for AdminDashboard chunks', () => {
