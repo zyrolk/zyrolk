@@ -1939,6 +1939,167 @@ type ExactSupplierRefreshConnector = SupplierConnector & {
   fetchExactProductForRefresh: (target: { supplierProductId: string; sku: string }) => Promise<RawA2ZProduct>;
 };
 
+export type SupplierReviewApprovalFreshnessFailureStage =
+  | "refresh_preparation"
+  | "exact_supplier_fetch"
+  | "commerce_validation"
+  | "freshness_comparison"
+  | "unknown";
+
+export type SupplierReviewApprovalFreshnessFailureClassification =
+  | "TIMEOUT"
+  | "HTTP_AUTH"
+  | "HTTP_ERROR"
+  | "PARSE_ERROR"
+  | "IDENTITY_MISMATCH"
+  | "MISSING_COST"
+  | "MISSING_PRICE"
+  | "MISSING_STOCK"
+  | "UNKNOWN_AVAILABILITY"
+  | "UNKNOWN";
+
+export interface SupplierReviewApprovalFreshnessDiagnostic {
+  [key: string]: unknown;
+  event: "supplier_review_approval_freshness_verification_failed";
+  queueItemId: string;
+  failureStage: SupplierReviewApprovalFreshnessFailureStage;
+  failureClassification: SupplierReviewApprovalFreshnessFailureClassification;
+  correlationId: string;
+  durationMs: number;
+}
+
+interface SupplierReviewApprovalFreshnessFailureShape {
+  name?: unknown;
+  message?: unknown;
+  status?: unknown;
+  statusCode?: unknown;
+  failureStage?: unknown;
+  failureClassification?: unknown;
+}
+
+class SupplierReviewApprovalFreshnessFailure extends Error {
+  public readonly failureStage: SupplierReviewApprovalFreshnessFailureStage;
+  public readonly failureClassification: SupplierReviewApprovalFreshnessFailureClassification;
+  public readonly statusCode: number;
+
+  constructor(
+    message: string,
+    failureStage: SupplierReviewApprovalFreshnessFailureStage,
+    failureClassification: SupplierReviewApprovalFreshnessFailureClassification,
+    statusCode = 422,
+  ) {
+    super(message);
+    this.name = "SupplierReviewApprovalFreshnessFailure";
+    this.failureStage = failureStage;
+    this.failureClassification = failureClassification;
+    this.statusCode = statusCode;
+  }
+}
+
+const errorMessageForFreshnessDiagnostic = (error: unknown): string => {
+  const message = (error as SupplierReviewApprovalFreshnessFailureShape)?.message;
+  return typeof message === "string" ? message : "";
+};
+
+const errorStatusForFreshnessDiagnostic = (error: unknown): number | undefined => {
+  const candidate = error as SupplierReviewApprovalFreshnessFailureShape;
+  const status = Number(candidate?.status ?? candidate?.statusCode);
+  return Number.isInteger(status) ? status : undefined;
+};
+
+export function classifySupplierReviewApprovalFreshnessFailure(error: unknown): {
+  failureStage: SupplierReviewApprovalFreshnessFailureStage;
+  failureClassification: SupplierReviewApprovalFreshnessFailureClassification;
+} {
+  const candidate = error as SupplierReviewApprovalFreshnessFailureShape;
+  const knownStage = candidate?.failureStage;
+  const knownClassification = candidate?.failureClassification;
+  if (
+    knownStage === "refresh_preparation"
+    || knownStage === "exact_supplier_fetch"
+    || knownStage === "commerce_validation"
+    || knownStage === "freshness_comparison"
+    || knownStage === "unknown"
+  ) {
+    if (
+      knownClassification === "TIMEOUT"
+      || knownClassification === "HTTP_AUTH"
+      || knownClassification === "HTTP_ERROR"
+      || knownClassification === "PARSE_ERROR"
+      || knownClassification === "IDENTITY_MISMATCH"
+      || knownClassification === "MISSING_COST"
+      || knownClassification === "MISSING_PRICE"
+      || knownClassification === "MISSING_STOCK"
+      || knownClassification === "UNKNOWN_AVAILABILITY"
+      || knownClassification === "UNKNOWN"
+    ) {
+      return { failureStage: knownStage, failureClassification: knownClassification };
+    }
+  }
+
+  const message = errorMessageForFreshnessDiagnostic(error);
+  const normalizedMessage = message.toLocaleLowerCase();
+  const status = errorStatusForFreshnessDiagnostic(error);
+  if (status === 401 || status === 403 || normalizedMessage.includes("authentication failed")) {
+    return { failureStage: "exact_supplier_fetch", failureClassification: "HTTP_AUTH" };
+  }
+  if (status === 408 || normalizedMessage.includes("timed out") || normalizedMessage.includes("time bound") || normalizedMessage.includes("timeout")) {
+    return { failureStage: "exact_supplier_fetch", failureClassification: "TIMEOUT" };
+  }
+  if (status !== undefined && status >= 400) {
+    return { failureStage: "exact_supplier_fetch", failureClassification: "HTTP_ERROR" };
+  }
+  if (normalizedMessage.includes("parse") || normalizedMessage.includes("valid json") || normalizedMessage.includes("malformed json")) {
+    return { failureStage: "exact_supplier_fetch", failureClassification: "PARSE_ERROR" };
+  }
+  if (
+    normalizedMessage.includes("unexpected supplier identity")
+    || normalizedMessage.includes("identities are inconsistent")
+    || normalizedMessage.includes("owned by a different supplier")
+    || normalizedMessage.includes("owned by a different supplier sku")
+  ) {
+    return { failureStage: "exact_supplier_fetch", failureClassification: "IDENTITY_MISMATCH" };
+  }
+  if (normalizedMessage.includes("authoritative reseller cost") || normalizedMessage.includes("supplier cost")) {
+    return { failureStage: "commerce_validation", failureClassification: "MISSING_COST" };
+  }
+  if (normalizedMessage.includes("authoritative proposed selling price") || normalizedMessage.includes("selling price")) {
+    return { failureStage: "commerce_validation", failureClassification: "MISSING_PRICE" };
+  }
+  if (normalizedMessage.includes("supplier stock") || normalizedMessage.includes("inventory value")) {
+    return { failureStage: "commerce_validation", failureClassification: "MISSING_STOCK" };
+  }
+  if (normalizedMessage.includes("availability") && (normalizedMessage.includes("unknown") || normalizedMessage.includes("unavailable"))) {
+    return { failureStage: "commerce_validation", failureClassification: "UNKNOWN_AVAILABILITY" };
+  }
+  if (
+    normalizedMessage.includes("review item")
+    || normalizedMessage.includes("supplier offer")
+    || normalizedMessage.includes("canonical product")
+    || normalizedMessage.includes("supplier source")
+  ) {
+    return { failureStage: "refresh_preparation", failureClassification: "UNKNOWN" };
+  }
+  return { failureStage: "unknown", failureClassification: "UNKNOWN" };
+}
+
+export function buildSupplierReviewApprovalFreshnessDiagnostic(
+  queueItemId: string,
+  error: unknown,
+  durationMs: number,
+  correlationId = queueItemId,
+): SupplierReviewApprovalFreshnessDiagnostic {
+  const classified = classifySupplierReviewApprovalFreshnessFailure(error);
+  return {
+    event: "supplier_review_approval_freshness_verification_failed",
+    queueItemId: queueItemId.slice(0, 160),
+    failureStage: classified.failureStage,
+    failureClassification: classified.failureClassification,
+    correlationId: String(correlationId || queueItemId).slice(0, 160),
+    durationMs: Math.max(0, Math.min(300_000, Math.floor(durationMs))),
+  };
+}
+
 const refreshIdentityValue = (value: unknown): string => String(value || "").normalize("NFKC").trim();
 
 const refreshIdentityMatches = (left: unknown, right: unknown): boolean => (
@@ -2194,15 +2355,35 @@ export async function refreshActiveSupplierReviewItem(
   if (typeof exactConnector.fetchExactProductForRefresh !== "function") {
     throw new ApiError("This supplier does not support exact single-product refresh.", 409);
   }
-  const product = await exactConnector.fetchExactProductForRefresh({ supplierProductId, sku: supplierSku });
+  let product: RawA2ZProduct;
+  try {
+    product = await exactConnector.fetchExactProductForRefresh({ supplierProductId, sku: supplierSku });
+  } catch (error) {
+    const classified = classifySupplierReviewApprovalFreshnessFailure(error);
+    throw new SupplierReviewApprovalFreshnessFailure(
+      "The exact supplier refresh failed.",
+      "exact_supplier_fetch",
+      classified.failureClassification,
+      500,
+    );
+  }
   if (
     !refreshIdentityMatches(product.supplierProductId, supplierProductId)
     || !refreshIdentityMatches(product.sku, supplierSku)
   ) {
-    throw new ApiError("Dropex returned a product with an unexpected supplier identity.", 409);
+    throw new SupplierReviewApprovalFreshnessFailure(
+      "Dropex returned an unexpected supplier identity.",
+      "exact_supplier_fetch",
+      "IDENTITY_MISMATCH",
+      409,
+    );
   }
   if (!supplierCostWasProvided(product)) {
-    throw new ApiError("Dropex did not provide the authoritative reseller cost for this refresh.", 422);
+    throw new SupplierReviewApprovalFreshnessFailure(
+      "Dropex did not provide the authoritative reseller cost for this refresh.",
+      "commerce_validation",
+      "MISSING_COST",
+    );
   }
   const currentSupplierAvailability = supplierOfferAvailability(
     product.availability,
@@ -2211,10 +2392,25 @@ export async function refreshActiveSupplierReviewItem(
   );
   if (options.requireAuthoritativeSupplierCommerce === true) {
     if (!Number.isFinite(Number(product.price)) || Number(product.price) <= 0) {
-      throw new ApiError("Dropex did not provide the authoritative proposed selling price for approval.", 422);
+      throw new SupplierReviewApprovalFreshnessFailure(
+        "Dropex did not provide the authoritative proposed selling price for approval.",
+        "commerce_validation",
+        "MISSING_PRICE",
+      );
     }
-    if (!supplierStockWasProvided(product) || currentSupplierAvailability === "unknown" || currentSupplierAvailability === "unavailable") {
-      throw new ApiError("Current supplier data could not be verified for approval.", 422);
+    if (!supplierStockWasProvided(product)) {
+      throw new SupplierReviewApprovalFreshnessFailure(
+        "Dropex did not provide authoritative supplier stock for approval.",
+        "commerce_validation",
+        "MISSING_STOCK",
+      );
+    }
+    if (currentSupplierAvailability === "unknown" || currentSupplierAvailability === "unavailable") {
+      throw new SupplierReviewApprovalFreshnessFailure(
+        "Current supplier availability could not be verified for approval.",
+        "commerce_validation",
+        "UNKNOWN_AVAILABILITY",
+      );
     }
   }
 
@@ -2541,6 +2737,10 @@ export const SUPPLIER_REVIEW_DATA_CHANGED_MESSAGE =
 export const SUPPLIER_REVIEW_DATA_UNVERIFIED_MESSAGE =
   "Current supplier data could not be verified. This product cannot be approved yet.";
 
+export interface SupplierReviewApprovalFreshnessDiagnosticContext {
+  correlationId?: string;
+}
+
 /**
  * Performs an approval-time Dropex freshness check without running live-stock
  * automation. Unchanged observations are left untouched; changed observations
@@ -2552,7 +2752,9 @@ export async function revalidateSupplierReviewItemForApproval(
   queueItemId: string,
   reviewer: { uid: string; email: string },
   expectedPendingRevision: string,
+  diagnosticContext: SupplierReviewApprovalFreshnessDiagnosticContext = {},
 ): Promise<void> {
+  const startedAt = Date.now();
   let preview: SupplierReviewRefreshResult;
   try {
     preview = await refreshActiveSupplierReviewItem(
@@ -2566,6 +2768,17 @@ export async function revalidateSupplierReviewItemForApproval(
       database,
     );
   } catch (error) {
+    const diagnostic = buildSupplierReviewApprovalFreshnessDiagnostic(
+      queueItemId,
+      error,
+      Date.now() - startedAt,
+      diagnosticContext.correlationId,
+    );
+    try {
+      appLogger.warn("Supplier review approval freshness verification failed.", diagnostic);
+    } catch {
+      // Diagnostic logging must never change the fail-closed approval result.
+    }
     throw new ApiError(
       SUPPLIER_REVIEW_DATA_UNVERIFIED_MESSAGE,
       422,

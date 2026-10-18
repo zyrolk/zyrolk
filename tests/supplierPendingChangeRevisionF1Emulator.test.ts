@@ -188,6 +188,12 @@ const pendingChange = async (reviewId: string): Promise<Record<string, any> | un
   (await adminDb.collection("supplier_pending_changes").doc(`change-${reviewId}`).get()).data()
 );
 
+const offerData = async (review: Record<string, any>): Promise<Record<string, any> | undefined> => (
+  review.supplierOfferId
+    ? (await adminDb.collection("supplier_product_offers").doc(String(review.supplierOfferId)).get()).data()
+    : undefined
+);
+
 const managedMedia = (identity: string) => {
   const contentHash = createHash("sha256").update(identity).digest("hex");
   const variant = (name: string, size: number) => ({
@@ -641,6 +647,10 @@ test("F1 emulator: approval revalidates current Dropex supplier truth before pub
     reviewIds.push(unresolvedReview.id);
     const unresolvedInitial = await prepareReview(unresolvedReview.id, unresolved);
     const unresolvedRevision = await pendingRevision(unresolvedInitial);
+    const unresolvedBeforeFailure = await reviewData(unresolvedReview.id);
+    const unresolvedOfferBefore = await offerData(unresolvedBeforeFailure);
+    const unresolvedProductsBefore = await productCount();
+    const unresolvedAuditsBefore = await auditCount(unresolvedReview.id);
     catalog.delete(unresolved);
     await assert.rejects(approve(unresolvedReview.id, {
       draft: approvalDraft(unresolvedReview.id, unresolvedInitial),
@@ -651,8 +661,12 @@ test("F1 emulator: approval revalidates current Dropex supplier truth before pub
       return true;
     });
     const unresolvedAfter = await reviewData(unresolvedReview.id);
+    assert.deepEqual(unresolvedAfter, unresolvedBeforeFailure, "failed freshness verification does not mutate the queue decision or observation");
     assert.equal(await pendingRevision(unresolvedAfter), unresolvedRevision);
     assert.equal(unresolvedAfter.queueState, "review_pending");
+    assert.equal(await productCount(), unresolvedProductsBefore, "failed freshness verification creates no live product");
+    assert.equal(await auditCount(unresolvedReview.id), unresolvedAuditsBefore, "failed freshness verification creates no approval decision audit");
+    assert.deepEqual(await offerData(unresolvedAfter), unresolvedOfferBefore, "failed freshness verification does not mutate the supplier offer");
   } finally {
     await Promise.all(reviewIds.map(async (reviewId) => {
       const review = await reviewData(reviewId);

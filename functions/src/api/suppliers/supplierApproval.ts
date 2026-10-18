@@ -764,6 +764,7 @@ export async function decideSupplierQueueItem(
           reviewQueueItemId,
           reviewer,
           requestedPendingRevision || "",
+          { correlationId: String(preApprovalData.correlationId || reviewQueueItemId) },
         );
       }
     const requestedImages = options.draft
