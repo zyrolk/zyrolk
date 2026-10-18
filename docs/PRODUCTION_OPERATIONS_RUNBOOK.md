@@ -48,9 +48,12 @@ release record.
 
 Before Rules, Functions, Hosting or data migration changes:
 
-1. Use a dedicated backup bucket with retention and object versioning. Keep its
-   name outside source control in `ZYRO_BACKUP_BUCKET`.
-2. Create a release-scoped Firestore export and wait for completion.
+1. Use the dedicated release backup bucket with **Object Versioning enabled**
+   and a **30-day, unlocked retention policy**. Keep its name outside source
+   control in `ZYRO_BACKUP_BUCKET`. This bucket is the independent release
+   backup location; do not substitute the live Firebase Storage bucket.
+2. Create a uniquely named, release-scoped Firestore export and wait for
+   successful completion.
 
 ```powershell
 $ZyroProject = 'zyrolk-e0164'
@@ -61,11 +64,38 @@ gcloud firestore export "gs://$ZyroBackupBucket/firestore/$ZyroBackupId" --proje
 gcloud firestore operations list --project=$ZyroProject
 ```
 
-3. Record the completed export operation and object path.
-4. Verify object versioning and retention on the production Storage bucket.
-   Firestore export does not back up Storage objects.
-5. Confirm the rollback owner can read the backup without granting public
-   access or broader application permissions.
+3. Record the completed export operation, object path, exported-object
+   evidence, and recovery owner access.
+4. Verify the live production Firebase Storage bucket separately:
+   Object Versioning must be enabled and Soft Delete must be at least 30 days.
+   Bucket-level retention is not required when this approved recovery policy
+   is verified. Firestore export does not back up Storage objects, and Soft
+   Delete is not an independent backup.
+5. Confirm the rollback owner can read the release backup without granting
+   public access or broader application permissions.
+
+### Production Storage recovery policy
+
+- Keep Object Versioning enabled on the live Firebase Storage bucket.
+- Keep Soft Delete at **30 days or longer**. Soft-deleted objects remain
+  billable until their retention expires, so monitor storage usage and billing
+  after changing the duration.
+- Do not add or lock a bucket-level retention policy for the live bucket when
+  the approved Object Versioning + Soft Delete policy is in force. This keeps
+  normal banner/logo replacement and Admin cleanup operations available.
+- Supplier media is managed by the server and must remain subject to the
+  existing media publication safeguards. Do not use Storage recovery controls
+  as a substitute for product approval or media audit records.
+- To recover an accidentally deleted object, identify the exact bucket,
+  object generation, and incident window; verify the request with the rollback
+  owner; list the soft-deleted or noncurrent generations; restore only the
+  approved object generation to the original path; and record the operation.
+  Do not perform broad restores or overwrite a newer approved object.
+- Review Storage usage, soft-deleted/noncurrent object growth, restore
+  operations, and related billing after releases and at least monthly. Record
+  anomalous growth and investigate before cleanup. Object Versioning and Soft
+  Delete improve recoverability but do not replace the dedicated Firestore
+  release export or an independent backup strategy.
 
 ## Production Console gates
 
