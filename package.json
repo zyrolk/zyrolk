@@ -47,7 +47,7 @@
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
     "recharts": "^3.9.1",
-    "sharp": "^0.35.4",
+    "sharp": "^0.35.5",
     "vite": "^6.2.3"
   },
   "devDependencies": {
@@ -70,6 +70,11 @@
     },
     "browserslist": "4.29.0",
     "baseline-browser-mapping": "2.11.25",
-    "qs": "6.16.0"
+    "qs": "6.16.0",
+    "proxy-addr": "2.0.8",
+    "@fastify/busboy": "3.2.3",
+    "@grpc/grpc-js": "1.14.6",
+    "brace-expansion": "2.1.7",
+    "source-map-js": "1.2.2"
   }
 }
