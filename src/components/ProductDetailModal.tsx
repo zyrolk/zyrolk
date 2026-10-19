@@ -2,8 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   X, Heart, ShoppingCart, Check, Phone,
   Truck, ArrowRight, Plus, Minus, ShoppingBag,
-  ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Maximize2, Sparkles, CheckCircle2,
-  Banknote, Headphones, LockKeyhole
+  ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Maximize2
 } from 'lucide-react';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { auth } from '../firebase';
@@ -15,7 +14,7 @@ import { sanitizeSupplierDescriptionHtml, supplierDescriptionLooksLikeHtml } fro
 import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
 import {
   PRODUCT_IMAGE_FALLBACK, buildProductGallery, clampGalleryIndex, getDialogEscapeAction, getFocusWrapIndex,
-  groupProductSpecifications, nextGalleryIndexForKey, productImageVariantUrl, selectRelatedProducts,
+  groupProductSpecifications, hasRenderableProductDescription, nextGalleryIndexForKey, productImageSrcSet, productImageVariantUrl, selectRelatedProducts,
 } from '../features/product-experience/productExperience';
 import ProductSpecificationsPanel from '../features/product-experience/ProductSpecificationsPanel';
 import RelatedProductsRail from '../features/product-experience/RelatedProductsRail';
@@ -84,6 +83,7 @@ export default function ProductDetailModal({
   const productDescription = product ? product.description : '';
   const productDescriptionIsHtml = supplierDescriptionLooksLikeHtml(productDescription);
   const safeProductDescriptionHtml = sanitizeSupplierDescriptionHtml(productDescription);
+  const hasProductDescription = hasRenderableProductDescription(productDescription);
 
   // Refs
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -405,7 +405,7 @@ export default function ProductDetailModal({
   };
 
   // Specifications list construction
-  const brandName = product.specs?.Brand || product.specs?.brand || "Brand not specified";
+  const brandName = String(product.specs?.Brand || product.specs?.brand || '').trim();
   const activeImageUrl = galleryImages[activeImageIndex] || product.imageUrl;
 
   // Filter out current product for related items
@@ -421,7 +421,7 @@ export default function ProductDetailModal({
       <div className="sr-only" role="status" aria-live="polite">{announcement}</div>
       
       {/* Immersive Apple/Samsung-style Premium Modal Layout */}
-      <div className="zy-product-detail-shell zy-product-experience relative w-full max-w-7xl bg-white overflow-hidden flex flex-col min-h-screen sm:min-h-0 sm:h-[94vh]">
+      <div className="zy-product-detail-shell zy-product-experience relative w-full max-w-6xl bg-white overflow-hidden flex flex-col min-h-screen sm:min-h-0 sm:h-[94vh]">
         
         {/* Top Header Sticky Rail */}
         <div className="zy-product-experience-header absolute top-0 left-0 right-0 z-40 p-4 sm:p-6 flex justify-between items-center bg-gradient-to-b from-white/95 via-white/80 to-transparent pointer-events-none">
@@ -448,9 +448,8 @@ export default function ProductDetailModal({
         <div 
           id="modal-scrollable-container" 
           ref={scrollContainerRef}
-          className="zy-product-experience-scroll flex-1 overflow-y-auto pt-24 p-5 sm:p-8 md:p-12 space-y-16 scroll-smooth"
+          className="zy-product-experience-scroll flex-1 overflow-y-auto pt-24 p-5 sm:p-8 md:p-10 space-y-10 scroll-smooth"
         >
-          <div ref={stickySentinelRef} className="h-px w-full" aria-hidden="true" />
           {isTransitioning ? (
             /* Premium Micro Loading Skeleton Screen */
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-14 animate-pulse pt-4">
@@ -474,9 +473,9 @@ export default function ProductDetailModal({
           ) : (
             <>
               {/* UPPER MAIN LAYOUT SECTION */}
-              <div className="zy-product-experience-main grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-14 items-start">
+              <div className="zy-product-experience-main grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-start">
                 
-                {/* LEFT SIDE: MULTI-IMAGE CAROUSEL, THUMBNAILS, SPECIFICATIONS & TRUST RAILS */}
+                {/* LEFT SIDE: PRODUCT MEDIA AND SPECIFICATIONS */}
                 <div className="zy-product-experience-gallery-column lg:col-span-7 space-y-8">
                   
                   {/* Premium Slider Container */}
@@ -527,6 +526,8 @@ export default function ProductDetailModal({
                           animate={{ opacity: 1, scale: 1 }}
                           transition={{ duration: prefersReducedMotion ? 0 : 0.32, ease: [0.2, 0.75, 0.25, 1] }}
                           src={activeImageUrl}
+                          srcSet={productImageSrcSet(activeImageUrl)}
+                          sizes="(min-width: 1024px) 54vw, 100vw"
                           alt={product.name}
                           referrerPolicy="no-referrer"
                           loading="eager"
@@ -582,7 +583,7 @@ export default function ProductDetailModal({
                       )}
 
                       {/* Magnifier Tip overlay */}
-                      <div className="absolute bottom-4 right-4 bg-slate-950/70 backdrop-blur-md text-white text-[10px] font-bold px-3 py-1.5 rounded-full opacity-100 sm:opacity-0 group-hover/zoom:opacity-100 transition-opacity flex items-center gap-1.5 shadow-md">
+                      <div className="absolute bottom-4 right-4 z-10 bg-slate-950/70 backdrop-blur-md text-white text-[10px] font-bold px-3 py-1.5 rounded-full opacity-100 sm:opacity-0 group-hover/zoom:opacity-100 transition-opacity flex items-center gap-1.5 shadow-md">
                         <Maximize2 className="h-3 w-3" />
                         <span>Tap to zoom</span>
                       </div>
@@ -611,52 +612,19 @@ export default function ProductDetailModal({
                     )}
                   </div>
 
-                  {/* Trust badge strip row */}
-                  <div className="zy-product-experience-trust-grid grid grid-cols-2 gap-3 sm:grid-cols-4 bg-slate-50/70 p-4 sm:p-5 rounded-3xl border border-slate-200/80 text-left">
-                    <div className="rounded-2xl bg-white p-3.5 border border-slate-100 space-y-1.5">
-                      <div className="p-2 bg-blue-50/80 text-brand-blue rounded-xl w-fit">
-                        <Banknote className="h-5 w-5" aria-hidden="true" />
-                      </div>
-                      <span className="text-xs font-bold text-slate-900 block">Cash on Delivery</span>
-                      <span className="text-[10px] text-slate-500 block leading-tight">Pay when your order arrives</span>
-                    </div>
-                    <div className="rounded-2xl bg-white p-3.5 border border-slate-100 space-y-1.5">
-                      <div className="p-2 bg-blue-50/80 text-brand-blue rounded-xl w-fit">
-                        <Truck className="h-5 w-5" aria-hidden="true" />
-                      </div>
-                      <span className="text-xs font-bold text-slate-900 block">Island-wide Delivery</span>
-                      <span className="text-[10px] text-slate-500 block leading-tight">Courier delivery across Sri Lanka</span>
-                    </div>
-                    <div className="rounded-2xl bg-white p-3.5 border border-slate-100 space-y-1.5">
-                      <div className="p-2 bg-blue-50/80 text-brand-blue rounded-xl w-fit">
-                        <LockKeyhole className="h-5 w-5" aria-hidden="true" />
-                      </div>
-                      <span className="text-xs font-bold text-slate-900 block">Secure Checkout</span>
-                      <span className="text-[10px] text-slate-500 block leading-tight">Protected order processing</span>
-                    </div>
-                    <div className="rounded-2xl bg-white p-3.5 border border-slate-100 space-y-1.5">
-                      <div className="p-2 bg-blue-50/80 text-brand-blue rounded-xl w-fit">
-                        <Headphones className="h-5 w-5" aria-hidden="true" />
-                      </div>
-                      <span className="text-xs font-bold text-slate-900 block">Customer Support</span>
-                      <span className="text-[10px] text-slate-500 block leading-tight">Help before and after ordering</span>
-                    </div>
-                  </div>
-
-                  <ProductSpecificationsPanel groups={specificationGroups} />
-
                 </div>
 
                 {/* RIGHT SIDE: CORE CONVERSIONS ENGINE (TITLES, PRICES, BADGES, AND ACTION CTAs) */}
-                <div className="zy-product-purchase zy-product-experience-purchase lg:col-span-5 space-y-8 text-left lg:sticky lg:top-2">
+                <div className="zy-product-purchase zy-product-experience-purchase lg:col-span-5 space-y-6 text-left lg:sticky lg:top-2">
                   
-                  {/* Category Pill + Stock Status Row */}
+                  <nav className="zy-product-breadcrumb" aria-label="Product breadcrumb">
+                    <span>Home</span>
+                    <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
+                    <span>{categoryDisplayName(sanitizeStorefrontCategoryId(product.category))}</span>
+                  </nav>
+
+                  {/* Breadcrumb carries taxonomy; this row is reserved for availability. */}
                   <div className="zy-product-experience-status flex flex-wrap items-center gap-2.5">
-                    <span className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue bg-blue-50 border border-blue-100/50 px-3.5 py-1.5 rounded-full flex items-center gap-1.5">
-                      <Sparkles className="h-3 w-3" />
-                      {categoryDisplayName(sanitizeStorefrontCategoryId(product.category))}
-                    </span>
-                    
                     {product.stock > 0 ? (
                       <span className={`text-[10px] font-extrabold uppercase tracking-widest px-3.5 py-1.5 rounded-full flex items-center gap-2 border ${
                         product.stock <= 5 
@@ -664,7 +632,7 @@ export default function ProductDetailModal({
                           : 'text-emerald-700 bg-emerald-50 border-emerald-100'
                       }`}>
                         <span className={`w-2 h-2 rounded-full ${product.stock <= 5 ? 'bg-amber-500' : 'bg-emerald-500'}`} aria-hidden="true" />
-                        {product.stock <= 5 ? `Limited Stock: Only ${product.stock} left` : 'In Stock & Ready'}
+                        {product.stock <= 5 ? `Limited Stock: Only ${product.stock} left` : 'In Stock'}
                       </span>
                     ) : (
                       <span className="text-[10px] font-extrabold uppercase tracking-widest text-red-700 bg-red-50 border border-red-100 px-3.5 py-1.5 rounded-full flex items-center gap-2">
@@ -676,36 +644,31 @@ export default function ProductDetailModal({
 
                   {/* Title & Brand Badging block */}
                   <div className="zy-product-experience-title space-y-3">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="inline-flex items-center text-[10px] font-bold uppercase tracking-widest text-slate-400 bg-slate-100 px-2.5 py-1 rounded-md">
+                    {brandName && (
+                      <span className="inline-flex items-center text-[10px] font-bold uppercase tracking-widest text-slate-500 bg-slate-100 px-2.5 py-1 rounded-md">
                         Brand: {brandName}
                       </span>
-                      <span className="inline-flex items-center text-[10px] font-bold uppercase tracking-widest text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-md gap-1">
-                        <CheckCircle2 className="h-3 w-3" />
-                        Live Product Listing
-                      </span>
-                    </div>
+                    )}
 
                     <h1 id="product-detail-title" className="text-3xl sm:text-4.5xl font-black text-slate-950 tracking-tight leading-none font-display">
                       {product.name}
                     </h1>
 
-                    <button
-                      type="button"
-                      onClick={() => document.getElementById('customer-reviews-section')?.scrollIntoView({ behavior: prefersReducedMotion ? 'auto' : 'smooth', block: 'start' })}
-                      className="mt-1.5 inline-flex items-center gap-2 rounded-lg text-xs font-bold text-brand-blue underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20"
-                    >
-                      Read genuine customer reviews and product Q&amp;A
-                    </button>
+                    {isReviewsEnabled && product.reviewsCount > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => document.getElementById('customer-reviews-section')?.scrollIntoView({ behavior: prefersReducedMotion ? 'auto' : 'smooth', block: 'start' })}
+                        className="mt-1.5 inline-flex items-center gap-2 rounded-lg text-xs font-bold text-brand-blue underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-blue/20"
+                      >
+                        Read {product.reviewsCount} genuine customer review{product.reviewsCount === 1 ? '' : 's'}
+                      </button>
+                    )}
                   </div>
                   {/* Price Conversions Box (Strikethrough, absolute savings, delivery information) */}
-                  <div className="zy-product-experience-price bg-slate-50 p-6 rounded-3xl border border-slate-100/80 text-left space-y-4">
+                  <div className="zy-product-experience-price bg-slate-50 p-5 sm:p-6 rounded-3xl border border-slate-100/80 text-left space-y-3.5">
                     <div className="space-y-1">
-                      <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">
-                        Marketplace Price
-                      </span>
                       <div className="flex items-baseline gap-3.5">
-                        <span className="text-4xl font-black text-slate-950 tracking-tight font-display">
+                        <span className="text-4xl sm:text-5xl font-black text-slate-950 tracking-tight leading-none font-display">
                           {formatPrice(product.price)}
                         </span>
                         {promotion && (
@@ -737,7 +700,7 @@ export default function ProductDetailModal({
                   </div>
 
                   {/* Core Description */}
-                  <div className="zy-product-experience-overview space-y-2.5">
+                  {hasProductDescription && <div className="zy-product-experience-overview space-y-2.5">
                     <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
                       Product Overview
                     </h4>
@@ -751,7 +714,7 @@ export default function ProductDetailModal({
                         {productDescription}
                       </p>
                     )}
-                  </div>
+                  </div>}
 
                   {/* Quantity selector input element */}
                   <div className="zy-product-experience-quantity flex items-center justify-between gap-4 bg-slate-50 p-4 rounded-2xl border border-slate-200/80 sm:p-4.5">
@@ -793,7 +756,7 @@ export default function ProductDetailModal({
                   </div>
 
                   {/* Action CTAs Cluster */}
-                  <div className="zy-product-experience-actions space-y-4 pt-2">
+                  <div ref={stickySentinelRef} className="zy-product-experience-actions space-y-4 pt-2">
                     
                     {product.stock > 0 && isProductExplicitlyActive(product.isActive) ? (
                       <>
@@ -886,6 +849,11 @@ export default function ProductDetailModal({
                     )}
                   </div>
 
+                </div>
+
+                {/* Keep product details after the purchase information on narrow screens while retaining the desktop media column. */}
+                <div className="lg:col-span-7 lg:col-start-1">
+                  <ProductSpecificationsPanel groups={specificationGroups} />
                 </div>
 
               </div>

@@ -17,6 +17,16 @@ export const PRODUCT_IMAGE_FALLBACK = `data:image/svg+xml,${encodeURIComponent(P
 
 const cleanString = (value: unknown): string => typeof value === 'string' ? value.trim() : '';
 
+/** Keep empty supplier HTML shells out of the customer-facing product overview. */
+export const hasRenderableProductDescription = (value: unknown): boolean => {
+  if (typeof value !== 'string') return false;
+  return value
+    .replace(/<[^>]*>/gu, ' ')
+    .replace(/&nbsp;|&#160;/giu, ' ')
+    .replace(/\s+/gu, ' ')
+    .trim().length > 0;
+};
+
 export type ProductImageVariant = 'thumbnail' | 'medium' | 'large';
 
 /**

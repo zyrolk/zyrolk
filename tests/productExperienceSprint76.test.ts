@@ -144,6 +144,7 @@ test('selected-product reconciliation is readiness-gated, live-first, and closes
 
 test('premium gallery retains live images while improving load, zoom, keyboard, and swipe behavior', () => {
   assert.match(modal, /buildProductGallery\(product\)/);
+  assert.match(modal, /productImageSrcSet\(activeImageUrl\)/);
   assert.match(modal, /setIsMainImageLoading\(true\)/);
   assert.match(modal, /const image = new Image\(\)/);
   assert.match(modal, /image\.src = productImageVariantUrl\(galleryImages\[index\], 'medium'\) \|\| galleryImages\[index\]/);
@@ -159,12 +160,20 @@ test('premium gallery retains live images while improving load, zoom, keyboard, 
 
 test('product information continues to render existing pricing, inventory, category, and specification data', () => {
   assert.match(modal, /sanitizeStorefrontCategoryId\(product\.category\)/);
+  assert.match(modal, /zy-product-breadcrumb/);
   assert.match(modal, /product\.stock <= 5/);
+  assert.match(modal, /: 'In Stock'/);
+  assert.doesNotMatch(modal, /In Stock & Ready/);
+  assert.doesNotMatch(modal, /Category Pill \+ Stock Status Row/);
   assert.match(modal, /formatPrice\(product\.price\)/);
+  assert.doesNotMatch(modal, /Marketplace Price/);
+  assert.doesNotMatch(styles, /\.zy-product-experience-price::after/);
   assert.match(modal, /const promotion = resolveCustomerPromotion\(product\)/);
   assert.match(modal, /\(\{promotion\.discountPercent\}% OFF\)/);
   assert.doesNotMatch(modal, /product\.discount\b|item\.discount\b/);
   assert.match(modal, /product\.description/);
+  assert.match(modal, /hasProductDescription/);
+  assert.doesNotMatch(modal, /Brand not specified|Live Product Listing/);
   assert.match(modal, /groupProductSpecifications\(product\?\.specs\)/);
   assert.match(modal, /<ProductSpecificationsPanel groups=\{specificationGroups\}/);
   assert.match(specifications, /groups\.map/);
@@ -174,13 +183,10 @@ test('product information continues to render existing pricing, inventory, categ
 test('premium purchase section retains delivery, secure shopping, WhatsApp, cart, and buy actions', () => {
   assert.match(modal, /zy-product-experience-purchase/);
   assert.match(modal, /Cash on Delivery/);
-  assert.match(modal, /Island-wide Delivery/);
-  assert.match(modal, /Courier delivery across Sri Lanka/);
   assert.match(modal, /Cash on Delivery Eligible/);
-  assert.match(modal, /Secure Checkout/);
-  assert.match(modal, /Customer Support/);
   assert.match(modal, /Delivery available/);
   assert.match(modal, /Final delivery details are confirmed at checkout\./);
+  assert.doesNotMatch(modal, /zy-product-experience-trust-grid/);
   assert.doesNotMatch(modal, /\b(?:freeDeliveryMin|freeDeliveryThreshold|isEligibleForFreeDelivery|deliveryCharge|deliveryFee|deliveryAreas?|district|cartItems|cartSubtotal|itemsSubtotal|estimatedDelivery(?:Days)?|shippingClass|supplierDelivery|ETA)\b/iu);
   assert.doesNotMatch(modal, /Eligible for FREE Shipping|Add \{formatPrice\([^)]*\)\} more|current product total meets the configured threshold|islandwide Free Delivery/iu);
   assert.match(modal, /handleWhatsAppOrderAssistance/);
@@ -216,7 +222,9 @@ test('related-products presentation consumes the unchanged deterministic ranking
 test('Sprint 76 styling is responsive, swipe-friendly, premium, and motion-safe', () => {
   assert.match(styles, /Sprint 76 — Premium product experience/);
   assert.match(styles, /\.zy-product-experience-gallery\s*\{[\s\S]*touch-action: pan-y/);
-  assert.match(styles, /\.zy-product-experience-purchase\s*\{[\s\S]*backdrop-filter: blur/);
+  assert.match(styles, /\.zy-product-experience-purchase\s*\{[\s\S]*background: #ffffff/);
+  assert.match(styles, /\.zy-product-breadcrumb\s*\{/);
+  assert.doesNotMatch(styles, /\.zy-product-experience-trust-grid/);
   assert.match(styles, /\.zy-related-products-rail\s*\{[\s\S]*overscroll-behavior-inline: contain/);
   assert.match(styles, /@media \(max-width: 767px\)[\s\S]*\.zy-product-experience-mobile-bar/);
   assert.match(styles, /@media \(max-width: 767px\)[\s\S]*\.zy-related-product-card[\s\S]*min-width:/);

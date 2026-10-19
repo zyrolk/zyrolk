@@ -3,7 +3,7 @@ import test from 'node:test';
 import { Product } from '../src/types';
 import {
   PRODUCT_IMAGE_FALLBACK, LatestRequestGate, SubmissionGuard, buildProductGallery,
-  calculateReviewSummary, clampGalleryIndex, getDialogEscapeAction, getFocusWrapIndex,
+  calculateReviewSummary, clampGalleryIndex, getDialogEscapeAction, getFocusWrapIndex, hasRenderableProductDescription,
   groupProductSpecifications, nextGalleryIndexForKey, productImageSrcSet, productImageVariantUrl,
   projectProductReview, selectRelatedProducts,
 } from '../src/features/product-experience/productExperience';
@@ -18,6 +18,12 @@ test('gallery deduplicates images, supplies fallback, and clamps indexes', () =>
   assert.deepEqual(buildProductGallery(product('p', { imageUrl: '', imageUrls: [] })), [PRODUCT_IMAGE_FALLBACK]);
   assert.equal(clampGalleryIndex(7, 2), 1);
   assert.equal(clampGalleryIndex(-1, 2), 0);
+});
+
+test('product descriptions render only when sanitized source text exists', () => {
+  assert.equal(hasRenderableProductDescription(''), false);
+  assert.equal(hasRenderableProductDescription('<p>&nbsp;</p><p> </p>'), false);
+  assert.equal(hasRenderableProductDescription('<p>Multi Purpose Cleaning Brush</p>'), true);
 });
 
 test('responsive product media selects existing managed variants without rewriting legacy URLs', () => {
