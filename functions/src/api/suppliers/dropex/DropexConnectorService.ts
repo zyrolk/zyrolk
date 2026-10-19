@@ -49,6 +49,10 @@ const REFRESH_MAX_PAGES = 20;
 const REFRESH_MAX_RECORDS = 10_000;
 const REFRESH_MAX_ELAPSED_MS = 30_000;
 const REFRESH_PAGE_SIZE = 500;
+const REFRESH_PAGE_CONCURRENCY = 3;
+const REFRESH_OPERATION_CONCURRENCY = 2;
+
+let activeExactRefreshOperations = 0;
 
 const normalizeScopeValue = (value: string, field: string): string => {
   const normalized = String(value || "").trim();
@@ -239,13 +243,22 @@ export class DropexConnectorService {
     url: string,
     init: RequestInit,
     outboundPolicy: SupplierOutboundPolicy,
+    timeoutMs = REQUEST_TIMEOUT_MS,
+    abortSignal?: AbortSignal,
   ): Promise<SupplierOutboundResponse> {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    const boundedTimeoutMs = Math.max(1, Math.min(REQUEST_TIMEOUT_MS, Math.floor(timeoutMs)));
+    const timeoutId = setTimeout(() => controller.abort(), boundedTimeoutMs);
+    const abortFromParent = () => controller.abort();
+    if (abortSignal) {
+      if (abortSignal.aborted) controller.abort();
+      else abortSignal.addEventListener("abort", abortFromParent, { once: true });
+    }
     try {
       return await this.fetchOutbound(url, { ...init, signal: controller.signal }, outboundPolicy);
     } finally {
       clearTimeout(timeoutId);
+      abortSignal?.removeEventListener("abort", abortFromParent);
     }
   }
 
@@ -263,6 +276,8 @@ export class DropexConnectorService {
   private async login(
     credentials: { username: string; password: string },
     outboundPolicy: SupplierOutboundPolicy,
+    timeoutMs?: number | (() => number),
+    abortSignal?: AbortSignal,
   ): Promise<DropexAuthenticatedSession> {
     const credentialFingerprint = this.credentialFingerprint(credentials);
     if (this.loginInFlight?.credentialFingerprint === credentialFingerprint) {
@@ -280,7 +295,7 @@ export class DropexConnectorService {
           username: credentials.username,
           password: credentials.password,
         }),
-      }, outboundPolicy);
+      }, outboundPolicy, typeof timeoutMs === "function" ? timeoutMs() : timeoutMs, abortSignal);
 
       const responseBodyText = await response.text();
       this.logDiagnostic("login", {
@@ -328,10 +343,15 @@ export class DropexConnectorService {
     outboundPolicy: SupplierOutboundPolicy,
     buildRequest: (token: string) => { url: string; init: RequestInit },
     allowAuthRetry = true,
+    timeoutMs?: number | (() => number),
+    abortSignal?: AbortSignal,
   ): Promise<{ response: SupplierOutboundResponse; bodyText: string }> {
+    const requestTimeoutMs = (): number | undefined => (
+      typeof timeoutMs === "function" ? timeoutMs() : timeoutMs
+    );
     let activeSession = this.reusableSession(credentials);
     if (!activeSession) {
-      activeSession = await this.login(credentials, outboundPolicy);
+      activeSession = await this.login(credentials, outboundPolicy, requestTimeoutMs(), abortSignal);
     }
 
     const execute = async (session: DropexAuthenticatedSession) => {
@@ -344,7 +364,7 @@ export class DropexConnectorService {
           Authorization: `Bearer ${session.token}`,
           ...(request.init.headers || {}),
         },
-      }, outboundPolicy);
+      }, outboundPolicy, requestTimeoutMs(), abortSignal);
       const bodyText = await response.text();
       return { response, bodyText };
     };
@@ -353,7 +373,7 @@ export class DropexConnectorService {
     const authFailure = result.response.status === 401 || result.response.status === 403;
     if (authFailure && allowAuthRetry) {
       this.session = null;
-      const refreshed = await this.login(credentials, outboundPolicy);
+      const refreshed = await this.login(credentials, outboundPolicy, requestTimeoutMs(), abortSignal);
       result = await execute(refreshed);
     }
     return result;
@@ -362,16 +382,25 @@ export class DropexConnectorService {
   private async loadCategoryLookup(
     credentials: { username: string; password: string },
     outboundPolicy: SupplierOutboundPolicy,
+    timeoutMs?: number | (() => number),
+    abortSignal?: AbortSignal,
   ): Promise<DropexCategoryLookup> {
     if (this.categoryLookup) return this.categoryLookup;
 
-    const { response, bodyText } = await this.authorizedRequest(credentials, outboundPolicy, (token) => ({
-      url: `${DROPEX_INVENTORY_SERVICE_URL}/api/v1/product-categories`,
-      init: {
-        method: "GET",
-        headers: { Authorization: `Bearer ${token}` },
-      },
-    }));
+    const { response, bodyText } = await this.authorizedRequest(
+      credentials,
+      outboundPolicy,
+      (token) => ({
+        url: `${DROPEX_INVENTORY_SERVICE_URL}/api/v1/product-categories`,
+        init: {
+          method: "GET",
+          headers: { Authorization: `Bearer ${token}` },
+        },
+      }),
+      true,
+      timeoutMs,
+      abortSignal,
+    );
 
     this.logDiagnostic("category-fetch", {
       endpoint: `${DROPEX_INVENTORY_SERVICE_URL}/api/v1/product-categories`,
@@ -429,14 +458,23 @@ export class DropexConnectorService {
     credentials: { username: string; password: string },
     outboundPolicy: SupplierOutboundPolicy,
     productId: string,
+    timeoutMs?: number | (() => number),
+    abortSignal?: AbortSignal,
   ): Promise<Record<string, unknown>> {
-    const { response, bodyText } = await this.authorizedRequest(credentials, outboundPolicy, (token) => ({
-      url: `${DROPEX_INVENTORY_SERVICE_URL}/api/v1/products/${encodeURIComponent(productId)}/dto`,
-      init: {
-        method: "GET",
-        headers: { Authorization: `Bearer ${token}` },
-      },
-    }));
+    const { response, bodyText } = await this.authorizedRequest(
+      credentials,
+      outboundPolicy,
+      (token) => ({
+        url: `${DROPEX_INVENTORY_SERVICE_URL}/api/v1/products/${encodeURIComponent(productId)}/dto`,
+        init: {
+          method: "GET",
+          headers: { Authorization: `Bearer ${token}` },
+        },
+      }),
+      true,
+      timeoutMs,
+      abortSignal,
+    );
 
     const httpError = classifyDropexHttpStatus(response.status, response.headers.get("retry-after"), this.now());
     if (httpError) throw httpError;
@@ -584,6 +622,22 @@ export class DropexConnectorService {
     outboundPolicy: SupplierOutboundPolicy,
     target: { supplierProductId: string; sku: string },
   ): Promise<RawA2ZProduct> {
+    if (activeExactRefreshOperations >= REFRESH_OPERATION_CONCURRENCY) {
+      throw new Error("Dropex exact refresh capacity is temporarily unavailable.");
+    }
+    activeExactRefreshOperations += 1;
+    try {
+      return await this.fetchExactProductForRefreshInternal(credentials, outboundPolicy, target);
+    } finally {
+      activeExactRefreshOperations -= 1;
+    }
+  }
+
+  private async fetchExactProductForRefreshInternal(
+    credentials: { username?: string; password?: string },
+    outboundPolicy: SupplierOutboundPolicy,
+    target: { supplierProductId: string; sku: string },
+  ): Promise<RawA2ZProduct> {
     if (!credentials.username || !credentials.password) {
       throw new Error("Dropex credentials are required.");
     }
@@ -594,16 +648,24 @@ export class DropexConnectorService {
     }
 
     const startedAt = this.now();
-    let page = 0;
-    let recordsInspected = 0;
-    let match: Record<string, unknown> | null = null;
-
-    while (page < REFRESH_MAX_PAGES && recordsInspected < REFRESH_MAX_RECORDS) {
-      if (this.now() - startedAt >= REFRESH_MAX_ELAPSED_MS) {
-        throw new Error("Dropex refresh catalogue lookup exceeded its time bound.");
+    const deadlineAt = startedAt + REFRESH_MAX_ELAPSED_MS;
+    const refreshCredentials = { username: credentials.username, password: credentials.password };
+    const remainingMs = (): number => {
+      const remaining = deadlineAt - this.now();
+      if (remaining <= 0) {
+        throw new DropexHttpError("Dropex refresh catalogue lookup exceeded its time bound.", 408, true);
       }
-      const activeSession = this.reusableSession({ username: credentials.username, password: credentials.password })
-        || await this.login({ username: credentials.username, password: credentials.password }, outboundPolicy);
+      return remaining;
+    };
+    const refreshAbortController = new AbortController();
+    const activeSession = this.reusableSession(refreshCredentials)
+      || await this.login(refreshCredentials, outboundPolicy, remainingMs(), refreshAbortController.signal);
+
+    const fetchPage = async (page: number): Promise<{
+      page: number;
+      pageRecord: Record<string, unknown> | null;
+      rawList: Record<string, unknown>[];
+    }> => {
       const catalogUrl = new URL(`${DROPEX_INVENTORY_SERVICE_URL}/api/v1/re-seller-products/get`);
       catalogUrl.searchParams.set("reSellerAccountId", activeSession.reSellerAccountId);
       catalogUrl.searchParams.set("page", String(page));
@@ -613,13 +675,15 @@ export class DropexConnectorService {
       for (let transientAttempt = 1; transientAttempt <= DROPEX_TRANSIENT_HTTP_MAX_ATTEMPTS; transientAttempt += 1) {
         try {
           const { response, bodyText } = await this.authorizedRequest(
-            { username: credentials.username, password: credentials.password },
+            refreshCredentials,
             outboundPolicy,
             (token) => ({
               url: catalogUrl.toString(),
               init: { method: "GET", headers: { Authorization: `Bearer ${token}` } },
             }),
             transientAttempt === 1,
+            remainingMs,
+            refreshAbortController.signal,
           );
           responseBodyText = bodyText;
           this.logDiagnostic("refresh-catalog-fetch", {
@@ -633,8 +697,13 @@ export class DropexConnectorService {
           if (httpError) throw httpError;
           break;
         } catch (error: unknown) {
+          if (refreshAbortController.signal.aborted) throw error;
+          if (this.now() >= deadlineAt) {
+            throw new DropexHttpError("Dropex refresh catalogue lookup exceeded its time bound.", 408, true);
+          }
           if (error instanceof DropexHttpError && error.retryable && transientAttempt < DROPEX_TRANSIENT_HTTP_MAX_ATTEMPTS) {
-            await this.sleep(transientRetryDelayMs(error, transientAttempt));
+            const delay = Math.min(transientRetryDelayMs(error, transientAttempt), remainingMs());
+            await this.sleep(delay);
             continue;
           }
           if (error instanceof Error && error.name === "AbortError") {
@@ -650,16 +719,26 @@ export class DropexConnectorService {
       } catch {
         throw new Error("Failed to parse Dropex refresh catalogue response as JSON.");
       }
-      const pageRecord = asRecord(responseBody);
-      const rawList = Array.isArray(responseBody)
-        ? asRecordArray(responseBody)
-        : envelopeRecords(responseBody);
-      recordsInspected += rawList.length;
+      return {
+        page,
+        pageRecord: asRecord(responseBody),
+        rawList: Array.isArray(responseBody)
+          ? asRecordArray(responseBody)
+          : envelopeRecords(responseBody),
+      };
+    };
+
+    let recordsInspected = 0;
+    let match: Record<string, unknown> | null = null;
+    let complete = false;
+    let nextPage = 0;
+
+    const consumePage = (result: Awaited<ReturnType<typeof fetchPage>>): void => {
+      recordsInspected += result.rawList.length;
       if (recordsInspected > REFRESH_MAX_RECORDS) {
         throw new Error("Dropex refresh catalogue lookup exceeded its record bound.");
       }
-
-      for (const item of rawList) {
+      for (const item of result.rawList) {
         const detail = asRecord(item.productDetail) || item;
         const productId = String(detail.id || item.productId || item.id || "").normalize("NFKC").trim();
         const sku = String(detail.sku || item.sku || "").normalize("NFKC").trim().toLocaleLowerCase();
@@ -668,20 +747,42 @@ export class DropexConnectorService {
         match = item;
       }
 
-      const reportedTotal = Number(pageRecord?.totalElements ?? pageRecord?.total ?? pageRecord?.count);
-      const currentPage = Number(pageRecord?.number ?? page);
-      const complete = pageRecord?.last === true
+      const reportedTotal = Number(result.pageRecord?.totalElements ?? result.pageRecord?.total ?? result.pageRecord?.count);
+      const currentPage = Number(result.pageRecord?.number ?? result.page);
+      complete = complete || result.pageRecord?.last === true
         || (Number.isFinite(reportedTotal) && ((currentPage + 1) * REFRESH_PAGE_SIZE) >= reportedTotal)
-        || rawList.length < REFRESH_PAGE_SIZE;
-      if (match) break;
-      if (complete) break;
-      page += 1;
+        || result.rawList.length < REFRESH_PAGE_SIZE;
+    };
+
+    consumePage(await fetchPage(0));
+    nextPage = 1;
+    while (!match && !complete && nextPage < REFRESH_MAX_PAGES && recordsInspected < REFRESH_MAX_RECORDS) {
+      const remainingPages = Math.min(
+        REFRESH_PAGE_CONCURRENCY,
+        REFRESH_MAX_PAGES - nextPage,
+        Math.ceil((REFRESH_MAX_RECORDS - recordsInspected) / REFRESH_PAGE_SIZE),
+      );
+      const pagePromises = Array.from(
+        { length: remainingPages },
+        (_, offset) => fetchPage(nextPage + offset),
+      );
+      let pageResults: Awaited<ReturnType<typeof fetchPage>>[];
+      try {
+        pageResults = await Promise.all(pagePromises);
+      } catch (error) {
+        refreshAbortController.abort();
+        await Promise.allSettled(pagePromises);
+        throw error;
+      }
+      pageResults.sort((left, right) => left.page - right.page).forEach(consumePage);
+      nextPage += remainingPages;
     }
 
     if (!match) {
       throw new Error("The exact Dropex reseller catalogue row could not be found within the refresh bounds.");
     }
-    if (this.now() - startedAt >= REFRESH_MAX_ELAPSED_MS) {
+    match = match as Record<string, unknown>;
+    if (this.now() >= deadlineAt) {
       throw new Error("Dropex refresh catalogue lookup exceeded its time bound.");
     }
 
@@ -690,14 +791,20 @@ export class DropexConnectorService {
     const categoryLookup = await this.loadCategoryLookup(
       { username: credentials.username, password: credentials.password },
       outboundPolicy,
+      remainingMs,
+      refreshAbortController.signal,
     );
+    remainingMs();
     const enrichment = productId
       ? await this.enrichProductDto(
         { username: credentials.username, password: credentials.password },
         outboundPolicy,
         productId,
+        remainingMs,
+        refreshAbortController.signal,
       )
       : undefined;
+    remainingMs();
     return ProductParser.parseCatalogItem(match, { categoryLookup, enrichment });
   }
 

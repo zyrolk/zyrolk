@@ -555,6 +555,258 @@ test('Dropex exact refresh uses 500-row pages to find a target beyond 3,000 reco
   assert.deepEqual(dtoCalls.map((url) => new URL(url).pathname), ['/api/v1/products/4990/dto']);
 });
 
+test('Dropex exact refresh limits catalogue concurrency to three pages and preserves reseller cost authority', async () => {
+  const pages: number[] = [];
+  let activeCatalogueRequests = 0;
+  let maxActiveCatalogueRequests = 0;
+  const service = new DropexConnectorService(
+    { supplierId: 'dropex', sourceId: 'dropex', credentialReference: 'test-profile' },
+    {
+      fetchOutbound: async (url, init) => {
+        if (url.includes('/auth/login')) return response({ access_token: jwtForAccount('reseller-1') });
+        if (url.includes('/re-seller-products/get')) {
+          const page = Number(new URL(url).searchParams.get('page') || '0');
+          pages.push(page);
+          activeCatalogueRequests += 1;
+          maxActiveCatalogueRequests = Math.max(maxActiveCatalogueRequests, activeCatalogueRequests);
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          activeCatalogueRequests -= 1;
+          const content: Array<{ productDetail: { id: string; sku: string; name?: string }; price: number }> = Array.from({ length: 500 }, (_, index) => ({
+            productDetail: { id: `other-${page}-${index}`, sku: `OTHER-${page}-${index}` },
+            price: 720,
+          }));
+          if (page === 2) {
+            content[0] = {
+              productDetail: {
+                id: '8750',
+                sku: 'AJU0027',
+                name: 'Multi Purpose Cleaning Brush',
+              },
+              price: 250,
+            };
+          }
+          return response({ content, number: page, totalElements: 8_038, last: false });
+        }
+        if (url.includes('/product-categories')) return response([]);
+        if (url.includes('/products/8750/dto')) {
+          return response({ data: { description: 'Cleaning brush.', sellingPrice: 999, onHandInventory: 6 } });
+        }
+        throw new Error(`Unexpected supplier endpoint in concurrency test: ${url}`);
+      },
+    },
+  );
+
+  const product = await service.fetchExactProductForRefresh(
+    { username: 'test-user', password: 'test-password' },
+    { approvedHosts: ['inventory.dropex.lk', 'user.dropex.lk'], connector: 'dropex' },
+    { supplierProductId: '8750', sku: 'AJU0027' },
+  );
+
+  assert.deepEqual(pages, [0, 1, 2, 3]);
+  assert.equal(maxActiveCatalogueRequests, 3);
+  assert.equal(product.supplierProductId, '8750');
+  assert.equal(product.sku, 'AJU0027');
+  assert.equal(product.wholesalePrice, 250);
+  assert.equal(product.price, 999);
+  assert.equal(product.inventoryLevel, 6);
+});
+
+test('Dropex exact refresh rejects duplicate identity across concurrently fetched pages', async () => {
+  const service = new DropexConnectorService(
+    { supplierId: 'dropex', sourceId: 'dropex', credentialReference: 'test-profile' },
+    {
+      fetchOutbound: async (url) => {
+        if (url.includes('/auth/login')) return response({ access_token: jwtForAccount('reseller-1') });
+        if (url.includes('/re-seller-products/get')) {
+          const page = Number(new URL(url).searchParams.get('page') || '0');
+          const content = Array.from({ length: 500 }, (_, index) => ({
+            productDetail: { id: `other-${page}-${index}`, sku: `OTHER-${page}-${index}` },
+            price: 720,
+          }));
+          if (page === 1 || page === 2) {
+            content[0] = { productDetail: { id: '8750', sku: 'AJU0027' }, price: 250 };
+          }
+          return response({ content, number: page, totalElements: 8_038, last: false });
+        }
+        throw new Error(`Unexpected supplier endpoint in duplicate concurrency test: ${url}`);
+      },
+    },
+  );
+
+  await assert.rejects(
+    service.fetchExactProductForRefresh(
+      { username: 'test-user', password: 'test-password' },
+      { approvedHosts: ['inventory.dropex.lk', 'user.dropex.lk'], connector: 'dropex' },
+      { supplierProductId: '8750', sku: 'AJU0027' },
+    ),
+    /multiple catalogue rows/u,
+  );
+});
+
+test('Dropex exact refresh aborts and settles sibling pages after a terminal page failure', async () => {
+  let siblingAborts = 0;
+  const requestedPages: number[] = [];
+  const service = new DropexConnectorService(
+    { supplierId: 'dropex', sourceId: 'dropex', credentialReference: 'test-profile' },
+    {
+      fetchOutbound: async (url, init) => {
+        if (url.includes('/auth/login')) return response({ access_token: jwtForAccount('reseller-1') });
+        if (url.includes('/re-seller-products/get')) {
+          const page = Number(new URL(url).searchParams.get('page') || '0');
+          requestedPages.push(page);
+          if (page === 0) {
+            return response({ content: Array.from({ length: 500 }, (_, index) => ({
+              productDetail: { id: `other-${page}-${index}`, sku: `OTHER-${page}-${index}` },
+              price: 720,
+            })), number: page, totalElements: 8_038, last: false });
+          }
+          if (page === 1) throw new Error('terminal catalogue failure');
+          return await new Promise<ReturnType<typeof response>>((_resolve, reject) => {
+            const abort = () => {
+              siblingAborts += 1;
+              reject(new DOMException('Aborted', 'AbortError'));
+            };
+            if (init?.signal?.aborted) abort();
+            else init?.signal?.addEventListener('abort', abort, { once: true });
+          });
+        }
+        throw new Error(`Unexpected supplier endpoint in cancellation test: ${url}`);
+      },
+    },
+  );
+
+  await assert.rejects(
+    service.fetchExactProductForRefresh(
+      { username: 'test-user', password: 'test-password' },
+      { approvedHosts: ['inventory.dropex.lk', 'user.dropex.lk'], connector: 'dropex' },
+      { supplierProductId: '8750', sku: 'AJU0027' },
+    ),
+    /terminal catalogue failure/u,
+  );
+  assert.deepEqual(requestedPages, [0, 1, 2, 3]);
+  assert.equal(siblingAborts, 2);
+});
+
+test('Dropex exact refresh caps simultaneous operations per API instance', async () => {
+  const pendingPageResolvers: Array<(value: ReturnType<typeof response>) => void> = [];
+  const service = new DropexConnectorService(
+    { supplierId: 'dropex', sourceId: 'dropex', credentialReference: 'test-profile' },
+    {
+      fetchOutbound: async (url) => {
+        if (url.includes('/auth/login')) return response({ access_token: jwtForAccount('reseller-1') });
+        if (url.includes('/re-seller-products/get')) {
+          return await new Promise<ReturnType<typeof response>>((resolve) => {
+            pendingPageResolvers.push(resolve);
+          });
+        }
+        throw new Error(`Unexpected supplier endpoint in operation-cap test: ${url}`);
+      },
+    },
+  );
+
+  const first = service.fetchExactProductForRefresh(
+    { username: 'test-user', password: 'test-password' },
+    { approvedHosts: ['inventory.dropex.lk', 'user.dropex.lk'], connector: 'dropex' },
+    { supplierProductId: '8750', sku: 'AJU0027' },
+  );
+  const second = service.fetchExactProductForRefresh(
+    { username: 'test-user', password: 'test-password' },
+    { approvedHosts: ['inventory.dropex.lk', 'user.dropex.lk'], connector: 'dropex' },
+    { supplierProductId: '8751', sku: 'AJU0028' },
+  );
+
+  await assert.rejects(
+    service.fetchExactProductForRefresh(
+      { username: 'test-user', password: 'test-password' },
+      { approvedHosts: ['inventory.dropex.lk', 'user.dropex.lk'], connector: 'dropex' },
+      { supplierProductId: '8752', sku: 'AJU0029' },
+    ),
+    /capacity is temporarily unavailable/u,
+  );
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(pendingPageResolvers.length, 2);
+  pendingPageResolvers.forEach((resolve) => resolve(response({ content: [], number: 0, last: true })));
+  const outcomes = await Promise.allSettled([first, second]);
+  assert.equal(outcomes.every((outcome) => outcome.status === 'rejected'), true);
+});
+
+test('Dropex exact refresh retries a rate-limited page without changing identity or cost checks', async () => {
+  let pageOneAttempts = 0;
+  const service = new DropexConnectorService(
+    { supplierId: 'dropex', sourceId: 'dropex', credentialReference: 'test-profile' },
+    {
+      fetchOutbound: async (url) => {
+        if (url.includes('/auth/login')) return response({ access_token: jwtForAccount('reseller-1') });
+        if (url.includes('/re-seller-products/get')) {
+          const page = Number(new URL(url).searchParams.get('page') || '0');
+          if (page === 1) {
+            pageOneAttempts += 1;
+            if (pageOneAttempts === 1) return response({ error: 'rate limited' }, 429);
+          }
+          const content = Array.from({ length: 500 }, (_, index) => ({
+            productDetail: { id: `other-${page}-${index}`, sku: `OTHER-${page}-${index}` },
+            price: 720,
+          }));
+          if (page === 1) content[0] = { productDetail: { id: '8750', sku: 'AJU0027' }, price: 250 };
+          return response({ content, number: page, totalElements: 8_038, last: false });
+        }
+        if (url.includes('/product-categories')) return response([]);
+        if (url.includes('/products/8750/dto')) return response({ sellingPrice: 999, onHandInventory: 6 });
+        throw new Error(`Unexpected supplier endpoint in rate-limit test: ${url}`);
+      },
+    },
+  );
+
+  const product = await service.fetchExactProductForRefresh(
+    { username: 'test-user', password: 'test-password' },
+    { approvedHosts: ['inventory.dropex.lk', 'user.dropex.lk'], connector: 'dropex' },
+    { supplierProductId: '8750', sku: 'AJU0027' },
+  );
+
+  assert.equal(pageOneAttempts, 2);
+  assert.equal(product.wholesalePrice, 250);
+  assert.equal(product.price, 999);
+});
+
+test('Dropex exact refresh aborts an in-flight page at the overall refresh deadline', async () => {
+  let nowCalls = 0;
+  let aborted = false;
+  const service = new DropexConnectorService(
+    { supplierId: 'dropex', sourceId: 'dropex', credentialReference: 'test-profile' },
+    {
+      now: () => {
+        nowCalls += 1;
+        return nowCalls === 1 ? 0 : 29_999;
+      },
+      fetchOutbound: async (url, init) => {
+        if (url.includes('/auth/login')) return response({ access_token: jwtForAccount('reseller-1') });
+        if (url.includes('/re-seller-products/get')) {
+          const signal = init?.signal;
+          return await new Promise<ReturnType<typeof response>>((_resolve, reject) => {
+            const abort = () => {
+              aborted = true;
+              reject(new DOMException('Aborted', 'AbortError'));
+            };
+            if (signal?.aborted) abort();
+            else signal?.addEventListener('abort', abort, { once: true });
+          });
+        }
+        throw new Error(`Unexpected supplier endpoint in deadline test: ${url}`);
+      },
+    },
+  );
+
+  await assert.rejects(
+    service.fetchExactProductForRefresh(
+      { username: 'test-user', password: 'test-password' },
+      { approvedHosts: ['inventory.dropex.lk', 'user.dropex.lk'], connector: 'dropex' },
+      { supplierProductId: '8750', sku: 'AJU0027' },
+    ),
+    /timed out/u,
+  );
+  assert.equal(aborted, true);
+});
+
 test('active NEW_PRODUCT refresh reuses the review and offer without creating a canonical product', async () => {
   const db = createFakeAdminDb();
   const patchedDb = adminDb as unknown as PatchableAdminDb;
