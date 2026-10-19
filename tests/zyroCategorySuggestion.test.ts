@@ -26,7 +26,7 @@ const taxonomy = [
   category('electronics', 'Electronics', ['smart-watches', 'smart-devices']),
   category('accessories', 'Accessories', ['mobile-accessories', 'personal-accessories', 'fitness-accessories', 'watches']),
   category('fashion', 'Fashion', ['watches']),
-  category('health-beauty', 'Health & Beauty', ['health-wellness', 'beauty-personal-care']),
+  category('health-beauty', 'Health & Beauty', ['health-wellness', 'beauty-personal-care', 'skin-care']),
   category('baby-kids', 'Baby & Kids', ['baby-care']),
   category('kids-toys', 'Kids & Toys', ['educational-toys', 'puzzles-games']),
   category('solar-lighting', 'Solar & Lighting', ['solar-lights', 'lighting-accessories']),
@@ -501,6 +501,19 @@ test('12 launch fixtures resolve conservatively', () => {
     assert.equal(result.subcategoryId, subcategoryId, name);
     assert.equal(result.status === 'SUGGESTED' ? result.confidence : result.status, expected, name);
   }
+});
+
+test('supplier sunscreen evidence resolves to the active canonical skin-care path', () => {
+  const result = suggestZyroCategory({
+    productName: 'SunScoop Hydrating Face & Body Fluid Sunscreen Spray SPF 60 PA++++',
+    description: 'Hydrating sunscreen spray for face and body with SPF 60 protection.',
+    categories: taxonomy,
+  });
+  assert.equal(result.status, 'SUGGESTED');
+  assert.equal(result.categoryId, 'health-beauty');
+  assert.equal(result.subcategoryId, 'skin-care');
+  assert.equal(result.confidence, 'HIGH');
+  assert.ok(result.reasons.some((reason) => /sunscreen|spf/iu.test(reason)));
 });
 
 test('repeated input is deterministic', () => {

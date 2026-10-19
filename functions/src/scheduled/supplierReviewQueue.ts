@@ -2000,6 +2000,29 @@ const supplierReviewRecordNeedsCategoryDecision = (
   return false;
 };
 
+const supplierReviewValidationEntryIsTaxonomyOnly = (entry: Record<string, unknown>): boolean => (
+  /(^|[^a-z])(category|subcategory)([^a-z]|$)|taxonomy|category_required/u.test(
+    `${normalizedReviewValue(entry.field)} ${normalizedReviewValue(entry.code)} ${normalizedReviewValue(entry.message)}`,
+  )
+);
+
+/**
+ * Category-decision work is a Good Product only when taxonomy is its sole
+ * remaining blocker. This keeps unusable media, price/cost, stock, identity
+ * and other validation failures in Needs Attention even when category is also
+ * unresolved.
+ */
+const supplierReviewRecordHasOnlyCategoryDecision = (
+  record: SupplierQueueRecord,
+  categoryRequiresSubcategory = false,
+): boolean => {
+  if (!supplierReviewRecordNeedsCategoryDecision(record, categoryRequiresSubcategory)) return false;
+  if (!supplierReviewRecordHasPublicationReadyMedia(record)) return false;
+  const entries = validationEntries(record);
+  return !entries.missingFields.some((field) => !supplierReviewValidationEntryIsTaxonomyOnly({ field }))
+    && !entries.errors.some((error) => !supplierReviewValidationEntryIsTaxonomyOnly(error));
+};
+
 /**
  * One primary operator group for the existing Product Review workflow. The
  * complete validation evidence is intentionally left on the record; this
@@ -2019,7 +2042,7 @@ export const supplierReviewReadinessGroupForRecord = (
   if (reviewComparisonIsRemoval(comparisonStatus)) return null;
   if (supplierReviewRecordHasConflictIssue(projectedRecord)) return "conflicts";
   if (supplierReviewRecordHasStockOrPriceIssue(projectedRecord)) return "stock_price_issues";
-  if (supplierReviewRecordNeedsCategoryDecision(projectedRecord, categoryRequiresSubcategory)) return "category_decision_required";
+  if (supplierReviewRecordHasOnlyCategoryDecision(projectedRecord, categoryRequiresSubcategory)) return "category_decision_required";
   if (supplierReviewRecordIsReadyForReview(projectedRecord)) return "ready_to_publish";
   return "missing_details";
 };
@@ -2062,6 +2085,8 @@ export const reviewRecordMatchesBusinessFilter = (
   if (lowStockHold) return false;
   if (filter === "new_products") return comparisonStatus === "new_product";
   if (filter === "needs_attention") {
+    const categoryRequiresSubcategory = categoryRequirements?.get(supplierReviewCategoryId(record)) === true;
+    if (supplierReviewReadinessGroupForRecord(projectedRecord, categoryRequiresSubcategory) === "category_decision_required") return false;
     const validation = asRecord(projectedRecord.productValidation);
     return validation.readyToPublish === false
       || (Array.isArray(validation.missingFields) && validation.missingFields.length > 0)

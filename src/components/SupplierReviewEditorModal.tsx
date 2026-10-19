@@ -747,7 +747,7 @@ export default function SupplierReviewEditorModal({
                 {suggestionMatchesCurrentSelection ? (
                   <p className="mt-3 rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-[10px] font-bold text-emerald-700 dark:text-emerald-300">Matches current selection.</p>
                 ) : isEditing ? (
-                  <button type="button" onClick={() => setDraft((current) => applyZyroCategorySuggestion(current, categorySuggestion))} disabled={isPublishing} className="mt-3 min-h-10 rounded-lg bg-violet-600 px-3 py-2 text-[10px] font-black text-white hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50">Apply Suggestion</button>
+                  <button type="button" onClick={() => setDraft((current) => applyZyroCategorySuggestion(current, categorySuggestion))} disabled={isPublishing || isSaving || isRefreshing} className="mt-3 min-h-10 rounded-lg bg-violet-600 px-3 py-2 text-[10px] font-black text-white hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50">Apply Suggestion</button>
                 ) : (
                   <p className="mt-3 text-[10px] font-semibold text-slate-500">Choose Edit product data to apply this suggestion.</p>
                 )}

@@ -56,7 +56,7 @@ import { normalizeCategoryBlueprint } from '../services/products/productBlueprin
 import { sortCategoriesAlphabetically } from '../services/categories/categoryUtils';
 import { sortBrandsAlphabetically } from '../services/brands/brandUtils';
 import { normalizeSupplierCategory, supplierCategoryMappingUiKey } from '../services/supplierCategoryMapping';
-import type { ZyroMissingParentCategoryProposal, ZyroTaxonomyProposal } from '../services/categorySuggestion/suggestZyroCategory';
+import { suggestZyroCategory, type ZyroMissingParentCategoryProposal, type ZyroTaxonomyProposal } from '../services/categorySuggestion/suggestZyroCategory';
 import {
   sortSupplierOffers,
   SupplierOfferSelectionView,
@@ -1558,7 +1558,9 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
     item: ReviewQueueItem,
     draft: { category: string; subcategory: string },
   ): Promise<void> => {
-    if (processingChangeId || savingReviewDraftId || refreshingReviewItemId) return;
+    if (processingChangeId || savingReviewDraftId || refreshingReviewItemId) {
+      throw new Error('This review is busy. Wait for the current operation to finish before saving.');
+    }
     setSavingReviewDraftId(item.id);
     try {
       const response = await patchSupplierApi(`/api/supplier-review-queue/${encodeURIComponent(item.id)}/draft`, {
@@ -1593,7 +1595,9 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
     item: ReviewQueueItem,
     decision: Launch1000ProductTypeClassificationDecision,
   ): Promise<void> => {
-    if (processingChangeId || savingReviewDraftId || refreshingReviewItemId) return;
+    if (processingChangeId || savingReviewDraftId || refreshingReviewItemId) {
+      throw new Error('This review is busy. Wait for the current operation to finish.');
+    }
     if (!item.supplierOfferPendingRevision || !item.updatedAt || !item.launch1000RecordFingerprint) {
       throw new Error('This review is missing freshness evidence. Reload it before approving the classification.');
     }
@@ -2994,10 +2998,28 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                   ? `Showing ${supplierScopeOptions.find((source) => source.id === reviewSupplierScope)?.label || 'selected supplier'} using an exact server-side source match; counts and pagination remain authoritative.`
                   : 'Search by exact supplier SKU, product ID or item code. Product-name search is not enabled.'}
               </p>
-              <div className="mt-4 rounded-2xl border border-blue-500/20 bg-blue-500/5 p-3 dark:bg-blue-500/10" aria-label="Product readiness groups">
+              <nav className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4" aria-label="Supplier review business queues">
+                <a href="#supplier-good-products-groups" className="flex min-h-11 items-center justify-between rounded-xl border border-emerald-500/25 bg-emerald-500/10 px-3 text-[10px] font-black text-emerald-800 hover:bg-emerald-500/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 dark:text-emerald-200">
+                  <span>Good Products</span>
+                  <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+                </a>
+                <button type="button" onClick={() => handleReviewFilterChange('needs_attention')} className="flex min-h-11 items-center justify-between rounded-xl border border-amber-500/25 bg-amber-500/10 px-3 text-left text-[10px] font-black text-amber-800 hover:bg-amber-500/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 dark:text-amber-200">
+                  <span>Needs Attention</span>
+                  <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+                </button>
+                <button type="button" onClick={() => handleReviewFilterChange('product_updates')} className="flex min-h-11 items-center justify-between rounded-xl border border-blue-500/25 bg-blue-500/10 px-3 text-left text-[10px] font-black text-blue-800 hover:bg-blue-500/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-blue-200">
+                  <span>Product Updates</span>
+                  <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+                </button>
+                <button type="button" onClick={() => handleReviewFilterChange('approved_history')} className="flex min-h-11 items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 text-left text-[10px] font-black text-slate-700 hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500 dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-200 dark:hover:bg-slate-800">
+                  <span>History</span>
+                  <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+                </button>
+              </nav>
+              <div id="supplier-good-products-groups" className="mt-4 scroll-mt-4 rounded-2xl border border-blue-500/20 bg-blue-500/5 p-3 dark:bg-blue-500/10" aria-label="Good Products readiness groups">
                 <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                  <p className="text-[10px] font-black uppercase tracking-wider text-blue-700 dark:text-blue-300">Publish readiness</p>
-                  <p className="text-[10px] text-slate-500 dark:text-slate-400">Server validation groups; approval remains an Admin decision.</p>
+                  <p className="text-[10px] font-black uppercase tracking-wider text-blue-700 dark:text-blue-300">Good Products</p>
+                  <p className="text-[10px] text-slate-500 dark:text-slate-400">Complete supplier data, split into publish-ready and category-decision work. Admin approval remains required.</p>
                 </div>
                 <div className="flex min-w-0 flex-wrap gap-1.5" role="tablist" aria-label="Product readiness groups">
                   {SUPPLIER_REVIEW_READINESS_GROUPS.map((group) => (
@@ -3118,6 +3140,40 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                     const subcategoryLabel = showSubcategory
                       ? supplierReviewDisplayLabel(draft.subcategory, activeSubcategories)
                       : undefined;
+                    const categorySuggestion = categories.length > 0
+                      ? suggestZyroCategory({
+                        productName: draft.productName,
+                        description: draft.description,
+                        productType: draft.productType,
+                        model: draft.model,
+                        brand: draft.brand,
+                        keywords: draft.keywords,
+                        specifications: draft.specifications,
+                        categories,
+                        taxonomyProposals: launch1000TaxonomyProposals,
+                        sourceEvidence: [
+                          draft.productName ? { kind: 'product_title' as const, ref: 'productPayload.name', value: draft.productName } : null,
+                          draft.description ? { kind: 'product_description' as const, ref: 'productPayload.description', value: draft.description } : null,
+                        ].filter((evidence): evidence is { kind: 'product_title' | 'product_description'; ref: string; value: string } => evidence !== null),
+                      })
+                      : null;
+                    const suggestedCategory = categorySuggestion?.status === 'SUGGESTED'
+                      ? categories.find((candidate) => String(candidate.id) === String(categorySuggestion.categoryId))
+                      : undefined;
+                    const suggestedSubcategory = suggestedCategory?.subcategories?.find(
+                      (candidate: { id?: string }) => String(candidate.id) === String(categorySuggestion?.subcategoryId || ''),
+                    );
+                    const categorySuggestionLabel = suggestedCategory
+                      ? supplierReviewDisplayLabel(suggestedCategory.id, categories)
+                      : undefined;
+                    const categorySuggestionSubcategoryLabel = suggestedSubcategory
+                      ? supplierReviewDisplayLabel(suggestedSubcategory.id, suggestedCategory?.subcategories || [])
+                      : undefined;
+                    const categorySuggestionReason = categories.length > 0 && !categorySuggestionLabel
+                      ? categorySuggestion?.status === 'MISSING_TAXONOMY_PROPOSAL' || categorySuggestion?.status === 'MISSING_PARENT_CATEGORY_PROPOSAL'
+                        ? 'Evidence suggests a taxonomy proposal; Admin must review it.'
+                        : 'No confident product-evidence match. Select a canonical category manually.'
+                      : undefined;
                     const brandLabel = supplierReviewDisplayLabel(draft.brand, brands);
                     const rawMetadata = supplierReviewRawMetadata(item);
                     const statusLabel = supplierReviewStatusLabel(item);
@@ -3144,6 +3200,10 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                         brandLabel={brandLabel}
                         categoryLabel={categoryLabel}
                         subcategoryLabel={subcategoryLabel}
+                        categorySuggestionLabel={categorySuggestionLabel}
+                        categorySuggestionSubcategoryLabel={categorySuggestionSubcategoryLabel}
+                        categorySuggestionConfidence={categorySuggestion?.status === 'SUGGESTED' ? categorySuggestion.confidence : undefined}
+                        categorySuggestionReason={categorySuggestionReason}
                         rawSupplierCategory={rawMetadata.supplierCategory}
                         rawSupplierSubcategory={rawMetadata.supplierSubcategory}
                         rawSupplierBrand={rawMetadata.supplierBrand}

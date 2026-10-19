@@ -89,6 +89,20 @@ test('Product Review presents the required business filters and maps them to exi
   assert.equal(supplierReviewApiState('approved_history'), 'history');
 });
 
+test('Product Review puts the four operator queues above advanced filters', () => {
+  const component = projectFile('src/components/SupplierHubFiveStars.tsx');
+  const reviewStart = component.indexOf('activeSubTab === \'review\'');
+  const reviewEnd = component.indexOf('{activeSubTab === \'suppliers\'', reviewStart);
+  assert.ok(reviewStart >= 0 && reviewEnd > reviewStart);
+  const review = component.slice(reviewStart, reviewEnd);
+  for (const label of ['Good Products', 'Needs Attention', 'Product Updates', 'History']) {
+    assert.match(review, new RegExp(label));
+  }
+  assert.match(review, /id="supplier-good-products-groups"/u);
+  assert.match(review, /<summary[^>]*>Operational filters<\/summary>/u);
+  assert.match(review, /Launch1000PilotDryRunPanel/u);
+});
+
 test('supplier cards use business health labels and retain existing actions', () => {
   assert.equal(supplierHealthLabel({ enabled: false }), 'Disabled');
   assert.equal(supplierHealthLabel({ sourceStatus: 'paused' }), 'Paused');

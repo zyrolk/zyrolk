@@ -104,6 +104,11 @@ export const ZYRO_CATEGORY_RULES: readonly ZyroCategoryRule[] = Object.freeze([
     keywords: ['beauty', 'hair', 'comb', 'trimmer'],
   },
   {
+    categoryId: 'health-beauty', subcategoryId: 'skin-care',
+    strongPhrases: ['sunscreen', 'sun screen', 'sunblock'],
+    keywords: ['spf', 'skincare', 'skin care'],
+  },
+  {
     categoryId: 'baby-kids', subcategoryId: 'baby-care',
     strongPhrases: ['baby bottle', 'baby monitor', 'newborn care'],
     keywords: ['baby', 'infant', 'newborn'],

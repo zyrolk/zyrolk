@@ -20,9 +20,21 @@ const baseRecord = (patch: Record<string, unknown> = {}): Record<string, unknown
   sourceId: "dropex",
   comparisonStatus: "NEW_PRODUCT",
   comparison: { comparisonStatus: "NEW_PRODUCT", changedFields: [] },
-  productValidation: { readyToPublish: true, missingFields: [], errors: [] },
+  productValidation: { readyToPublish: false, missingFields: ["category"], errors: [{ field: "category", code: "required" }] },
   productPayload: { category: "", stock: 10 },
   stock: 10,
+  mediaStatus: "ready",
+  mediaQueueClass: "ready",
+  mediaSourceImageUrls: ["https://supplier.example/image.webp"],
+  managedMedia: [{
+    contentHash: "a".repeat(64),
+    firebaseStorageUrl: "https://firebasestorage.googleapis.com/v0/b/demo/o/managed.webp?alt=media",
+    originalSupplierUrl: "https://supplier.example/image.webp",
+    imageStatus: "ready",
+    isPrimary: true,
+    storagePath: "supplier-review/demo/managed.webp",
+    variants: { large: { firebaseStorageUrl: "https://firebasestorage.googleapis.com/v0/b/demo/o/managed.webp?alt=media" } },
+  }],
   supplierSnapshot: {
     inventoryLevel: 10,
     providedFields: ["stock"],
@@ -41,10 +53,10 @@ test("business projection preserves the existing overlapping queue semantics", (
   const attention = baseRecord({
     comparisonStatus: "DESCRIPTION_CHANGED",
     comparison: { comparisonStatus: "DESCRIPTION_CHANGED", changedFields: ["Description"] },
-    productValidation: { readyToPublish: false, missingFields: ["category"], errors: [{ code: "required" }] },
+    productValidation: { readyToPublish: false, missingFields: ["category"], errors: [{ field: "category", code: "required" }] },
   });
   assert.deepEqual(buildSupplierReviewBusinessQueueProjection(attention as never).businessQueueClasses, [
-    "actionable", "category_decision_required", "product_updates", "needs_attention",
+    "actionable", "category_decision_required", "product_updates",
   ]);
 
   const lowStock = baseRecord({ stock: 2, productPayload: { category: "", stock: 2 } });
@@ -168,6 +180,22 @@ test("readiness groups preserve primary blocker precedence without weakening app
     productValidation: { readyToPublish: false, missingFields: ["category"], errors: [{ field: "category", code: "required" }] },
   });
   assert.equal(supplierReviewReadinessGroupForRecord(categoryDecision as never), "category_decision_required");
+
+  const categoryAndImageBlocker = baseRecord({
+    productValidation: {
+      readyToPublish: false,
+      missingFields: ["category", "images"],
+      errors: [
+        { field: "category", code: "required" },
+        { field: "images", code: "required" },
+      ],
+    },
+    mediaStatus: "failed",
+    mediaQueueClass: "issues",
+    managedMedia: [],
+  });
+  assert.equal(supplierReviewReadinessGroupForRecord(categoryAndImageBlocker as never), "missing_details");
+  assert.ok((buildSupplierReviewBusinessQueueProjection(categoryAndImageBlocker as never).businessQueueClasses as string[]).includes("needs_attention"));
 
   const stockAndDetails = baseRecord({
     productValidation: { readyToPublish: false, missingFields: ["stock", "images"], errors: [{ field: "stock", code: "required" }] },

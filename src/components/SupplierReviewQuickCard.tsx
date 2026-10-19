@@ -35,6 +35,11 @@ export interface SupplierReviewQuickCardProps {
   brandLabel: string;
   categoryLabel: string;
   subcategoryLabel?: string;
+  /** Server-safe deterministic proposal; the current selection remains separate until Admin applies it. */
+  categorySuggestionLabel?: string;
+  categorySuggestionSubcategoryLabel?: string;
+  categorySuggestionConfidence?: string;
+  categorySuggestionReason?: string;
   rawSupplierCategory?: string;
   rawSupplierSubcategory?: string;
   rawSupplierBrand?: string;
@@ -139,6 +144,10 @@ export function SupplierReviewQuickCard({
   brandLabel,
   categoryLabel,
   subcategoryLabel,
+  categorySuggestionLabel,
+  categorySuggestionSubcategoryLabel,
+  categorySuggestionConfidence,
+  categorySuggestionReason,
   rawSupplierCategory,
   rawSupplierSubcategory,
   rawSupplierBrand,
@@ -185,6 +194,16 @@ export function SupplierReviewQuickCard({
     : mediaState === 'LEGACY_UNKNOWN'
       ? 'bg-slate-500/10 text-slate-600 dark:text-slate-300'
       : 'bg-amber-500/10 text-amber-700 dark:text-amber-300';
+  const currentTaxonomyAvailable = !['Not available', 'Loading…'].includes(categoryLabel);
+  const displayedCategoryLabel = currentTaxonomyAvailable ? categoryLabel : categorySuggestionLabel || categoryLabel;
+  const displayedSubcategoryLabel = currentTaxonomyAvailable
+    ? subcategoryLabel
+    : categorySuggestionSubcategoryLabel || (!categorySuggestionLabel ? subcategoryLabel : undefined);
+  const taxonomyNote = !currentTaxonomyAvailable && categorySuggestionLabel
+    ? `Suggested${categorySuggestionConfidence ? ` · ${categorySuggestionConfidence} confidence` : ''} · Admin confirms`
+    : !currentTaxonomyAvailable && categorySuggestionReason
+      ? categorySuggestionReason
+      : 'Admin confirms';
 
   const highLevelStatus = terminalState
     ? terminalState
@@ -236,7 +255,7 @@ export function SupplierReviewQuickCard({
             <div><span className="block text-slate-400">Selling</span><strong className="font-black text-blue-600">LKR {sellingPrice.toLocaleString()}</strong></div>
             <div><span className="block text-slate-400">Stock</span><strong className="font-black">{formatSupplierStockLabel(stock, supplierStockAvailable)}</strong></div>
             <div><span className="block text-slate-400">Margin</span><strong className="font-black">{formatSupplierMarginLabel(marginPercent, profitAvailable)}</strong></div>
-            <div><span className="block text-slate-400">Suggested Zyro taxonomy</span><strong className="line-clamp-2 font-black">{categoryLabel}{subcategoryLabel ? ` / ${subcategoryLabel}` : ''}</strong><span className="mt-0.5 block text-[9px] font-semibold text-slate-400">Admin confirms</span></div>
+            <div><span className="block text-slate-400">Suggested Zyro taxonomy</span><strong className="line-clamp-2 font-black">{displayedCategoryLabel}{displayedSubcategoryLabel ? ` / ${displayedSubcategoryLabel}` : ''}</strong><span className="mt-0.5 block text-[9px] font-semibold text-slate-400">{taxonomyNote}</span></div>
           </div>
           <div className="flex items-center gap-2 sm:justify-end">
             <button type="button" onClick={onViewDetails} disabled={processing} aria-label={`Review product ${productName}`} className="min-h-11 flex-1 rounded-xl bg-blue-600 px-4 text-[10px] font-black text-white hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-50 sm:flex-none">Review</button>
@@ -291,7 +310,7 @@ export function SupplierReviewQuickCard({
         </dl>
 
         <div className="grid gap-2 border-b border-slate-100 px-3 py-3 text-[10px] dark:border-slate-800 sm:grid-cols-3 sm:px-4">
-          <div><span className="font-black uppercase tracking-wide text-slate-400">Suggested Zyro taxonomy</span><p className="mt-1 font-semibold text-slate-700 dark:text-slate-200">{categoryLabel}</p>{subcategoryLabel && <p className="mt-0.5 text-[9px] font-semibold text-slate-500 dark:text-slate-400">{subcategoryLabel}</p>}<p className="mt-0.5 text-[9px] font-semibold text-slate-400">Admin confirms</p></div>
+          <div><span className="font-black uppercase tracking-wide text-slate-400">Suggested Zyro taxonomy</span><p className="mt-1 font-semibold text-slate-700 dark:text-slate-200">{displayedCategoryLabel}</p>{displayedSubcategoryLabel && <p className="mt-0.5 text-[9px] font-semibold text-slate-500 dark:text-slate-400">{displayedSubcategoryLabel}</p>}<p className="mt-0.5 text-[9px] font-semibold text-slate-400">{taxonomyNote}</p></div>
           <div><span className="font-black uppercase tracking-wide text-slate-400">Zyro brand</span><p className="mt-1 font-semibold text-slate-700 dark:text-slate-200">{brandLabel}</p></div>
           <div><span className="font-black uppercase tracking-wide text-slate-400">Storefront</span><p className="mt-1 font-semibold text-slate-700 dark:text-slate-200">{storefrontStatusLabel}</p></div>
         </div>

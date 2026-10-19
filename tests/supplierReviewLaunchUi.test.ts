@@ -169,6 +169,26 @@ test('compact review cards make supplier scope, readiness, taxonomy ownership, a
   assert.match(markup, /Admin confirms/u);
 });
 
+test('compact review cards show an unapplied deterministic suggestion and explain a true no-match', () => {
+  const suggestedMarkup = renderQuickCard({
+    categoryLabel: 'Not available',
+    subcategoryLabel: undefined,
+    categorySuggestionLabel: 'Health & Beauty',
+    categorySuggestionSubcategoryLabel: 'Skin Care',
+    categorySuggestionConfidence: 'HIGH',
+    compact: true,
+  });
+  assert.match(suggestedMarkup, /Health &amp; Beauty \/ Skin Care/u);
+  assert.match(suggestedMarkup, /Suggested · HIGH confidence · Admin confirms/u);
+
+  const noMatchMarkup = renderQuickCard({
+    categoryLabel: 'Not available',
+    categorySuggestionReason: 'No confident product-evidence match. Select a canonical category manually.',
+    compact: true,
+  });
+  assert.match(noMatchMarkup, /No confident product-evidence match. Select a canonical category manually./u);
+});
+
 test('rendered quick actions follow ready, invalid, conflict, and removal gates', () => {
   assert.match(renderQuickCard(), /aria-label="Approve Rendered QA product"/u);
   assert.match(renderQuickCard(), /aria-label="Reject Rendered QA product"/u);
@@ -386,6 +406,18 @@ test('rendered View Details starts read-only and makes editing explicit', () => 
   assert.match(markup, /<fieldset disabled=""/u);
   assert.match(markup, />Edit product data</u);
   assert.doesNotMatch(markup, /type="submit"/u);
+});
+
+test('review Save guards busy actions and disables suggestion application during save/refresh', () => {
+  const hub = projectFile('src/components/SupplierHubFiveStars.tsx');
+  const saveStart = hub.indexOf('const handleSaveSupplierReviewDraft');
+  const saveEnd = hub.indexOf('const handleApproveLaunch1000ProductTypeClassification', saveStart);
+  assert.ok(saveStart >= 0 && saveEnd > saveStart);
+  assert.match(hub.slice(saveStart, saveEnd), /throw new Error\('This review is busy\. Wait for the current operation to finish before saving\.'\)/u);
+
+  const modal = projectFile('src/components/SupplierReviewEditorModal.tsx');
+  assert.match(modal, /Apply Suggestion<\/button>/u);
+  assert.match(modal, /disabled=\{isPublishing \|\| isSaving \|\| isRefreshing\}[^>]*>Apply Suggestion/u);
 });
 
 test('supplier-managed commercial values stay read-only while listing controls remain editable', () => {
