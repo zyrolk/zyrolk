@@ -11,6 +11,11 @@ import { SupplierRegistry } from "../api/suppliers/SupplierRegistry";
 import { isValidSupplierImageUrl, ProductParser } from "../api/suppliers/a2z/ProductParser";
 import { RawA2ZProduct } from "../api/suppliers/a2z/types";
 import {
+  buildDropexFailureDiagnostic,
+  DropexFailureDiagnostic,
+  getDropexFailureDiagnostic,
+} from "../api/suppliers/dropex/diagnostics";
+import {
   normalizeSupplierSourceConfig,
   resolveSupplierSourceAutoSyncSchedule,
 } from "../api/suppliers/supplierSourceCompatibility";
@@ -1966,6 +1971,15 @@ export interface SupplierReviewApprovalFreshnessDiagnostic {
   failureClassification: SupplierReviewApprovalFreshnessFailureClassification;
   correlationId: string;
   durationMs: number;
+  connectorPhase?: DropexFailureDiagnostic["phase"];
+  connectorOperationPhase?: DropexFailureDiagnostic["operationPhase"];
+  connectorFailureClassification?: DropexFailureDiagnostic["classification"];
+  connectorDurationMs?: number;
+  connectorHttpStatus?: number;
+  connectorPage?: number;
+  connectorTimedOut?: boolean;
+  connectorAborted?: boolean;
+  connectorRateLimited?: boolean;
 }
 
 interface SupplierReviewApprovalFreshnessFailureShape {
@@ -1975,24 +1989,36 @@ interface SupplierReviewApprovalFreshnessFailureShape {
   statusCode?: unknown;
   failureStage?: unknown;
   failureClassification?: unknown;
+  __dropexFailureDiagnostic?: DropexFailureDiagnostic;
 }
 
 class SupplierReviewApprovalFreshnessFailure extends Error {
   public readonly failureStage: SupplierReviewApprovalFreshnessFailureStage;
   public readonly failureClassification: SupplierReviewApprovalFreshnessFailureClassification;
   public readonly statusCode: number;
+  public readonly connectorDiagnostic?: DropexFailureDiagnostic;
 
   constructor(
     message: string,
     failureStage: SupplierReviewApprovalFreshnessFailureStage,
     failureClassification: SupplierReviewApprovalFreshnessFailureClassification,
     statusCode = 422,
+    connectorDiagnostic?: DropexFailureDiagnostic,
   ) {
     super(message);
     this.name = "SupplierReviewApprovalFreshnessFailure";
     this.failureStage = failureStage;
     this.failureClassification = failureClassification;
     this.statusCode = statusCode;
+    this.connectorDiagnostic = connectorDiagnostic;
+    if (connectorDiagnostic) {
+      Object.defineProperty(this, "__dropexFailureDiagnostic", {
+        configurable: true,
+        enumerable: false,
+        value: connectorDiagnostic,
+        writable: false,
+      });
+    }
   }
 }
 
@@ -2034,6 +2060,26 @@ export function classifySupplierReviewApprovalFreshnessFailure(error: unknown): 
       || knownClassification === "UNKNOWN"
     ) {
       return { failureStage: knownStage, failureClassification: knownClassification };
+    }
+  }
+
+  const connectorDiagnostic = getDropexFailureDiagnostic(error);
+  if (connectorDiagnostic) {
+    const connectorClassification = connectorDiagnostic.classification;
+    if (connectorClassification === "AUTH") {
+      return { failureStage: "exact_supplier_fetch", failureClassification: "HTTP_AUTH" };
+    }
+    if (connectorClassification === "TIMEOUT" || connectorClassification === "ABORT") {
+      return { failureStage: "exact_supplier_fetch", failureClassification: "TIMEOUT" };
+    }
+    if (connectorClassification === "RATE_LIMIT" || connectorClassification === "HTTP_ERROR") {
+      return { failureStage: "exact_supplier_fetch", failureClassification: "HTTP_ERROR" };
+    }
+    if (connectorClassification === "PARSE_ERROR") {
+      return { failureStage: "exact_supplier_fetch", failureClassification: "PARSE_ERROR" };
+    }
+    if (connectorClassification === "IDENTITY_MISMATCH") {
+      return { failureStage: "exact_supplier_fetch", failureClassification: "IDENTITY_MISMATCH" };
     }
   }
 
@@ -2090,6 +2136,7 @@ export function buildSupplierReviewApprovalFreshnessDiagnostic(
   correlationId = queueItemId,
 ): SupplierReviewApprovalFreshnessDiagnostic {
   const classified = classifySupplierReviewApprovalFreshnessFailure(error);
+  const connector = getDropexFailureDiagnostic(error);
   return {
     event: "supplier_review_approval_freshness_verification_failed",
     queueItemId: queueItemId.slice(0, 160),
@@ -2097,6 +2144,17 @@ export function buildSupplierReviewApprovalFreshnessDiagnostic(
     failureClassification: classified.failureClassification,
     correlationId: String(correlationId || queueItemId).slice(0, 160),
     durationMs: Math.max(0, Math.min(300_000, Math.floor(durationMs))),
+    ...(connector ? {
+      connectorPhase: connector.phase,
+      connectorOperationPhase: connector.operationPhase,
+      connectorFailureClassification: connector.classification,
+      connectorDurationMs: connector.durationMs,
+      ...(connector.httpStatus !== undefined ? { connectorHttpStatus: connector.httpStatus } : {}),
+      ...(connector.page !== undefined ? { connectorPage: connector.page } : {}),
+      ...(connector.timedOut ? { connectorTimedOut: true } : {}),
+      ...(connector.aborted ? { connectorAborted: true } : {}),
+      ...(connector.rateLimited ? { connectorRateLimited: true } : {}),
+    } : {}),
   };
 }
 
@@ -2356,26 +2414,51 @@ export async function refreshActiveSupplierReviewItem(
     throw new ApiError("This supplier does not support exact single-product refresh.", 409);
   }
   let product: RawA2ZProduct;
+  const exactRefreshStartedAt = Date.now();
   try {
     product = await exactConnector.fetchExactProductForRefresh({ supplierProductId, sku: supplierSku });
   } catch (error) {
     const classified = classifySupplierReviewApprovalFreshnessFailure(error);
+    const connectorDiagnostic = getDropexFailureDiagnostic(error);
+    if (refreshMode !== "preview") {
+      try {
+        appLogger.warn(
+          "Supplier Product Review exact supplier refresh failed.",
+          buildSupplierReviewApprovalFreshnessDiagnostic(
+            queueItemId,
+            error,
+            Date.now() - exactRefreshStartedAt,
+            String(queueItem.correlationId || queueItemId),
+          ),
+        );
+      } catch {
+        // Diagnostic logging must never change the fail-closed refresh result.
+      }
+    }
     throw new SupplierReviewApprovalFreshnessFailure(
       "The exact supplier refresh failed.",
       "exact_supplier_fetch",
       classified.failureClassification,
       500,
+      connectorDiagnostic,
     );
   }
   if (
     !refreshIdentityMatches(product.supplierProductId, supplierProductId)
     || !refreshIdentityMatches(product.sku, supplierSku)
   ) {
+    const identityError = new Error("Dropex returned an unexpected supplier identity.");
+    const identityDiagnostic = buildDropexFailureDiagnostic(
+      identityError,
+      "identity_response_parsing",
+      0,
+    );
     throw new SupplierReviewApprovalFreshnessFailure(
-      "Dropex returned an unexpected supplier identity.",
+      identityError.message,
       "exact_supplier_fetch",
       "IDENTITY_MISMATCH",
       409,
+      identityDiagnostic,
     );
   }
   if (!supplierCostWasProvided(product)) {

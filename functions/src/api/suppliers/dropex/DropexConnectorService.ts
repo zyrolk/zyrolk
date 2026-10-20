@@ -1,7 +1,12 @@
 import { createHash } from "node:crypto";
 import { ProductParser, DropexCategoryLookup, readDropexResellerPrice } from "./ProductParser";
 import { RawA2ZProduct } from "../a2z/types";
-import { sanitizeDropexResponseBody, sanitizeDropexResponseHeaders } from "./diagnostics";
+import {
+  attachDropexFailureDiagnostic,
+  buildDropexFailureDiagnostic,
+  DropexDiagnosticOperationPhase,
+  DropexFailureDiagnostic,
+} from "./diagnostics";
 import {
   DROPEX_CREDENTIAL_TARGET_URL,
   DROPEX_INVENTORY_SERVICE_URL,
@@ -222,12 +227,46 @@ export class DropexConnectorService {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  private logDiagnostic(authenticationStage: string, details: Record<string, unknown>): void {
+  private logDiagnostic(phase: string, details: Record<string, unknown>): void {
+    const safeDetails: Record<string, unknown> = {};
+    for (const key of [
+      "operationPhase",
+      "classification",
+      "durationMs",
+      "httpStatus",
+      "page",
+      "timedOut",
+      "aborted",
+      "rateLimited",
+    ]) {
+      const value = details[key];
+      if (value !== undefined) safeDetails[key] = value;
+    }
     this.debugLog("[Dropex-Connector]", JSON.stringify({
       event: "dropex_integration_diagnostic",
-      authenticationStage,
-      ...details,
+      phase,
+      ...safeDetails,
     }));
+  }
+
+  private recordFailure(
+    error: unknown,
+    operationPhase: DropexDiagnosticOperationPhase,
+    startedAt: number,
+    details: Pick<DropexFailureDiagnostic, "httpStatus" | "page"> = {},
+  ): DropexFailureDiagnostic {
+    const existing = error && typeof error === "object"
+      ? (error as { __dropexFailureDiagnostic?: DropexFailureDiagnostic }).__dropexFailureDiagnostic
+      : undefined;
+    const diagnostic = existing || buildDropexFailureDiagnostic(
+      error,
+      operationPhase,
+      this.now() - startedAt,
+      details,
+    );
+    attachDropexFailureDiagnostic(error, diagnostic);
+    this.logDiagnostic(diagnostic.phase, diagnostic as unknown as Record<string, unknown>);
+    return diagnostic;
   }
 
   private credentialFingerprint(credentials: { username?: string; password?: string }): string {
@@ -285,49 +324,55 @@ export class DropexConnectorService {
     }
 
     const promise = (async () => {
-      const response = await this.fetchWithTimeout(`${DROPEX_USER_SERVICE_URL}/auth/login`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
-        body: JSON.stringify({
-          username: credentials.username,
-          password: credentials.password,
-        }),
-      }, outboundPolicy, typeof timeoutMs === "function" ? timeoutMs() : timeoutMs, abortSignal);
-
-      const responseBodyText = await response.text();
-      this.logDiagnostic("login", {
-        endpoint: `${DROPEX_USER_SERVICE_URL}/auth/login`,
-        method: "POST",
-        httpStatus: response.status,
-        responseHeaders: sanitizeDropexResponseHeaders(response.headers),
-        responseBody: sanitizeDropexResponseBody(responseBodyText),
-      });
-
-      const httpError = classifyDropexHttpStatus(response.status, response.headers.get("retry-after"), this.now());
-      if (httpError) throw httpError;
-
-      let parsed: DropexLoginResponse;
+      const startedAt = this.now();
+      let responseStatus: number | undefined;
       try {
-        parsed = JSON.parse(responseBodyText) as DropexLoginResponse;
-      } catch {
-        throw new Error("Dropex authentication response was not valid JSON.");
-      }
+        const response = await this.fetchWithTimeout(`${DROPEX_USER_SERVICE_URL}/auth/login`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+          body: JSON.stringify({
+            username: credentials.username,
+            password: credentials.password,
+          }),
+        }, outboundPolicy, typeof timeoutMs === "function" ? timeoutMs() : timeoutMs, abortSignal);
+        responseStatus = response.status;
 
-      const token = extractAccessToken(parsed);
-      const payload = decodeJwtPayload(token);
-      const session: DropexAuthenticatedSession = {
-        token,
-        expiresAt: extractTokenExpiryMs(payload, this.now()),
-        reSellerAccountId: extractReSellerAccountId(payload),
-        scopeKey: this.sessionScopeKey,
-        credentialFingerprint,
-      };
-      this.session = session;
-      this.categoryLookup = null;
-      return session;
+        const responseBodyText = await response.text();
+        this.logDiagnostic("login", {
+          operationPhase: "login",
+          durationMs: this.now() - startedAt,
+          httpStatus: response.status,
+        });
+
+        const httpError = classifyDropexHttpStatus(response.status, response.headers.get("retry-after"), this.now());
+        if (httpError) throw httpError;
+
+        let parsed: DropexLoginResponse;
+        try {
+          parsed = JSON.parse(responseBodyText) as DropexLoginResponse;
+        } catch {
+          throw new Error("Dropex authentication response was not valid JSON.");
+        }
+
+        const token = extractAccessToken(parsed);
+        const payload = decodeJwtPayload(token);
+        const session: DropexAuthenticatedSession = {
+          token,
+          expiresAt: extractTokenExpiryMs(payload, this.now()),
+          reSellerAccountId: extractReSellerAccountId(payload),
+          scopeKey: this.sessionScopeKey,
+          credentialFingerprint,
+        };
+        this.session = session;
+        this.categoryLookup = null;
+        return session;
+      } catch (error) {
+        this.recordFailure(error, "login", startedAt, { httpStatus: responseStatus });
+        throw error;
+      }
     })();
 
     this.loginInFlight = { credentialFingerprint, promise };
@@ -385,6 +430,21 @@ export class DropexConnectorService {
     timeoutMs?: number | (() => number),
     abortSignal?: AbortSignal,
   ): Promise<DropexCategoryLookup> {
+    const startedAt = this.now();
+    try {
+      return await this.loadCategoryLookupInternal(credentials, outboundPolicy, timeoutMs, abortSignal);
+    } catch (error) {
+      this.recordFailure(error, "category_lookup", startedAt);
+      throw error;
+    }
+  }
+
+  private async loadCategoryLookupInternal(
+    credentials: { username: string; password: string },
+    outboundPolicy: SupplierOutboundPolicy,
+    timeoutMs?: number | (() => number),
+    abortSignal?: AbortSignal,
+  ): Promise<DropexCategoryLookup> {
     if (this.categoryLookup) return this.categoryLookup;
 
     const { response, bodyText } = await this.authorizedRequest(
@@ -402,12 +462,9 @@ export class DropexConnectorService {
       abortSignal,
     );
 
-    this.logDiagnostic("category-fetch", {
-      endpoint: `${DROPEX_INVENTORY_SERVICE_URL}/api/v1/product-categories`,
-      method: "GET",
+    this.logDiagnostic("category_lookup", {
+      operationPhase: "category_lookup",
       httpStatus: response.status,
-      responseHeaders: sanitizeDropexResponseHeaders(response.headers),
-      responseBody: sanitizeDropexResponseBody(bodyText),
     });
 
     const httpError = classifyDropexHttpStatus(response.status, response.headers.get("retry-after"), this.now());
@@ -461,6 +518,22 @@ export class DropexConnectorService {
     timeoutMs?: number | (() => number),
     abortSignal?: AbortSignal,
   ): Promise<Record<string, unknown>> {
+    const startedAt = this.now();
+    try {
+      return await this.enrichProductDtoInternal(credentials, outboundPolicy, productId, timeoutMs, abortSignal);
+    } catch (error) {
+      this.recordFailure(error, "product_dto_enrichment", startedAt);
+      throw error;
+    }
+  }
+
+  private async enrichProductDtoInternal(
+    credentials: { username: string; password: string },
+    outboundPolicy: SupplierOutboundPolicy,
+    productId: string,
+    timeoutMs?: number | (() => number),
+    abortSignal?: AbortSignal,
+  ): Promise<Record<string, unknown>> {
     const { response, bodyText } = await this.authorizedRequest(
       credentials,
       outboundPolicy,
@@ -475,6 +548,11 @@ export class DropexConnectorService {
       timeoutMs,
       abortSignal,
     );
+
+    this.logDiagnostic("product_dto_enrichment", {
+      operationPhase: "product_dto_enrichment",
+      httpStatus: response.status,
+    });
 
     const httpError = classifyDropexHttpStatus(response.status, response.headers.get("retry-after"), this.now());
     if (httpError) throw httpError;
@@ -528,12 +606,10 @@ export class DropexConnectorService {
           },
         }), transientAttempt === 1);
         responseBodyText = bodyText;
-        this.logDiagnostic("catalog-fetch", {
-          endpoint: catalogUrl.toString(),
-          method: "GET",
+        this.logDiagnostic("exact_catalog_page", {
+          operationPhase: "exact_catalog_page",
+          page,
           httpStatus: response.status,
-          responseHeaders: sanitizeDropexResponseHeaders(response.headers),
-          responseBody: sanitizeDropexResponseBody(responseBodyText),
         });
         const httpError = classifyDropexHttpStatus(response.status, response.headers.get("retry-after"), this.now());
         if (httpError) throw httpError;
@@ -622,12 +698,18 @@ export class DropexConnectorService {
     outboundPolicy: SupplierOutboundPolicy,
     target: { supplierProductId: string; sku: string },
   ): Promise<RawA2ZProduct> {
+    const startedAt = this.now();
     if (activeExactRefreshOperations >= REFRESH_OPERATION_CONCURRENCY) {
-      throw new Error("Dropex exact refresh capacity is temporarily unavailable.");
+      const error = new Error("Dropex exact refresh capacity is temporarily unavailable.");
+      this.recordFailure(error, "exact_catalog_page", startedAt);
+      throw error;
     }
     activeExactRefreshOperations += 1;
     try {
       return await this.fetchExactProductForRefreshInternal(credentials, outboundPolicy, target);
+    } catch (error) {
+      this.recordFailure(error, "identity_response_parsing", startedAt);
+      throw error;
     } finally {
       activeExactRefreshOperations -= 1;
     }
@@ -666,6 +748,7 @@ export class DropexConnectorService {
       pageRecord: Record<string, unknown> | null;
       rawList: Record<string, unknown>[];
     }> => {
+      const pageStartedAt = this.now();
       const catalogUrl = new URL(`${DROPEX_INVENTORY_SERVICE_URL}/api/v1/re-seller-products/get`);
       catalogUrl.searchParams.set("reSellerAccountId", activeSession.reSellerAccountId);
       catalogUrl.searchParams.set("page", String(page));
@@ -686,29 +769,41 @@ export class DropexConnectorService {
             refreshAbortController.signal,
           );
           responseBodyText = bodyText;
-          this.logDiagnostic("refresh-catalog-fetch", {
-            endpoint: catalogUrl.toString(),
-            method: "GET",
+          this.logDiagnostic("exact_catalog_page", {
+            operationPhase: "exact_catalog_page",
+            page,
             httpStatus: response.status,
-            responseHeaders: sanitizeDropexResponseHeaders(response.headers),
-            responseBody: sanitizeDropexResponseBody(responseBodyText),
           });
           const httpError = classifyDropexHttpStatus(response.status, response.headers.get("retry-after"), this.now());
           if (httpError) throw httpError;
           break;
         } catch (error: unknown) {
-          if (refreshAbortController.signal.aborted) throw error;
+          if (refreshAbortController.signal.aborted) {
+            this.recordFailure(error, "exact_catalog_page", pageStartedAt, { page });
+            throw error;
+          }
           if (this.now() >= deadlineAt) {
-            throw new DropexHttpError("Dropex refresh catalogue lookup exceeded its time bound.", 408, true);
+            const deadlineError = new DropexHttpError("Dropex refresh catalogue lookup exceeded its time bound.", 408, true);
+            this.recordFailure(deadlineError, "exact_catalog_page", pageStartedAt, { page });
+            throw deadlineError;
           }
           if (error instanceof DropexHttpError && error.retryable && transientAttempt < DROPEX_TRANSIENT_HTTP_MAX_ATTEMPTS) {
-            const delay = Math.min(transientRetryDelayMs(error, transientAttempt), remainingMs());
+            let delay: number;
+            try {
+              delay = Math.min(transientRetryDelayMs(error, transientAttempt), remainingMs());
+            } catch (retryError) {
+              this.recordFailure(retryError, "exact_catalog_page", pageStartedAt, { page });
+              throw retryError;
+            }
             await this.sleep(delay);
             continue;
           }
           if (error instanceof Error && error.name === "AbortError") {
-            throw new DropexHttpError("Dropex refresh catalogue request timed out.", 408, true);
+            const timeoutError = new DropexHttpError("Dropex refresh catalogue request timed out.", 408, true);
+            this.recordFailure(timeoutError, "exact_catalog_page", pageStartedAt, { page });
+            throw timeoutError;
           }
+          this.recordFailure(error, "exact_catalog_page", pageStartedAt, { page });
           throw error;
         }
       }
@@ -717,7 +812,9 @@ export class DropexConnectorService {
       try {
         responseBody = JSON.parse(responseBodyText);
       } catch {
-        throw new Error("Failed to parse Dropex refresh catalogue response as JSON.");
+        const parseError = new Error("Failed to parse Dropex refresh catalogue response as JSON.");
+        this.recordFailure(parseError, "identity_response_parsing", pageStartedAt, { page });
+        throw parseError;
       }
       return {
         page,
@@ -779,11 +876,15 @@ export class DropexConnectorService {
     }
 
     if (!match) {
-      throw new Error("The exact Dropex reseller catalogue row could not be found within the refresh bounds.");
+      const identityError = new Error("The exact Dropex reseller catalogue row could not be found within the refresh bounds.");
+      this.recordFailure(identityError, "identity_response_parsing", startedAt);
+      throw identityError;
     }
     match = match as Record<string, unknown>;
     if (this.now() >= deadlineAt) {
-      throw new Error("Dropex refresh catalogue lookup exceeded its time bound.");
+      const deadlineError = new Error("Dropex refresh catalogue lookup exceeded its time bound.");
+      this.recordFailure(deadlineError, "identity_response_parsing", startedAt);
+      throw deadlineError;
     }
 
     const detail = asRecord(match.productDetail) || match;
@@ -805,7 +906,12 @@ export class DropexConnectorService {
       )
       : undefined;
     remainingMs();
-    return ProductParser.parseCatalogItem(match, { categoryLookup, enrichment });
+    try {
+      return ProductParser.parseCatalogItem(match, { categoryLookup, enrichment });
+    } catch (error) {
+      this.recordFailure(error, "identity_response_parsing", startedAt);
+      throw error;
+    }
   }
 
   /**
@@ -836,11 +942,9 @@ export class DropexConnectorService {
         init: { method: "GET", headers: { Authorization: `Bearer ${token}` } },
       }),
     );
-    this.logDiagnostic("direct-inventory-fetch", {
-      endpoint,
-      method: "GET",
+    this.logDiagnostic("product_dto_enrichment", {
+      operationPhase: "product_dto_enrichment",
       httpStatus: response.status,
-      responseHeaders: sanitizeDropexResponseHeaders(response.headers),
     });
     const httpError = classifyDropexHttpStatus(response.status, response.headers.get("retry-after"), this.now());
     if (httpError) throw httpError;

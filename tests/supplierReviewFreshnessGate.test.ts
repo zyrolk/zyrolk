@@ -7,6 +7,10 @@ import {
 } from "../functions/src/api/suppliers/supplierOfferEngine";
 import { DropexHttpError } from "../functions/src/api/suppliers/dropex/dropexHttpErrors";
 import {
+  attachDropexFailureDiagnostic,
+  buildDropexFailureDiagnostic,
+} from "../functions/src/api/suppliers/dropex/diagnostics";
+import {
   buildSupplierReviewApprovalFreshnessDiagnostic,
   classifySupplierReviewApprovalFreshnessFailure,
   compareSupplierReviewFreshness,
@@ -128,6 +132,38 @@ test("approval freshness diagnostics classify known failures without exposing th
     durationMs: 300_000,
   });
   assert.doesNotMatch(JSON.stringify(diagnostic), /bearer-secret-value/u);
+
+  const rateLimitedError = new DropexHttpError("Dropex request was rate limited (HTTP 429).", 429, true);
+  attachDropexFailureDiagnostic(
+    rateLimitedError,
+    buildDropexFailureDiagnostic(rateLimitedError, "exact_catalog_page", 1_234, { page: 3 }),
+  );
+  const propagated = buildSupplierReviewApprovalFreshnessDiagnostic(
+    "dropex-aju0027",
+    rateLimitedError,
+    1_500,
+    "queue-correlation-2",
+  );
+  assert.deepEqual(
+    {
+      connectorPhase: propagated.connectorPhase,
+      connectorOperationPhase: propagated.connectorOperationPhase,
+      connectorFailureClassification: propagated.connectorFailureClassification,
+      connectorDurationMs: propagated.connectorDurationMs,
+      connectorHttpStatus: propagated.connectorHttpStatus,
+      connectorPage: propagated.connectorPage,
+      connectorRateLimited: propagated.connectorRateLimited,
+    },
+    {
+      connectorPhase: "deadline_abort_rate_limit",
+      connectorOperationPhase: "exact_catalog_page",
+      connectorFailureClassification: "RATE_LIMIT",
+      connectorDurationMs: 1_234,
+      connectorHttpStatus: 429,
+      connectorPage: 3,
+      connectorRateLimited: true,
+    },
+  );
 });
 
 test("approval freshness keeps the generic fail-closed response and diagnostic logging separate", () => {
