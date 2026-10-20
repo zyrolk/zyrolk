@@ -438,6 +438,10 @@ test("SH-3 new and updated products use the real review worker and approval tran
       email: "admin@example.test",
     }, { draft, expectedPendingRevision: revision });
     assert.equal(result.success, true);
+    assert.equal(result.status, "approved");
+    assert.equal(result.publicationStatus, "committed");
+    assert.ok(result.productId);
+    assert.ok(result.approvalAuditId);
     const product = (await adminDb.collection("products").doc(result.productId!).get()).data()!;
     const privateProduct = (await adminDb.collection("product_private").doc(result.productId!).get()).data()!;
     const approvedReview = (await adminDb.collection("supplier_review_queue").doc(review.id).get()).data()!;

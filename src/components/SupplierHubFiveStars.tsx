@@ -48,6 +48,12 @@ import SupplierManualSyncDialog from './supplier-management/SupplierManualSyncDi
 import SupplierConnectionBadge from './supplier-ui/SupplierConnectionBadge';
 import { calculateSupplierProfit, createSupplierReviewDraft, SupplierReviewDraft } from '../services/supplierReviewEditor';
 import {
+  isDurablyCommittedSupplierApproval,
+  isSupplierApprovalUnknownError,
+  SUPPLIER_APPROVAL_UNKNOWN_MESSAGE,
+  SupplierApprovalUnknownError,
+} from '../services/supplierApprovalOutcome';
+import {
   LAUNCH1000_PRODUCT_TYPE_CLASSIFICATION_MANIFEST_REVISION,
   Launch1000ProductTypeClassificationDecision,
 } from '../services/launch1000ProductTypeClassification';
@@ -302,6 +308,7 @@ export interface ReviewQueueItem {
   managedMedia?: Array<Record<string, unknown>>;
   mediaFailures?: Array<{ originalSupplierUrl?: string; reason?: string; retryable?: boolean; failedAt?: string }>;
   mediaStatus?: string;
+  mediaReadiness?: string;
   media?: SupplierReviewMediaEvidence;
   categoryMapping?: {
     supplierCategory?: string;
@@ -945,6 +952,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
   }, [activeSubTab, editingSourceId, onNestedNavigationChange]);
 
   const [processingChangeId, setProcessingChangeId] = useState<string | null>(null);
+  const approvalInFlightRef = useRef<string | null>(null);
   const [savingReviewDraftId, setSavingReviewDraftId] = useState<string | null>(null);
   const [refreshingReviewItemId, setRefreshingReviewItemId] = useState<string | null>(null);
   const refreshingReviewItemIdRef = useRef<string | null>(null);
@@ -1305,11 +1313,20 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
       setSupplierOfferError(null);
       return;
     }
-    if (
+    const reviewStateChanged = (
       fresh.supplierOfferPendingRevision !== editingReviewItem.supplierOfferPendingRevision
       || fresh.queueState !== editingReviewItem.queueState
       || fresh.status !== editingReviewItem.status
-    ) {
+    );
+    const mediaStateChanged = (
+      fresh.mediaStatus !== editingReviewItem.mediaStatus
+      || fresh.mediaReadiness !== editingReviewItem.mediaReadiness
+      || fresh.mediaProcessedAt !== editingReviewItem.mediaProcessedAt
+      || JSON.stringify(fresh.managedMedia || null) !== JSON.stringify(editingReviewItem.managedMedia || null)
+      || JSON.stringify(fresh.mediaFailures || null) !== JSON.stringify(editingReviewItem.mediaFailures || null)
+      || JSON.stringify(fresh.productValidation || null) !== JSON.stringify(editingReviewItem.productValidation || null)
+    );
+    if (reviewStateChanged) {
       if (!supplierReviewDecisionReady(fresh) || supplierReviewIsPreparing(fresh)) {
         setEditingReviewItem(null);
         setSupplierOffers([]);
@@ -1318,6 +1335,8 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
         setTimeout(() => setSuccessMsg(null), 6000);
         return;
       }
+    }
+    if (reviewStateChanged || mediaStateChanged) {
       setEditingReviewItem(fresh);
     }
   }, [editingReviewItem, reviewQueue]);
@@ -1472,9 +1491,25 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
     action: 'approve' | 'reject' | 'delete',
     body: Record<string, unknown> = {},
   ) => {
-    const response = await postSupplierApi(`/api/supplier-review-queue/${encodeURIComponent(queueItemId)}/${action}`, body);
+    let response: Response;
+    try {
+      // Approval is never transparently retried after a 401: the first request
+      // may already have reached the server and must be reconciled by the
+      // operator instead of being submitted again.
+      response = await postSupplierApi(`/api/supplier-review-queue/${encodeURIComponent(queueItemId)}/${action}`, body, {
+        retryUnauthorized: action !== 'approve',
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error || '');
+      if (/authentication|required|sign in|app check did not issue|permission|forbidden/iu.test(message)) throw error;
+      throw new SupplierApprovalUnknownError(error);
+    }
     const result = await response.json().catch(() => ({})) as {
       success?: boolean;
+      action?: string;
+      productId?: unknown;
+      approvalAuditId?: unknown;
+      publicationStatus?: string;
       error?: string;
       status?: string;
       conflict?: ReviewQueueItem['approvalConflict'];
@@ -2190,7 +2225,8 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
   };
 
   const handleApproveReviewItem = async (item: ReviewQueueItem, draft: SupplierReviewDraft) => {
-    if (processingChangeId) return;
+    if (processingChangeId || approvalInFlightRef.current) return;
+    approvalInFlightRef.current = item.id;
     setProcessingChangeId(item.id);
     try {
       const result = await decideSupplierReviewQueueItem(item.id, 'approve', {
@@ -2207,7 +2243,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
         return;
       }
       if (result.status === 'supplier_freshness_unverified') {
-        void refreshSupplierQueueViews();
+        await refreshSupplierQueueViews();
         setErrorMsg(result.error || SUPPLIER_REVIEW_FRESHNESS_HOLD_MESSAGE);
         setTimeout(() => setErrorMsg(null), 6000);
         return;
@@ -2221,6 +2257,13 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
         });
         setErrorMsg(result.error || 'The live product changed. Review the conflict before publishing.');
         setTimeout(() => setErrorMsg(null), 6000);
+        return;
+      }
+
+      if (!isDurablyCommittedSupplierApproval(result)) {
+        await refreshSupplierQueueViews();
+        setErrorMsg(result.error || SUPPLIER_APPROVAL_UNKNOWN_MESSAGE);
+        setTimeout(() => setErrorMsg(null), 7000);
         return;
       }
 
@@ -2241,10 +2284,13 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
         await reconcileStaleSupplierReviewItem(item);
         return;
       }
-      void refreshSupplierQueueViews();
-      setErrorMsg(`Failed to approve: ${error.message || 'Unknown error'}`);
-      setTimeout(() => setErrorMsg(null), 4000);
+      await refreshSupplierQueueViews();
+      setErrorMsg(isSupplierApprovalUnknownError(error)
+        ? SUPPLIER_APPROVAL_UNKNOWN_MESSAGE
+        : `Failed to approve: ${error.message || 'Unknown error'}`);
+      setTimeout(() => setErrorMsg(null), isSupplierApprovalUnknownError(error) ? 7000 : 4000);
     } finally {
+      if (approvalInFlightRef.current === item.id) approvalInFlightRef.current = null;
       setProcessingChangeId(null);
     }
   };

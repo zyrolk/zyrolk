@@ -288,6 +288,12 @@ export default function SupplierReviewEditorModal({
       draft.category,
       draft.specifications,
     );
+    const managedMediaValidationError = (item.productValidation?.errors || []).find((error) => {
+      const field = String(error.field || '').trim().toLowerCase();
+      const code = String(error.code || '').trim().toLowerCase();
+      return field === 'images' || code === 'managed_media_required';
+    });
+    const managedMediaBlocker = String(managedMediaValidationError?.message || '').trim();
     const fieldChecks = checks.map((check) => {
       if (check.label === 'Specifications' && !specificationsRequired && specificationCount === 0) {
         return { label: check.label, valid: true, note: 'Not required' };
@@ -297,7 +303,7 @@ export default function SupplierReviewEditorModal({
       }
       const optionalMediaWarnings = String(item.mediaReadiness || '').trim().toLowerCase() === 'publication_safe_with_media_warnings';
       const error = check.label === 'Images'
-        ? (supplierReviewManagedMediaReady(item) ? undefined : 'Managed supplier media is not ready for publication.')
+        ? (supplierReviewManagedMediaReady(item) ? undefined : managedMediaBlocker || 'Managed supplier media is not ready for publication.')
         : check.label === 'Specifications'
         ? (validationErrors.specifications
           || (!specificationsSatisfied && specificationsRequired

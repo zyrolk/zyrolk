@@ -136,6 +136,20 @@ test('Product Review exposes only server-authoritative decisions and bounded tru
   assert.equal(indexes.indexes.some((index) => index.collectionGroup === 'supplier_approval_audit'
     && index.fields.some((field) => field.fieldPath === 'queueItemId' && field.order === 'ASCENDING')
     && index.fields.some((field) => field.fieldPath === 'timestamp' && field.order === 'ASCENDING')), true);
+  assert.match(hub, /isDurablyCommittedSupplierApproval\(result\)/);
+  assert.match(hub, /approvalInFlightRef/);
+  assert.match(hub, /retryUnauthorized: action !== 'approve'/);
+  assert.match(approval, /publicationStatus: "committed"/);
+  assert.match(approval, /approvalAuditId/);
+  assert.match(approval, /no durable publication was confirmed/);
+});
+
+test('managed media blockers remain server-owned and visible in the editor', () => {
+  const editor = projectFile('src/components/SupplierReviewEditorModal.tsx');
+  assert.match(editor, /managedMediaValidationError/);
+  assert.match(editor, /managedMediaBlocker/);
+  assert.match(editor, /Managed supplier media is not ready for publication/);
+  assert.doesNotMatch(editor, /fetch\(/);
 });
 
 test('Conflict detail identifies the reason and canonical product without automatic merge language', () => {

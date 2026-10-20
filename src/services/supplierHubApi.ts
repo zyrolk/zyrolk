@@ -2,6 +2,9 @@ import { auth } from '../firebase';
 import { getAppCheckRequestHeaders } from './security/appCheck';
 
 export type SupplierApiMethod = 'GET' | 'POST' | 'PATCH';
+export interface SupplierApiRequestOptions {
+  retryUnauthorized?: boolean;
+}
 
 export async function getSupplierApiHeaders(forceRefresh = false): Promise<Record<string, string>> {
   await auth.authStateReady();
@@ -23,6 +26,7 @@ export async function requestSupplierApi(
   path: string,
   method: SupplierApiMethod,
   body?: Record<string, unknown>,
+  options: SupplierApiRequestOptions = {},
 ): Promise<Response> {
   const request = async (forceRefresh: boolean) => fetch(path, {
     method,
@@ -31,10 +35,10 @@ export async function requestSupplierApi(
   });
 
   let response = await request(false);
-  if (response.status === 401) response = await request(true);
+  if (options.retryUnauthorized !== false && response.status === 401) response = await request(true);
   return response;
 }
 
 export const getSupplierApi = (path: string): Promise<Response> => requestSupplierApi(path, 'GET');
-export const postSupplierApi = (path: string, body: Record<string, unknown>): Promise<Response> => requestSupplierApi(path, 'POST', body);
+export const postSupplierApi = (path: string, body: Record<string, unknown>, options?: SupplierApiRequestOptions): Promise<Response> => requestSupplierApi(path, 'POST', body, options);
 export const patchSupplierApi = (path: string, body: Record<string, unknown>): Promise<Response> => requestSupplierApi(path, 'PATCH', body);

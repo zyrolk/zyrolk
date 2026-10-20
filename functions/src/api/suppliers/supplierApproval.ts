@@ -165,6 +165,8 @@ export interface SupplierQueueDecisionSuccessResult {
   productId?: string;
   sku?: string;
   idempotent?: boolean;
+  publicationStatus?: "committed";
+  approvalAuditId?: string;
 }
 
 export interface SupplierQueueDecisionConflictResult {
@@ -791,6 +793,8 @@ export async function decideSupplierQueueItem(
     productId?: string;
     sku?: string;
     idempotent?: boolean;
+    publicationStatus?: "committed";
+    approvalAuditId?: string;
     conflict?: SupplierApprovalConflict;
   }> => {
     const reviewReference = db.collection("supplier_review_queue").doc(reviewQueueItemId);
@@ -814,16 +818,37 @@ export async function decideSupplierQueueItem(
     if (!isPending(selectedData.status) && !selectedIsConflict) {
       const decisionRevision = cleanPendingRevision(selectedData.decisionPendingRevision);
       const decisionAction = String(selectedData.decisionAction || "").toLowerCase();
+      const decisionAuditId = stringValue(selectedData.decisionAuditId);
+      const decisionProductId = stringValue(selectedData.decisionProductId || selectedData.canonicalProductId || selectedData.productId);
       if (
         decisionAction === action
         && decisionRevision
         && requestedPendingRevision === decisionRevision
-        && stringValue(selectedData.decisionAuditId)
+        && decisionAuditId
       ) {
+        if (action === "approved") {
+          if (!decisionProductId) {
+            throw new ApiError("The previous approval could not be reconciled; no durable publication was confirmed.", 409);
+          }
+          const [productSnapshot, auditSnapshot] = await Promise.all([
+            transaction.get(db.collection("products").doc(decisionProductId)),
+            transaction.get(db.collection("supplier_approval_audit").doc(decisionAuditId)),
+          ]);
+          const auditData = auditSnapshot.exists ? auditSnapshot.data() || {} : {};
+          if (
+            !productSnapshot.exists
+            || !auditSnapshot.exists
+            || String(auditData.action || "").toLowerCase() !== "approve"
+            || String(auditData.queueItemId || "") !== reviewQueueItemId
+          ) {
+            throw new ApiError("The previous approval could not be reconciled; no durable publication was confirmed.", 409);
+          }
+        }
         return {
-          productId: stringValue(selectedData.decisionProductId || selectedData.canonicalProductId || selectedData.productId) || undefined,
+          productId: decisionProductId || undefined,
           sku: stringValue(selectedData.zyroSku) || undefined,
           idempotent: true,
+          ...(action === "approved" ? { publicationStatus: "committed" as const, approvalAuditId: decisionAuditId } : {}),
         };
       }
       throw new ApiError("Supplier review item is no longer pending; reload and try again.", 409);
@@ -1559,6 +1584,9 @@ export async function decideSupplierQueueItem(
     return {
       ...(decidedProductId ? { productId: decidedProductId } : {}),
       ...(approvedProductPayload?.sku ? { sku: String(approvedProductPayload.sku) } : {}),
+      ...(action === "approved" && decidedProductId
+        ? { publicationStatus: "committed" as const, approvalAuditId: auditId }
+        : {}),
     };
   });
 
@@ -1581,5 +1609,7 @@ export async function decideSupplierQueueItem(
     ...(transactionResult.productId ? { productId: transactionResult.productId } : {}),
     ...(transactionResult.sku ? { sku: transactionResult.sku } : {}),
     ...(transactionResult.idempotent ? { idempotent: true } : {}),
+    ...(transactionResult.publicationStatus ? { publicationStatus: transactionResult.publicationStatus } : {}),
+    ...(transactionResult.approvalAuditId ? { approvalAuditId: transactionResult.approvalAuditId } : {}),
   };
 }

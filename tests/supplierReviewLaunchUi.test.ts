@@ -298,8 +298,11 @@ test('successful decisions render terminal state without stale Approve or Reject
   const approvalStart = hub.indexOf('const handleApproveReviewItem');
   const approvalEnd = hub.indexOf('const handleRejectReviewItem', approvalStart);
   const approvalHandler = hub.slice(approvalStart, approvalEnd);
-  assert.ok(approvalHandler.indexOf("supplierReviewTerminalItem(candidate, 'approved')") >= 0);
-  assert.ok(approvalHandler.indexOf("supplierReviewTerminalItem(candidate, 'approved')") < approvalHandler.indexOf('await refreshSupplierQueueViews()'));
+  const committedApprovalStart = approvalHandler.indexOf('setEditingReviewItem(null);');
+  const committedApprovalEnd = approvalHandler.indexOf('} catch (error: any)', committedApprovalStart);
+  const committedApprovalHandler = approvalHandler.slice(committedApprovalStart, committedApprovalEnd);
+  assert.ok(committedApprovalHandler.indexOf("supplierReviewTerminalItem(candidate, 'approved')") >= 0);
+  assert.ok(committedApprovalHandler.indexOf("supplierReviewTerminalItem(candidate, 'approved')") < committedApprovalHandler.indexOf('await refreshSupplierQueueViews()'));
   assert.match(approvalHandler, /Queue refresh failed, so this decision remains locked locally/u);
 
   const rejectionStart = hub.indexOf('const handleRejectReviewItem');
