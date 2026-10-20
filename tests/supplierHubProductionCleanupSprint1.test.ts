@@ -41,7 +41,7 @@ test('Supplier Hub API authentication is centralized for every frontend consumer
 
   assert.match(api, /getAppCheckRequestHeaders\(forceRefresh\)/);
   assert.match(api, /Authorization: `Bearer \$\{token\}`/);
-  assert.match(api, /if \(response\.status === 401\) response = await request\(true\)/);
+  assert.match(api, /if \(options\.retryUnauthorized !== false && response\.status === 401\) response = await request\(true\)/);
   assert.match(supplierHub, /from '\.\.\/services\/supplierHubApi'/);
   assert.match(aiManager, /useAIManagerSupplierData/);
 });

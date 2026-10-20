@@ -169,7 +169,7 @@ test("Supplier Hub loads bounded sync history through the protected API and retr
   const supplierApi = readFileSync("src/services/supplierHubApi.ts", "utf8");
   assert.match(operations, /supplier-operations\/sync-history\?limit=40/);
   assert.match(operations, /setHistoryCursor\(historyResult\.nextCursor\)/);
-  assert.match(supplierApi, /if \(response\.status === 401\) response = await request\(true\)/);
+  assert.match(supplierApi, /if \(options\.retryUnauthorized !== false && response\.status === 401\) response = await request\(true\)/);
 });
 
 test("Supplier Hub resolves catalog evidence beyond the bounded activity window", () => {

@@ -140,7 +140,7 @@ test('Supplier Hub refreshes App Check together with Firebase Auth after a 401',
   const source = readFileSync('src/services/supplierHubApi.ts', 'utf8');
   assert.match(source, /user\.getIdToken\(forceRefresh\)/);
   assert.match(source, /getAppCheckRequestHeaders\(forceRefresh\)/);
-  assert.match(source, /if \(response\.status === 401\) response = await request\(true\)/);
+  assert.match(source, /if \(options\.retryUnauthorized !== false && response\.status === 401\) response = await request\(true\)/);
 });
 
 test('production Functions continue enforcing verified App Check tokens', () => {

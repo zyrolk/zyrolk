@@ -11,7 +11,7 @@ test("Supplier Hub waits for Firebase Auth restoration and attaches the ID token
   assert.match(supplierApi, /await auth\.authStateReady\(\)/);
   assert.match(supplierApi, /user\.getIdToken\(forceRefresh\)/);
   assert.match(supplierApi, /Authorization: `Bearer \$\{token\}`/);
-  assert.match(supplierApi, /if \(response\.status === 401\) response = await request\(true\)/);
+  assert.match(supplierApi, /if \(options\.retryUnauthorized !== false && response\.status === 401\) response = await request\(true\)/);
 });
 
 test("local Admin Auth uses the same Firebase project while production keeps environment authority", () => {
