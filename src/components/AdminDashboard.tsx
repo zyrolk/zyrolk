@@ -372,6 +372,7 @@ interface AdminDashboardProps {
   initialCmsPageId?: string;
   onExitToStorefront?: () => void;
   operatorMode?: boolean;
+  authenticatedUserEmail?: string | null;
 }
 
 const ADMIN_TAB_LABELS: Record<AdminTab, string> = {
@@ -421,7 +422,7 @@ const formatOperationsTimestamp = (value: string | null): string => {
   return Number.isFinite(date.getTime()) ? date.toLocaleString() : 'No activity recorded';
 };
 
-export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId = 'about-us', onExitToStorefront, operatorMode = false }: AdminDashboardProps = {}) {
+export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId = 'about-us', onExitToStorefront, operatorMode = false, authenticatedUserEmail = null }: AdminDashboardProps = {}) {
   const [activeTab, setActiveTab] = useState<AdminTab>(initialTab);
   const isDarkMode = true;
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
@@ -429,6 +430,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
   const [supplierHubNestedNav, setSupplierHubNestedNav] = useState<{ active: boolean; title: string; onBack: () => void } | null>(null);
   const mobileMenuButtonRef = useRef<HTMLButtonElement>(null);
   const mobileMenuCloseRef = useRef<HTMLButtonElement>(null);
+  const authCheckVersionRef = useRef(0);
 
   // States loaded from Firestore
   const [publicProducts, setPublicProducts] = useState<Product[]>([]);
@@ -1083,14 +1085,21 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
   // Auth Checks
   useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
+      const authCheckVersion = ++authCheckVersionRef.current;
+      setAuthorized(null);
+      setProductReviewOperator(false);
+      setActiveTab(initialTab);
+      setSupplierHubNestedNav(null);
+      setIsMobileMenuOpen(false);
+      setLoading(true);
       if (!currentUser) {
         setAuthorized(false);
-        setProductReviewOperator(false);
         setLoading(false);
         return;
       }
       try {
         const tokenResult = await currentUser.getIdTokenResult(true);
+        if (authCheckVersion !== authCheckVersionRef.current) return;
         const isFullAdmin = tokenResult.claims.admin === true || tokenResult.claims.role === 'admin';
         const isReviewOperator = hasProductReviewOperatorAccess(tokenResult.claims);
         if (isFullAdmin || isReviewOperator) {
@@ -1103,13 +1112,14 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
           setLoading(false);
         }
       } catch (err) {
+        if (authCheckVersion !== authCheckVersionRef.current) return;
         setAuthorized(false);
         setProductReviewOperator(false);
         setLoading(false);
       }
     });
     return () => unsubscribeAuth();
-  }, []);
+  }, [initialTab]);
 
   // Live order snapshot and live reviews snapshot
   useEffect(() => {
@@ -2202,7 +2212,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
           <ShieldCheck className="h-12 w-12 text-red-500 mx-auto" />
           <h2 className="text-xl font-bold">Admin Authorization Required</h2>
           <p className="text-sm text-slate-400 leading-relaxed">
-            Please sign in with the registered corporate administrator account ({PRODUCTION_ADMIN_EMAIL}) to access administrative transactions.
+            Please sign in with an authorized account to access administrative transactions.
           </p>
           <div className="flex gap-4">
             <button onClick={() => window.location.href = '/'} className="flex-1 py-3 bg-slate-800 hover:bg-slate-700 font-semibold rounded-xl text-xs transition-all cursor-pointer">Return Home</button>
@@ -2271,11 +2281,11 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
           )}
           <div className="flex items-center space-x-3">
             <div className="w-9 h-9 bg-slate-800 rounded-full flex items-center justify-center font-bold text-slate-200">
-              ZA
+              {(authenticatedUserEmail?.trim() || auth.currentUser?.email?.trim() || '??').slice(0, 2).toUpperCase()}
             </div>
             <div className="min-w-0 flex-1 text-left">
               <p className="text-xs font-bold text-white truncate">Zyro Admin</p>
-              <p className="text-[10px] text-slate-500 truncate">{PRODUCTION_ADMIN_EMAIL}</p>
+              <p className="text-[10px] text-slate-500 truncate">{authenticatedUserEmail?.trim() || auth.currentUser?.email?.trim() || 'Signed-in account'}</p>
             </div>
           </div>
           <button type="button" onClick={() => auth.signOut()} className="flex min-h-11 w-full items-center justify-center space-x-1.5 rounded-lg bg-slate-800 text-[11px] font-bold text-slate-400 transition-all hover:bg-slate-700 hover:text-white">

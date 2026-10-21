@@ -73,3 +73,35 @@ test('Operator UI is review-only, uses local skip navigation, and keeps approval
   assert.match(modal, /Save is required before publish/);
   assert.doesNotMatch(modal, /postSupplierApi|patchSupplierApi|getSupplierApi/);
 });
+
+test('Admin identity display is derived from the authenticated Firebase user', () => {
+  const app = readFileSync('src/App.tsx', 'utf8');
+  const dashboard = readFileSync('src/components/AdminDashboard.tsx', 'utf8');
+
+  assert.match(app, /authenticatedUserEmail=\{user\?\.email \?\? null\}/);
+  assert.match(dashboard, /authenticatedUserEmail\?: string \| null/);
+  assert.match(dashboard, /authenticatedUserEmail\?\.trim\(\) \|\| auth\.currentUser\?\.email\?\.trim\(\) \|\| 'Signed-in account'/);
+  assert.doesNotMatch(dashboard, /<p className="text-\[10px\] text-slate-500 truncate">\{PRODUCTION_ADMIN_EMAIL\}<\/p>/);
+});
+
+test('Auth transitions clear stale identity and navigation before claims resolve', () => {
+  const app = readFileSync('src/App.tsx', 'utf8');
+  const dashboard = readFileSync('src/components/AdminDashboard.tsx', 'utf8');
+
+  assert.match(app, /setUser\(currentUser\);\s*setIsAdminMode\(false\);\s*setIsAdminUser\(false\);\s*setIsProductReviewOperator\(false\)/);
+  assert.match(app, /if \(!isCurrentAuthContext\(\)\) return;/);
+  assert.match(dashboard, /setAuthorized\(null\);\s*setProductReviewOperator\(false\);\s*setActiveTab\(initialTab\)/);
+  assert.match(dashboard, /authCheckVersionRef\.current/);
+  assert.match(app, /setUser\(null\)/);
+});
+
+test('Admin, operator, and unauthenticated states keep distinct navigation', () => {
+  const app = readFileSync('src/App.tsx', 'utf8');
+  const dashboard = readFileSync('src/components/AdminDashboard.tsx', 'utf8');
+
+  assert.match(app, /const isFullAdmin = hasAdminAccess\(tokenResult\.claims\)/);
+  assert.match(app, /setIsProductReviewOperator\(isReviewOperator && !isFullAdmin\)/);
+  assert.match(dashboard, /const isFullAdmin = tokenResult\.claims\.admin === true \|\| tokenResult\.claims\.role === 'admin'/);
+  assert.match(dashboard, /if \(!currentUser\) \{\s*setAuthorized\(false\)/);
+  assert.match(dashboard, /ADMIN_SIDEBAR_NAV\.filter\(\(tab\) => !productReviewOperator \|\| tab\.id === 'productReview'\)/);
+});

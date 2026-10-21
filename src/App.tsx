@@ -587,6 +587,14 @@ export default function App() {
       authContextVersionRef.current = nextAuthContextVersion;
       setAuthContextVersion(nextAuthContextVersion);
       setAuthStateResolved(false);
+      // Clear the previous account's identity and privileged navigation before
+      // resolving the new token so account switching cannot inherit stale UI.
+      setUser(currentUser);
+      setIsAdminMode(false);
+      setIsAdminUser(false);
+      setIsProductReviewOperator(false);
+      setIsSupplierUser(false);
+      const isCurrentAuthContext = () => authContextVersionRef.current === nextAuthContextVersion;
       const reconciliationController = cartOpenReconciliationControllerRef.current;
       reconciliationController.invalidateForAuthContext();
       if (isCartOpenRef.current) {
@@ -599,6 +607,7 @@ export default function App() {
           let loadedCart = cartRef.current;
           let loadedRecentlyViewedIds = recentlyViewedIdsRef.current;
           const tokenResult = await currentUser.getIdTokenResult();
+          if (!isCurrentAuthContext()) return;
           const isFullAdmin = hasAdminAccess(tokenResult.claims);
           const isReviewOperator = hasProductReviewOperatorAccess(tokenResult.claims);
           if (isFullAdmin || isReviewOperator) {
@@ -608,6 +617,7 @@ export default function App() {
             setIsSupplierUser(false);
           } else {
             const userDoc = await getDoc(doc(db, "users", currentUser.uid));
+            if (!isCurrentAuthContext()) return;
             if (userDoc.exists()) {
               setIsAdminMode(false);
               setIsAdminUser(false);
@@ -677,6 +687,7 @@ export default function App() {
           setRecentlyViewedLoadedForUser(currentUser.uid);
           setUser(currentUser);
         } catch (e: any) {
+          if (!isCurrentAuthContext()) return;
           reportClientIssue('auth-profile-load', e, 'warning');
           setIsAdminMode(false);
           setIsAdminUser(false);
@@ -692,7 +703,7 @@ export default function App() {
           setRecentlyViewedLoadedForUser(currentUser.uid);
           setUser(currentUser);
         } finally {
-          setAuthStateResolved(true);
+          if (isCurrentAuthContext()) setAuthStateResolved(true);
         }
       } else {
         setIsAdminMode(false);
@@ -1557,6 +1568,7 @@ export default function App() {
             initialTab={adminInitialTab}
             initialCmsPageId={adminInitialCmsPageId}
             operatorMode={isProductReviewOperator}
+            authenticatedUserEmail={user?.email ?? null}
             onExitToStorefront={() => {
               setIsAdminMode(false);
               setCurrentPage('home');
