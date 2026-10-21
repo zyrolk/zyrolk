@@ -281,7 +281,7 @@ test('Sprint 6B removes unbounded queue listeners and keeps queue access server-
   const indexes = JSON.parse(readFileSync('firestore.indexes.json', 'utf8')) as { indexes: Array<{ collectionGroup: string; fields: Array<{ fieldPath: string; order: string }> }> };
   assert.doesNotMatch(component, /onSnapshot\(\s*collection\(db, ["']supplier_(review_queue|import_queue|pending_changes)["']/);
   assert.match(component, /\/api\/supplier-review-queue\?/);
-  assert.match(routes, /app\.get\("\/api\/supplier-review-queue", requireSupplierHubAdmin/);
+  assert.match(routes, /app\.get\("\/api\/supplier-review-queue", requireProductReviewOperator/);
   assert.equal(indexes.indexes.some((index) => index.collectionGroup === 'supplier_review_queue'
     && index.fields.some((field) => field.fieldPath === 'status')
     && index.fields.some((field) => field.fieldPath === 'createdAt' && field.order === 'DESCENDING')), true);
