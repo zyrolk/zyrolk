@@ -67,7 +67,7 @@ test('Sprint 5 keeps Supplier Hub audit records server-created, append-only, ord
   assert.match(approval, /action: action === "approved" \? "approve"/);
   assert.match(queue, /action: "retry"/);
   assert.match(routes, /action: "resume"/);
-  assert.match(routes, /supplier-review-queue\/:queueItemId\/audit", requireSupplierHubAdmin/);
+  assert.match(routes, /supplier-review-queue\/:queueItemId\/audit", requireProductReviewOperator/);
   assert.match(routes, /orderBy\("timestamp", "asc"\)/);
   assert.match(routes, /nextCursor/);
   assert.match(sync, /atomicGroup: queueItemId/);

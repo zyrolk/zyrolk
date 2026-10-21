@@ -76,6 +76,7 @@ import {
   normalizeWebsiteSettings,
 } from '../services/settings/websiteSettings';
 import { reportClientIssue } from '../services/observability/clientDiagnostics';
+import { hasProductReviewOperatorAccess } from '../services/security/adminAuthorization';
 import {
   hasBrandProductReference,
   hasCategoryProductReference,
@@ -370,6 +371,7 @@ interface AdminDashboardProps {
   initialTab?: AdminTab;
   initialCmsPageId?: string;
   onExitToStorefront?: () => void;
+  operatorMode?: boolean;
 }
 
 const ADMIN_TAB_LABELS: Record<AdminTab, string> = {
@@ -419,7 +421,7 @@ const formatOperationsTimestamp = (value: string | null): string => {
   return Number.isFinite(date.getTime()) ? date.toLocaleString() : 'No activity recorded';
 };
 
-export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId = 'about-us', onExitToStorefront }: AdminDashboardProps = {}) {
+export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId = 'about-us', onExitToStorefront, operatorMode = false }: AdminDashboardProps = {}) {
   const [activeTab, setActiveTab] = useState<AdminTab>(initialTab);
   const isDarkMode = true;
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
@@ -465,6 +467,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
   const [settings, setSettings] = useState<WebsiteSettings | null>(DEFAULT_WEBSITE_SETTINGS);
   const [loading, setLoading] = useState(true);
   const [authorized, setAuthorized] = useState<boolean | null>(null);
+  const [productReviewOperator, setProductReviewOperator] = useState(operatorMode);
   
   const [toasts, setToasts] = useState<{
     id: string;
@@ -499,6 +502,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
   const [supplierHubEntry, setSupplierHubEntry] = useState(0);
 
   const navigateAdminTab = useCallback((tab: AdminTab) => {
+    if (productReviewOperator && tab !== 'productReview') return;
     setActiveTab(tab);
     setSelectedOrderId(null);
     setSelectedCustomerEmail(null);
@@ -508,7 +512,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
       setSupplierHubEntry((value) => value + 1);
     }
     window.scrollTo({ top: 0, behavior: 'smooth' });
-  }, []);
+  }, [productReviewOperator]);
 
   const isAdminDashboard = activeTab === 'stats';
   const isAdminNestedView = Boolean(
@@ -1081,19 +1085,26 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
     const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
       if (!currentUser) {
         setAuthorized(false);
+        setProductReviewOperator(false);
         setLoading(false);
         return;
       }
       try {
         const tokenResult = await currentUser.getIdTokenResult(true);
-        if (tokenResult.claims.admin === true || tokenResult.claims.role === 'admin') {
+        const isFullAdmin = tokenResult.claims.admin === true || tokenResult.claims.role === 'admin';
+        const isReviewOperator = hasProductReviewOperatorAccess(tokenResult.claims);
+        if (isFullAdmin || isReviewOperator) {
           setAuthorized(true);
+          setProductReviewOperator(isReviewOperator && !isFullAdmin);
+          if (isReviewOperator && !isFullAdmin) setActiveTab('productReview');
         } else {
           setAuthorized(false);
+          setProductReviewOperator(false);
           setLoading(false);
         }
       } catch (err) {
         setAuthorized(false);
+        setProductReviewOperator(false);
         setLoading(false);
       }
     });
@@ -1102,7 +1113,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
 
   // Live order snapshot and live reviews snapshot
   useEffect(() => {
-    if (!authorized) return;
+    if (!authorized || productReviewOperator) return;
     const needsOrders = ['stats', 'aiManager', 'orders', 'customers'].includes(activeTab);
     const needsReviews = ['stats', 'aiManager', 'customers'].includes(activeTab);
     const needsProducts = ['stats', 'aiManager', 'products'].includes(activeTab);
@@ -1299,7 +1310,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
       unsubscribeProducts();
       unsubscribeProductCommercial();
     };
-    }, [activeTab, authorized]);
+  }, [activeTab, authorized, productReviewOperator]);
 
   const loadMoreAdminProducts = async (): Promise<void> => {
     const cursor = adminProductCursorRef.current;
@@ -2225,7 +2236,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
           </div>
 
           <nav className="space-y-1.5 pt-4">
-            {ADMIN_SIDEBAR_NAV.map(tab => {
+            {ADMIN_SIDEBAR_NAV.filter((tab) => !productReviewOperator || tab.id === 'productReview').map(tab => {
               const Icon = tab.icon;
               const active = activeTab === tab.id;
               return (
@@ -2305,8 +2316,8 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                 <Menu className="h-5 w-5" aria-hidden="true" />
               </button>
             )}
-            {/* Notification bell */}
-            <div className="relative">
+            {/* Notification bell is outside the operator capability. */}
+            {!productReviewOperator && <div className="relative">
               <button type="button" onClick={() => setShowNotifications(!showNotifications)} className="relative flex h-11 w-11 items-center justify-center rounded-xl bg-slate-100 text-slate-500 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700" aria-label={`Admin notifications${notificationsList.length ? `, ${notificationsList.length} active` : ''}`} aria-expanded={showNotifications} aria-controls="admin-notifications">
                 <Bell className="h-4 w-4" aria-hidden="true" />
                 {notificationsList.length > 0 && (
@@ -2338,7 +2349,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                   </motion.div>
                 )}
               </AnimatePresence>
-            </div>
+            </div>}
 
             <div className="hidden md:flex items-center space-x-2">
               <span className="w-2.5 h-2.5 bg-emerald-500 rounded-full animate-ping" />
@@ -5261,6 +5272,7 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                 key={supplierHubEntry}
                 isDarkMode={isDarkMode}
                 initialSubTab={activeTab === 'productReview' ? 'review' : 'suppliers'}
+                operatorMode={productReviewOperator}
                 onSubTabChange={(tab) => {
                   setActiveTab(tab === 'review' ? 'productReview' : 'supplierHubFiveStars');
                 }}

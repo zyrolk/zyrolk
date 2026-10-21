@@ -1,6 +1,6 @@
 import * as express from "express";
 import { ApiError, sendSupplierFailure } from "../errors";
-import { requireSupplierHubAdmin } from "../middleware/supplierHubAdminAuth";
+import { requireProductReviewOperator, requireSupplierHubAdmin } from "../middleware/supplierHubAdminAuth";
 import { fetchSupplierProductsFromTarget } from "../suppliers/fetchSupplierProducts";
 import {
   decideSupplierQueueItem,
@@ -613,7 +613,7 @@ export function registerSupplierRoutes(app: express.Express): void {
     }
   });
 
-  app.get("/api/supplier-products/:productId/offers", requireSupplierHubAdmin, async (req, res) => {
+  app.get("/api/supplier-products/:productId/offers", requireProductReviewOperator, async (req, res) => {
     try {
       res.status(200).json({ success: true, ...(await listSupplierProductOffers(adminDb, req.params.productId)) });
     } catch (error: unknown) {
@@ -675,7 +675,7 @@ export function registerSupplierRoutes(app: express.Express): void {
     }
   });
 
-  app.get("/api/supplier-review-catalog", requireSupplierHubAdmin, async (_req, res) => {
+  app.get("/api/supplier-review-catalog", requireProductReviewOperator, async (_req, res) => {
     try {
       const catalog = await loadSupplierReviewCatalogTaxonomy(adminDb);
       res.status(200).json({ success: true, catalog });
@@ -857,7 +857,7 @@ export function registerSupplierRoutes(app: express.Express): void {
     }
   });
 
-  app.get("/api/supplier-review-queue", requireSupplierHubAdmin, async (req, res) => {
+  app.get("/api/supplier-review-queue", requireProductReviewOperator, async (req, res) => {
     try {
       const view = readSupplierQueueView(req.query.view);
       const state = readSupplierReviewQueueState(req.query.state);
@@ -922,7 +922,7 @@ export function registerSupplierRoutes(app: express.Express): void {
   // Read-only, bounded evidence bridge for diagnosing one media queue item.
   // It deliberately sits beside the review read model and never exposes a
   // queue mutation or raw supplier/media payload.
-  app.get("/api/supplier-review-queue/diagnostics", requireSupplierHubAdmin, async (req, res) => {
+  app.get("/api/supplier-review-queue/diagnostics", requireProductReviewOperator, async (req, res) => {
     try {
       const requestedQueueItemId = req.query.queueItemId === undefined
         ? null
@@ -994,7 +994,7 @@ export function registerSupplierRoutes(app: express.Express): void {
     }
   });
 
-  app.post("/api/supplier-review-queue/:queueItemId/approve", requireSupplierHubAdmin, decide("approved"));
+  app.post("/api/supplier-review-queue/:queueItemId/approve", requireProductReviewOperator, decide("approved"));
   app.post("/api/supplier-review-queue/:queueItemId/reject", requireSupplierHubAdmin, decide("rejected"));
   app.post("/api/supplier-review-queue/:queueItemId/delete", requireSupplierHubAdmin, decide("deleted"));
   app.post("/api/supplier-review-queue/:queueItemId/refresh", requireSupplierHubAdmin, async (req, res) => {
@@ -1011,7 +1011,7 @@ export function registerSupplierRoutes(app: express.Express): void {
     }
   });
 
-  app.patch("/api/supplier-review-queue/:queueItemId/draft", requireSupplierHubAdmin, async (req, res) => {
+  app.patch("/api/supplier-review-queue/:queueItemId/draft", requireProductReviewOperator, async (req, res) => {
     try {
       const result = await saveSupplierReviewDraft(
         adminDb,
@@ -1112,7 +1112,7 @@ export function registerSupplierRoutes(app: express.Express): void {
 
   // The UI can use this endpoint for a chronological, server-authorized review
   // history without ever receiving permission to write audit records directly.
-  app.get("/api/supplier-review-queue/:queueItemId/audit", requireSupplierHubAdmin, async (req, res) => {
+  app.get("/api/supplier-review-queue/:queueItemId/audit", requireProductReviewOperator, async (req, res) => {
     try {
       const queueItemId = readQueueItemId(req.params.queueItemId);
       const limit = readBoundedLimit(req.query.limit);

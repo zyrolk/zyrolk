@@ -3,7 +3,7 @@ import { onSnapshot, doc, getDoc, updateDoc, setDoc } from 'firebase/firestore';
 import { onAuthStateChanged, signOut, User } from 'firebase/auth';
 import { db, auth } from './firebase';
 import { Product, Category, CartItem, CustomerProduct, WebsiteSettings } from './types';
-import { hasAdminAccess } from './services/security/adminAuthorization';
+import { hasAdminAccess, hasProductReviewOperatorAccess } from './services/security/adminAuthorization';
 import { projectCustomerProducts } from './services/product-search/customerProjection';
 import { searchCustomerProducts } from './services/product-search/customerProductSearch';
 import { getBrowserStorage, readStoredArray, writeStoredJson } from './services/browser/persistentStorage';
@@ -458,6 +458,7 @@ export default function App() {
   const [personalizationSyncError, setPersonalizationSyncError] = useState('');
   const [compareMessage, setCompareMessage] = useState('');
   const [isAdminUser, setIsAdminUser] = useState<boolean>(false);
+  const [isProductReviewOperator, setIsProductReviewOperator] = useState<boolean>(false);
   const [isSupplierUser, setIsSupplierUser] = useState<boolean>(false);
   const [adminInitialTab, setAdminInitialTab] = useState<'stats' | 'products' | 'categories' | 'orders' | 'customers' | 'pages' | 'settings'>('stats');
   const [adminInitialCmsPageId, setAdminInitialCmsPageId] = useState<string>('about-us');
@@ -598,15 +599,19 @@ export default function App() {
           let loadedCart = cartRef.current;
           let loadedRecentlyViewedIds = recentlyViewedIdsRef.current;
           const tokenResult = await currentUser.getIdTokenResult();
-          if (hasAdminAccess(tokenResult.claims)) {
+          const isFullAdmin = hasAdminAccess(tokenResult.claims);
+          const isReviewOperator = hasProductReviewOperatorAccess(tokenResult.claims);
+          if (isFullAdmin || isReviewOperator) {
             setIsAdminMode(true);
-            setIsAdminUser(true);
+            setIsAdminUser(isFullAdmin);
+            setIsProductReviewOperator(isReviewOperator && !isFullAdmin);
             setIsSupplierUser(false);
           } else {
             const userDoc = await getDoc(doc(db, "users", currentUser.uid));
             if (userDoc.exists()) {
               setIsAdminMode(false);
               setIsAdminUser(false);
+              setIsProductReviewOperator(false);
               // Sync user's wishlist from firestore and merge with current guest wishlist
               const userData = userDoc.data();
               if (userData?.role === 'supplier') {
@@ -655,6 +660,7 @@ export default function App() {
             } else {
               setIsAdminMode(false);
               setIsAdminUser(false);
+              setIsProductReviewOperator(false);
               setIsSupplierUser(false);
             }
           }
@@ -674,6 +680,7 @@ export default function App() {
           reportClientIssue('auth-profile-load', e, 'warning');
           setIsAdminMode(false);
           setIsAdminUser(false);
+          setIsProductReviewOperator(false);
           setIsSupplierUser(false);
           if (isCartOpenRef.current) {
             const contextKey = `${nextAuthContextVersion}:${currentUser.uid}:${currentUser.uid}`;
@@ -690,6 +697,7 @@ export default function App() {
       } else {
         setIsAdminMode(false);
         setIsAdminUser(false);
+        setIsProductReviewOperator(false);
         setIsSupplierUser(false);
         setWishlistLoadedForUser(null);
         setCartLoadedForUser(null);
@@ -1548,6 +1556,7 @@ export default function App() {
           <AdminDashboard
             initialTab={adminInitialTab}
             initialCmsPageId={adminInitialCmsPageId}
+            operatorMode={isProductReviewOperator}
             onExitToStorefront={() => {
               setIsAdminMode(false);
               setCurrentPage('home');

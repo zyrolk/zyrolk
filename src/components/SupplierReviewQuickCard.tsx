@@ -69,6 +69,8 @@ export interface SupplierReviewQuickCardProps {
   onApprove: () => void;
   onReject: () => void;
   onRemove?: () => void;
+  /** Local-only operator navigation; must never change server queue state. */
+  onSkip?: () => void;
   onViewDetails: () => void;
   onViewHistory: () => void;
   onRetryMedia?: () => void;
@@ -174,6 +176,7 @@ export function SupplierReviewQuickCard({
   onApprove,
   onReject,
   onRemove,
+  onSkip,
   onViewDetails,
   onViewHistory,
   onRetryMedia,
@@ -265,6 +268,7 @@ export function SupplierReviewQuickCard({
                 {canReject && <button type="button" onClick={onReject} disabled={processing} className="min-h-10 rounded-lg px-3 text-left text-[10px] font-black text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800">Reject</button>}
                 {canQuickApprove && <button type="button" onClick={onApprove} disabled={processing} className="min-h-10 rounded-lg px-3 text-left text-[10px] font-black text-blue-700 hover:bg-blue-50 disabled:opacity-50 dark:text-blue-300 dark:hover:bg-blue-950/30">{processing ? 'Approving…' : 'Approve'}</button>}
                 {canRemove && onRemove && <button type="button" onClick={onRemove} disabled={processing} className="min-h-10 rounded-lg px-3 text-left text-[10px] font-black text-amber-700 hover:bg-amber-50 disabled:opacity-50 dark:text-amber-300 dark:hover:bg-amber-950/30">Remove from Review</button>}
+                {onSkip && <button type="button" onClick={onSkip} disabled={processing} className="min-h-10 rounded-lg px-3 text-left text-[10px] font-black text-slate-600 hover:bg-slate-50 disabled:opacity-50 dark:text-slate-300 dark:hover:bg-slate-800">Skip for now</button>}
                 {onLoadMediaForensics && <button type="button" onClick={onLoadMediaForensics} disabled={mediaForensicsLoading} className="min-h-10 rounded-lg px-3 text-left text-[10px] font-black text-slate-600 hover:bg-slate-50 disabled:opacity-50 dark:text-slate-300 dark:hover:bg-slate-800">{mediaForensicsLoading ? 'Loading diagnostics…' : 'View diagnostics'}</button>}
                 <button type="button" onClick={onViewHistory} className="min-h-10 rounded-lg px-3 text-left text-[10px] font-black text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800">View history</button>
               </div>
@@ -434,6 +438,7 @@ export function SupplierReviewQuickCard({
               <div className="absolute bottom-full right-0 z-10 mb-2 grid min-w-40 gap-1 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl dark:border-slate-700 dark:bg-slate-900">
                 {canQuickApprove && <button type="button" onClick={onApprove} disabled={processing} aria-label={`Approve ${productName}`} className="min-h-10 rounded-lg px-3 text-left text-[10px] font-black text-blue-700 hover:bg-blue-50 disabled:opacity-50 dark:text-blue-300 dark:hover:bg-blue-950/30">{processing ? 'Approving…' : 'Approve'}</button>}
                 {canRemove && onRemove && <button type="button" onClick={onRemove} disabled={processing} aria-label={`Remove ${productName} from Product Review`} className="min-h-10 rounded-lg px-3 text-left text-[10px] font-black text-amber-700 hover:bg-amber-50 disabled:opacity-50 dark:text-amber-300 dark:hover:bg-amber-950/30">Remove from Review</button>}
+                {onSkip && <button type="button" onClick={onSkip} disabled={processing} aria-label={`Skip ${productName} for now`} className="min-h-10 rounded-lg px-3 text-left text-[10px] font-black text-slate-600 hover:bg-slate-50 disabled:opacity-50 dark:text-slate-300 dark:hover:bg-slate-800">Skip for now</button>}
                 <button type="button" onClick={onViewHistory} className="min-h-10 rounded-lg px-3 text-left text-[10px] font-black text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800">View history</button>
               </div>
             </details>

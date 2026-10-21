@@ -38,6 +38,7 @@ import {
 import { buildSupplierOnboardingSource, SupplierOnboardingType } from '../services/supplierSourceOnboarding';
 import { reportClientIssue } from '../services/observability/clientDiagnostics';
 import SupplierReviewEditorModal from './SupplierReviewEditorModal';
+import ProductReviewOperatorModal from './ProductReviewOperatorModal';
 import SupplierReviewHistoryModal, { SupplierReviewAuditEvent } from './SupplierReviewHistoryModal';
 import SupplierReviewQuickCard from './SupplierReviewQuickCard';
 import SupplierReviewPagination from './SupplierReviewPagination';
@@ -123,6 +124,7 @@ import {
 interface SupplierHubFiveStarsProps {
   isDarkMode?: boolean;
   initialSubTab?: SupplierHubSection;
+  operatorMode?: boolean;
   onSubTabChange?: (tab: SupplierHubSection) => void;
   onNestedNavigationChange?: (state: { active: boolean; title: string; onBack: () => void } | null) => void;
 }
@@ -464,7 +466,7 @@ const mergeSupplierQueuePage = <T extends { id: string }>(current: T[], page: T[
   return Array.from(items.values());
 };
 
-function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', onSubTabChange, onNestedNavigationChange }: SupplierHubFiveStarsProps) {
+function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', operatorMode = false, onSubTabChange, onNestedNavigationChange }: SupplierHubFiveStarsProps) {
   // Product review workspace state
   const initialProductReviewUrlStateRef = useRef(readProductReviewUrlState());
   const initialProductReviewUrlState = initialProductReviewUrlStateRef.current;
@@ -522,9 +524,10 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
   }, []);
 
   // Supplier Hub navigation and interaction state
-  const [activeSubTab, setActiveSubTab] = useState<SupplierHubPrimarySection>(() => readSupplierHubSection(initialSubTab));
+  const [activeSubTab, setActiveSubTab] = useState<SupplierHubPrimarySection>(() => operatorMode ? 'review' : readSupplierHubSection(initialSubTab));
   const [showOperationsDiagnostics, setShowOperationsDiagnostics] = useState(false);
   const [canAccessAdvanced, setCanAccessAdvanced] = useState(false);
+  const [operatorSkippedReviewIds, setOperatorSkippedReviewIds] = useState<Set<string>>(() => new Set());
   const [reviewFilter, setReviewFilter] = useState<ProductReviewFilter>(initialProductReviewUrlState.filter);
   const [reviewMediaFilter, setReviewMediaFilter] = useState<'all' | 'ready' | 'processing' | 'issues'>(initialProductReviewUrlState.media);
   const [reviewQueueMode, setReviewQueueMode] = useState<SupplierReviewQueueMode>(initialProductReviewUrlState.queueMode);
@@ -571,6 +574,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
   const connectModalBusyRef = useRef(false);
 
   const refreshSupplierReviewActionableCount = useCallback(async (): Promise<void> => {
+    if (operatorMode) return;
     const requestId = ++supplierReviewCountRequestIdRef.current;
     try {
       const response = await getSupplierApi('/api/supplier-operations/overview');
@@ -588,7 +592,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
     } catch {
       // Keep the last authoritative count while a transient summary request fails.
     }
-  }, []);
+  }, [operatorMode]);
 
   const closeConnectModal = useCallback(() => {
     setShowConnectModal(false);
@@ -705,6 +709,10 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
       }).catch(() => {
         if (!cancelled) setCanAccessAdvanced(false);
       });
+      if (operatorMode) {
+        setCanAccessAdvanced(false);
+        return;
+      }
       void loadSources().catch((error) => {
         if (!cancelled) {
           setSupplierSourcesLoaded(false);
@@ -717,7 +725,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
       cancelled = true;
       unsubscribeAuth();
     };
-  }, [loadSources]);
+  }, [loadSources, operatorMode]);
 
   const [categories, setCategories] = useState<any[]>([]);
   const [brands, setBrands] = useState<any[]>([]);
@@ -737,6 +745,12 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
         taxonomy.categories.map((category) => normalizeCategoryBlueprint(category)),
       ));
       setBrands(sortBrandsAlphabetically(taxonomy.brands));
+      if (operatorMode) {
+        setLaunch1000TaxonomyProposals([]);
+        setSupplierCategoryMappings([]);
+        setSupplierCategoryMappingDrafts({});
+        return;
+      }
       try {
         const proposalsResponse = await getSupplierApi('/api/launch1000/taxonomy/proposals');
         const proposalsPayload = proposalsResponse.ok
@@ -776,7 +790,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
       setBrands([]);
       setLaunch1000TaxonomyProposals([]);
     }
-  }, []);
+  }, [operatorMode]);
 
   useEffect(() => {
     if (!['review', 'suppliers', 'settings'].includes(activeSubTab)) return;
@@ -784,7 +798,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
   }, [activeSubTab, loadReviewCatalog]);
 
   useEffect(() => {
-    if (activeSubTab !== 'settings') return;
+    if (operatorMode || activeSubTab !== 'settings') return;
     const unsubscribe = onSnapshot(
       doc(db, "supplier_settings", "config"),
       (snapshot) => {
@@ -808,11 +822,13 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
     );
 
     return () => unsubscribe();
-  }, [activeSubTab]);
+  }, [activeSubTab, operatorMode]);
 
   // The API already applies the selected business/media/search query. Keep the
   // browser page bounded and render only the authoritative page returned by it.
-  const visibleReviewItems = reviewQueue;
+  const visibleReviewItems = operatorMode
+    ? reviewQueue.filter((item) => !operatorSkippedReviewIds.has(item.id))
+    : reviewQueue;
   const validCategoryIds = useMemo(() => supplierReviewValidCategoryIds(categories), [categories]);
   const supplierCategoryOptions = useMemo(() => {
     const values = new Map<string, {
@@ -929,11 +945,22 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
   const [savingSettingsSourceId, setSavingSettingsSourceId] = useState<string | null>(null);
 
   const selectSubTab = useCallback((tab: SupplierHubSection) => {
+    if (operatorMode && tab !== 'review') return;
     const nextSection: SupplierHubPrimarySection = tab === 'activity' ? 'operations' : tab as SupplierHubPrimarySection;
     setActiveSubTab(nextSection);
     writeSupplierHubSectionUrl(nextSection);
     onSubTabChange?.(nextSection);
-  }, [onSubTabChange]);
+  }, [onSubTabChange, operatorMode]);
+
+  const handleOperatorSkip = useCallback((item: ReviewQueueItem) => {
+    if (!operatorMode) return;
+    setOperatorSkippedReviewIds((current) => {
+      const next = new Set(current);
+      next.add(item.id);
+      return next;
+    });
+    setEditingReviewItem(null);
+  }, [operatorMode]);
 
   useEffect(() => {
     if (!onNestedNavigationChange || activeSubTab !== 'suppliers') {
@@ -1117,7 +1144,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
   };
 
   const refreshSupplierQueueViews = async (): Promise<boolean> => {
-    void refreshSupplierReviewActionableCount();
+    if (!operatorMode) void refreshSupplierReviewActionableCount();
     return loadSupplierQueueView({ page: supplierReviewPage });
   };
 
@@ -1443,7 +1470,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
 
   const openSupplierReviewEditor = (item: ReviewQueueItem) => {
     setEditingReviewItem(item);
-    void loadSupplierOffers(item);
+    if (!operatorMode) void loadSupplierOffers(item);
   };
 
   const configureSupplierOffer = async (offerId: string, patch: { priority?: number; enabled?: boolean }) => {
@@ -2813,6 +2840,12 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
         </motion.div>
       )}
 
+      {operatorMode && (
+        <div className="rounded-2xl border border-blue-500/20 bg-blue-500/10 px-4 py-3 text-xs font-semibold text-blue-700 dark:text-blue-200" role="status">
+          Product Review operator mode: review images and commercial data, confirm a canonical category, save, then publish through the existing server checks. Skip is local to this session and does not change queue state.
+        </div>
+      )}
+
       {/* Primary V2 navigation. The select keeps the same destinations usable at
           360–430px without an overflowing tab strip. */}
       <nav aria-label="Supplier Hub sections" className="rounded-2xl border border-slate-200/70 bg-white/80 p-2 shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
@@ -2824,11 +2857,11 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
           className="min-h-11 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm font-bold text-slate-800 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 md:hidden"
           aria-label="Supplier Hub section"
         >
-          <option value="overview">Overview</option>
+          {!operatorMode && <option value="overview">Overview</option>}
           <option value="review">Review Queue</option>
-          <option value="suppliers">Suppliers</option>
-          <option value="operations">Operations</option>
-          <option value="settings">Settings</option>
+          {!operatorMode && <option value="suppliers">Suppliers</option>}
+          {!operatorMode && <option value="operations">Operations</option>}
+          {!operatorMode && <option value="settings">Settings</option>}
         </select>
         <div className="hidden flex-wrap items-center gap-1.5 md:flex">
           {[
@@ -2837,7 +2870,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
             { id: 'suppliers', label: 'Suppliers', badge: supplierSources.length, icon: Globe },
             { id: 'operations', label: 'Operations', badge: null, icon: Activity },
             { id: 'settings', label: 'Settings', badge: null, icon: Settings },
-          ].map((tab) => {
+          ].filter((tab) => !operatorMode || tab.id === 'review').map((tab) => {
             const TabIcon = tab.icon;
             const isSubActive = activeSubTab === tab.id;
             return (
@@ -2975,7 +3008,7 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
 
         {activeSubTab === 'review' && (
           <div className="space-y-8">
-            <Launch1000PilotDryRunPanel />
+            {!operatorMode && <Launch1000PilotDryRunPanel />}
             <section aria-labelledby="product-review-filters-title" className="rounded-3xl border border-slate-200/70 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950 sm:p-5">
               <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
                 <div className="min-w-0">
@@ -3265,17 +3298,18 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
                         onLoadMediaForensics={() => void loadMediaForensics(item)}
                         isPreparing={isPreparing}
                         decisionReady={supplierReviewDecisionReady(item)}
-                        canQuickApprove={canQuickApprove}
-                        canReject={supplierReviewCanReject(item)}
-                        canRemove={supplierReviewCanRemove(item)}
+                        canQuickApprove={operatorMode ? false : canQuickApprove}
+                        canReject={operatorMode ? false : supplierReviewCanReject(item)}
+                        canRemove={operatorMode ? false : supplierReviewCanRemove(item)}
                         needsResolution={needsResolution}
                         processing={processingChangeId === item.id}
-                        canRetryMedia={supplierReviewCanRetryMedia(item)}
+                        canRetryMedia={operatorMode ? false : supplierReviewCanRetryMedia(item)}
                         retryingMedia={retryingMediaId === item.id}
                         terminalState={terminalState}
                         onApprove={() => void handleApproveReviewItem(item, draft)}
                         onReject={() => { setRejectingReviewItem(item); setRejectionReasonDraft(''); }}
                         onRemove={() => setRemovingReviewItem(item)}
+                        onSkip={operatorMode ? () => handleOperatorSkip(item) : undefined}
                         onViewDetails={() => openSupplierReviewEditor(item)}
                         onViewHistory={() => openSupplierReviewHistory(item)}
                         onRetryMedia={() => void handleRetryDeadLetterMedia(item)}
@@ -4211,7 +4245,25 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
       )}
 
       {editingReviewItem && (
-        <SupplierReviewEditorModal
+        operatorMode ? (
+          <ProductReviewOperatorModal
+            item={editingReviewItem}
+            initialDraft={createSupplierReviewDraft(editingReviewItem, categories)}
+            categories={categories}
+            decisionReady={supplierReviewDecisionReady(editingReviewItem)}
+            blockingProblems={supplierReviewOperatorProblems(editingReviewItem)}
+            isPublishing={processingChangeId === editingReviewItem.id}
+            isSaving={savingReviewDraftId === editingReviewItem.id}
+            serverError={errorMsg}
+            onClose={() => {
+              if (processingChangeId !== editingReviewItem.id && savingReviewDraftId !== editingReviewItem.id) setEditingReviewItem(null);
+            }}
+            onSkip={() => handleOperatorSkip(editingReviewItem)}
+            onSaveDraft={(draft) => handleSaveSupplierReviewDraft(editingReviewItem, draft)}
+            onPublish={(draft) => handleApproveReviewItem(editingReviewItem, draft)}
+          />
+        ) : (
+          <SupplierReviewEditorModal
           item={editingReviewItem}
           initialDraft={createSupplierReviewDraft(editingReviewItem, categories)}
           categories={categories}
@@ -4245,7 +4297,8 @@ function SupplierHubFiveStars({ isDarkMode = true, initialSubTab = 'suppliers', 
           onCreateMissingParentCategory={handleCreateMissingParentCategory}
           onApproveProductTypeClassification={(decision) => handleApproveLaunch1000ProductTypeClassification(editingReviewItem, decision)}
           onPublish={(draft) => handleApproveReviewItem(editingReviewItem, draft)}
-        />
+          />
+        )
       )}
 
       {historyReviewItem && (

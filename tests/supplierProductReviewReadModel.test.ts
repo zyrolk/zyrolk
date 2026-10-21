@@ -310,7 +310,7 @@ test('PR-1 supplier scope uses dedicated indexed fields and leaves identity sear
 test('PR-1 preserves Admin authorization and does not introduce offset pagination', () => {
   const routes = readFileSync('functions/src/api/routes/supplier.ts', 'utf8');
   const queue = readFileSync('functions/src/scheduled/supplierReviewQueue.ts', 'utf8');
-  assert.match(routes, /app\.get\("\/api\/supplier-review-queue", requireSupplierHubAdmin/u);
+  assert.match(routes, /app\.get\("\/api\/supplier-review-queue", requireProductReviewOperator/u);
   assert.doesNotMatch(queue, /\.offset\(/u);
   assert.match(routes, /listSupplierReviewReadModelPage/u);
   assert.match(queue, /\.count\(\)\.get\(\)/u);

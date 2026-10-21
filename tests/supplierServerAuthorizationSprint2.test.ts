@@ -50,7 +50,7 @@ test('Supplier Hub queue decisions are Functions-authoritative and transaction g
   const legacyDashboard = readFileSync('src/components/AdminDashboard.tsx', 'utf8');
   const legacyDecisionService = readFileSync('src/services/supplierQueueService.ts', 'utf8');
 
-  assert.match(routes, /supplier-review-queue\/:queueItemId\/approve", requireSupplierHubAdmin/);
+  assert.match(routes, /supplier-review-queue\/:queueItemId\/approve", requireProductReviewOperator/);
   assert.match(routes, /supplier-review-queue\/bulk-approve", requireSupplierHubAdmin/);
   assert.match(routes, /supplier-review-queue\/bulk-reject", requireSupplierHubAdmin/);
   assert.match(approval, /await db\.runTransaction/);

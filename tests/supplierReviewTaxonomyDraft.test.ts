@@ -1320,7 +1320,7 @@ test("Save Changes is separate from approval and sends the narrow draft route", 
   assert.match(hub, /expectedPendingRevision: item\.supplierOfferPendingRevision/u);
   assert.match(hub, /expectedUpdatedAt: item\.updatedAt/u);
   const routes = readFileSync("functions/src/api/routes/supplier.ts", "utf8");
-  assert.match(routes, /app\.patch\("\/api\/supplier-review-queue\/:queueItemId\/draft", requireSupplierHubAdmin/u);
+  assert.match(routes, /app\.patch\("\/api\/supplier-review-queue\/:queueItemId\/draft", requireProductReviewOperator/u);
   assert.match(routes, /status: "review_pending"/u);
   assert.doesNotMatch(hub.slice(hub.indexOf("const handleSaveSupplierReviewDraft"), hub.indexOf("const handleRefreshPendingReviewBatch")), /decideSupplierReviewQueueItem/u);
 });

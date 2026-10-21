@@ -148,6 +148,6 @@ test("diagnostic projection is read-only and does not expose raw media payloads"
 
 test("diagnostic endpoint is Admin-protected and has no mutation route", () => {
   const routes = readFileSync(new URL("../functions/src/api/routes/supplier.ts", import.meta.url), "utf8");
-  assert.match(routes, /app\.get\("\/api\/supplier-review-queue\/diagnostics", requireSupplierHubAdmin/u);
+  assert.match(routes, /app\.get\("\/api\/supplier-review-queue\/diagnostics", requireProductReviewOperator/u);
   assert.doesNotMatch(routes, /app\.(post|patch|delete)\("\/api\/supplier-review-queue\/diagnostics/u);
 });

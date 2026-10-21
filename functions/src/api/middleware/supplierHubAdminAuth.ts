@@ -1,9 +1,9 @@
 import * as express from "express";
 import { adminAuth } from "../firebase";
 import { appLogger } from "../logging";
-import { hasSupplierHubAdminAccess } from "../security/adminAuthorization";
+import { hasProductReviewOperatorAccess, hasSupplierHubAdminAccess } from "../security/adminAuthorization";
 
-export { hasSupplierHubAdminAccess } from "../security/adminAuthorization";
+export { hasProductReviewOperatorAccess, hasSupplierHubAdminAccess } from "../security/adminAuthorization";
 
 export interface SupplierHubAdminIdentity {
   uid: string;
@@ -53,6 +53,53 @@ export const requireSupplierHubAdmin: express.RequestHandler = async (req, res, 
     next();
   } catch (error) {
     appLogger.warn("Supplier Hub API authentication failed.", {
+      path: req.path,
+      method: req.method,
+      error,
+    });
+    res.status(401).json({ error: "Invalid, expired, or revoked authentication token" });
+  }
+};
+
+/**
+ * Review operators share the same token/App Check boundary as Supplier Hub
+ * admins, but are admitted only to routes explicitly marked for review work.
+ * Full Supplier Hub admins remain compatible with this middleware.
+ */
+export const requireProductReviewOperator: express.RequestHandler = async (req, res, next) => {
+  const authHeader = req.header("Authorization") || "";
+  const match = authHeader.match(/^Bearer\s+(.+)$/i);
+  if (!match) {
+    appLogger.warn("Product Review API authentication rejected.", {
+      path: req.path,
+      method: req.method,
+      reason: "missing_bearer_token",
+    });
+    res.status(401).json({ error: "Authentication required" });
+    return;
+  }
+
+  try {
+    const decodedToken = res.locals.supplierHubLocalExpressPreview === true
+      ? await adminAuth.verifyIdToken(match[1])
+      : await adminAuth.verifyIdToken(match[1], true);
+    if (!hasSupplierHubAdminAccess(decodedToken) && !hasProductReviewOperatorAccess(decodedToken)) {
+      appLogger.warn("Product Review API authentication rejected.", {
+        path: req.path,
+        method: req.method,
+        reason: "product_review_operator_claim_required",
+        uid: decodedToken.uid,
+      });
+      res.status(403).json({ error: "Product Review access required" });
+      return;
+    }
+    res.locals.supplierAdmin = {
+      uid: decodedToken.uid,
+      email: (decodedToken.email || "unknown").toLowerCase(),
+    } satisfies SupplierHubAdminIdentity;
+    next();
+  } catch (error) {
+    appLogger.warn("Product Review API authentication failed.", {
       path: req.path,
       method: req.method,
       error,

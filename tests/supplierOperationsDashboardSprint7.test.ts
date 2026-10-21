@@ -107,7 +107,7 @@ test("operations APIs are admin protected and preserve existing Supplier Hub rou
     assert.match(routes, new RegExp(`${route.replaceAll("/", "\\/")}[^\\n]+requireSupplierHubAdmin`));
   }
   assert.match(routes, /app\.post\("\/api\/supplier-sync", requireSupplierHubAdmin/);
-  assert.match(routes, /app\.post\("\/api\/supplier-review-queue\/:queueItemId\/approve", requireSupplierHubAdmin/);
+  assert.match(routes, /app\.post\("\/api\/supplier-review-queue\/:queueItemId\/approve", requireProductReviewOperator/);
 });
 
 test("Activity stays business-focused while recovery and monitoring remain under Advanced", () => {
