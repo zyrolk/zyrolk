@@ -24,31 +24,15 @@ import {
   prepareGuestOrderRecoveryToken,
   promoteGuestOrderRecoveryToken,
 } from '../orders/guestOrderRecovery';
+import {
+  clearCheckoutIdempotencyKey, getCheckoutIdempotencyKey, getCheckoutSessionStorage,
+} from './checkoutIdempotency';
 import './premiumCheckout.css';
 
-const IDEMPOTENCY_KEY = 'zyro.checkout.idempotency';
 const CHECKOUT_ADDRESS_READ_LIMIT = 25;
 const formatPrice = (amount: number) => new Intl.NumberFormat('en-LK', {
   style: 'currency', currency: 'LKR', minimumFractionDigits: 0, maximumFractionDigits: 0,
 }).format(amount);
-
-function createIdempotencyKey(): string {
-  return window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
-
-function getIdempotencyKey(signature: string): string {
-  try {
-    const previous = JSON.parse(window.sessionStorage.getItem(IDEMPOTENCY_KEY) || '{}') as { key?: string; signature?: string };
-    if (previous.key && previous.signature === signature) return previous.key;
-    const key = createIdempotencyKey();
-    window.sessionStorage.setItem(IDEMPOTENCY_KEY, JSON.stringify({ key, signature }));
-    return key;
-  } catch { return createIdempotencyKey(); }
-}
-
-function clearIdempotencyKey(): void {
-  try { window.sessionStorage.removeItem(IDEMPOTENCY_KEY); } catch { /* Session storage may be unavailable. */ }
-}
 
 interface CouponQuote { code: string; discountAmount: number; cartSignature: string }
 
@@ -60,7 +44,7 @@ export default function PremiumCheckoutDrawer({
   isOpen, user, onClose, cartItems, onUpdateQuantity, onRemoveItem, onClearCart, onRefreshCartProducts,
   isCartReconciliationPending = false, cartReconciliationNotice = '', settings, setCurrentPage,
 }: CartDrawerProps) {
-  const [form, setForm] = useState<CheckoutFormValues>(() => typeof window === 'undefined' ? EMPTY_CHECKOUT_FORM : readCheckoutDraft(window.sessionStorage));
+  const [form, setForm] = useState<CheckoutFormValues>(() => typeof window === 'undefined' ? EMPTY_CHECKOUT_FORM : readCheckoutDraft(getCheckoutSessionStorage()));
   const [errors, setErrors] = useState<CheckoutErrors>({});
   const [addresses, setAddresses] = useState<CustomerAddress[]>([]);
   const [addressesLoading, setAddressesLoading] = useState(false);
@@ -162,7 +146,7 @@ export default function PremiumCheckoutDrawer({
 
   useEffect(() => {
     formHasAddressRef.current = Boolean(form.customerAddress);
-    if (typeof window !== 'undefined') writeCheckoutDraft(window.sessionStorage, form);
+    if (typeof window !== 'undefined') writeCheckoutDraft(getCheckoutSessionStorage(), form);
   }, [form]);
   useEffect(() => {
     if (couponQuote && couponQuote.cartSignature !== cartSignature) {
@@ -210,13 +194,14 @@ export default function PremiumCheckoutDrawer({
 
   const handleCheckout = async (event: FormEvent) => {
     event.preventDefault();
-    if (!commerceCartItems.length || isSubmitting || isCartReconciliationPending) return;
+    if (!commerceCartItems.length || isSubmitting || isSubmittingRef.current || isCartReconciliationPending) return;
     const normalized = normalizeCheckoutForm(form);
     const nextErrors = validateCheckoutForm(normalized);
     setForm(normalized); setErrors(nextErrors); setCheckoutError('');
     const firstError = Object.keys(nextErrors)[0] as CheckoutField | undefined;
     if (firstError) { document.getElementById(`checkout-${firstError}`)?.focus(); return; }
 
+    isSubmittingRef.current = true;
     setIsSubmitting(true);
     try {
       const analyticsItems = commerceCartItems.map(item => commerceAnalyticsItem({
@@ -250,7 +235,7 @@ export default function PremiumCheckoutDrawer({
           : await prepareGuestOrderRecoveryToken(checkoutSignature) || undefined;
         if (guestRecoveryToken) guestRecoveryAttemptRef.current = { signature: checkoutSignature, token: guestRecoveryToken };
       }
-      const idempotencyKey = getIdempotencyKey(checkoutSignature);
+      const idempotencyKey = getCheckoutIdempotencyKey(checkoutSignature);
       const requestPayload = guestRecoveryToken ? { ...payload, guestRecoveryToken } : payload;
       const result = await fetchJson<{ success: boolean; order: Order; error?: string }>('/api/checkout', {
         method: 'POST',
@@ -264,8 +249,8 @@ export default function PremiumCheckoutDrawer({
         guestRecoveryAttemptRef.current = null;
       }
       trackPurchaseOnce(result.order.id, result.order.totalPrice, 'cod', result.order.couponCode, analyticsItems);
-      clearIdempotencyKey();
-      clearCheckoutDraft(window.sessionStorage);
+      clearCheckoutIdempotencyKey();
+      clearCheckoutDraft(getCheckoutSessionStorage());
       onClearCart();
     } catch (error) {
       reportClientIssue('checkout-request', error, 'warning');
@@ -292,7 +277,10 @@ export default function PremiumCheckoutDrawer({
       } else {
         setCheckoutError(error instanceof Error ? error.message : 'The order could not be placed. Your cart remains saved.');
       }
-    } finally { setIsSubmitting(false); }
+    } finally {
+      isSubmittingRef.current = false;
+      setIsSubmitting(false);
+    }
   };
 
   const copyReference = async () => {

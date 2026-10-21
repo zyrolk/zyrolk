@@ -98,6 +98,21 @@ test('POST /api/checkout consumes a fresh limited-use token and continues to the
   assert.doesNotMatch(response.body, /App verification/);
 });
 
+test('checkout rejects a missing idempotency key before entering the order transaction', async () => {
+  const response = await send('POST', '/api/checkout', { 'X-Firebase-AppCheck': 'checkout-missing-key' }, {
+    customerUid: 'guest',
+    customerName: 'Checkout Safety Test',
+    customerPhone: '0771234567',
+    customerAddress: 'No 1, Main Street',
+    district: 'Colombo',
+    paymentMethod: 'cod',
+    cartItems: [{ productId: 'missing-product', quantity: 1, expectedUnitPrice: 1000 }],
+  });
+
+  assert.equal(response.status, 400);
+  assert.deepEqual(JSON.parse(response.body), { error: 'A valid idempotency key is required' });
+});
+
 test('an already consumed token is rejected on checkout with the safe App Check response', async () => {
   await send('POST', '/api/checkout', { 'X-Firebase-AppCheck': 'checkout-token-replayed' }, {});
   verifyCalls.length = 0;
@@ -275,10 +290,12 @@ test('only the checkout order request uses limited-use tokens and guest recovery
   assert.match(drawer, /headers: \{ 'Content-Type': 'application\/json', 'Idempotency-Key': idempotencyKey, \.\.\.\(token \? \{ Authorization: `Bearer \$\{token\}` \} : \{\}\) \},/);
   assert.match(drawer, /body: JSON\.stringify\(\{ \.\.\.requestPayload, idempotencyKey \}\),/);
   assert.match(drawer, /const checkoutSignature = JSON\.stringify\(payload\);/);
-  assert.match(drawer, /const idempotencyKey = getIdempotencyKey\(checkoutSignature\);/);
+  assert.match(drawer, /const idempotencyKey = getCheckoutIdempotencyKey\(checkoutSignature\);/);
   assert.match(drawer, /guestRecoveryToken/);
-  assert.match(drawer, /if \(previous\.key && previous\.signature === signature\) return previous\.key;/);
-  assert.match(drawer, /window\.sessionStorage\.setItem\(IDEMPOTENCY_KEY, JSON\.stringify\(\{ key, signature \}\)\);/);
+  const idempotency = readFileSync('src/features/checkout/checkoutIdempotency.ts', 'utf8');
+  assert.match(idempotency, /inMemoryAttempt/);
+  assert.match(idempotency, /storage\?\.getItem\(CHECKOUT_IDEMPOTENCY_STORAGE_KEY\)/);
+  assert.match(idempotency, /storage\?\.setItem\(CHECKOUT_IDEMPOTENCY_STORAGE_KEY/);
 
   const sourceFiles = (directory: string): string[] => readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
     const entryPath = path.join(directory, entry.name);

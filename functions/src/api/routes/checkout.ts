@@ -10,7 +10,6 @@ import {
   getAuthenticatedCheckoutRateLimitKey,
   getBestEffortNetworkRateLimitKey,
   getGuestCheckoutRateLimitKeys,
-  getIdempotencyKeyFromValues,
   getCouponDocumentId,
   hashValue,
   nextCheckoutAbuseCounter,
@@ -20,6 +19,7 @@ import {
   resolveCouponDiscount,
   resolveCheckoutIdempotency,
   resolveCodReservationExpiresAt,
+  requireCheckoutIdempotencyKey,
   validateCheckoutCartItems,
   validateCheckoutDetails,
   validatePaymentMethod,
@@ -137,7 +137,7 @@ export function registerCheckoutRoutes(app: express.Express): void {
 
     let customerUid: string;
     let validatedCartItems: CheckoutCartItem[];
-    let idempotencyKey: string | null;
+    let idempotencyKey: string;
     let requestHash: string;
     let validatedPaymentMethod: "cod" | "whatsapp_confirm" | "payhere";
     let guestRecoveryToken: string | null = null;
@@ -160,7 +160,7 @@ export function registerCheckoutRoutes(app: express.Express): void {
       enforceCheckoutNetworkRateLimit(getBestEffortNetworkRateLimitKey(req.header("x-forwarded-for"), req.ip));
       validatedPaymentMethod = validatePaymentMethod(paymentMethod);
       validatedCartItems = validateCheckoutCartItems(cartItems, { requireExpectedUnitPrice: true });
-      idempotencyKey = getIdempotencyKeyFromValues(req.header("Idempotency-Key"), req.body?.idempotencyKey);
+      idempotencyKey = requireCheckoutIdempotencyKey(req.header("Idempotency-Key"), req.body?.idempotencyKey);
       requestHash = createCheckoutRequestHash(req.body, validatedCartItems);
       if (customerUid === "guest") guestRecoveryToken = validateGuestRecoveryToken(req.body?.guestRecoveryToken);
       if (paymentMethod && paymentMethod !== "cod") throw new CheckoutError("Only Cash on Delivery is currently available", 400);
@@ -186,18 +186,14 @@ export function registerCheckoutRoutes(app: express.Express): void {
       });
 
       const finalizedOrder = await adminDb.runTransaction<CheckoutOrderResponse>(async (transaction) => {
-        const idempotencyRef = idempotencyKey
-          ? adminDb.collection(CHECKOUT_IDEMPOTENCY_COLLECTION).doc(hashValue(idempotencyKey))
-          : null;
+        const idempotencyRef = adminDb.collection(CHECKOUT_IDEMPOTENCY_COLLECTION).doc(hashValue(idempotencyKey));
 
-        if (idempotencyRef) {
-          const idempotencySnap = await transaction.get(idempotencyRef);
-          if (idempotencySnap.exists) {
-            const idempotencyData = idempotencySnap.data();
-            const idempotencyDecision = resolveCheckoutIdempotency(idempotencyData || null, requestHash);
-            if (idempotencyDecision.action === "return-order") {
+        const idempotencySnap = await transaction.get(idempotencyRef);
+        if (idempotencySnap.exists) {
+          const idempotencyData = idempotencySnap.data();
+          const idempotencyDecision = resolveCheckoutIdempotency(idempotencyData || null, requestHash);
+          if (idempotencyDecision.action === "return-order") {
             return idempotencyDecision.order as CheckoutOrderResponse;
-            }
           }
         }
 
@@ -406,18 +402,16 @@ export function registerCheckoutRoutes(app: express.Express): void {
           ...orderData
         };
 
-        if (idempotencyRef) {
-          transaction.set(idempotencyRef, {
-            keyHash: hashValue(idempotencyKey!),
-            requestHash,
-            status: "succeeded",
-            orderId: orderRef.id,
-            orderNumber,
-            order,
-            createdAt: capturedAt,
-            updatedAt: capturedAt,
-          }, { merge: true });
-        }
+        transaction.set(idempotencyRef, {
+          keyHash: hashValue(idempotencyKey),
+          requestHash,
+          status: "succeeded",
+          orderId: orderRef.id,
+          orderNumber,
+          order,
+          createdAt: capturedAt,
+          updatedAt: capturedAt,
+        }, { merge: true });
 
         return order;
       });

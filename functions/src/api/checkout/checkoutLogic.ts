@@ -239,6 +239,14 @@ export function getIdempotencyKeyFromValues(headerValue: unknown, bodyValue: unk
   return key;
 }
 
+export function requireCheckoutIdempotencyKey(headerValue: unknown, bodyValue: unknown): string {
+  const key = getIdempotencyKeyFromValues(headerValue, bodyValue);
+  if (!key || /[\u0000-\u001F\u007F]/u.test(key)) {
+    throw new CheckoutError("A valid idempotency key is required", 400);
+  }
+  return key;
+}
+
 export function hashValue(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
