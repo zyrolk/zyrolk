@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, ImageOff, ShieldCheck, SkipForward, X } from 'lucide-react';
 import type {
   SupplierReviewDraft,
@@ -11,6 +11,7 @@ import {
   type SupplierReviewQuickApprovalItem,
 } from '../services/supplierHubPresentation';
 import { suggestZyroCategory } from '../services/categorySuggestion/suggestZyroCategory';
+import { resolveOperatorCategorySelection } from '../utils/operatorSuggestionSelection';
 
 interface ProductReviewOperatorModalProps {
   item: SupplierReviewSourceItem;
@@ -51,14 +52,20 @@ export default function ProductReviewOperatorModal({
   const [selectedCategory, setSelectedCategory] = useState(initialDraft.category || '');
   const [selectedSubcategory, setSelectedSubcategory] = useState(initialDraft.subcategory || '');
   const [hasSavedCategory, setHasSavedCategory] = useState(false);
+  const [suggestionPreselected, setSuggestionPreselected] = useState(false);
   const [feedback, setFeedback] = useState<{ kind: 'success' | 'error'; message: string } | null>(null);
+  const taxonomyInteractionRef = useRef(false);
+  const appliedSuggestionKeyRef = useRef('');
 
   useEffect(() => {
     setDraft(initialDraft);
     setSelectedCategory(initialDraft.category || '');
     setSelectedSubcategory(initialDraft.subcategory || '');
     setHasSavedCategory(false);
+    setSuggestionPreselected(false);
     setFeedback(null);
+    taxonomyInteractionRef.current = false;
+    appliedSuggestionKeyRef.current = '';
   }, [item.id]);
 
   const activeCategories = useMemo(() => categories.filter((category) => category.isActive !== false && category.taxonomyCandidate !== true), [categories]);
@@ -90,8 +97,42 @@ export default function ProductReviewOperatorModal({
     ? activeCategories.find((category) => category.id === categorySuggestion.categoryId)
     : undefined;
   const suggestedSubcategory = suggestedCategory?.subcategories?.find((subcategory) => subcategory.id === categorySuggestion.subcategoryId);
+  const operatorCategorySelection = useMemo(() => resolveOperatorCategorySelection(
+    initialDraft,
+    categorySuggestion,
+    activeCategories,
+  ), [
+    activeCategories,
+    categorySuggestion,
+    initialDraft.category,
+    initialDraft.subcategory,
+    initialDraft.fieldOwnership?.category,
+    initialDraft.fieldOwnership?.subcategory,
+  ]);
   const categoryPathReady = Boolean(selectedCategory) && (activeSubcategories.length === 0 || Boolean(selectedSubcategory));
   const canPublish = hasSavedCategory && decisionReady && categoryPathReady && managedMediaReady && !isPublishing && !isSaving;
+
+  useEffect(() => {
+    if (
+      !operatorCategorySelection.isSuggestionPreselected
+      || taxonomyInteractionRef.current
+      || hasSavedCategory
+      || selectedCategory
+      || selectedSubcategory
+    ) return;
+    const selectionKey = `${item.id}:${operatorCategorySelection.category}:${operatorCategorySelection.subcategory}`;
+    if (appliedSuggestionKeyRef.current === selectionKey) return;
+    setSelectedCategory(operatorCategorySelection.category);
+    setSelectedSubcategory(operatorCategorySelection.subcategory);
+    setSuggestionPreselected(operatorCategorySelection.requiresExplicitSave);
+    appliedSuggestionKeyRef.current = selectionKey;
+  }, [
+    hasSavedCategory,
+    item.id,
+    operatorCategorySelection,
+    selectedCategory,
+    selectedSubcategory,
+  ]);
 
   const applySuggestion = () => {
     if (categorySuggestion.status !== 'SUGGESTED' || !categorySuggestion.categoryId) return;
@@ -100,6 +141,8 @@ export default function ProductReviewOperatorModal({
     const subcategory = category.subcategories?.find((candidate) => candidate.id === categorySuggestion.subcategoryId && candidate.isActive !== false);
     setSelectedCategory(category.id);
     setSelectedSubcategory(subcategory?.id || '');
+    taxonomyInteractionRef.current = true;
+    setSuggestionPreselected(false);
     setFeedback({ kind: 'success', message: 'Suggestion applied locally. Save to record the Admin category decision.' });
   };
 
@@ -113,6 +156,7 @@ export default function ProductReviewOperatorModal({
       await onSaveDraft({ category: selectedCategory, subcategory: selectedSubcategory });
       setDraft((current) => ({ ...current, category: selectedCategory, subcategory: selectedSubcategory }));
       setHasSavedCategory(true);
+      setSuggestionPreselected(false);
       setFeedback({ kind: 'success', message: 'Category saved. The server remains the approval authority.' });
     } catch (error) {
       setFeedback({ kind: 'error', message: error instanceof Error ? error.message : 'Category could not be saved.' });
@@ -169,12 +213,13 @@ export default function ProductReviewOperatorModal({
             <div className="mt-3 rounded-xl bg-slate-50 p-3 text-[11px] dark:bg-slate-900/70">
               <span className="font-black text-slate-500">Suggestion:</span>{' '}
               {suggestedCategory ? `${suggestedCategory.name || suggestedCategory.id}${suggestedSubcategory ? ` / ${suggestedSubcategory.name || suggestedSubcategory.id}` : ''}` : 'No confident existing-taxonomy suggestion'}
-              <span className="ml-2 font-bold text-slate-400">({categorySuggestion.confidence})</span>
+              <span className="ml-2 font-bold text-slate-400">(Confidence: {categorySuggestion.confidence})</span>
               {categorySuggestion.reasons?.length > 0 && <p className="mt-1 text-slate-500">{categorySuggestion.reasons.join(' · ')}</p>}
+              {suggestionPreselected && !hasSavedCategory && <p role="status" className="mt-2 font-black text-blue-700 dark:text-blue-300">Suggested category — not confirmed or saved</p>}
             </div>
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
-              <label className="text-[10px] font-black uppercase tracking-wide text-slate-500">Category<select value={selectedCategory} onChange={(event) => { setSelectedCategory(event.target.value); setSelectedSubcategory(''); setHasSavedCategory(false); }} disabled={isSaving || isPublishing} className="mt-1 min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold normal-case text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-white"><option value="">Select active category</option>{activeCategories.map((category) => <option key={category.id} value={category.id}>{category.name || category.id}</option>)}</select></label>
-              <label className="text-[10px] font-black uppercase tracking-wide text-slate-500">Subcategory<select value={selectedSubcategory} onChange={(event) => { setSelectedSubcategory(event.target.value); setHasSavedCategory(false); }} disabled={isSaving || isPublishing || !selectedCategory} className="mt-1 min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold normal-case text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-white"><option value={activeSubcategories.length === 0 ? '' : undefined}>{activeSubcategories.length === 0 ? 'No subcategory required' : 'Select active subcategory'}</option>{activeSubcategories.map((subcategory) => <option key={subcategory.id} value={subcategory.id}>{subcategory.name || subcategory.id}</option>)}</select></label>
+              <label className="text-[10px] font-black uppercase tracking-wide text-slate-500">Category<select value={selectedCategory} onChange={(event) => { taxonomyInteractionRef.current = true; setSuggestionPreselected(false); setSelectedCategory(event.target.value); setSelectedSubcategory(''); setHasSavedCategory(false); }} disabled={isSaving || isPublishing} className="mt-1 min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold normal-case text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-white"><option value="">Select active category</option>{activeCategories.map((category) => <option key={category.id} value={category.id}>{category.name || category.id}</option>)}</select></label>
+              <label className="text-[10px] font-black uppercase tracking-wide text-slate-500">Subcategory<select value={selectedSubcategory} onChange={(event) => { taxonomyInteractionRef.current = true; setSuggestionPreselected(false); setSelectedSubcategory(event.target.value); setHasSavedCategory(false); }} disabled={isSaving || isPublishing || !selectedCategory} className="mt-1 min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold normal-case text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-white"><option value={activeSubcategories.length === 0 ? '' : undefined}>{activeSubcategories.length === 0 ? 'No subcategory required' : 'Select active subcategory'}</option>{activeSubcategories.map((subcategory) => <option key={subcategory.id} value={subcategory.id}>{subcategory.name || subcategory.id}</option>)}</select></label>
             </div>
             <div className="mt-4 flex flex-wrap items-center gap-2">
               <button type="button" onClick={() => void saveCategory()} disabled={isSaving || isPublishing} className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-blue-600 px-4 text-xs font-black text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"><Check className="h-4 w-4" />{isSaving ? 'Saving…' : 'Save category'}</button>
