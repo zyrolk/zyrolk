@@ -4317,16 +4317,23 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
               offerStateExpectation: supplierOfferStateExpectation(ownOffer || {}),
             });
             if (activeReviewQueueDoc) {
+              const suppressionPatch = {
+                status: "Suppressed",
+                queueState: "suppressed",
+                systemDecision: "NEW_PRODUCT_DEFERRED_ZERO_STOCK",
+                systemDecisionReason: "New supplier product deferred because explicit supplier stock is zero.",
+                updatedAt: createdAt,
+              };
               queuedWrites.push({
                 collection: "supplier_review_queue",
                 id: activeReviewQueueDoc.id,
                 atomicGroup: queueItemId,
                 data: {
-                  status: "Suppressed",
-                  queueState: "suppressed",
-                  systemDecision: "NEW_PRODUCT_DEFERRED_ZERO_STOCK",
-                  systemDecisionReason: "New supplier product deferred because explicit supplier stock is zero.",
-                  updatedAt: createdAt,
+                  ...suppressionPatch,
+                  ...buildSupplierReviewBusinessQueueProjection({
+                    ...(activeReviewQueueData || {}),
+                    ...suppressionPatch,
+                  } as never),
                 },
               });
             }

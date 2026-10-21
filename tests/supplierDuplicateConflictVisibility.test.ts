@@ -5,6 +5,7 @@ import { ProductParser } from "../functions/src/api/suppliers/a2z/ProductParser"
 import { buildSupplierProductOffer } from "../functions/src/api/suppliers/supplierOfferEngine";
 import { listSupplierQueuePage } from "../functions/src/scheduled/supplierReviewQueue";
 import { buildSupplierDuplicateConflictReviewItem } from "../functions/src/scheduled/supplierSync";
+import { SUPPLIER_REVIEW_BUSINESS_PROJECTION_VERSION } from "../functions/src/api/suppliers/supplierReviewBusinessQueueProjection";
 
 const detectedAt = "2026-07-29T08:00:00.000Z";
 const queueItemId = "a2z-traders-duplicate-1";
@@ -86,6 +87,7 @@ test("same-supplier duplicate projects one deterministic conflict into Product R
   assert.equal(conflictReview.data.status, "CONFLICT");
   assert.equal(conflictReview.data.queueState, "conflict");
   assert.equal(conflictReview.data.supplierOfferId, offer.id);
+  assert.equal(conflictReview.data.businessQueueClassesVersion, SUPPLIER_REVIEW_BUSINESS_PROJECTION_VERSION);
   assert.equal(conflictReview.data.approvalBaseline, approvalBaseline);
   assert.deepEqual(conflictReview.data.productPayload, existingReview.productPayload);
 

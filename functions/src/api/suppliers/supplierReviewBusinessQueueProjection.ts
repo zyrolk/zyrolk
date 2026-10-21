@@ -20,6 +20,12 @@ export interface SupplierReviewBusinessProjectionStatus {
   completedAt?: unknown;
 }
 
+export interface SupplierReviewBusinessProjectionReadiness {
+  markerActive: boolean;
+  indexedReadsAllowed: boolean;
+  compatibilityKnown: boolean;
+}
+
 export const supplierReviewBusinessProjectionReference = (db: Firestore) => (
   db.collection(SUPPLIER_REVIEW_BUSINESS_PROJECTION_COLLECTION)
     .doc(SUPPLIER_REVIEW_BUSINESS_PROJECTION_DOCUMENT)
@@ -54,7 +60,38 @@ export const migrationCheckpointForProjectionVersion = (
  * same projection version. This preserves legacy behavior during deployment.
  */
 export async function isSupplierReviewBusinessProjectionActive(db: Firestore): Promise<boolean> {
+  const readiness = await readSupplierReviewBusinessProjectionReadiness(db);
+  return readiness.indexedReadsAllowed;
+}
+
+/**
+ * A completed migration is not enough to authorize indexed reads forever: a
+ * stale scheduled writer can append legacy projection records after the
+ * marker becomes active. Probe for one legacy record so queue pages/counts
+ * fail closed without scanning or loading the collection.
+ */
+export async function readSupplierReviewBusinessProjectionReadiness(
+  db: Firestore,
+): Promise<SupplierReviewBusinessProjectionReadiness> {
   const snapshot = await supplierReviewBusinessProjectionReference(db).get();
   const data = snapshot.exists ? snapshot.data() as Partial<SupplierReviewBusinessProjectionStatus> : null;
-  return isSupplierReviewBusinessProjectionStatusActive(data);
+  const markerActive = isSupplierReviewBusinessProjectionStatusActive(data);
+  if (!markerActive) {
+    return { markerActive: false, indexedReadsAllowed: false, compatibilityKnown: true };
+  }
+
+  try {
+    const legacyRecord = await db.collection("supplier_review_queue")
+      .where("businessQueueClassesVersion", "!=", SUPPLIER_REVIEW_BUSINESS_PROJECTION_VERSION)
+      .limit(1)
+      .get();
+    return {
+      markerActive: true,
+      indexedReadsAllowed: legacyRecord.empty,
+      compatibilityKnown: true,
+    };
+  } catch {
+    // An unavailable compatibility probe must never authorize indexed reads.
+    return { markerActive: true, indexedReadsAllowed: false, compatibilityKnown: false };
+  }
 }

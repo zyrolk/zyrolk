@@ -174,6 +174,8 @@ test("operations summary exposes direct review overview aggregates without confl
   assert.match(service, /approvedCount: approvedOfferSnapshot\.data\(\)\.count/u);
   assert.match(service, /publishedCount: null/u);
   assert.match(service, /where\(SUPPLIER_MEDIA_QUEUE_CLASS_FIELD, "==", mediaQueueClass\)/u);
+  assert.match(service, /businessProjectionCounts\.active \? null : fallbackActionableReviewCount/u);
+  assert.match(service, /businessProjectionCounts\.active \? null : fallbackLowStockHoldReviewCount/u);
 });
 
 test("Sprint 1-6 Supplier Hub contracts remain wired", () => {

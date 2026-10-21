@@ -50,6 +50,8 @@ const makeFakeDb = (records: StoredRecord[], options: { mediaProjectionActive?: 
           if (operator === 'in') return Array.isArray(value) && value.includes(actual);
           if (operator === 'array-contains') return Array.isArray(actual) && actual.includes(value);
           if (operator === '<=') return String(actual || '') <= String(value);
+          if (operator === '<') return Number(actual) < Number(value);
+          if (operator === '!=') return actual !== value;
           return actual === value;
         }));
         selected.sort((left, right) => {
@@ -116,6 +118,7 @@ const records = (count: number): StoredRecord[] => Array.from({ length: count },
     updatedAt: new Date(Date.UTC(2026, 0, 1, 0, 0, 0, count - index)).toISOString(),
     supplierItemCode: `SKU-${String(index).padStart(3, '0')}`,
     productName: `Review product ${index}`,
+    businessQueueClassesVersion: SUPPLIER_REVIEW_BUSINESS_QUEUE_CLASSES_VERSION,
     comparison: { comparisonStatus: 'NEW_PRODUCT' },
     productValidation: { readyToPublish: true, missingFields: [], errors: [] },
   },
@@ -450,5 +453,23 @@ test('active v3 business metadata keeps the legacy-compatible Product Review pat
     query: query({ businessFilter: 'actionable', pageSize: 25 }), page: 1,
   });
   assert.equal(result.countStatus, 'unavailable');
+  assert.equal(result.items.length, 3);
+});
+
+test('mixed v3/v4 records disable indexed business reads and exact counts', async () => {
+  const mixed = records(3).map((record, index) => ({
+    ...record,
+    data: {
+      ...record.data,
+      businessQueueClasses: ['actionable'],
+      businessQueueClassesVersion: index === 0 ? 3 : SUPPLIER_REVIEW_BUSINESS_QUEUE_CLASSES_VERSION,
+    },
+  }));
+  const db = makeFakeDb(mixed, { businessProjectionActive: true }) as never;
+  const result = await listSupplierReviewReadModelPage(db, {
+    query: query({ businessFilter: 'actionable', pageSize: 25 }), page: 1,
+  });
+  assert.equal(result.countStatus, 'unavailable');
+  assert.equal(result.totalCount, null);
   assert.equal(result.items.length, 3);
 });

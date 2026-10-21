@@ -68,6 +68,36 @@ test("business projection preserves the existing overlapping queue semantics", (
   assert.deepEqual(buildSupplierReviewBusinessQueueProjection(history as never).businessQueueClasses, ["approved_history"]);
 });
 
+test("new and updated queue records receive v4 fields without replacing approval state", () => {
+  const newRecord = baseRecord({ supplierOfferId: "offer-new" });
+  const newProjection = buildSupplierReviewBusinessQueueProjection(newRecord as never);
+  assert.equal(newProjection.businessQueueClassesVersion, SUPPLIER_REVIEW_BUSINESS_PROJECTION_VERSION);
+  assert.ok(Array.isArray(newProjection.businessQueueClasses));
+
+  const existing = baseRecord({
+    supplierOfferId: "offer-existing",
+    canonicalProductId: "canonical-1",
+    decisionAction: "saved",
+    decisionAuditId: "audit-1",
+    decisionProductId: "canonical-1",
+    status: "Approved",
+    queueState: "approved",
+  });
+  const update: Record<string, unknown> = {
+    ...existing,
+    stock: 12,
+    ...buildSupplierReviewBusinessQueueProjection({ ...existing, stock: 12 } as never),
+  };
+  assert.equal(update.businessQueueClassesVersion, SUPPLIER_REVIEW_BUSINESS_PROJECTION_VERSION);
+  assert.equal(update.canonicalProductId, "canonical-1");
+  assert.equal(update.decisionAuditId, "audit-1");
+  assert.equal(update.decisionProductId, "canonical-1");
+
+  const sync = readFileSync("functions/src/scheduled/supplierSync.ts", "utf8");
+  assert.match(sync, /Object\.assign\(queueData, buildSupplierReviewBusinessQueueProjection\(queueData\)\)/u);
+  assert.match(sync, /suppressionPatch[\s\S]*buildSupplierReviewBusinessQueueProjection\(\{/u);
+});
+
 test("business queue projection is a read model and does not replace approval or media authority", () => {
   const source = readFileSync("functions/src/scheduled/supplierReviewQueue.ts", "utf8");
   const migration = readFileSync("scripts/migrateSupplierReviewBusinessQueueProjection.ts", "utf8");

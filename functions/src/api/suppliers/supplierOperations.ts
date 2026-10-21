@@ -8,7 +8,7 @@ import {
 import { SUPPLIER_OPERATIONAL_ALERT_CATEGORIES } from "./supplierOperationalAlerts";
 import { classifySupplierMediaReadiness } from "./supplierMediaReadiness";
 import { SUPPLIER_MEDIA_QUEUE_CLASS_FIELD } from "./supplierMediaObservability";
-import { isSupplierReviewBusinessProjectionActive } from "./supplierReviewBusinessQueueProjection";
+import { readSupplierReviewBusinessProjectionReadiness } from "./supplierReviewBusinessQueueProjection";
 
 export const OPERATIONS_PAGE_LIMIT = 50;
 export const OPERATIONS_MAX_PAGE_LIMIT = 100;
@@ -145,12 +145,19 @@ export async function loadSupplierReviewOverview(db: Firestore): Promise<Record<
 
 const loadSupplierReviewBusinessProjectionCounts = async (db: Firestore): Promise<{
   active: boolean;
+  indexed: boolean;
   actionable: number | null;
   needsAttention: number | null;
   lowStockHold: number | null;
 }> => {
-  if (!await isSupplierReviewBusinessProjectionActive(db)) {
-    return { active: false, actionable: null, needsAttention: null, lowStockHold: null };
+  const readiness = await readSupplierReviewBusinessProjectionReadiness(db);
+  if (!readiness.markerActive) {
+    return { active: false, indexed: false, actionable: null, needsAttention: null, lowStockHold: null };
+  }
+  if (!readiness.indexedReadsAllowed) {
+    // Keep the marker visible for diagnostics, but do not expose counts as
+    // exact while legacy or unverified records remain in the collection.
+    return { active: true, indexed: false, actionable: null, needsAttention: null, lowStockHold: null };
   }
   try {
     const classes = await Promise.all(["actionable", "needs_attention", "low_stock_hold"].map(async (queueClass) => {
@@ -163,12 +170,13 @@ const loadSupplierReviewBusinessProjectionCounts = async (db: Firestore): Promis
     const values = Object.fromEntries(classes) as Record<string, number>;
     return {
       active: true,
+      indexed: true,
       actionable: values.actionable ?? null,
       needsAttention: values.needs_attention ?? null,
       lowStockHold: values.low_stock_hold ?? null,
     };
   } catch {
-    return { active: true, actionable: null, needsAttention: null, lowStockHold: null };
+    return { active: true, indexed: true, actionable: null, needsAttention: null, lowStockHold: null };
   }
 };
 
@@ -559,8 +567,10 @@ export async function loadSupplierOperationsSummary(db: Firestore): Promise<Reco
     .map((document) => classifySupplierReviewRecordForCounts(document.data() as never));
   const fallbackActionableReviewCount = reviewCountClasses.filter((kind) => kind === "actionable").length;
   const fallbackLowStockHoldReviewCount = reviewCountClasses.filter((kind) => kind === "low_stock_hold").length;
-  const actionableReviewCount = businessProjectionCounts.actionable ?? fallbackActionableReviewCount;
-  const lowStockHoldReviewCount = businessProjectionCounts.lowStockHold ?? fallbackLowStockHoldReviewCount;
+  const actionableReviewCount = businessProjectionCounts.actionable
+    ?? (businessProjectionCounts.active ? null : fallbackActionableReviewCount);
+  const lowStockHoldReviewCount = businessProjectionCounts.lowStockHold
+    ?? (businessProjectionCounts.active ? null : fallbackLowStockHoldReviewCount);
   const approvalEvents = approvalSnapshot.docs.map((document) => document.data());
   const histories = historySnapshot.docs.map((document) => document.data());
   const publishedToday = approvalEvents.filter((event) => event.action === "approve" || event.action === "approved").length;
