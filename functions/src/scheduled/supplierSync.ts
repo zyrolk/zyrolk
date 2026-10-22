@@ -112,6 +112,10 @@ import {
 import { buildSupplierOfferRemovalReviewId } from "../api/suppliers/supplierQueueLifecycle";
 import { buildSupplierMediaQueueProjection } from "../api/suppliers/supplierMediaObservability";
 import {
+  emitSupplierReviewProjectionDiagnostic,
+  SupplierReviewProjectionDiagnosticInput,
+} from "./supplierReviewProjectionDiagnostics";
+import {
   buildSupplierQueueLifecycle,
   classifySupplierQueueFailure,
   reviewRecordIsRefreshable,
@@ -1739,6 +1743,46 @@ interface SupplierSyncWrite {
   };
 }
 
+const projectionDiagnosticForSyncWrite = (
+  item: SupplierSyncWrite,
+  previousProjection: { classes?: unknown; version?: unknown } | null = null,
+  existingDocument: boolean | null = null,
+): SupplierReviewProjectionDiagnosticInput | null => {
+  if (item.collection !== "supplier_review_queue") return null;
+  const expectedProjection = buildSupplierReviewBusinessQueueProjection(item.data as never);
+  const productPayload = item.data.productPayload && typeof item.data.productPayload === "object"
+    ? item.data.productPayload as Record<string, unknown>
+    : {};
+  const supplierSnapshot = item.data.supplierSnapshot && typeof item.data.supplierSnapshot === "object"
+    ? item.data.supplierSnapshot as Record<string, unknown>
+    : {};
+  const stockValue = item.data.stock ?? productPayload.stock ?? supplierSnapshot.inventoryLevel;
+  const numericStock = Number(stockValue);
+  const expectedClasses = Array.isArray(expectedProjection.businessQueueClasses)
+    ? expectedProjection.businessQueueClasses.map(String)
+    : [];
+  return {
+    writer: "supplierSync",
+    operation: "supplier_sync_queue_write",
+    outcome: "commit_success",
+    queueItemId: item.id,
+    runId: item.data.batchId,
+    correlationId: item.data.correlationId,
+    expectedProjection: {
+      classes: expectedProjection.businessQueueClasses,
+      version: expectedProjection.businessQueueClassesVersion,
+    },
+    persistedProjection: {
+      classes: item.data.businessQueueClasses,
+      version: item.data.businessQueueClassesVersion,
+    },
+    previousProjection,
+    categoryDecisionRequired: expectedClasses.includes("category_decision_required"),
+    zeroStock: Number.isFinite(numericStock) ? numericStock <= 0 : null,
+    existingDocument,
+  };
+};
+
 function buildSupplierAutomationAuditWrite(input: {
   action: "NEW_PRODUCT_DEFERRED_ZERO_STOCK";
   source: SupplierSource;
@@ -1779,12 +1823,15 @@ function buildSupplierAutomationAuditWrite(input: {
 async function commitQueuedItems(items: SupplierSyncWrite[], database: Firestore = adminDb): Promise<void> {
   let batch = database.batch();
   let operationCount = 0;
+  let batchProjectionDiagnostics: SupplierReviewProjectionDiagnosticInput[] = [];
 
   const flushBatch = async (): Promise<void> => {
     if (operationCount === 0) return;
     await batch.commit();
+    batchProjectionDiagnostics.forEach((diagnostic) => emitSupplierReviewProjectionDiagnostic(appLogger, diagnostic));
     batch = database.batch();
     operationCount = 0;
+    batchProjectionDiagnostics = [];
   };
 
   for (let index = 0; index < items.length;) {
@@ -1806,6 +1853,7 @@ async function commitQueuedItems(items: SupplierSyncWrite[], database: Firestore
       const reviewIdentityFromWrite = reviewWrite
         ? getSupplierQueueIdentityCandidate(reviewWrite.data)
         : null;
+      let reviewProjectionDiagnostic: SupplierReviewProjectionDiagnosticInput | null = null;
       await adminDb.runTransaction(async (transaction) => {
         const [currentOffer, currentReview] = await Promise.all([
           transaction.get(offerReference),
@@ -1836,6 +1884,18 @@ async function commitQueuedItems(items: SupplierSyncWrite[], database: Firestore
             : currentReview?.exists ? getSupplierQueueIdentityCandidate(currentReview.data()) : null)
           : null;
         const reviewHasStableIdentity = Boolean(reviewIdentity?.sourceId && reviewIdentity.supplierProductId);
+        if (reviewWrite) {
+          reviewProjectionDiagnostic = projectionDiagnosticForSyncWrite(
+            reviewWrite,
+            currentReview && currentReview.exists
+              ? {
+                classes: currentReview.data()?.businessQueueClasses,
+                version: currentReview.data()?.businessQueueClassesVersion,
+              }
+              : null,
+            currentReview ? currentReview.exists : false,
+          );
+        }
         if (currentReview?.exists && reviewHasStableIdentity && !supplierReviewQueueRecordMatchesIdentity(currentReview.data(), {
           sourceId: reviewIdentity!.sourceId,
           supplierProductId: reviewIdentity!.supplierProductId,
@@ -1883,6 +1943,9 @@ async function commitQueuedItems(items: SupplierSyncWrite[], database: Firestore
           });
         }
       });
+      if (reviewProjectionDiagnostic) {
+        emitSupplierReviewProjectionDiagnostic(appLogger, reviewProjectionDiagnostic);
+      }
       index = groupEnd;
       continue;
     }
@@ -1893,6 +1956,8 @@ async function commitQueuedItems(items: SupplierSyncWrite[], database: Firestore
       const reference = database.collection(item.collection).doc(item.id);
       if (item.create) batch.create(reference, item.data);
       else batch.set(reference, item.data, { merge: true });
+      const projectionDiagnostic = projectionDiagnosticForSyncWrite(item, null, item.create === true ? false : true);
+      if (projectionDiagnostic) batchProjectionDiagnostics.push(projectionDiagnostic);
       operationCount++;
     }
 

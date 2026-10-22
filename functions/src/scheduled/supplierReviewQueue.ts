@@ -53,6 +53,10 @@ import {
   hasLegacySupplierDerivedReviewTaxonomy,
   projectLegacySupplierDerivedReviewValidation,
 } from "../api/suppliers/supplierReviewTaxonomyAuthority";
+import {
+  emitSupplierReviewProjectionDiagnostic,
+  SupplierReviewProjectionDiagnosticInput,
+} from "./supplierReviewProjectionDiagnostics";
 
 export const SUPPLIER_QUEUE_STATES = [
   "queued",
@@ -460,11 +464,21 @@ export async function ensureSupplierReviewQueueManagedMedia(
           mediaFailures: error.failures,
         },
       };
+      const retryRecord = { ...queueItem, ...retryPatch } as SupplierQueueRecord;
+      const retryProjection = buildSupplierReviewBusinessQueueProjection(retryRecord);
       await reference.set({
         ...retryPatch,
         ...buildSupplierMediaQueueProjection(queueItem, retryPatch),
-        ...buildSupplierReviewBusinessQueueProjection({ ...queueItem, ...retryPatch }),
+        ...retryProjection,
       }, { merge: true });
+      emitSupplierReviewProjectionDiagnostic(appLogger, projectionDiagnosticForQueueWrite(
+        "media_retry_write",
+        queueItemId,
+        queueItem,
+        retryRecord,
+        retryProjection,
+        1,
+      ));
     }
     throw error;
   }
@@ -553,11 +567,21 @@ export async function ensureSupplierReviewQueueManagedMedia(
       },
     } : {}),
   };
+  const mediaRecord = { ...queueItem, ...patch } as SupplierQueueRecord;
+  const mediaProjection = buildSupplierReviewBusinessQueueProjection(mediaRecord);
   await reference.set({
     ...patch,
     ...buildSupplierMediaQueueProjection(queueItem, patch),
-    ...buildSupplierReviewBusinessQueueProjection({ ...queueItem, ...patch }),
+    ...mediaProjection,
   }, { merge: true });
+  emitSupplierReviewProjectionDiagnostic(appLogger, projectionDiagnosticForQueueWrite(
+    "media_success_write",
+    queueItemId,
+    queueItem,
+    mediaRecord,
+    mediaProjection,
+    1,
+  ));
   // Queue workers resolve only after completion changes the queue back to
   // review_pending. The resolver intentionally fences processing records.
   if (mediaReadiness.publicationSafe && String(queueItem.queueState || "").toLowerCase() !== "processing") {
@@ -597,6 +621,48 @@ const stateFor = (record: SupplierQueueRecord): SupplierQueueState => {
   if (legacyStatus === "approved") return "approved";
   if (legacyStatus === "rejected") return "rejected";
   return "queued";
+};
+
+const projectionDiagnosticForQueueWrite = (
+  operation: string,
+  queueItemId: string,
+  previousRecord: SupplierQueueRecord,
+  nextRecord: SupplierQueueRecord,
+  persistedProjection: Record<string, unknown>,
+  transactionAttempts: number,
+): SupplierReviewProjectionDiagnosticInput => {
+  const expectedProjection = buildSupplierReviewBusinessQueueProjection(nextRecord);
+  const productPayload = asRecord(nextRecord.productPayload);
+  const supplierSnapshot = asRecord(nextRecord.supplierSnapshot);
+  const stockValue = nextRecord.stock ?? productPayload.stock ?? supplierSnapshot.inventoryLevel;
+  const numericStock = Number(stockValue);
+  const expectedClasses = Array.isArray(expectedProjection.businessQueueClasses)
+    ? expectedProjection.businessQueueClasses.map(String)
+    : [];
+  return {
+    writer: "scheduledSupplierQueueWorker",
+    operation,
+    outcome: "commit_success",
+    queueItemId,
+    runId: nextRecord.batchId,
+    correlationId: nextRecord.correlationId,
+    expectedProjection: {
+      classes: expectedProjection.businessQueueClasses,
+      version: expectedProjection.businessQueueClassesVersion,
+    },
+    persistedProjection: {
+      classes: persistedProjection.businessQueueClasses,
+      version: persistedProjection.businessQueueClassesVersion,
+    },
+    previousProjection: {
+      classes: previousRecord.businessQueueClasses,
+      version: previousRecord.businessQueueClassesVersion,
+    },
+    categoryDecisionRequired: expectedClasses.includes("category_decision_required"),
+    zeroStock: Number.isFinite(numericStock) ? numericStock <= 0 : null,
+    existingDocument: true,
+    transactionAttempts,
+  };
 };
 
 /**
@@ -1038,17 +1104,30 @@ export async function leaseSupplierReviewQueueItem(
   leaseMs = DEFAULT_LEASE_MS,
 ): Promise<SupplierQueueRecord | null> {
   const reference = db.collection("supplier_review_queue").doc(queueItemId);
-  return db.runTransaction(async (transaction) => {
+  const projectionDiagnostics: SupplierReviewProjectionDiagnosticInput[] = [];
+  let transactionAttempts = 0;
+  const result = await db.runTransaction(async (transaction) => {
+    transactionAttempts += 1;
     const snapshot = await transaction.get(reference);
     if (!snapshot.exists) return null;
     const record = snapshot.data() as SupplierQueueRecord;
     const currentState = stateFor(record);
     if ((currentState === "leased" || currentState === "processing") && isSupplierQueueLeaseExpired(record, now)) {
       const failure = buildSupplierQueueFailureUpdate(record, new Error("Worker lease expired."), now, { recoveredLease: true });
+      const nextRecord = { ...record, ...failure.data } as SupplierQueueRecord;
+      const projection = buildSupplierReviewBusinessQueueProjection(nextRecord);
+      projectionDiagnostics.push(projectionDiagnosticForQueueWrite(
+        "lease_recovery_write",
+        queueItemId,
+        record,
+        nextRecord,
+        projection,
+        transactionAttempts,
+      ));
       transaction.set(reference, {
         ...failure.data,
         ...buildSupplierMediaQueueProjection(record, failure.data, now),
-        ...buildSupplierReviewBusinessQueueProjection({ ...record, ...failure.data }),
+        ...projection,
       }, { merge: true });
       createSupplierAuditEvent(db, transaction, {
         queueItemId,
@@ -1073,10 +1152,20 @@ export async function leaseSupplierReviewQueueItem(
       lastLeasedAt: new Date(now).toISOString(),
       leaseCount: Number(record.leaseCount || 0) + 1,
     };
+    const nextRecord = { ...record, ...leasePatch } as SupplierQueueRecord;
+    const projection = buildSupplierReviewBusinessQueueProjection(nextRecord);
+    projectionDiagnostics.push(projectionDiagnosticForQueueWrite(
+      "lease_write",
+      queueItemId,
+      record,
+      nextRecord,
+      projection,
+      transactionAttempts,
+    ));
     transaction.set(reference, {
       ...leasePatch,
       ...buildSupplierMediaQueueProjection(record, leasePatch, now),
-      ...buildSupplierReviewBusinessQueueProjection({ ...record, ...leasePatch }),
+      ...projection,
     }, { merge: true });
     createSupplierAuditEvent(db, transaction, {
       queueItemId,
@@ -1090,6 +1179,12 @@ export async function leaseSupplierReviewQueueItem(
     });
     return record;
   });
+  const projectionDiagnostic = projectionDiagnostics.at(-1);
+  if (projectionDiagnostic) {
+    projectionDiagnostic.transactionAttempts = transactionAttempts;
+    emitSupplierReviewProjectionDiagnostic(appLogger, projectionDiagnostic);
+  }
+  return result;
 }
 
 export async function heartbeatSupplierReviewQueueLease(
@@ -1123,7 +1218,10 @@ export async function heartbeatSupplierReviewQueueLease(
 
 async function markSupplierQueueProcessing(db: Firestore, queueItemId: string, workerId: string, now: number): Promise<SupplierQueueRecord> {
   const reference = db.collection("supplier_review_queue").doc(queueItemId);
-  return db.runTransaction(async (transaction) => {
+  const projectionDiagnostics: SupplierReviewProjectionDiagnosticInput[] = [];
+  let transactionAttempts = 0;
+  const result = await db.runTransaction(async (transaction) => {
+    transactionAttempts += 1;
     const snapshot = await transaction.get(reference);
     const record = snapshot.exists ? snapshot.data() as SupplierQueueRecord : null;
     if (!record || supplierReviewQueueDecisionStates().has(stateFor(record))) {
@@ -1138,10 +1236,20 @@ async function markSupplierQueueProcessing(db: Firestore, queueItemId: string, w
       leaseExpiresAt: new Date(now + DEFAULT_LEASE_MS).toISOString(),
       leaseHeartbeatAt: new Date(now).toISOString(),
     };
+    const nextRecord = { ...record, ...processingPatch } as SupplierQueueRecord;
+    const projection = buildSupplierReviewBusinessQueueProjection(nextRecord);
+    projectionDiagnostics.push(projectionDiagnosticForQueueWrite(
+      "processing_write",
+      queueItemId,
+      record,
+      nextRecord,
+      projection,
+      transactionAttempts,
+    ));
     transaction.set(reference, {
       ...processingPatch,
       ...buildSupplierMediaQueueProjection(record, processingPatch, now),
-      ...buildSupplierReviewBusinessQueueProjection({ ...record, ...processingPatch }),
+      ...projection,
     }, { merge: true });
     createSupplierAuditEvent(db, transaction, {
       queueItemId,
@@ -1155,13 +1263,22 @@ async function markSupplierQueueProcessing(db: Firestore, queueItemId: string, w
     });
     return record;
   });
+  const projectionDiagnostic = projectionDiagnostics.at(-1);
+  if (projectionDiagnostic) {
+    projectionDiagnostic.transactionAttempts = transactionAttempts;
+    emitSupplierReviewProjectionDiagnostic(appLogger, projectionDiagnostic);
+  }
+  return result;
 }
 
 async function completeSupplierQueueItem(db: Firestore, queueItemId: string, workerId: string, now: number): Promise<void> {
   const reviewReference = db.collection("supplier_review_queue").doc(queueItemId);
   const importReference = db.collection("supplier_import_queue").doc(queueItemId);
   const pendingReference = db.collection("supplier_pending_changes").doc(`change-${queueItemId}`);
+  const projectionDiagnostics: SupplierReviewProjectionDiagnosticInput[] = [];
+  let transactionAttempts = 0;
   await db.runTransaction(async (transaction) => {
+    transactionAttempts += 1;
     const snapshot = await transaction.get(reviewReference);
     const record = snapshot.exists ? snapshot.data() as SupplierQueueRecord : null;
     if (!record) throw new Error("Supplier queue lease is no longer owned by this worker.");
@@ -1185,10 +1302,20 @@ async function completeSupplierQueueItem(db: Firestore, queueItemId: string, wor
       importPayload: FieldValue.delete(),
       pendingChangePayload: FieldValue.delete(),
     };
+    const nextRecord = { ...record, ...completionPatch } as SupplierQueueRecord;
+    const projection = buildSupplierReviewBusinessQueueProjection(nextRecord);
+    projectionDiagnostics.push(projectionDiagnosticForQueueWrite(
+      "completion_write",
+      queueItemId,
+      record,
+      nextRecord,
+      projection,
+      transactionAttempts,
+    ));
     transaction.set(reviewReference, {
       ...completionPatch,
       ...buildSupplierMediaQueueProjection(record, { queueState: completionPatch.queueState }, now),
-      ...buildSupplierReviewBusinessQueueProjection({ ...record, ...completionPatch }),
+      ...projection,
     }, { merge: true });
     createSupplierAuditEvent(db, transaction, {
       queueItemId,
@@ -1201,6 +1328,11 @@ async function completeSupplierQueueItem(db: Firestore, queueItemId: string, wor
       now,
     });
   });
+  const projectionDiagnostic = projectionDiagnostics.at(-1);
+  if (projectionDiagnostic) {
+    projectionDiagnostic.transactionAttempts = transactionAttempts;
+    emitSupplierReviewProjectionDiagnostic(appLogger, projectionDiagnostic);
+  }
 }
 
 async function recordSupplierQueueFailure(
@@ -1212,7 +1344,10 @@ async function recordSupplierQueueFailure(
   recoveredLease = false,
 ): Promise<SupplierQueueState> {
   const reference = db.collection("supplier_review_queue").doc(queueItemId);
-  return db.runTransaction(async (transaction) => {
+  const projectionDiagnostics: SupplierReviewProjectionDiagnosticInput[] = [];
+  let transactionAttempts = 0;
+  const result = await db.runTransaction(async (transaction) => {
+    transactionAttempts += 1;
     const snapshot = await transaction.get(reference);
     const record = snapshot.exists ? snapshot.data() as SupplierQueueRecord : null;
     if (!record) return "dead_letter";
@@ -1254,10 +1389,20 @@ async function recordSupplierQueueFailure(
       ...failure.data,
       ...(nextValidation ? { productValidation: nextValidation } : {}),
     };
+    const nextRecord = { ...record, ...failurePatch } as SupplierQueueRecord;
+    const projection = buildSupplierReviewBusinessQueueProjection(nextRecord);
+    projectionDiagnostics.push(projectionDiagnosticForQueueWrite(
+      "failure_write",
+      queueItemId,
+      record,
+      nextRecord,
+      projection,
+      transactionAttempts,
+    ));
     transaction.set(reference, {
       ...failurePatch,
       ...buildSupplierMediaQueueProjection(record, failurePatch, now),
-      ...buildSupplierReviewBusinessQueueProjection({ ...record, ...failurePatch }),
+      ...projection,
     }, { merge: true });
     createSupplierAuditEvent(db, transaction, {
       queueItemId,
@@ -1272,6 +1417,12 @@ async function recordSupplierQueueFailure(
     });
     return failure.state;
   });
+  const projectionDiagnostic = projectionDiagnostics.at(-1);
+  if (projectionDiagnostic) {
+    projectionDiagnostic.transactionAttempts = transactionAttempts;
+    emitSupplierReviewProjectionDiagnostic(appLogger, projectionDiagnostic);
+  }
+  return result;
 }
 
 export async function processSupplierReviewQueueItem(
@@ -2841,7 +2992,10 @@ export async function retryDeadLetterSupplierReviewQueueItem(
   admin?: SupplierAuditActor,
 ): Promise<boolean> {
   const reference = db.collection("supplier_review_queue").doc(queueItemId);
-  return db.runTransaction(async (transaction) => {
+  const projectionDiagnostics: SupplierReviewProjectionDiagnosticInput[] = [];
+  let transactionAttempts = 0;
+  const result = await db.runTransaction(async (transaction) => {
+    transactionAttempts += 1;
     const snapshot = await transaction.get(reference);
     const record = snapshot.exists ? snapshot.data() as SupplierQueueRecord : null;
     if (!record || !["dead_letter", "suppressed"].includes(stateFor(record))) return false;
@@ -2853,6 +3007,23 @@ export async function retryDeadLetterSupplierReviewQueueItem(
         await resolveSupplierQueueIdentity(db, transaction, record),
       )
       : {};
+    const nextRecord = {
+      ...record,
+      ...queueIdentityProjection,
+      queueState: "queued",
+      status: "Pending",
+      retryCount: 0,
+      nextRetryAt: new Date(now).toISOString(),
+    } as SupplierQueueRecord;
+    const projection = buildSupplierReviewBusinessQueueProjection(nextRecord);
+    projectionDiagnostics.push(projectionDiagnosticForQueueWrite(
+      "manual_retry_write",
+      queueItemId,
+      record,
+      nextRecord,
+      projection,
+      transactionAttempts,
+    ));
     transaction.set(reference, {
       ...queueIdentityProjection,
       queueState: "queued" satisfies SupplierQueueState,
@@ -2865,14 +3036,7 @@ export async function retryDeadLetterSupplierReviewQueueItem(
       leaseOwner: FieldValue.delete(),
       leaseAcquiredAt: FieldValue.delete(),
       leaseExpiresAt: FieldValue.delete(),
-      ...buildSupplierReviewBusinessQueueProjection({
-        ...record,
-        ...queueIdentityProjection,
-        queueState: "queued",
-        status: "Pending",
-        retryCount: 0,
-        nextRetryAt: new Date(now).toISOString(),
-      }),
+      ...projection,
     }, { merge: true });
     createSupplierAuditEvent(db, transaction, {
       queueItemId,
@@ -2886,4 +3050,10 @@ export async function retryDeadLetterSupplierReviewQueueItem(
     });
     return true;
   });
+  const projectionDiagnostic = projectionDiagnostics.at(-1);
+  if (projectionDiagnostic) {
+    projectionDiagnostic.transactionAttempts = transactionAttempts;
+    emitSupplierReviewProjectionDiagnostic(appLogger, projectionDiagnostic);
+  }
+  return result;
 }
