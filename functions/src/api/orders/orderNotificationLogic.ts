@@ -1,5 +1,10 @@
 export const ORDER_EMAIL_MAX_ATTEMPTS = 3;
 export const ORDER_EMAIL_RETRY_BASE_MS = 5 * 60 * 1000;
+// A normal Trigger Email handoff should report a provider state well before
+// the existing five-minute retry cadence. This threshold identifies a stale
+// nonterminal outcome without treating it as a delivery failure or retrying it.
+export const ORDER_EMAIL_STALE_HANDOFF_MS = 15 * 60 * 1000;
+export const ORDER_EMAIL_STALE_HANDOFF_LIMIT = 50;
 
 export type OrderEmailDeliveryStatus = "handed_off" | "delivering" | "delivered" | "retry_pending" | "failed";
 
@@ -7,6 +12,28 @@ export interface OrderEmailDeliveryProjection {
   status: OrderEmailDeliveryStatus;
   shouldRetry: boolean;
   nextRetryAtMillis?: number;
+}
+
+export function isStaleUnknownOrderEmailHandoff(
+  status: unknown,
+  updatedAt: unknown,
+  now = Date.now(),
+  thresholdMs = ORDER_EMAIL_STALE_HANDOFF_MS,
+): boolean {
+  if (status !== "handed_off" || !Number.isFinite(now) || !Number.isFinite(thresholdMs) || thresholdMs < 0) {
+    return false;
+  }
+  const updatedAtMillis = updatedAt && typeof updatedAt === "object" && "toMillis" in updatedAt
+    && typeof (updatedAt as { toMillis?: unknown }).toMillis === "function"
+    ? (updatedAt as { toMillis: () => number }).toMillis()
+    : updatedAt instanceof Date
+      ? updatedAt.getTime()
+      : typeof updatedAt === "number"
+        ? updatedAt
+        : typeof updatedAt === "string"
+          ? new Date(updatedAt).getTime()
+          : Number.NaN;
+  return Number.isFinite(updatedAtMillis) && updatedAtMillis <= now - thresholdMs;
 }
 
 export function orderEmailRetryDelay(attempt: number): number {

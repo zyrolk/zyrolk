@@ -47,6 +47,29 @@ test('Admin operational status is custom-claim protected and aggregation backed'
   assert.doesNotMatch(admin, /updateDoc\(doc\(db, "orders", orderList\[i\]\.id\)/);
 });
 
+test('Admin operations surfaces bounded stale email handoffs without resending', () => {
+  const operations = source('functions/src/api/admin/adminOperations.ts');
+  const delivery = source('functions/src/api/orders/orderNotificationLogic.ts');
+  const admin = source('src/components/AdminDashboard.tsx');
+  const indexes = JSON.parse(source('firestore.indexes.json')) as {
+    indexes: Array<{ collectionGroup: string; fields: Array<{ fieldPath: string; order?: string }> }>;
+  };
+  assert.match(delivery, /ORDER_EMAIL_STALE_HANDOFF_MS = 15 \* 60 \* 1000/);
+  assert.match(operations, /where\('status', '==', 'handed_off'\)/);
+  assert.match(operations, /where\('updatedAt', '<=', Timestamp\.fromMillis/);
+  assert.match(operations, /orderBy\('updatedAt', 'desc'\)/);
+  assert.match(operations, /limit\(ORDER_EMAIL_STALE_HANDOFF_LIMIT\)/);
+  assert.match(operations, /staleUnknown/);
+  assert.match(admin, /unknown delivery outcome/);
+  assert.match(admin, /Do not resend automatically/);
+  assert.ok(indexes.indexes.some((index) => index.collectionGroup === 'notification_outbox'
+    && index.fields[0]?.fieldPath === 'status'
+    && index.fields[1]?.fieldPath === 'updatedAt'
+    && index.fields[1]?.order === 'DESCENDING'));
+  assert.doesNotMatch(operations, /collection\('mail'\)[\s\S]*\.create/);
+  assert.doesNotMatch(operations, /retryOrderNotifications/);
+});
+
 test('supplier critical-alert email uses the monitored retryable outbox lifecycle', () => {
   const alerts = source('functions/src/api/suppliers/supplierOperationalAlerts.ts');
   const delivery = source('functions/src/triggers/orderNotifications.ts');

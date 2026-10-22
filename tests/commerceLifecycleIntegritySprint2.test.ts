@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import {
+  isStaleUnknownOrderEmailHandoff,
   projectOrderEmailDelivery,
   orderEmailRetryDelay,
   safeOrderEmailFailure,
@@ -46,6 +47,18 @@ test('Sprint 2 email delivery projection is bounded, observable and retryable', 
   assert.deepEqual(projectOrderEmailDelivery('ERROR', 3, 1_000), { status: 'failed', shouldRetry: false });
   assert.equal(orderEmailRetryDelay(2), orderEmailRetryDelay(1) * 2);
   assert.equal(safeOrderEmailFailure({ message: ' provider\u0000 failed ' }), 'provider failed');
+});
+
+test('stale handed-off notifications are observable as unknown without becoming retryable', () => {
+  const now = Date.parse('2026-10-22T12:00:00.000Z');
+  const recent = now - (5 * 60 * 1000);
+  const stale = now - (16 * 60 * 1000);
+  assert.equal(isStaleUnknownOrderEmailHandoff('handed_off', recent, now), false);
+  assert.equal(isStaleUnknownOrderEmailHandoff('handed_off', stale, now), true);
+  assert.equal(isStaleUnknownOrderEmailHandoff('delivered', stale, now), false);
+  assert.equal(isStaleUnknownOrderEmailHandoff('failed', stale, now), false);
+  assert.equal(isStaleUnknownOrderEmailHandoff('retry_pending', stale, now), false);
+  assert.equal(projectOrderEmailDelivery(undefined, 1, now).shouldRetry, false);
 });
 
 test('Sprint 2 email trigger records delivery status and scheduled bounded retries', () => {

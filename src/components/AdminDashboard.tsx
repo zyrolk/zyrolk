@@ -409,6 +409,8 @@ interface AdminOperationsSummary {
     retry_pending: number;
     failed: number;
     inProgress: number;
+    staleUnknown: number;
+    staleUnknownTruncated: boolean;
     lastFailure: null | { id: string; kind: string; attemptCount: number; message: string; updatedAt: string | null };
   };
   supplierAlerts: { active: number };
@@ -2628,6 +2630,12 @@ export default function AdminDashboard({ initialTab = 'stats', initialCmsPageId 
                   {operationsSummary?.emailNotifications.lastFailure && (
                     <p className="mt-3 text-xs text-red-500" role="status">
                       Latest email failure: {operationsSummary.emailNotifications.lastFailure.message}
+                    </p>
+                  )}
+                  {operationsSummary?.emailNotifications.staleUnknown > 0 && (
+                    <p className="mt-3 text-xs text-amber-600 dark:text-amber-300" role="status">
+                      {operationsSummary.emailNotifications.staleUnknownTruncated ? 'At least ' : ''}
+                      {operationsSummary.emailNotifications.staleUnknown} handed-off email notification{operationsSummary.emailNotifications.staleUnknown === 1 ? '' : 's'} have an unknown delivery outcome. Do not resend automatically.
                     </p>
                   )}
                 </section>

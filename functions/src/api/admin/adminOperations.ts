@@ -1,4 +1,9 @@
-import { Firestore } from 'firebase-admin/firestore';
+import { Firestore, Timestamp } from 'firebase-admin/firestore';
+import {
+  isStaleUnknownOrderEmailHandoff,
+  ORDER_EMAIL_STALE_HANDOFF_LIMIT,
+  ORDER_EMAIL_STALE_HANDOFF_MS,
+} from '../orders/orderNotificationLogic';
 
 const EMAIL_STATUSES = ['handed_off', 'delivering', 'delivered', 'retry_pending', 'failed'] as const;
 
@@ -24,6 +29,8 @@ export interface AdminOperationsSummary {
   generatedAt: string;
   emailNotifications: Record<EmailStatus, number> & {
     inProgress: number;
+    staleUnknown: number;
+    staleUnknownTruncated: boolean;
     lastFailure: null | {
       id: string;
       kind: string;
@@ -57,6 +64,7 @@ export async function loadAdminOperationsSummary(
     retryPending,
     failed,
     failedSnapshot,
+    staleHandedOffSnapshot,
     openAlerts,
     acknowledgedAlerts,
     couponTotal,
@@ -69,6 +77,11 @@ export async function loadAdminOperationsSummary(
     count(outbox.where('status', '==', 'retry_pending')),
     count(outbox.where('status', '==', 'failed')),
     outbox.where('status', '==', 'failed').orderBy('updatedAt', 'desc').limit(1).get(),
+    outbox.where('status', '==', 'handed_off')
+      .where('updatedAt', '<=', Timestamp.fromMillis(now - ORDER_EMAIL_STALE_HANDOFF_MS))
+      .orderBy('updatedAt', 'desc')
+      .limit(ORDER_EMAIL_STALE_HANDOFF_LIMIT)
+      .get(),
     count(alerts.where('status', '==', 'open')),
     count(alerts.where('status', '==', 'acknowledged')),
     count(coupons),
@@ -76,6 +89,9 @@ export async function loadAdminOperationsSummary(
     audit.orderBy('timestamp', 'desc').limit(1).get(),
   ]);
   const failureDocument = failedSnapshot.docs[0];
+  const staleUnknown = staleHandedOffSnapshot.docs.filter((document) => (
+    isStaleUnknownOrderEmailHandoff(document.data().status, document.data().updatedAt, now)
+  )).length;
   const failure = failureDocument?.data() || {};
   const auditDocument = latestAudit.docs[0]?.data() || {};
   return {
@@ -87,6 +103,8 @@ export async function loadAdminOperationsSummary(
       retry_pending: retryPending,
       failed,
       inProgress: handedOff + delivering,
+      staleUnknown,
+      staleUnknownTruncated: staleHandedOffSnapshot.size === ORDER_EMAIL_STALE_HANDOFF_LIMIT,
       lastFailure: failureDocument ? {
         id: failureDocument.id,
         kind: String(failure.kind || 'email'),
