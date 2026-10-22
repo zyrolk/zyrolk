@@ -2131,19 +2131,51 @@ export type SupplierReviewBusinessQueueClass =
   | "approved_history";
 
 /**
+ * Lifecycle writes often do not have a category document in hand. Preserve a
+ * category-decision class that was already derived from the canonical tree;
+ * catalog and refresh writers pass the current category requirement
+ * explicitly. This avoids a lifecycle-only rewrite downgrading a valid v4
+ * category decision back to missing_details.
+ */
+export const supplierReviewCategoryRequiresSubcategory = (
+  record: SupplierQueueRecord,
+  explicitRequirement?: boolean,
+): boolean => {
+  if (typeof explicitRequirement === "boolean") return explicitRequirement;
+  const existingClasses = Array.isArray(record.businessQueueClasses)
+    ? record.businessQueueClasses.map((value) => String(value))
+    : [];
+  if (existingClasses.includes("category_decision_required")) return true;
+  const payload = asRecord(record.productPayload);
+  const mapping = asRecord(record.categoryMapping);
+  return Boolean(
+    asString(payload.category)
+    && !asString(payload.subcategory)
+    && mapping.requiresManualSelection === true,
+  );
+};
+
+/**
  * The persisted business queue projection is an indexed read model only. The
  * existing per-record predicates remain the authority; this helper simply
  * evaluates all of them once for a write or bounded migration pass.
  */
 export const buildSupplierReviewBusinessQueueProjection = (
   record: SupplierQueueRecord,
-  categoryRequiresSubcategory = false,
+  categoryRequiresSubcategory?: boolean,
 ): Record<string, unknown> => {
-  const projectedRecord = projectSupplierReviewLowStockHold(record, categoryRequiresSubcategory);
+  const effectiveCategoryRequirement = supplierReviewCategoryRequiresSubcategory(record, categoryRequiresSubcategory);
+  const projectedRecord = projectSupplierReviewLowStockHold(record, effectiveCategoryRequirement);
+  const categoryRequirements = new Map<string, boolean>([
+    [supplierReviewCategoryId(projectedRecord), effectiveCategoryRequirement],
+  ]);
   const classes = new Set<SupplierReviewBusinessQueueClass>();
   if (classifySupplierReviewRecordForCounts(projectedRecord) === "actionable") classes.add("actionable");
-  if (reviewRecordMatchesBusinessFilter(projectedRecord, "ready_for_review")) classes.add("ready_for_review");
-  const readinessGroup = supplierReviewReadinessGroupForRecord(projectedRecord, categoryRequiresSubcategory);
+  if (supplierReviewRecordIsReadyForReview(projectedRecord)
+    && supplierReviewReadinessGroupForRecord(projectedRecord, effectiveCategoryRequirement) === "ready_to_publish") {
+    classes.add("ready_for_review");
+  }
+  const readinessGroup = supplierReviewReadinessGroupForRecord(projectedRecord, effectiveCategoryRequirement);
   if (readinessGroup) classes.add(readinessGroup);
   ([
     "new_products",
@@ -2154,7 +2186,7 @@ export const buildSupplierReviewBusinessQueueProjection = (
     "low_stock_hold",
     "approved_history",
   ] as const).forEach((filter) => {
-    if (reviewRecordMatchesBusinessFilter(projectedRecord, filter)) classes.add(filter);
+    if (reviewRecordMatchesBusinessFilter(projectedRecord, filter, categoryRequirements)) classes.add(filter);
   });
   return {
     [SUPPLIER_REVIEW_BUSINESS_QUEUE_CLASSES_FIELD]: [...classes],

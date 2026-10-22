@@ -658,6 +658,21 @@ const asRecord = (value: unknown): Record<string, unknown> => value && typeof va
   ? value as Record<string, unknown>
   : {};
 
+const categoryRequirementForQueueRecord = (
+  record: Record<string, unknown>,
+  categories: readonly StoreCategoryMappingCandidate[],
+): boolean => {
+  const payload = asRecord(record.productPayload);
+  const categoryId = String(payload.category || "").trim();
+  const category = categories.find((candidate) => candidate.id === categoryId);
+  return Boolean(
+    category
+    && category.isActive !== false
+    && category.taxonomyCandidate !== true
+    && category.subcategories?.some((subcategory) => subcategory.isActive !== false),
+  );
+};
+
 function getMaxProducts(settings: SupplierSettings): number {
   const configured = Number(settings.maxProducts || DEFAULT_MAX_PRODUCTS);
   if (!Number.isFinite(configured) || configured < 1) {
@@ -2749,7 +2764,10 @@ export async function refreshActiveSupplierReviewItem(
   }, selectedComparison);
   queueData.pendingChangePayload = pendingChange || FieldValue.delete();
   Object.assign(queueData, buildSupplierMediaQueueProjection(queueData));
-  Object.assign(queueData, buildSupplierReviewBusinessQueueProjection(queueData));
+  Object.assign(queueData, buildSupplierReviewBusinessQueueProjection(
+    queueData,
+    categoryRequirementForQueueRecord(queueData, storeCategories),
+  ));
 
   const queuedWrites: SupplierSyncWrite[] = [
     {
@@ -4754,7 +4772,10 @@ export async function runSupplierSync(options: SupplierSyncRunOptions = {}): Pro
               },
             } : baseQueueData;
             Object.assign(queueData, buildSupplierMediaQueueProjection(queueData));
-            Object.assign(queueData, buildSupplierReviewBusinessQueueProjection(queueData));
+            Object.assign(queueData, buildSupplierReviewBusinessQueueProjection(
+              queueData,
+              categoryRequirementForQueueRecord(queueData, storeCategories),
+            ));
             queuedWrites.push({
               collection: "supplier_review_queue",
               id: queueItemId,

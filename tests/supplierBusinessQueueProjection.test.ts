@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   buildSupplierReviewBusinessQueueProjection,
   reviewRecordMatchesBusinessFilter,
+  supplierReviewCategoryRequiresSubcategory,
   supplierReviewReadinessGroupForRecord,
   supplierReviewQueueMediaIsReady,
 } from "../functions/src/scheduled/supplierReviewQueue";
@@ -13,6 +14,12 @@ import {
   migrationCheckpointForProjectionVersion,
   SUPPLIER_REVIEW_BUSINESS_PROJECTION_VERSION,
 } from "../functions/src/api/suppliers/supplierReviewBusinessQueueProjection";
+import {
+  canResumeSupplierReviewBusinessProjectionMigration,
+  migrationModeFor,
+  projectionPatchRequiresWrite,
+  supplierReviewProjectionSourceFingerprint,
+} from "../scripts/supplierReviewBusinessQueueProjectionMigrationSupport";
 
 const baseRecord = (patch: Record<string, unknown> = {}): Record<string, unknown> => ({
   status: "Pending",
@@ -96,6 +103,58 @@ test("new and updated queue records receive v4 fields without replacing approval
   const sync = readFileSync("functions/src/scheduled/supplierSync.ts", "utf8");
   assert.match(sync, /Object\.assign\(queueData, buildSupplierReviewBusinessQueueProjection\(queueData\)\)/u);
   assert.match(sync, /suppressionPatch[\s\S]*buildSupplierReviewBusinessQueueProjection\(\{/u);
+  assert.match(sync, /categoryRequirementForQueueRecord\(queueData, storeCategories\)/u);
+});
+
+test("canonical category requirements are applied by writers while lifecycle rewrites preserve repaired v4 state", () => {
+  const categoryNeedsChild = baseRecord({
+    productPayload: { category: "electronics", subcategory: "", stock: 10 },
+    productValidation: { readyToPublish: true, missingFields: [], errors: [] },
+  });
+  assert.equal(supplierReviewCategoryRequiresSubcategory(categoryNeedsChild as never), false);
+  assert.deepEqual(
+    buildSupplierReviewBusinessQueueProjection(categoryNeedsChild as never, true).businessQueueClasses,
+    ["actionable", "category_decision_required", "new_products"],
+  );
+
+  const repaired = {
+    ...categoryNeedsChild,
+    businessQueueClasses: ["actionable", "category_decision_required", "new_products"],
+    businessQueueClassesVersion: SUPPLIER_REVIEW_BUSINESS_PROJECTION_VERSION,
+  };
+  assert.equal(supplierReviewCategoryRequiresSubcategory(repaired as never), true);
+  assert.deepEqual(
+    buildSupplierReviewBusinessQueueProjection(repaired as never).businessQueueClasses,
+    ["actionable", "category_decision_required", "new_products"],
+  );
+  const classes = buildSupplierReviewBusinessQueueProjection({
+    ...repaired,
+    productValidation: { readyToPublish: false, missingFields: [], errors: [] },
+  } as never).businessQueueClasses as string[];
+  assert.equal(classes.includes("missing_details"), false);
+  assert.equal(classes.includes("needs_attention"), false);
+});
+
+test("zero stock remains held for unpublished records but live stock-only records keep their existing actionable policy", () => {
+  const unpublished = baseRecord({
+    stock: 0,
+    productPayload: { category: "", stock: 0 },
+    comparison: { comparisonStatus: "NEW_PRODUCT", matchedProductLive: false, changedFields: [] },
+    supplierSnapshot: { inventoryLevel: 0, providedFields: ["stock"], supplierMetadata: { supplierStockAvailable: true } },
+  });
+  const unpublishedClasses = buildSupplierReviewBusinessQueueProjection(unpublished as never).businessQueueClasses as string[];
+  assert.deepEqual(unpublishedClasses, ["stock_price_issues", "low_stock_hold"]);
+  assert.equal(unpublishedClasses.includes("actionable"), false);
+
+  const live = baseRecord({
+    stock: 0,
+    productPayload: { category: "", stock: 0 },
+    comparison: { comparisonStatus: "STOCK_CHANGED", matchedProductLive: true, changedFields: ["Stock"] },
+    supplierSnapshot: { inventoryLevel: 0, providedFields: ["stock"], supplierMetadata: { supplierStockAvailable: true } },
+  });
+  const liveClasses = buildSupplierReviewBusinessQueueProjection(live as never).businessQueueClasses as string[];
+  assert.equal(liveClasses.includes("actionable"), true);
+  assert.equal(liveClasses.includes("low_stock_hold"), false);
 });
 
 test("business queue projection is a read model and does not replace approval or media authority", () => {
@@ -151,6 +210,72 @@ test("only a pending v2 checkpoint resumes; v1 checkpoints restart safely", () =
   });
 });
 
+test("active v4 markers repair mixed legacy records but remain a no-op when compatible", () => {
+  const activeV4 = {
+    status: "active" as const,
+    version: SUPPLIER_REVIEW_BUSINESS_PROJECTION_VERSION,
+    scanned: 6384,
+    projected: 6384,
+    lastDocumentId: null,
+  };
+
+  assert.equal(migrationModeFor(activeV4, true), "mixed-version-repair");
+  assert.equal(migrationModeFor(activeV4, false), "noop");
+  assert.equal(migrationModeFor(undefined, false), "initial");
+});
+
+test("mixed-version repair preserves checkpoint resume and idempotent projection writes", () => {
+  const pendingV4 = {
+    status: "pending" as const,
+    version: SUPPLIER_REVIEW_BUSINESS_PROJECTION_VERSION,
+    scanned: 400,
+    projected: 120,
+    lastDocumentId: "review-0400",
+  };
+  const projection = {
+    businessQueueClasses: ["actionable"],
+    businessQueueClassesVersion: SUPPLIER_REVIEW_BUSINESS_PROJECTION_VERSION,
+  };
+
+  assert.equal(canResumeSupplierReviewBusinessProjectionMigration(pendingV4), true);
+  assert.equal(projectionPatchRequiresWrite({
+    businessQueueClasses: ["legacy"],
+    businessQueueClassesVersion: 3,
+  }, projection), true);
+  assert.equal(projectionPatchRequiresWrite(projection, projection), false);
+  assert.deepEqual(migrationCheckpointForProjectionVersion(pendingV4), {
+    scanned: 400,
+    projected: 120,
+    lastDocumentId: "review-0400",
+  });
+});
+
+test("migration fencing ignores projection-only changes but detects source and taxonomy-input changes", () => {
+  const source = {
+    status: "Pending",
+    stock: 10,
+    productPayload: { category: "electronics", subcategory: "phones" },
+    businessQueueClasses: ["missing_details"],
+    businessQueueClassesVersion: 3,
+  };
+  assert.equal(supplierReviewProjectionSourceFingerprint({
+    ...source,
+    businessQueueClasses: ["actionable"],
+    businessQueueClassesVersion: SUPPLIER_REVIEW_BUSINESS_PROJECTION_VERSION,
+  }), supplierReviewProjectionSourceFingerprint(source));
+  assert.notEqual(
+    supplierReviewProjectionSourceFingerprint(source),
+    supplierReviewProjectionSourceFingerprint({ ...source, stock: 0 }),
+  );
+  assert.notEqual(
+    supplierReviewProjectionSourceFingerprint(source),
+    supplierReviewProjectionSourceFingerprint({
+      ...source,
+      productPayload: { category: "home-kitchen", subcategory: "phones" },
+    }),
+  );
+});
+
 test("migration source keeps bounded projection-only v2 activation guarantees", () => {
   const migration = readFileSync("scripts/migrateSupplierReviewBusinessQueueProjection.ts", "utf8");
   assert.match(migration, /isSupplierReviewBusinessProjectionMigrationRequired\(existing\)/u);
@@ -160,6 +285,14 @@ test("migration source keeps bounded projection-only v2 activation guarantees", 
   assert.match(migration, /MAX_BATCHES_PER_INVOCATION = 25/u);
   assert.match(migration, /projection-field-only/u);
   assert.match(migration, /no-product-business-data-rewrite/u);
+  assert.match(migration, /businessQueueClassesVersion", "!=", SUPPLIER_REVIEW_BUSINESS_PROJECTION_VERSION/u);
+  assert.match(migration, /migrationModeFor\(\s*existing/u);
+  assert.match(migration, /migrationMode[\s\S]*mixed-version-repair/u);
+  assert.match(migration, /dry-run-no-metadata-writes/u);
+  assert.match(migration, /category-reads-by-referenced-id/u);
+  assert.match(migration, /runTransaction\(async \(transaction\)/u);
+  assert.match(migration, /supplierReviewProjectionSourceFingerprint/u);
+  assert.match(migration, /conflictIds/u);
 });
 
 test("ready_for_review is only projected when the complete server proposal and managed media are publish-safe", () => {
