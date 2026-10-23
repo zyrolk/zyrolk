@@ -466,6 +466,90 @@ or failed rollback prerequisite is a NO-GO.
 9. Repeat checkout, inventory, orders, Supplier Hub, Product Review, media,
    notifications and scheduler smoke tests before reopening administration.
 
+### API-only emergency rollback using a retained Firebase-managed revision
+
+The source-based rollback procedure above remains the default.
+
+This exception applies only to an emergency rollback of the Firebase-managed
+Cloud Run service `api` when the recorded source revision cannot be rebuilt
+safely or promptly.
+
+#### Authorization and prerequisites
+
+Before changing traffic, the incident owner must explicitly authorize use of
+this exception and record:
+
+- Incident or change identifier.
+- Project, service and region.
+- Current revision and traffic allocation.
+- Proposed retained rollback revision and traffic allocation.
+- Immutable image digest for both revisions.
+- Runtime configuration and Secret Manager version IDs.
+- Firebase-managed ownership and reconciliation risk.
+
+The operator must independently verify that the retained revision:
+
+- Is still deployed and available.
+- Has the expected immutable image digest.
+- Has compatible runtime, environment and secret-version bindings.
+- Was previously verified healthy, or is otherwise approved by the incident owner.
+- Has not been deleted, altered or superseded by an incompatible deployment.
+
+No rollback revision may be deleted or reconfigured under this exception.
+
+#### Traffic change
+
+Only the `api` service may be changed. The operator must record the exact
+pre-change and post-change traffic allocations and timestamps in UTC.
+
+The traffic change requires explicit owner authorization immediately before
+execution. No deployment, source rebuild, function configuration change, IAM
+change, rules change, data write or other production modification is authorized
+by this exception.
+
+Because Firebase manages the Function and its Cloud Run service, no API
+deployment or other Firebase Functions deployment may occur during the rollback
+window unless separately approved. A later Firebase deployment may reconcile
+traffic or create a newer revision.
+
+#### Post-rollback verification
+
+After traffic is shifted, run the minimum safe smoke-test set:
+
+1. Confirm the target revision receives the intended traffic.
+2. Confirm a safe public API/storefront request succeeds.
+3. Confirm protected API access still rejects missing or invalid Auth/App Check.
+4. Confirm an authorized read-only API operation, where available, succeeds.
+5. Check Cloud Run and API error logs for new relevant errors.
+6. Confirm Hosting, scheduler, Supplier Sync, Auto Sync and Maintenance Mode
+   are unchanged.
+7. Confirm no order, payment, product, supplier, notification or other data
+   mutation occurred.
+
+Record all results and any limitations.
+
+#### Failure recovery
+
+If the retained revision fails compatibility or smoke tests:
+
+1. Stop further changes.
+2. Do not retry automatically.
+3. If the pre-rollback revision remains available and was independently
+   confirmed healthy, obtain separate owner authorization to restore its
+   recorded traffic allocation.
+4. Otherwise preserve the current state and escalate to the incident owner.
+5. Record the failure evidence and final traffic state.
+
+#### Closure and retirement
+
+The incident record must contain the authorization, revision IDs, digests,
+traffic states, runtime and secret-version evidence, smoke-test results, error
+findings and final owner GO/NO-GO decision.
+
+This exception must be retired for the service once complete source-to-artifact
+provenance is available for new releases and the normal source-based rollback
+procedure can be followed.
+
 ## Release closure
 
 The release record must contain the immutable Git revision/tag, validation and
