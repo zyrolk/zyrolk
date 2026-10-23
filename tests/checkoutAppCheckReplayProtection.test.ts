@@ -23,7 +23,7 @@ moduleExtensions['.ts'] = function loadFunctionsSource(module, filename) {
   module._compile(outputText, filename);
 };
 const functionsRequire = createRequire(path.resolve('functions/package.json'));
-const { createApiApp, requiresAppCheckReplayProtection } = functionsRequire('./src/api/app.ts') as typeof import('../functions/src/api/app');
+const { createApiApp, isPublicHealthCheckRequest, requiresAppCheckReplayProtection } = functionsRequire('./src/api/app.ts') as typeof import('../functions/src/api/app');
 const { adminAppCheck, adminDb } = functionsRequire('./src/api/firebase.ts') as typeof import('../functions/src/api/firebase');
 
 interface VerifyCall { token: string; options?: { consume?: boolean } }
@@ -42,7 +42,7 @@ const fakeVerifyToken = async (token: string, options?: { consume?: boolean }) =
   return { appId: 'web-app', token: {}, alreadyConsumed };
 };
 
-function send(method: string, requestPath: string, headers: Record<string, string> = {}, body?: unknown): Promise<{ status: number; body: string }> {
+function send(method: string, requestPath: string, headers: Record<string, string> = {}, body?: unknown): Promise<{ status: number; body: string; headers: http.IncomingHttpHeaders }> {
   const { port } = server.address() as AddressInfo;
   const payload = body === undefined ? '' : JSON.stringify(body);
   return new Promise((resolve, reject) => {
@@ -56,7 +56,7 @@ function send(method: string, requestPath: string, headers: Record<string, strin
       let text = '';
       response.setEncoding('utf8');
       response.on('data', (chunk) => { text += chunk; });
-      response.on('end', () => resolve({ status: response.statusCode || 0, body: text }));
+      response.on('end', () => resolve({ status: response.statusCode || 0, body: text, headers: response.headers }));
     });
     request.on('error', reject);
     request.end(payload);
@@ -89,6 +89,40 @@ test('replay protection applies only to requests Express routes to the checkout 
   assert.equal(requiresAppCheckReplayProtection('POST', '/api/checkoutx'), false);
   assert.equal(requiresAppCheckReplayProtection('POST', '/api/checkout//'), false);
   assert.equal(requiresAppCheckReplayProtection('POST', '/api/contact-inquiries'), false);
+});
+
+test('the exact public health check is App Check-exempt and returns only its minimal response', async () => {
+  assert.equal(isPublicHealthCheckRequest('GET', '/api/healthz'), true);
+  assert.equal(isPublicHealthCheckRequest('POST', '/api/healthz'), false);
+  assert.equal(isPublicHealthCheckRequest('GET', '/api/healthz/'), false);
+  assert.equal(isPublicHealthCheckRequest('GET', '/api/healthz-extra'), false);
+
+  const originalCollection = adminDb.collection;
+  (adminDb as unknown as { collection: () => never }).collection = () => {
+    throw new Error('health check must not access Firestore');
+  };
+  try {
+    const response = await send('GET', '/api/healthz');
+    assert.equal(response.status, 200);
+    assert.deepEqual(JSON.parse(response.body), { status: 'ok' });
+    assert.match(response.headers['content-type'] || '', /^application\/json;/);
+    assert.equal(response.headers['cache-control'], 'no-store');
+    assert.deepEqual(Object.keys(JSON.parse(response.body)), ['status']);
+    assert.equal(verifyCalls.length, 0);
+  } finally {
+    (adminDb as unknown as { collection: typeof originalCollection }).collection = originalCollection;
+  }
+});
+
+test('non-exact health paths and methods do not receive the public App Check bypass', async () => {
+  const post = await send('POST', '/api/healthz');
+  const slash = await send('GET', '/api/healthz/');
+  const other = await send('GET', '/api/healthz-extra');
+
+  assert.equal(post.status, 401);
+  assert.equal(slash.status, 401);
+  assert.equal(other.status, 401);
+  assert.equal(verifyCalls.length, 0);
 });
 
 test('POST /api/checkout consumes a fresh limited-use token and continues to the checkout handler', async () => {

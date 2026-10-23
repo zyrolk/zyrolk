@@ -51,6 +51,10 @@ export const requiresAppCheckReplayProtection = (method: string, path: string): 
   method === "POST" && CHECKOUT_REPLAY_PROTECTED_PATH.test(path)
 );
 
+export const isPublicHealthCheckRequest = (method: string, path: string): boolean => (
+  method === "GET" && path === "/api/healthz"
+);
+
 export function createApiApp(): express.Express {
   const app = express();
   const runtimeConfig = getRuntimeConfig();
@@ -96,7 +100,8 @@ export function createApiApp(): express.Express {
     // serving an exact loopback host. Deployed Functions always verify tokens.
     const isFunctionsEmulatorRequest = process.env.FUNCTIONS_EMULATOR === "true" && isExactLocalhost(req.hostname || "");
     if (isFunctionsEmulatorRequest || !runtimeConfig.requireAppCheck || req.path === "/sitemap.xml"
-      || isPublicProductMetadataRequest(req.method, req.path)) {
+      || isPublicProductMetadataRequest(req.method, req.path)
+      || isPublicHealthCheckRequest(req.method, req.path)) {
       next();
       return;
     }
@@ -138,6 +143,11 @@ export function createApiApp(): express.Express {
   });
 
   app.use(express.json({ limit: "100kb" }));
+
+  app.get("/api/healthz", (_req, res) => {
+    res.set("Cache-Control", "no-store");
+    res.status(200).json({ status: "ok" });
+  });
 
   // PayHere routes deliberately remain unregistered during the COD-only launch period.
   registerAdminConfigurationRoutes(app, { auth: adminAuth, db: adminDb });
