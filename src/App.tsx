@@ -34,7 +34,7 @@ import {
   subscribeToStorefrontCategories,
   subscribeToStorefrontProductPage,
 } from './services/storefront/storefrontCatalog';
-import { isProductExplicitlyActive } from './services/storefront/productAvailability';
+import { isProductExplicitlyActive, isProductInStock } from './services/storefront/productAvailability';
 import { resolveCustomerPromotion } from './services/products/promotionPolicy';
 import { canUseProductInCommerce, filterCommerceCartItems, filterCommerceProductIds, filterCommerceProducts } from './services/storefront/previewCommerceGuard';
 import { toFirestoreCartSnapshot } from './services/storefront/cartCloudSnapshot';
@@ -1363,37 +1363,41 @@ export default function App() {
     () => storefrontProducts.filter(product => isProductExplicitlyActive(product.isActive)),
     [storefrontProducts]
   );
+  const homepageProducts = useMemo(
+    () => activeProducts.filter(isProductInStock),
+    [activeProducts],
+  );
   const activeProductCount = catalogActiveCount ?? activeProducts.length;
 
   const featuredProducts = useMemo(
-    () => activeProducts.filter(product => product.isFeatured),
-    [activeProducts]
+    () => homepageProducts.filter(product => product.isFeatured),
+    [homepageProducts]
   );
   const newArrivalProducts = useMemo(
-    () => activeProducts.filter(product => product.isNew).slice(0, 8),
-    [activeProducts]
+    () => homepageProducts.filter(product => product.isNew).slice(0, 8),
+    [homepageProducts]
   );
   const bestSellerProducts = useMemo(
-    () => activeProducts.filter(product => product.isBestSeller).slice(0, 8),
-    [activeProducts]
+    () => homepageProducts.filter(product => product.isBestSeller).slice(0, 8),
+    [homepageProducts]
   );
-  const latestProducts = useMemo(() => [...activeProducts].sort((a, b) => {
+  const latestProducts = useMemo(() => [...homepageProducts].sort((a, b) => {
     const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
     const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
     if (dateB !== dateA) return dateB - dateA;
     return b.id.localeCompare(a.id);
-  }), [activeProducts]);
+  }), [homepageProducts]);
   const discountedProducts = useMemo(
-    () => activeProducts.filter(product => resolveCustomerPromotion(product) !== null).slice(0, 8),
-    [activeProducts]
+    () => homepageProducts.filter(product => resolveCustomerPromotion(product) !== null).slice(0, 8),
+    [homepageProducts]
   );
   const trendingProducts = useMemo(() => {
     const dealIds = new Set(discountedProducts.map(product => product.id));
     return featuredProducts.filter(product => !dealIds.has(product.id)).slice(0, 8);
   }, [discountedProducts, featuredProducts]);
   const recommendedProducts = useMemo(
-    () => selectExploreMoreProducts(activeProducts, [newArrivalProducts, trendingProducts, bestSellerProducts, discountedProducts]),
-    [activeProducts, bestSellerProducts, discountedProducts, newArrivalProducts, trendingProducts],
+    () => selectExploreMoreProducts(homepageProducts, [newArrivalProducts, trendingProducts, bestSellerProducts, discountedProducts]),
+    [homepageProducts, bestSellerProducts, discountedProducts, newArrivalProducts, trendingProducts],
   );
   const homepageLatestProducts = useMemo(() => {
     const usedIds = new Set([
