@@ -12,9 +12,9 @@ const slice7Styles = styles.slice(
 );
 
 test('Slice 7 preserves live Featured, New Arrivals and Best Sellers projections', () => {
-  assert.match(app, /const featuredProducts = useMemo\([\s\S]*?activeProducts\.filter\(product => product\.isFeatured\)/);
-  assert.match(app, /const newArrivalProducts = useMemo\([\s\S]*?activeProducts\.filter\(product => product\.isNew\)\.slice\(0, 8\)/);
-  assert.match(app, /const bestSellerProducts = useMemo\([\s\S]*?activeProducts\.filter\(product => product\.isBestSeller\)\.slice\(0, 8\)/);
+  assert.match(app, /const featuredProducts = useMemo\([\s\S]*?homepageProducts\.filter\(product => product\.isFeatured\)/);
+  assert.match(app, /const newArrivalProducts = useMemo\([\s\S]*?homepageProducts\.filter\(product => product\.isNew\)\.slice\(0, 8\)/);
+  assert.match(app, /const bestSellerProducts = useMemo\([\s\S]*?homepageProducts\.filter\(product => product\.isBestSeller\)\.slice\(0, 8\)/);
   assert.doesNotMatch(app, /featuredProducts\.push|newArrivalProducts\.push|bestSellerProducts\.push|mock|sample product/iu);
 });
 

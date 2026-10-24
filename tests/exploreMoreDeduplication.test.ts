@@ -45,8 +45,8 @@ test('Explore More is deterministic, keeps stable order and never refills with d
 });
 
 test('App feeds Explore More every other shelf and leaves New Arrivals unchanged', () => {
-  assert.match(app, /const newArrivalProducts = useMemo\(\n\s+\(\) => activeProducts\.filter\(product => product\.isNew\)\.slice\(0, 8\),\n\s+\[activeProducts\]\n\s+\);/u);
-  assert.match(app, /selectExploreMoreProducts\(activeProducts, \[newArrivalProducts, trendingProducts, bestSellerProducts, discountedProducts\]\)/u);
+  assert.match(app, /const newArrivalProducts = useMemo\(\n\s+\(\) => homepageProducts\.filter\(product => product\.isNew\)\.slice\(0, 8\),\n\s+\[homepageProducts\]\n\s+\);/u);
+  assert.match(app, /selectExploreMoreProducts\(homepageProducts, \[newArrivalProducts, trendingProducts, bestSellerProducts, discountedProducts\]\)/u);
   assert.match(app, /recommendedProducts=\{recommendedProducts\}/u);
 });
 
