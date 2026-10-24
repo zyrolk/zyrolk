@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
+import { isProductInStock, normalizeStorefrontStock } from '../src/services/storefront/productAvailability';
 
 const app = readFileSync('src/App.tsx', 'utf8');
 const homepage = readFileSync('src/components/MarketplaceHomePhase1.tsx', 'utf8');
@@ -31,11 +32,32 @@ test('shelf product selection stays with the live App-level product projections'
   );
   assert.equal((homepageLoader.match(/where\('isActive', '==', true\)/g) || []).length, 4);
   assert.match(homepageLoader, /where\('isFeatured', '==', true\)/);
-  assert.match(app, /activeProducts\.filter\(product => product\.isNew\)\.slice\(0, 8\)/);
-  assert.match(app, /activeProducts\.filter\(product => product\.isBestSeller\)\.slice\(0, 8\)/);
+  assert.match(app, /const homepageProducts = useMemo\(\s*\(\) => activeProducts\.filter\(isProductInStock\)/);
+  assert.match(app, /homepageProducts\.filter\(product => product\.isNew\)\.slice\(0, 8\)/);
+  assert.match(app, /homepageProducts\.filter\(product => product\.isBestSeller\)\.slice\(0, 8\)/);
   assert.match(app, /featuredProducts\.filter\(product => !dealIds\.has\(product\.id\)\)\.slice\(0, 8\)/);
-  assert.match(app, /activeProducts\.filter\(product => resolveCustomerPromotion\(product\) !== null\)\.slice\(0, 8\)/);
+  assert.match(app, /homepageProducts\.filter\(product => resolveCustomerPromotion\(product\) !== null\)\.slice\(0, 8\)/);
   assert.doesNotMatch(shelf, /firebase|firestore|isNew|isFeatured|isBestSeller|originalPrice >|\.filter\(/iu);
+});
+
+test('homepage stock eligibility normalizes invalid values and filters before shelf limits', () => {
+  assert.equal(normalizeStorefrontStock(4.9), 4);
+  assert.equal(normalizeStorefrontStock(-3), 0);
+  assert.equal(normalizeStorefrontStock('not-a-number'), 0);
+  assert.equal(normalizeStorefrontStock(Infinity), 0);
+  assert.equal(isProductInStock({ stock: 4.9 }), true);
+  assert.equal(isProductInStock({ stock: 0 }), false);
+  assert.equal(isProductInStock({ stock: 7 }), true);
+  assert.equal(isProductInStock({ stock: -2 }), false);
+  assert.equal(isProductInStock({ stock: 'invalid' }), false);
+
+  const products = [
+    { id: 'out-of-stock-first', stock: 0 },
+    { id: 'in-stock-first', stock: 3 },
+    { id: 'in-stock-second', stock: 2 },
+  ];
+  const visibleShelf = products.filter(isProductInStock).slice(0, 2);
+  assert.deepEqual(visibleShelf.map(product => product.id), ['in-stock-first', 'in-stock-second']);
 });
 
 test('generic shelf receives content, state, actions, and commerce handlers through props', () => {

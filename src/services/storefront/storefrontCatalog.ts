@@ -16,7 +16,7 @@ import {
 } from 'firebase/firestore';
 import { Category, Product } from '../../types';
 import { ProductionReview, projectProductionReview } from '../../features/reviews/reviewModel';
-import { isProductExplicitlyActive } from './productAvailability';
+import { isProductExplicitlyActive, normalizeStorefrontStock } from './productAvailability';
 
 export const STOREFRONT_PRODUCT_PAGE_SIZE = 24;
 export const STOREFRONT_CATEGORY_LIMIT = 100;
@@ -110,7 +110,7 @@ export const projectStorefrontProduct = (id: string, data: Record<string, unknow
   isFeatured: data.isFeatured === true,
   isBestSeller: data.isBestSeller === true,
   isActive: isProductExplicitlyActive(data.isActive),
-  stock: Math.max(0, Math.trunc(finiteNumber(data.stock))),
+  stock: normalizeStorefrontStock(data.stock),
   specs: publicSpecifications(data.specs),
   createdAt: timestampText(data.createdAt),
   updatedAt: timestampText(data.updatedAt),
