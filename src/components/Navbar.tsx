@@ -66,11 +66,16 @@ export default function Navbar({
   const [isMegaMenuOpen, setIsMegaMenuOpen] = useState(false);
   const [tempSearch, setTempSearch] = useState("");
   const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [isMobileSearchOpen, setIsMobileSearchOpen] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
   const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(-1);
+  const logoUrl = settings?.logoUrl?.trim() || '';
+  const [logoImageFailed, setLogoImageFailed] = useState(false);
   const searchInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const mobileSearchTriggerRef = useRef<HTMLButtonElement | null>(null);
   const mobileMenuRef = useRef<HTMLDivElement | null>(null);
   const prefersReducedMotion = useReducedMotion();
+  const isCompactMobileHeader = currentPage === 'home' && !isAdminMode;
   const [recentSearches, setRecentSearches] = useState<string[]>(() => {
     try {
       const stored = sessionStorage.getItem(RECENT_SEARCHES_KEY);
@@ -83,6 +88,10 @@ export default function Navbar({
   useEffect(() => {
     setTempSearch(searchQuery || "");
   }, [searchQuery]);
+
+  useEffect(() => {
+    setLogoImageFailed(false);
+  }, [logoUrl]);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
@@ -101,9 +110,14 @@ export default function Navbar({
   useEffect(() => {
     const handleOutsideClick = (event: MouseEvent) => {
       const target = event.target as HTMLElement | null;
-      if (!target?.closest('[data-product-search]')) {
+      if (!target?.closest('[data-product-search], .zy-mobile-search-trigger')) {
+        const wasMobileSearchOpen = isCompactMobileHeader && isMobileSearchOpen;
         setIsSearchOpen(false);
+        setIsMobileSearchOpen(false);
         setActiveSuggestionIndex(-1);
+        if (wasMobileSearchOpen) {
+          window.requestAnimationFrame(() => mobileSearchTriggerRef.current?.focus());
+        }
       }
       if (!target?.closest('[data-account-menu]')) setIsProfileOpen(false);
       if (!target?.closest('[data-mega-menu]')) setIsMegaMenuOpen(false);
@@ -113,6 +127,12 @@ export default function Navbar({
         setIsProfileOpen(false);
         setIsMegaMenuOpen(false);
         setIsMobileMenuOpen(false);
+        if (isCompactMobileHeader && isMobileSearchOpen) {
+          setIsSearchOpen(false);
+          setIsMobileSearchOpen(false);
+          setActiveSuggestionIndex(-1);
+          window.requestAnimationFrame(() => mobileSearchTriggerRef.current?.focus());
+        }
       }
     };
     document.addEventListener('mousedown', handleOutsideClick);
@@ -121,7 +141,7 @@ export default function Navbar({
       document.removeEventListener('mousedown', handleOutsideClick);
       document.removeEventListener('keydown', handleEscape);
     };
-  }, []);
+  }, [isCompactMobileHeader, isMobileSearchOpen]);
 
   useEffect(() => {
     if (!isMobileMenuOpen) return;
@@ -180,6 +200,7 @@ export default function Navbar({
     setIsAdminMode(false);
     setIsMobileMenuOpen(false);
     setIsSearchOpen(false);
+    setIsMobileSearchOpen(false);
     setActiveSuggestionIndex(-1);
   };
 
@@ -193,13 +214,35 @@ export default function Navbar({
     onSelectProduct(product);
     setIsMobileMenuOpen(false);
     setIsSearchOpen(false);
+    setIsMobileSearchOpen(false);
     setActiveSuggestionIndex(-1);
+  };
+
+  const closeMobileSearch = (restoreFocus = true) => {
+    setIsMobileSearchOpen(false);
+    setIsSearchOpen(false);
+    setActiveSuggestionIndex(-1);
+    if (restoreFocus && isCompactMobileHeader) {
+      window.requestAnimationFrame(() => mobileSearchTriggerRef.current?.focus());
+    }
+  };
+
+  const openMobileSearch = () => {
+    setIsMobileMenuOpen(false);
+    setIsMobileSearchOpen(true);
+    setIsSearchOpen(true);
+    setActiveSuggestionIndex(-1);
+    window.requestAnimationFrame(() => searchInputRefs.current.mobile?.focus());
   };
 
   const handleSearchKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'Escape') {
-      setIsSearchOpen(false);
-      setActiveSuggestionIndex(-1);
+      if (isCompactMobileHeader && isMobileSearchOpen) {
+        closeMobileSearch();
+      } else {
+        setIsSearchOpen(false);
+        setActiveSuggestionIndex(-1);
+      }
       return;
     }
     if (matchingProducts.length === 0) return;
@@ -225,6 +268,7 @@ export default function Navbar({
     setIsAdminMode(false);
     setIsMobileMenuOpen(false);
     setIsSearchOpen(false);
+    setIsMobileSearchOpen(false);
     setIsMegaMenuOpen(false);
   };
 
@@ -518,7 +562,7 @@ export default function Navbar({
   };
 
   return (
-    <header className={`zy-market-header sticky top-0 z-50 w-full bg-white ${isScrolled ? 'is-scrolled' : ''}`}>
+    <header className={`zy-market-header sticky top-0 z-50 w-full bg-white ${isCompactMobileHeader ? 'zy-compact-mobile-header-root' : ''} ${isScrolled ? 'is-scrolled' : ''}`}>
       <div className="zy-announcement-bar">
         <div className="zy-header-container">
           <div className="zy-announcement-benefits" aria-label="Store benefits">
@@ -533,8 +577,8 @@ export default function Navbar({
         </div>
       </div>
 
-      <div className="zy-market-header-shell zy-header-container">
-        <div className="zy-market-header-row">
+      <div className={`zy-market-header-shell zy-header-container${isCompactMobileHeader ? ' zy-compact-mobile-header-shell' : ''}`}>
+        <div className={`zy-market-header-row ${isCompactMobileHeader ? 'zy-compact-mobile-header' : ''}`}>
           <button
             type="button"
             onClick={() => setIsMobileMenuOpen((open) => !open)}
@@ -547,12 +591,26 @@ export default function Navbar({
           </button>
 
           <button type="button" className="zy-brand-button" onClick={() => navigateToPage('home')} aria-label="Go to Zyro.lk homepage">
-            {settings?.logoUrl ? (
-              <img src={settings.logoUrl} alt={settings.storeName || 'Zyro.lk'} referrerPolicy="no-referrer" />
+            {logoUrl && !logoImageFailed ? (
+              <img src={logoUrl} alt={settings?.storeName || 'Zyro.lk'} referrerPolicy="no-referrer" onError={() => setLogoImageFailed(true)} />
             ) : (
               <span>{settings?.storeName ? settings.storeName.split('.')[0] : 'Zyro'}<b>.lk</b></span>
             )}
           </button>
+
+          {isCompactMobileHeader && (
+            <button
+              ref={mobileSearchTriggerRef}
+              type="button"
+              className="zy-navbar-action zy-mobile-search-trigger"
+              onClick={() => isMobileSearchOpen ? closeMobileSearch() : openMobileSearch()}
+              aria-label="Search products"
+              aria-expanded={isMobileSearchOpen}
+              aria-controls="mobile-product-search-panel"
+            >
+              <Search aria-hidden="true" />
+            </button>
+          )}
 
           <div className="zy-header-categories" data-mega-menu>
             <button
@@ -640,7 +698,13 @@ export default function Navbar({
             <b>Delivery available</b>
           </div>
         </div>
-        <div className="zy-navbar-mobile-search">{renderSearchBox('mobile')}</div>
+        <div
+          id={isCompactMobileHeader ? 'mobile-product-search-panel' : undefined}
+          className={`zy-navbar-mobile-search${isCompactMobileHeader ? ' zy-compact-mobile-search' : ''}${isMobileSearchOpen ? ' is-open' : ''}`}
+          aria-hidden={isCompactMobileHeader && !isMobileSearchOpen ? true : undefined}
+        >
+          {(!isCompactMobileHeader || isMobileSearchOpen) && renderSearchBox('mobile')}
+        </div>
       </div>
 
       <div className="zy-desktop-navigation" data-mega-menu>

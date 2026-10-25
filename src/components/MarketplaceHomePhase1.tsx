@@ -322,6 +322,7 @@ export default function MarketplaceHomePhase1({
                 onClick={() => onSelectCategory(item.category.id)}
                 className="zy-foundation-category-tile"
                 data-zy-category-motion
+                data-category-id={item.category.id}
                 aria-label={`Browse ${formatCategoryDisplayName(item.category.name)}, ${item.itemsCount} ${item.itemsCount === 1 ? 'product' : 'products'}`}
                 role="listitem"
               >
@@ -382,6 +383,7 @@ export default function MarketplaceHomePhase1({
                 onClick={item.onClick}
                 className={`zy-home-category-promo zy-home-category-promo-tone-${index % 4}${item.kind === 'preview' ? ' is-preview' : ''}`}
                 aria-label={item.kind === 'live' ? `Shop ${item.name} category` : `Explore ${item.promo.categoryName}`}
+                data-category-id={item.kind === 'live' ? item.id : undefined}
                 data-preview-promo-id={item.kind === 'preview' ? item.promo.id : undefined}
               >
                 <span

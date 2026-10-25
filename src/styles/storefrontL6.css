@@ -472,6 +472,12 @@ html {
   bottom: max(0.55rem, env(safe-area-inset-bottom));
 }
 
+@media (min-width: 768px) {
+  .zy-bottom-dock {
+    display: none !important;
+  }
+}
+
 .zy-mobile-dock {
   min-width: 0;
   border-color: rgba(100, 116, 139, 0.18);

@@ -1,0 +1,67 @@
+name: Homepage visual preview
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  homepage-visual:
+    name: Capture homepage screenshots
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    defaults:
+      run:
+        shell: bash
+
+    env:
+      FIXTURE_ROOT: tests/visual/homepage-premium
+
+    steps:
+      - name: Check out the selected ref
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Verify the selected ref contains the homepage changes
+        run: |
+          git rev-parse --verify HEAD
+          grep -q 'zy-home-category-promo' src/components/MarketplaceHomePhase1.tsx
+          grep -q 'Search products' src/components/Navbar.tsx
+
+      - name: Install locked application dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Install locked visual-test dependencies
+        working-directory: ${{ env.FIXTURE_ROOT }}
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Install pinned Chromium and system dependencies
+        working-directory: ${{ env.FIXTURE_ROOT }}
+        run: npx playwright install --with-deps chromium
+
+      - name: Capture visual artifacts
+        if: always()
+        working-directory: ${{ env.FIXTURE_ROOT }}
+        env:
+          CI: true
+          ZYRO_SOURCE_ROOT: ${{ github.workspace }}
+          VISUAL_OUTPUT_DIR: ${{ github.workspace }}/tests/visual/homepage-premium/screenshots
+        run: npm run visual
+
+      - name: Upload homepage screenshots and reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zyro-homepage-visual-${{ github.run_id }}
+          path: |
+            tests/visual/homepage-premium/screenshots/*.png
+            tests/visual/homepage-premium/playwright-report/
+          if-no-files-found: warn
+          retention-days: 7

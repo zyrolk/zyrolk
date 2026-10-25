@@ -4747,3 +4747,113 @@
     gap: 0.7rem;
   }
 }
+
+/* Homepage premium surface pass: presentation-only tokens and stable category identity styling. */
+.zy-penpot-storefront .zy-launch-home {
+  --zy-home-background: #eef6ff;
+  --zy-home-surface: #ffffff;
+  --zy-home-section: #e6f0ff;
+  --zy-home-primary: #2563eb;
+  --zy-home-text: #0b1f4a;
+  --zy-home-muted: #5b6b83;
+  --zy-home-border: #d9e7f7;
+  --zy-home-shadow: 0 18px 42px -30px rgba(17, 57, 110, 0.32);
+  color: var(--zy-home-text);
+  background: var(--zy-home-background);
+}
+
+.zy-penpot-storefront .zy-launch-home > .zy-foundation-category-dock,
+.zy-penpot-storefront .zy-launch-home > .zy-home-category-promos {
+  border: 1px solid var(--zy-home-border);
+  background: var(--zy-home-section);
+  box-shadow: var(--zy-home-shadow);
+}
+
+.zy-penpot-storefront:has(.zy-launch-home) .zy-market-header.zy-compact-mobile-header-root,
+.zy-penpot-storefront:has(.zy-launch-home) .zy-market-header-shell.zy-compact-mobile-header-shell {
+  background: var(--zy-home-background, #eef6ff);
+}
+
+.zy-penpot-storefront .zy-launch-home > .zy-foundation-category-dock {
+  border-radius: 1.25rem;
+  padding-block: clamp(0.75rem, 1.6vw, 1.15rem);
+}
+
+.zy-penpot-storefront .zy-launch-home .zy-foundation-dock-header h2,
+.zy-penpot-storefront .zy-launch-home .zy-home-category-promos-header h2 {
+  color: var(--zy-home-text);
+}
+
+.zy-penpot-storefront .zy-launch-home .zy-foundation-eyebrow,
+.zy-penpot-storefront .zy-launch-home .zy-home-category-promos-eyebrow {
+  color: var(--zy-home-primary);
+}
+
+.zy-penpot-storefront .zy-launch-home > .zy-foundation-category-dock .zy-foundation-category-image,
+.zy-penpot-storefront .zy-launch-home > .zy-foundation-category-dock .zy-foundation-category-skeleton > span {
+  border-color: var(--zy-home-border);
+  background: linear-gradient(145deg, #ffffff 0%, #edf5ff 68%, #e5efff 100%);
+  box-shadow: 0 10px 24px -16px rgba(37, 99, 235, 0.42);
+}
+
+.zy-penpot-storefront .zy-launch-home > .zy-foundation-category-dock .zy-foundation-category-tile strong {
+  color: var(--zy-home-text);
+}
+
+.zy-penpot-storefront .zy-launch-home > .zy-foundation-category-dock .zy-foundation-category-tile:focus-visible {
+  outline-color: rgba(37, 99, 235, 0.42);
+}
+
+.zy-penpot-storefront .zy-launch-home .zy-home-category-promo {
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  box-shadow: 0 18px 34px -27px rgba(17, 57, 110, 0.58);
+}
+
+/* Stable identity mapping: category colors do not depend on array position. */
+.zy-penpot-storefront .zy-launch-home .zy-home-category-promo[data-category-id='fashion'] {
+  background: linear-gradient(135deg, #f97316 0%, #f59e0b 100%);
+}
+
+.zy-penpot-storefront .zy-launch-home .zy-home-category-promo[data-category-id='home-garden'] {
+  background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+}
+
+.zy-penpot-storefront .zy-launch-home .zy-home-category-promo[data-category-id='kids-toys'] {
+  background: linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%);
+}
+
+.zy-penpot-storefront .zy-launch-home .zy-home-category-promo[data-category-id='health-beauty'] {
+  background: linear-gradient(135deg, #d9a441 0%, #b7791f 100%);
+}
+
+.zy-penpot-storefront .zy-launch-home .zy-home-category-promo-cta {
+  color: var(--zy-home-primary);
+  box-shadow: 0 5px 14px -12px rgba(11, 31, 74, 0.48);
+}
+
+.zy-penpot-storefront .zy-launch-home .zy-home-category-promo:focus-visible {
+  outline-color: rgba(37, 99, 235, 0.46);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .zy-penpot-storefront .zy-launch-home .zy-home-category-promo,
+  .zy-penpot-storefront .zy-launch-home > .zy-foundation-category-dock .zy-foundation-category-image {
+    transition: none;
+  }
+}
+
+@media (max-width: 767px) {
+  .zy-penpot-storefront .zy-launch-home > .zy-foundation-category-dock {
+    border-radius: 1rem;
+    padding-block: 0.6rem 0.75rem;
+  }
+
+  .zy-penpot-storefront .zy-launch-home > .zy-home-category-promos {
+    border-radius: 1rem;
+    padding: 0.7rem;
+  }
+
+  .zy-penpot-storefront .zy-launch-home .zy-home-category-promo-grid {
+    gap: 0.7rem;
+  }
+}

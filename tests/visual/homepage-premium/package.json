@@ -1,0 +1,11 @@
+{
+  "name": "zyro-homepage-visual-fixture",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "visual": "playwright test --config=playwright.config.ts"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.55.0"
+  }
+}
