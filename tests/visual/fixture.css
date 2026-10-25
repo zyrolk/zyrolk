@@ -1,0 +1,61 @@
+html,
+body,
+#root {
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  background: #e2e8f0;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+}
+
+.zy-visual-fixture-page {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 100vh;
+  padding: 1rem;
+  background: #f8faff;
+}
+
+.zy-visual-fixture-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem 0.25rem 1rem;
+  color: #0f172a;
+  font-size: 0.75rem;
+}
+
+.zy-visual-fixture-header span {
+  color: #64748b;
+  font-size: 0.65rem;
+}
+
+.zy-visual-fixture-grid {
+  display: grid;
+  gap: 1rem;
+}
+
+.zy-visual-fixture-case {
+  min-width: 0;
+}
+
+@media (min-width: 768px) and (max-width: 1023px) {
+  .zy-visual-fixture-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1024px) {
+  .zy-visual-fixture-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 767px) {
+  .zy-visual-fixture-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

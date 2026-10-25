@@ -1,0 +1,45 @@
+name: Product Card Visual Baseline
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  visual:
+    name: Sandboxed ProductCard screenshots
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install locked root dependencies
+        run: npm ci
+
+      - name: Install pinned Playwright runner without changing manifests
+        run: npm install --no-save --no-package-lock --ignore-scripts @playwright/test@1.55.0
+
+      - name: Install sandboxed Chromium and Linux dependencies
+        run: npx --no-install playwright install --with-deps chromium
+
+      - name: Capture ProductCard screenshots
+        run: npx --no-install playwright test tests/visual/product-card-visual.spec.ts --config tests/visual/playwright.config.ts
+
+      - name: Upload ProductCard screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: product-card-visual-baseline
+          path: tests/visual/artifacts/product-card-*.png
+          if-no-files-found: warn
+          retention-days: 7
