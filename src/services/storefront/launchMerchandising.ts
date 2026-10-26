@@ -154,6 +154,23 @@ export const LAUNCH_FEATURED_CATEGORY_IDS: readonly string[] = Object.freeze([
   'health-beauty',
 ]);
 
+/** Homepage-only presentation priority; category records and routes remain unchanged. */
+export const HOMEPAGE_CATEGORY_SHORTCUT_IDS: readonly string[] = Object.freeze([
+  'automotive',
+  'baby-kids',
+  'electronics',
+  'fashion',
+  'health-beauty',
+]);
+
+/** Homepage collection-card presentation order; missing live categories are skipped. */
+export const HOMEPAGE_COLLECTION_CATEGORY_IDS: readonly string[] = Object.freeze([
+  'fashion',
+  'home-garden',
+  'baby-kids',
+  'health-beauty',
+]);
+
 export type LaunchCategoryBannerTone = 'warm' | 'cool';
 
 export interface LaunchCategoryBanner {

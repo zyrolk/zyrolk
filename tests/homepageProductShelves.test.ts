@@ -8,6 +8,7 @@ const homepage = readFileSync('src/components/MarketplaceHomePhase1.tsx', 'utf8'
 const shelf = readFileSync('src/components/StorefrontProductShelf.tsx', 'utf8');
 const styles = readFileSync('src/index.css', 'utf8');
 const catalog = readFileSync('src/services/storefront/storefrontCatalog.ts', 'utf8');
+const publicCatalog = readFileSync('functions/src/api/products/publicCatalog.ts', 'utf8');
 
 test('Sprint 74 composes all five homepage sections from the generic storefront shelf', () => {
   assert.equal((homepage.match(/const (?:flashDeals|newArrivals|featured|bestSellers|recommended)Shelf = \{/g) || []).length, 5);
@@ -30,8 +31,12 @@ test('shelf product selection stays with the live App-level product projections'
     catalog.indexOf('export const loadStorefrontHomepageProducts'),
     catalog.indexOf('export const loadStorefrontCatalogCounts'),
   );
-  assert.equal((homepageLoader.match(/where\('isActive', '==', true\)/g) || []).length, 4);
-  assert.match(homepageLoader, /where\('isFeatured', '==', true\)/);
+  assert.match(homepageLoader, /\/api\/catalog\/products\/homepage/u);
+  assert.equal((publicCatalog.match(/homepageQuery\(db,/g) || []).length, 4);
+  assert.match(publicCatalog, /homepageQuery\(db, "isFeatured"\)/u);
+  assert.match(publicCatalog, /homepageQuery\(db, "isNew"\)/u);
+  assert.match(publicCatalog, /homepageQuery\(db, "isBestSeller"\)/u);
+  assert.match(publicCatalog, /homepageQuery\(db, "discount"\)/u);
   assert.match(app, /const homepageProducts = useMemo\(\s*\(\) => activeProducts\.filter\(isProductInStock\)/);
   assert.match(app, /homepageProducts\.filter\(product => product\.isNew\)\.slice\(0, 8\)/);
   assert.match(app, /homepageProducts\.filter\(product => product\.isBestSeller\)\.slice\(0, 8\)/);

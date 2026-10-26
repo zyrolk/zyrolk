@@ -1,29 +1,24 @@
 import {
   collection,
   documentId,
-  doc,
   Firestore,
-  getCountFromServer,
-  getDoc,
-  getDocs,
   limit,
   onSnapshot,
   orderBy,
   query,
-  QueryDocumentSnapshot,
-  startAfter,
   where,
 } from 'firebase/firestore';
 import { Category, Product } from '../../types';
 import { ProductionReview, projectProductionReview } from '../../features/reviews/reviewModel';
 import { isProductExplicitlyActive, normalizeStorefrontStock } from './productAvailability';
+import { fetchJson } from '../network/fetchJson';
 
 export const STOREFRONT_PRODUCT_PAGE_SIZE = 24;
 export const STOREFRONT_CATEGORY_LIMIT = 100;
 export const HOMEPAGE_REVIEW_LIMIT = 6;
 export interface StorefrontProductPage {
   products: Product[];
-  cursor: QueryDocumentSnapshot | null;
+  cursor: string | null;
   hasMore: boolean;
 }
 
@@ -73,12 +68,6 @@ const publicSpecifications = (value: unknown): Record<string, string> => {
 
 const STOREFRONT_TARGETED_READ_CONCURRENCY = 8;
 
-const isFirestorePermissionDenied = (error: unknown): boolean => {
-  if (!error || typeof error !== 'object') return false;
-  const code = (error as { code?: unknown }).code;
-  return code === 'permission-denied' || code === 'firestore/permission-denied';
-};
-
 /**
  * Projects a public product document through an explicit customer-safe boundary.
  * Commercial and supplier-only fields are intentionally never copied.
@@ -126,40 +115,56 @@ export const mergeStorefrontProducts = (
   return [...merged.values()];
 };
 
-const pageFromDocuments = (documents: QueryDocumentSnapshot[]): StorefrontProductPage => ({
-  products: documents.map((document) => projectStorefrontProduct(document.id, document.data())),
-  cursor: documents.at(-1) || null,
-  hasMore: documents.length === STOREFRONT_PRODUCT_PAGE_SIZE,
+interface PublicCatalogPageResponse {
+  products: Array<Record<string, unknown>>;
+  nextCursor: string | null;
+  hasMore: boolean;
+}
+
+interface PublicCatalogProductsResponse {
+  products: Array<Record<string, unknown>>;
+}
+
+interface PublicCatalogCountsResponse extends StorefrontCatalogCounts {}
+
+const projectApiProducts = (records: readonly Record<string, unknown>[]): Product[] => records.flatMap((record) => {
+  const id = text(record.id);
+  if (!id) return [];
+  const product = projectStorefrontProduct(id, record);
+  return isProductExplicitlyActive(product.isActive) ? [product] : [];
 });
 
+const loadPublicCatalogPage = async (after?: string | null): Promise<StorefrontProductPage> => {
+  const parameters = new URLSearchParams({ limit: String(STOREFRONT_PRODUCT_PAGE_SIZE) });
+  if (after) parameters.set('after', after);
+  const response = await fetchJson<PublicCatalogPageResponse>(`/api/catalog/products?${parameters.toString()}`);
+  return {
+    products: projectApiProducts(response.products),
+    cursor: typeof response.nextCursor === 'string' && response.nextCursor ? response.nextCursor : null,
+    hasMore: response.hasMore === true,
+  };
+};
+
 export const subscribeToStorefrontProductPage = (
-  firestore: Firestore,
+  _firestore: Firestore,
   onPage: (page: StorefrontProductPage) => void,
   onError: (error: unknown) => void,
-): (() => void) => onSnapshot(
-  query(
-    collection(firestore, 'products'),
-    where('isActive', '==', true),
-    orderBy(documentId()),
-    limit(STOREFRONT_PRODUCT_PAGE_SIZE),
-  ),
-  (snapshot) => onPage(pageFromDocuments(snapshot.docs)),
-  onError,
-);
+): (() => void) => {
+  let cancelled = false;
+  void loadPublicCatalogPage()
+    .then((page) => {
+      if (!cancelled) onPage(page);
+    })
+    .catch((error) => {
+      if (!cancelled) onError(error);
+    });
+  return () => { cancelled = true; };
+};
 
 export const loadNextStorefrontProductPage = async (
-  firestore: Firestore,
-  cursor: QueryDocumentSnapshot,
-): Promise<StorefrontProductPage> => {
-  const snapshot = await getDocs(query(
-    collection(firestore, 'products'),
-    where('isActive', '==', true),
-    orderBy(documentId()),
-    startAfter(cursor),
-    limit(STOREFRONT_PRODUCT_PAGE_SIZE),
-  ));
-  return pageFromDocuments(snapshot.docs);
-};
+  _firestore: Firestore,
+  cursor: string,
+): Promise<StorefrontProductPage> => loadPublicCatalogPage(cursor);
 
 export const loadStorefrontProductsByIdsWithReader = async (
   ids: readonly string[],
@@ -189,53 +194,33 @@ export const loadStorefrontProductsByIdsWithReader = async (
 };
 
 export const loadStorefrontProductsByIds = async (
-  firestore: Firestore,
+  _firestore: Firestore,
   ids: readonly string[],
-): Promise<Product[]> => loadStorefrontProductsByIdsWithReader(ids, async (productId) => {
-  try {
-    const snapshot = await getDoc(doc(firestore, 'products', productId));
-    if (!snapshot.exists()) return null;
-    const product = projectStorefrontProduct(snapshot.id, snapshot.data());
-    return isProductExplicitlyActive(product.isActive) ? product : null;
-  } catch (error) {
-    if (isFirestorePermissionDenied(error)) return null;
-    throw error;
-  }
-});
+): Promise<Product[]> => {
+  const uniqueIds = [...new Set(ids.map((id) => id.trim()).filter(Boolean))];
+  if (uniqueIds.length === 0) return [];
+  const response = await fetchJson<PublicCatalogProductsResponse>(
+    `/api/catalog/products/by-ids?ids=${encodeURIComponent(uniqueIds.join(','))}`,
+  );
+  return projectApiProducts(response.products);
+};
 
-export const loadStorefrontHomepageProducts = async (firestore: Firestore): Promise<Product[]> => {
-  const snapshots = await Promise.all([
-    getDocs(query(collection(firestore, 'products'), where('isActive', '==', true), where('isFeatured', '==', true), limit(16))),
-    getDocs(query(collection(firestore, 'products'), where('isActive', '==', true), where('isNew', '==', true), limit(16))),
-    getDocs(query(collection(firestore, 'products'), where('isActive', '==', true), where('isBestSeller', '==', true), limit(16))),
-    getDocs(query(collection(firestore, 'products'), where('isActive', '==', true), where('discount', '>', 0), limit(16))),
-  ]);
-  return mergeStorefrontProducts([], snapshots.flatMap((snapshot) => snapshot.docs.map((document) => (
-    projectStorefrontProduct(document.id, document.data())
-  ))));
+export const loadStorefrontHomepageProducts = async (_firestore: Firestore): Promise<Product[]> => {
+  const response = await fetchJson<PublicCatalogProductsResponse>('/api/catalog/products/homepage');
+  return projectApiProducts(response.products);
 };
 
 export const loadStorefrontCatalogCounts = async (
-  firestore: Firestore,
+  _firestore: Firestore,
   categories: readonly Category[],
 ): Promise<StorefrontCatalogCounts> => {
-  const activeProductsQuery = query(collection(firestore, 'products'), where('isActive', '==', true));
-  const [activeProducts, categoryEntries] = await Promise.all([
-    getCountFromServer(activeProductsQuery),
-    Promise.all(categories
-      .filter(isPublicStorefrontCategory)
-      .map(async (category) => {
-      const countSnapshot = await getCountFromServer(query(
-        collection(firestore, 'products'),
-        where('category', '==', category.id),
-        where('isActive', '==', true),
-      ));
-      return [category.id, countSnapshot.data().count] as const;
-      })),
-  ]);
+  const categoryIds = categories.filter(isPublicStorefrontCategory).map((category) => category.id);
+  const response = await fetchJson<PublicCatalogCountsResponse>(
+    `/api/catalog/counts?categoryIds=${encodeURIComponent(categoryIds.join(','))}`,
+  );
   return {
-    activeProducts: activeProducts.data().count,
-    byCategory: Object.fromEntries(categoryEntries),
+    activeProducts: Number.isFinite(response.activeProducts) ? response.activeProducts : 0,
+    byCategory: response.byCategory || {},
   };
 };
 

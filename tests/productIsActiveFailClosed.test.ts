@@ -5,7 +5,6 @@ import { assertFails, assertSucceeds, initializeTestEnvironment } from '@firebas
 import { doc, getDoc, getDocs, collection, query, orderBy, limit, setDoc } from 'firebase/firestore';
 import { isProductExplicitlyActive } from '../src/services/storefront/productAvailability';
 import {
-  loadStorefrontProductsByIds,
   loadStorefrontProductsByIdsWithReader,
   projectStorefrontProduct,
 } from '../src/services/storefront/storefrontCatalog';
@@ -48,7 +47,8 @@ test('B direct product load: only explicit true is treated as loadable in storef
   const catalog = read('src/services/storefront/storefrontCatalog.ts');
 
   assert.match(catalog, /isProductExplicitlyActive\(data\.isActive\)/);
-  assert.match(catalog, /getDoc\(doc\(firestore, 'products', productId\)\)/);
+  assert.match(catalog, /\/api\/catalog\/products\/by-ids/u);
+  assert.match(catalog, /fetchJson<PublicCatalogProductsResponse>/u);
   assert.doesNotMatch(catalog, /where\(documentId\(\), 'in'/);
   assert.match(catalog, /STOREFRONT_TARGETED_READ_CONCURRENCY = 8/);
   assert.match(app, /isProductExplicitlyActive\(candidate\.isActive\)/);
@@ -166,6 +166,13 @@ test('E Firestore rules emulator: public reads fail closed unless isActive is ex
     await environment.withSecurityRulesDisabled(async (context) => {
       const db = context.firestore();
       await setDoc(doc(db, 'products', 'active-product'), { name: 'Active', price: 100, isActive: true });
+      await setDoc(doc(db, 'products', 'supplier-product'), {
+        name: 'Supplier-backed',
+        price: 100,
+        isActive: true,
+        supplierId: 'supplier-private',
+        supplierInternalNotes: 'private',
+      });
       await setDoc(doc(db, 'products', 'inactive-product'), { name: 'Inactive', price: 100, isActive: false });
       await setDoc(doc(db, 'products', 'legacy-product'), { name: 'Legacy', price: 100 });
       await setDoc(doc(db, 'product_private', 'active-product'), { sku: 'ZY-ACTIVE' });
@@ -175,24 +182,12 @@ test('E Firestore rules emulator: public reads fail closed unless isActive is ex
     const customerDb = environment.authenticatedContext('customer-user').firestore();
     const adminDb = environment.authenticatedContext('admin-user', { admin: true }).firestore();
 
-    const publicClientDb = anonymousDb as unknown as Parameters<typeof loadStorefrontProductsByIds>[0];
-    const activeTargetedProducts = await assertSucceeds(loadStorefrontProductsByIds(publicClientDb, [
-      'active-product',
-      'inactive-product',
-      'missing-product',
-    ]));
-    assert.deepEqual(activeTargetedProducts.map((product) => product.id), ['active-product']);
-
-    const inactiveOnlyTargetedProducts = await assertSucceeds(loadStorefrontProductsByIds(publicClientDb, [
-      'inactive-product',
-      'missing-product',
-    ]));
-    assert.deepEqual(inactiveOnlyTargetedProducts, []);
-
     await assertSucceeds(getDoc(doc(anonymousDb, 'products', 'active-product')));
     await assertSucceeds(getDoc(doc(customerDb, 'products', 'active-product')));
     await assertFails(getDoc(doc(anonymousDb, 'products', 'inactive-product')));
     await assertFails(getDoc(doc(customerDb, 'products', 'inactive-product')));
+    await assertFails(getDoc(doc(anonymousDb, 'products', 'supplier-product')));
+    await assertFails(getDoc(doc(customerDb, 'products', 'supplier-product')));
     await assertFails(getDoc(doc(anonymousDb, 'products', 'legacy-product')));
     await assertFails(getDoc(doc(customerDb, 'products', 'legacy-product')));
     await assertFails(getDoc(doc(customerDb, 'product_private', 'active-product')));

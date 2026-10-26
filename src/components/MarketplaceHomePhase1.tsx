@@ -17,7 +17,8 @@ import type {
 import { DEFAULT_HOMEPAGE_SECTIONS } from '../services/settings/websiteSettings';
 import {
   LAUNCH_CATEGORY_BANNERS,
-  LAUNCH_FEATURED_CATEGORY_IDS,
+  HOMEPAGE_CATEGORY_SHORTCUT_IDS,
+  HOMEPAGE_COLLECTION_CATEGORY_IDS,
   LAUNCH_MERCHANDISING_IMAGE_CONTRACT,
   formatCategoryDisplayName,
   getCategoryMonogram,
@@ -111,14 +112,25 @@ export default function MarketplaceHomePhase1({
   }, []);
   const liveCategoryRailItems: HomepageCategoryRailItem[] = categoryVisuals.map(item => ({ kind: 'live', ...item }));
   const previewCategoryRailItems: HomepageCategoryRailItem[] = previewPresentation?.categories.map(category => ({ kind: 'preview', category })) || [];
-  const categoryRailItems = [...liveCategoryRailItems, ...previewCategoryRailItems].slice(0, 9);
+  const prioritizedLiveCategoryRailItems: HomepageCategoryRailItem[] = orderByCategoryPriority(
+    categoryVisuals.filter(item => HOMEPAGE_CATEGORY_SHORTCUT_IDS.some(id => categoryMatches(id, item.category.id))),
+    item => item.category.id,
+    HOMEPAGE_CATEGORY_SHORTCUT_IDS,
+  ).slice(0, HOMEPAGE_CATEGORY_SHORTCUT_IDS.length).map(item => ({ kind: 'live' as const, ...item }));
+  const categoryRailItems = previewPresentation
+    ? [...liveCategoryRailItems, ...previewCategoryRailItems].slice(0, HOMEPAGE_CATEGORY_SHORTCUT_IDS.length)
+    : prioritizedLiveCategoryRailItems;
   const bannerCategoryVisuals = orderByCategoryPriority(
     categoryVisuals,
     item => item.category.id,
     LAUNCH_CATEGORY_BANNERS.map(banner => banner.categoryId),
   ).slice(0, SECONDARY_PROMO_LIMIT);
   const bannerCategoryIds = new Set(bannerCategoryVisuals.map(item => item.category.id));
-  const featuredCategoryVisuals = orderByCategoryPriority(categoryVisuals, item => item.category.id, LAUNCH_FEATURED_CATEGORY_IDS);
+  const featuredCategoryVisuals = orderByCategoryPriority(
+    categoryVisuals.filter(item => HOMEPAGE_COLLECTION_CATEGORY_IDS.some(id => categoryMatches(id, item.category.id))),
+    item => item.category.id,
+    HOMEPAGE_COLLECTION_CATEGORY_IDS,
+  );
   // Cards skip categories that already get a wide promo banner and prefer real imagery; both are only fallbacks.
   const categoryCardVisuals = [
     ...featuredCategoryVisuals.filter(item => item.image && !bannerCategoryIds.has(item.category.id)),

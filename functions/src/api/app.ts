@@ -8,6 +8,7 @@ import { registerReviewSystemRoutes } from "./routes/reviewSystem";
 import { registerAdminConfigurationRoutes } from "./routes/adminConfiguration";
 import { registerContactRoutes } from "./routes/contact";
 import { registerAdminProductRoutes } from "./routes/adminProducts";
+import { registerPublicCatalogRoutes } from "./routes/publicCatalog";
 import { adminAppCheck, adminAuth, adminDb } from "./firebase";
 import { appLogger } from "./logging";
 import { createPublicProductMetadataHandler, isPublicProductMetadataRequest } from "./products/publicProductMetadata";
@@ -152,6 +153,7 @@ export function createApiApp(): express.Express {
   // PayHere routes deliberately remain unregistered during the COD-only launch period.
   registerAdminConfigurationRoutes(app, { auth: adminAuth, db: adminDb });
   registerAdminProductRoutes(app);
+  registerPublicCatalogRoutes(app);
   registerCheckoutRoutes(app);
   registerContactRoutes(app, { db: adminDb });
   registerOrderRoutes(app);
