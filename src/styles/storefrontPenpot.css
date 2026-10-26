@@ -4996,3 +4996,36 @@
     padding-inline: 0.65rem;
   }
 }
+
+/* Homepage finalization: fit the five approved mobile shortcuts without changing live category data. */
+@media (max-width: 767px) {
+  .zy-penpot-storefront .zy-launch-home > .zy-foundation-category-dock .zy-foundation-category-rail {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 0.25rem;
+    overflow-x: visible;
+    padding-inline: 0;
+  }
+
+  .zy-penpot-storefront .zy-launch-home > .zy-foundation-category-dock .zy-foundation-category-tile {
+    width: auto;
+    min-width: 0;
+    flex: none;
+  }
+
+  .zy-penpot-storefront .zy-launch-home > .zy-foundation-category-dock .zy-foundation-category-all {
+    display: none;
+  }
+
+  .zy-penpot-storefront .zy-launch-home > .zy-foundation-category-dock .zy-foundation-category-image,
+  .zy-penpot-storefront .zy-launch-home > .zy-foundation-category-dock .zy-foundation-category-skeleton > span {
+    flex-basis: clamp(3rem, 14vw, 3.65rem);
+    width: clamp(3rem, 14vw, 3.65rem);
+    height: clamp(3rem, 14vw, 3.65rem);
+  }
+
+  .zy-penpot-storefront .zy-launch-home > .zy-foundation-category-dock .zy-foundation-category-tile strong {
+    font-size: clamp(0.62rem, 2.6vw, 0.68rem);
+    overflow-wrap: anywhere;
+  }
+}

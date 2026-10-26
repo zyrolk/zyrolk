@@ -13,7 +13,7 @@ test('Slice 5 keeps live category cards first and fills only local preview densi
   assert.match(homepage, /const promoCategoryItems: HomepagePromoItem\[\] = \[/);
   assert.match(homepage, /const FEATURED_CATEGORY_CARD_LIMIT = 4;/);
   assert.match(homepage, /categoryCardVisuals\.slice\(0, FEATURED_CATEGORY_CARD_LIMIT\)/);
-  assert.match(homepage, /orderByCategoryPriority\(categoryVisuals, item => item\.category\.id, LAUNCH_FEATURED_CATEGORY_IDS\)/);
+  assert.match(homepage, /const featuredCategoryVisuals = orderByCategoryPriority\([\s\S]*HOMEPAGE_COLLECTION_CATEGORY_IDS/);
   assert.match(homepage, /item\.image && !bannerCategoryIds\.has\(item\.category\.id\)/);
   assert.ok(homepage.indexOf('const bannerCategoryIds') < homepage.indexOf('const categoryCardVisuals'));
   assert.match(homepage, /item\.onClick/);

@@ -33,7 +33,8 @@ test('premium shelf treatments retain every live App-level product projection', 
   }
 
   assert.match(app, /subscribeToStorefrontProductPage\(db/);
-  assert.match(catalog, /orderBy\(documentId\(\)\)[\s\S]*limit\(STOREFRONT_PRODUCT_PAGE_SIZE\)/);
+  assert.match(catalog, /\/api\/catalog\/products\?\$\{parameters\.toString\(\)\}/);
+  assert.doesNotMatch(catalog, /collection\([^)]*,\s*['"]products['"]\)/);
   assert.doesNotMatch(homepage, /firebase|firestore|mock product|sample product/iu);
   assert.doesNotMatch(shelf, /firebase|firestore|mock product|sample product/iu);
 });

@@ -48,7 +48,7 @@ test('help section keeps existing support, FAQ, hotline and WhatsApp destination
 });
 
 test('menu closes on outside tap and Escape, and restores background scrolling', () => {
-  const menuEffect = navbar.match(/useEffect\(\(\) => \{\n {4}if \(!isMobileMenuOpen\) return;[\s\S]*?\n {2}\}, \[isMobileMenuOpen\]\);/)?.[0] || '';
+  const menuEffect = navbar.match(/useEffect\(\(\) => \{\r?\n {4}if \(!isMobileMenuOpen\) return;[\s\S]*?\r?\n {2}\}, \[isMobileMenuOpen\]\);/)?.[0] || '';
   assert.match(menuEffect, /document\.addEventListener\('pointerdown', handleOutsideMenuPointer\)/);
   assert.match(menuEffect, /mobileMenuRef\.current\?\.contains\(target\)/);
   assert.match(menuEffect, /setIsMobileMenuOpen\(false\)/);

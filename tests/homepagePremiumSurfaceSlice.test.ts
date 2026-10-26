@@ -43,6 +43,13 @@ test('collection color treatments use stable category IDs and preserve the two-c
   assert.match(premiumStyles, /@media \(max-width: 767px\)[\s\S]*zy-home-category-promo-grid[\s\S]*gap: 0\.7rem/);
 });
 
+test('mobile category shortcuts fit the approved five-item presentation', () => {
+  assert.match(premiumStyles, /Homepage finalization: fit the five approved mobile shortcuts/);
+  assert.match(premiumStyles, /Homepage finalization: fit the five approved mobile shortcuts[\s\S]*@media \(max-width: 767px\)[\s\S]*grid-template-columns: repeat\(5, minmax\(0, 1fr\)\)/);
+  assert.match(premiumStyles, /Homepage finalization: fit the five approved mobile shortcuts[\s\S]*\.zy-foundation-category-all\s*\{\s*display: none/);
+  assert.match(premiumStyles, /Homepage finalization: fit the five approved mobile shortcuts[\s\S]*overflow-wrap: anywhere/);
+});
+
 test('mobile navigation remains full-width and safe-area aware', () => {
   assert.match(bottomNav, /zy-bottom-dock fixed left-3 right-3/);
   assert.match(styles, /\.zy-penpot-storefront \.zy-bottom-dock\s*\{[\s\S]*bottom: 0/);
